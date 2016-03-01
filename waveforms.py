@@ -1,3 +1,9 @@
+from .util import unwrap
+from math import pi
+
+PI = pi
+HALF_PI = pi / 2.0
+
 def triangle(angle):
     """Generate a point on a unit triangle wave from angle in radians."""
     angle = unwrap(angle)
