@@ -112,3 +112,17 @@ class Animation (object):
         elif self.type == 3:
             # sawtooth wave
             return float(self.weight * sawtooth(angle, self.smoothing))
+
+
+class AnimationClipboard (object):
+    """Class for storing a deep copy of an animation to support copy/paste."""
+    def __init__(self):
+        self.anim = None
+        self.has_data = False
+
+    def copy(self, to_copy):
+        self.anim = to_copy.copy()
+        self.has_data = True
+
+    def paste(self):
+        return self.anim.copy()
