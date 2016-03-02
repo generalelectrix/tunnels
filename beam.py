@@ -29,8 +29,8 @@ class Beam (object):
     def replace_current_animation(self, new_anim):
         pass
 
-    def set_midi_param(is_note, num, val):
+    def set_midi_param(self, is_note, num, val):
         pass
 
-    def get_midi_param(is_note, num):
+    def get_midi_param(self, is_note, num):
         return 0

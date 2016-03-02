@@ -1,8 +1,14 @@
-# scale overall radius, set > 1.0 to enable larger shapes than screen size
-from .constants import MAX_RADIUS, MAX_X_OFFSET, MAX_Y_OFFSET, X_CENTER, Y_CENTER
+from .animation import Animation
+from .beam import Beam
+from .constants import (
+    MAX_RADIUS, MAX_X_OFFSET, MAX_Y_OFFSET, X_CENTER, Y_CENTER, is1080, width, height)
 from copy import deepcopy
+from .LED_control import set_anim_select_LED
+from math import pi
+from .util import unwrap
 from .waveforms import sawtooth
 
+# scale overall radius, set > 1.0 to enable larger shapes than screen size
 MAX_RAD_MULT = 2.0
 MAX_ELLIPSE_ASPECT = 2.0
 
@@ -55,6 +61,7 @@ class Tunnel (Beam):
 
     def __init__(self):
         """Default tunnel constructor."""
+        super(Tunnel, self).__init__()
         self.rot_speedI = 64
         self.thicknessI = 32
         self.radiusI = 64
@@ -72,12 +79,11 @@ class Tunnel (Beam):
 
         self.x_offset, self.y_offset = 0, 0
 
-        if (is1080):
+        if is1080:
             self.x_nudge = self.y_nudge = 15 if is1080 else 10
-            self.thicknessScale = 4.05 if is1080 else 2.7
+            self.thickness_scale = 4.05 if is1080 else 2.7
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
-        self.curr_anim = 0;
 
         self.update_params()
 
@@ -106,7 +112,7 @@ class Tunnel (Beam):
         self.col_center = self.col_centerI * 2
         self.col_width = self.col_widthI
         self.col_spread = self.col_spreadI / 8
-        self.col_sat = (127 - colSatI) * 2 # we have a "desaturate" knob, not a saturate knob.
+        self.col_sat = (127 - self.col_satI) * 2 # we have a "desaturate" knob, not a saturate knob.
 
         # THIS IS A HACK.  This only works because the APC40 doesn't put out 0 for the bottom of the knob.
         segs = self.segs = self.segsI
@@ -162,7 +168,7 @@ class Tunnel (Beam):
         self.curr_angle = unwrap(
             self.curr_angle + self.rot_speed + rot_adjust/self.rot_speed_scale)
 
-        raius = self.radius
+        radius = self.radius
         thickness = self.thickness
 
         rad_X = (
@@ -184,7 +190,7 @@ class Tunnel (Beam):
         """actually draws a tunnel segment given animation parameters
 
         Args:
-            float rad_X, float rad_Y, int seg_num, boolean as_mask, int level
+            float rad_X, float rad_Y, int seg_num, boolean as_mask, int level_scale
         """
         # parameters that animations may modify
         rad_adjust = 0.
@@ -197,29 +203,29 @@ class Tunnel (Beam):
         y_adjust = 0
 
         # the angle of this particular segment
-        seg_angle = self.rot_interval*seg_num+self.curr_angle;
-        rel_angle = self.rot_interval*seg_num;
+        seg_angle = self.rot_interval*seg_num+self.curr_angle
+        rel_angle = self.rot_interval*seg_num
 
         for anim in self.anims:
             target = anim.target
 
             # what is this animation targeting?
             if target == 2: # thickness
-                    thickness_adjust += anim.get_value(rel_angle);
+                    thickness_adjust += anim.get_value(rel_angle)
             elif target == 3: # radius
-                    rad_adjust += anim.get_value(rel_angle);
+                    rad_adjust += anim.get_value(rel_angle)
             elif target == 5: # color center
-                    col_center_adjust += anim.get_value(0);
+                    col_center_adjust += anim.get_value(0)
             elif target == 6: # color width
-                    col_width_adjust += anim.get_value(0);
+                    col_width_adjust += anim.get_value(0)
             elif target == 7: # color periodicity
-                    col_period_adjust += anim.get_value(0) / 16;
+                    col_period_adjust += anim.get_value(0) / 16
             elif target == 8: # saturation
-                    col_sat_adjust += anim.get_value(rel_angle);
+                    col_sat_adjust += anim.get_value(rel_angle)
             elif target == 11: # x offset
-                    x_adjust += anim.get_value(0)*(width/2)/127;
+                    x_adjust += anim.get_value(0)*(width/2)/127
             elif target == 12: # y offset
-                    y_adjust += anim.get_value(0)*(height/2)/127;
+                    y_adjust += anim.get_value(0)*(height/2)/127
 
         # FIXME-RENDERING: Processing draw call
         strokeWeight( abs(self.thickness*(1 + thickness_adjust/127)) )
@@ -269,7 +275,7 @@ class Tunnel (Beam):
             # otherwise pick the color and set the level
             else:
                 # FIXME-RENDERING
-                stroke( blendColor(seg_color, color(0,0,level), MULTIPLY) )
+                stroke( blendColor(seg_color, color(0,0,level_scale), MULTIPLY) )
         else:
             # FIXME-RENDERING
             noStroke()
@@ -282,249 +288,155 @@ class Tunnel (Beam):
             abs(rad_X + rad_adjust),
             abs(rad_Y+ rad_adjust),
             seg_angle,
-            seg_angle + rot_interval,)
+            seg_angle + self.rot_interval,)
 
-
-    # function to set the control parameter based on passed midi value
-    void setMIDIParam(boolean isNote, int num, int val) {
-
-        Animation anim;
+    def set_midi_param(self, is_note, num, val):
+        """set a control parameter based on passed midi message"""
         # define the mapping between APC40 and parameters and set values
-        if (isNote) {
+        unimplemented_animation_waveforms = (28, 29, 30, 31)
+        unimplemented_animation_targets = (43, 44, 47)
 
+        if is_note:
             # ipad animation type select
-            if (num >= 24 && num <= 31) {
+            if num >= 24 and num <= 31:
 
                 # haven't implemented these waveforms yet
-                if (num != 28 && num != 29 && num != 30 && num != 31) {
-                    anim = getAnimation(currAnim);
-                    anim.typeI = num;
-                    anim.updateParams();
-                }
-            }
+
+                if num not in unimplemented_animation_waveforms:
+                    anim = self.get_current_animation()
+                    anim.typeI = num
+                    anim.update_params()
 
             # ipad periodicity select
-            else if (num >= 0 && num <= 15) {
-                anim = getAnimation(currAnim);
-                anim.nPeriodsI = num;
-                anim.updateParams();
-            }
+            elif num >= 0 and num <= 15:
+                anim = self.get_current_animation()
+                anim.n_periodsI = num
+                anim.update_params()
 
             # ipad target select
-            else if (num >= 35 && num <= 47) {
-                if (num != 47 && num != 44 && num != 43) {
-                    anim = getAnimation(currAnim);
-                    anim.targetI = num;
-                    anim.updateParams();
-                }
-            }
+            elif (
+                num >= 35 and
+                num <= 47 and
+                num not in unimplemented_animation_targets
+            ):
+                anim = self.get_current_animation()
+                anim.targetI = num
+                anim.update_params()
 
-            switch(num) {
-                # animation control buttons, for iPad control
+            # animation control buttons, for iPad control
 
+            # aniamtion select buttons:
+            elif num == 0x57: #anim 0
+                self.curr_anim = 0
+                set_anim_select_LED(0)
+            elif num == 0x58: #anim 1
+                self.curr_anim = 1
+                set_anim_select_LED(1)
+            elif num == 0x59: #anim 2
+                self.curr_anim = 2
+                set_anim_select_LED(2)
+            elif num == 0x5A: #anim 3
+                self.curr_anim = 3
+                set_anim_select_LED(3)
 
+            # directional controls
+            elif num == 0x5E: # up on D-pad
+                self.y_offset -= self.y_nudge
+            elif num == 0x5F: # down on D-pad
+                self.y_offset += self.y_nudge
+            elif num == 0x60: # right on D-pad
+                self.x_offset += self.x_nudge
+            elif num == 0x61: # left on D-pad
+                self.x_offset -= self.x_nudge
+            elif num == 0x62: # "shift" - beam center
+                self.x_offset = 0
+                self.y_offset = 0
 
-                # aniamtion select buttons:
-                case 0x57: #anim 0
-                    currAnim = 0;
-                    setAnimSelectLED(0);
-                    break;
-                case 0x58: #anim 1
-                    currAnim = 1;
-                    setAnimSelectLED(1);
-                    break;
-                case 0x59: #anim 2
-                    currAnim = 2;
-                    setAnimSelectLED(2);
-                    break;
-                case 0x5A: #anim 3
-                    currAnim = 3;
-                    setAnimSelectLED(3);
-                    break;
+        else: # this is a control change
+            # color parameters: top of lower bank
+            if num == 16: # color center
+                self.col_centerI = val
+            elif num == 17: # color width
+                self.col_widthI = val
+            elif num == 18: # color spread
+                self.col_spreadI = val
+            elif num == 19: # saturation
+                self.col_satI = val
 
-                # directional controls
-                case 0x5E: # up on D-pad
-                    yOffset -= yNudge;
-                    break;
-                case 0x5F: # down on D-pad
-                    yOffset += yNudge;
-                    break;
-                case 0x60: # right on D-pad
-                    xOffset += xNudge;
-                    break;
-                case 0x61: # left on D-pad
-                    xOffset -= xNudge;
-                    break;
-                case 0x62: # "shift" - beam center
-                    xOffset = 0;
-                    yOffset = 0;
-                    break;
-            } # end of note num switch
+            # geometry parameters: bottom of lower bank
+            elif num == 20: # rotation speed
+                self.rot_speedI = val
+            elif num == 21: # thickness
+                self.thicknessI = val
+            elif num == 22: # radius
+                self.radiusI = val
+            elif num == 23: # ellipse aspect ratio
+                self.ellipse_aspectI = val
 
-        }
+            # segments parameters: bottom of upper bank
 
-        else { # this is a control change
-            switch(num) {
-                # color parameters: top of lower bank
-                case 16: # color center
-                    colCenterI = val;
-                    break;
-                case 17: # color width
-                    colWidthI = val;
-                    break;
-                case 18: # color spread
-                    colSpreadI = val;
-                    break;
-                case 19: # saturation
-                    colSatI = val;
-                    break;
+            elif num == 52: # number of segments
+                self.segsI = val
+            elif num == 53: # blacking
+                self.blackingI = val
 
-                # geometry parameters: bottom of lower bank
-                case 20: # rotation speed
-                    rotSpeedI = val;
-                    break;
-                case 21: # thickness
-                    thicknessI = val;
-                    break;
-                case 22: # radius
-                    radiusI = val;
-                    break;
-                case 23: # ellipse aspect ratio
-                    ellipseAspectI = val;
-                    break;
+            # animation parameters: top of upper bank
+            # /* fix this code
+            elif num == 48:
+                anim = self.get_current_animation()
+                anim.speedI = val
+                anim.update_params()
+            elif num == 49:
+                anim = self.get_current_animation()
+                anim.weightI = val
+                anim.update_params()
+            elif num == 50:
+                anim = self.get_current_animation()
+                anim.duty_cycleI = val
+                anim.update_params()
+            elif num == 51:
+                anim = self.get_current_animation()
+                anim.smoothingI = val
+                anim.update_params()
 
-                # segments parameters: bottom of upper bank
+    def get_midi_param(self, is_note, num):
+        """get the midi-scaled value for a control parameter"""
 
-                case 52: # number of segments
-                    segsI = val;
-                    break;
-                case 53: # blacking
-                    blackingI = val;
-                    break;
+        if not is_note:
+            if num == 16: # color center
+                return self.col_centerI
+            if num == 17: # color width
+                return self.col_widthI
+            if num == 18: # color spread
+                return self.col_spreadI
+            if num == 19: # saturation
+                return self.col_satI
 
-                # animation parameters: top of upper bank
-                # /* fix this code
-                case 48:
-                    anim = getAnimation(currAnim);
-                    anim.speedI = val;
-                    anim.updateParams();
-                    break;
-                case 49:
-                    anim = getAnimation(currAnim);
-                    anim.weightI = val;
-                    anim.updateParams();
-                    break;
-                case 50:
-                    anim = getAnimation(currAnim);
-                    anim.dutyCycleI = val;
-                    anim.updateParams();
-                    break;
-                case 51:
-                    anim = getAnimation(currAnim);
-                    anim.smoothingI = val;
-                    anim.updateParams();
-                    break;
-                # */
+            # geometry parameters: bottom of lower bank
+            if num == 20: # rotation speed
+                return self.rot_speedI
+            if num == 21: # thickness
+                return self.thicknessI
+            if num == 22: # radius
+                return self.radiusI
+            if num == 23: # ellipse aspect ratio
+                return self.ellipse_aspectI
 
-            } # end of switch
+            # segments parameters: bottom of upper bank
 
-        }
+            if num == 52: # number of segments
+                return self.segsI
+            if num == 53: # blacking
+                return self.blackingI
 
-    } # end up update midi param method
-
-    # method to get the midi-scaled value for a control parameter
-    int getMIDIParam(boolean isNote, int num) {
-        int theVal = 0;
-
-        Animation anim;
-
-        if (!isNote) {
-            switch(num) {
-                case 16: # color center
-                    theVal = colCenterI;
-                    break;
-                case 17: # color width
-                    theVal = colWidthI;
-                    break;
-                case 18: # color spread
-                    theVal = colSpreadI;
-                    break;
-                case 19: # saturation
-                    theVal = colSatI;
-                    break;
-
-                # geometry parameters: bottom of lower bank
-                case 20: # rotation speed
-                    theVal = rotSpeedI;
-                    break;
-                case 21: # thickness
-                    theVal = thicknessI;
-                    break;
-                case 22: # radius
-                    theVal = radiusI;
-                    break;
-                case 23: # ellipse aspect ratio
-                    theVal = ellipseAspectI;
-                    break;
-
-                # segments parameters: bottom of upper bank
-
-                case 52: # number of segments
-                    theVal = segsI;
-                    break;
-                case 53: # blacking
-                    theVal = blackingI;
-                    break;
-
-                # animation parameters: top of upper bank
-                # /* fix this code
-                case 48:
-                    anim = getAnimation(currAnim);
-                    theVal = anim.speedI;
-                    break;
-                case 49:
-                    anim = getAnimation(currAnim);
-                    theVal = anim.weightI;
-                    break;
-                case 50:
-                    anim = getAnimation(currAnim);
-                    theVal = anim.dutyCycleI;
-                    break;
-                case 51:
-                    anim = getAnimation(currAnim);
-                    theVal = anim.smoothingI;
-                    break;
-            }
-        }
-
-        return theVal;
-    } # end of getMIDIParam method
-
-
-    String toString() {
-        return type + "\t" +
-                     rotSpeedI + "\t" +
-                     thicknessI + "\t" +
-                     radiusI + "\t" +
-                     ellipseAspectI + "\t" +
-                     colCenterI + "\t" +
-                     colWidthI + "\t" +
-                     colSpreadI + "\t" +
-                     colSatI + "\t" +
-                     segsI + "\t" +
-                     blackingI + "\t" +
-                     curr_angle + "\t" +
-                     xOffset + "\t" +
-                     yOffset + "\t" +
-                     currAnim  + "\t" +
-                     theAnims[0].toString() + "\t" +
-                     theAnims[1].toString() + "\t" +
-                     theAnims[2].toString() + "\t" +
-                     theAnims[3].toString();
-    }
-
-    void setupPixelParams() {
-
-    }
-
-} # end of Tunnel class
+            # animation parameters: top of upper bank
+            # /* fix this code
+            # FIXME: wtf was this comment about fix this code talking about...
+            if num == 48:
+                return self.get_current_animation().speedI
+            if num == 49:
+                return self.get_current_animation().weightI
+            if num == 50:
+                return self.get_current_animation().duty_cycleI
+            if num == 51:
+                return self.get_current_animation().smoothingI
