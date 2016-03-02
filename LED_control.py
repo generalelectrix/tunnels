@@ -1,5 +1,7 @@
-"""helper functions for controlling APC LEDs"""
+"""helper functions for controlling APC and touch OSC LEDs and buttons"""
 from .look import Look
+from .midi import send_CC, send_note
+from .tunnel import Tunnel
 
 KNOB_NUMS = [
     16, 17, 18, 19,
@@ -13,8 +15,8 @@ def update_knob_state(layer, beam):
     layer: index of the currently selected layer
     beam: the instance of the beam in that layer
     """
-    for knob_num in knob_nums:
-        send_CC(0, knob_num, beam.get_MIDI_param(false, knob_num))
+    for knob_num in KNOB_NUMS:
+        send_CC(0, knob_num, beam.get_MIDI_param(is_note=False, num=knob_num))
 
     print "set anim LEDs"
 
@@ -96,145 +98,86 @@ def set_anim_select_LED(which_anim):
         else:
             send_note(0, button_offset + i, 0)
 
+def _set_LED_in_range(button_number, button_offset, n_buttons):
+    """Set one LED in a button range on, all others off."""
+    for n in xrange(buttom_offset, n_buttons+button_offset):
+        if n == button_number:
+            send_note(0, n, 1)
+        else:
+            send_note(0, n, 0)
 
-void setAnimTypeLED(int whichType) {
+def set_anim_type_LED(which_type):
+    _set_LED_in_range(which_type, 24, 8)
 
-    int buttonOffset = 24;
+def set_anim_periods_LED(which_type):
+    _set_LED_in_range(which_type, 0, 16)
 
-    for (int i = 0; i < 8; i++) {
-        if (whichType == i + buttonOffset) {
-            sendNote(0, buttonOffset + i, 1);
-        }
-        else {
-            sendNote(0, buttonOffset + i, 0);
-        }
-    }
+def set_anim_target_LED(which_type):
+    _set_LED_in_range(which_type, 35, 13)
 
-}
+def set_clip_launch_LED(row, column, state, color):
+    """Set the color state of an APC40 clip launch LED
 
-void setAnimPeriodsLED(int whichType) {
+    Args:
+        row, column: the indices of the clip launch LED
+        state (int): off=0, on=1, blink=2
+        color (int): green=0, red=1, yellow=2
+    """
+    if state == 0:
+        val = 0
+    elif state == 1:
+        val = color*2 + 1
+    elif state == 2:
+        val = (color + 1)*2
+    else:
+        val = 0
 
-    int buttonOffset = 0;
+    # column is midi channel, row is note plus offset of 0x35
+    send_note(column, 0x35+row, val);
 
-    for (int i = 0; i < 16; i++) {
-        if (whichType == i + buttonOffset) {
-            sendNote(0, buttonOffset + i, 1);
-        }
-        else {
-            sendNote(0, buttonOffset + i, 0);
-        }
-    }
+def set_scene_launch_LED(row, state):
+    """Set the state of an APC40 scene launch LED
 
-}
+    Args:
+        row: the row of the target scene launch LED
+        state (int): 0=off, 1=on, 2=blink
+    """
+    send_note(0, 0x52 + row, state)
 
-void setAnimTargetLED(int whichType) {
+def set_beam_save_LED(state):
+    set_scene_launch_LED(0, state)
 
-    int buttonOffset = 35;
+def set_look_save_LED(state):
+    set_scene_launch_LED(1, state)
 
-    println("setting anim LED " + whichType);
+def set_delete_LED(state):
+    set_scene_launch_LED(2, state)
 
-    for (int i = 0; i < 13; i++) {
-        if (whichType == i + buttonOffset) {
-            sendNote(0, buttonOffset + i, 1);
-            println("setting the LED!");
-        }
-        else {
-            sendNote(0, buttonOffset + i, 0);
-        }
-    }
+def set_look_edit_LED(state):
+    set_scene_launch_LED(4, state)
 
-}
+def set_track_select_LED(channel, state):
+    send_note(channel, 0x33, state)
 
-// method to set the color state of a clip launch LED
-// state is off=0, on=1, blink=2
-// col is green=0, red=1, yellow=2
-void setClipLaunchLED(int row, int column, int state, int col) {
+def set_track_select_LED_radio(channel):
+    for chan in xrange(8):
+        if chan == channel:
+            set_track_select_LED(chan, 1)
+        else:
+            set_track_select_LED(chan, 0)
 
-    int val;
+def _set_bool_button_LED(channel, CC, state):
+    if state:
+        send_note(channel, CC, 1)
+    else:
+        send_note(channel, CC, 0)
 
-    if (0 == state) {
-        val = 0;
-    }
-    else if (1 == state) {
-        val = col*2 + 1;
-    }
-    else if (2 ==  state) {
-        val = (col+1)*2;
-    }
-    else {
-        val = 0;
-    }
+def set_bump_buttom_LED(channel, state):
+    _set_bool_button_LED(channel, 0x32, state)
 
-    // column is midi channel, row is note plus offset of 0x35
-    sendNote(column, 0x35+row, val);
+def set_mask_buttom_LED(channel, state):
+    _set_bool_button_LED(channel, 0x31, state)
 
-}
-
-// method to set scene launch LED
-// 0=off, 1=on, 2=blink
-void setSceneLaunchLED(int row, int state) {
-    sendNote(0, 0x52 + row, state);
-}
-
-void setBeamSaveLED(int state) {
-    setSceneLaunchLED(0, state);
-}
-
-void setLookSaveLED(int state) {
-    setSceneLaunchLED(1, state);
-}
-
-void setDeleteLED(int state) {
-    setSceneLaunchLED(2, state);
-}
-
-void setLookEditLED(int state) {
-    setSceneLaunchLED(4, state);
-}
-
-void setTrackSelectLED(int channel, int state) {
-    sendNote(channel, 0x33, state);
-}
-
-void setTrackSelectLEDRadio(int channel) {
-    for (int i=0; i<8; i++) {
-
-        if (i == channel) {
-            setTrackSelectLED(i,1);
-        }
-        else{
-            setTrackSelectLED(i,0);
-        }
-
-    }
-
-}
-
-void setBumpButtonLED(int channel, boolean state) {
-    if (state) {
-        sendNote(channel, 0x32, 1);
-    }
-    else {
-        sendNote(channel, 0x32, 0);
-    }
-}
-
-void setMaskButtonLED(int channel, boolean state) {
-    if (state) {
-        sendNote(channel, 0x31, 1);
-    }
-    else {
-        sendNote(channel, 0x31, 0);
-    }
-}
-
-void setIsLookLED(int channel, boolean state) {
-    if (state) {
-        sendNote(channel, 0x30, 1);
-    }
-    else {
-        sendNote(channel, 0x30, 0);
-    }
-
-}
+def set_is_look_LED(channel, state):
+    _set_bool_button_LED(channel, 0x30, state)
 
