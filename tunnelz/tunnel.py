@@ -1,9 +1,9 @@
 from .animation import Animation
 from .beam import Beam
-from .constants import (
-    MAX_RADIUS, MAX_X_OFFSET, MAX_Y_OFFSET, X_CENTER, Y_CENTER, is1080, width, height)
+from .color import color
+from .geometry import geometry
 from copy import deepcopy
-from .LED_control import set_anim_select_LED
+from .button_LED import set_anim_select_LED
 from math import pi
 from .util import unwrap
 from .waveforms import sawtooth
@@ -79,9 +79,8 @@ class Tunnel (Beam):
 
         self.x_offset, self.y_offset = 0, 0
 
-        if is1080:
-            self.x_nudge = self.y_nudge = 15 if is1080 else 10
-            self.thickness_scale = 4.05 if is1080 else 2.7
+        self.x_nudge = self.y_nudge = geometry.x_nudge, geometry.y_nudge
+        self.thickness_scale = geometry.thickness_scale
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
 
@@ -106,7 +105,7 @@ class Tunnel (Beam):
         self.thickness = float(self.thicknessI*self.thickness_scale)
 
         # in pixels, I think
-        self.radius = int(MAX_RAD_MULT * MAX_RADIUS * self.radiusI / 127)
+        self.radius = int(MAX_RAD_MULT * geometry.max_radius * self.radiusI / 127)
         self.ellipse_aspect = float(MAX_ELLIPSE_ASPECT * self.ellipse_aspectI / 127.)
 
         self.col_center = self.col_centerI * 2
@@ -121,8 +120,8 @@ class Tunnel (Beam):
         self.blacking = (self.blackingI - 64) / self.blacking_scale
 
         # ensure we don't offset beyond the maximum
-        self.x_offset = min(max(self.x_offset, -MAX_X_OFFSET), MAX_X_OFFSET)
-        self.y_offset = min(max(self.y_offset, -MAX_Y_OFFSET), MAX_Y_OFFSET)
+        self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
+        self.y_offset = min(max(self.y_offset, -geometry.max_y_offset), geometry.max_y_offset)
 
     def copy(self):
         """Use deep_copy to recursively copy this Tunnel."""
@@ -177,7 +176,7 @@ class Tunnel (Beam):
         rad_Y = radius - thickness/2
 
         # FIXME-RENDERING: Processing draw call
-        noFill()
+        # noFill()
 
         # loop over segments and draw arcs
         for i in xrange(self.segs):
@@ -223,13 +222,14 @@ class Tunnel (Beam):
             elif target == 8: # saturation
                     col_sat_adjust += anim.get_value(rel_angle)
             elif target == 11: # x offset
-                    x_adjust += anim.get_value(0)*(width/2)/127
+                    x_adjust += anim.get_value(0)*(geometry.x_size/2)/127
             elif target == 12: # y offset
-                    y_adjust += anim.get_value(0)*(height/2)/127
+                    y_adjust += anim.get_value(0)*(geometry.y_size/2)/127
 
-        # FIXME-RENDERING: Processing draw call
-        strokeWeight( abs(self.thickness*(1 + thickness_adjust/127)) )
         # the abs() is there to prevent negative width setting when using multiple animations.
+        stroke_weight = abs(self.thickness*(1 + thickness_adjust/127))
+        # FIXME-RENDERING: Processing draw call
+        # strokeWeight( stroke_weight )
 
         # now set the color
 
@@ -262,33 +262,44 @@ class Tunnel (Beam):
         # otherwise this is a blacked segment.
         else:
             # FIXME-COLOR
-            seg_color = color(0)
+            seg_color = color(0, 0, 0)
 
         # only draw something if the segment color isn't black.
         # FIXME-COLOR
-        if color(0) != seg_color:
+        if color(0, 0, 0) != seg_color:
 
             # if we're drawing this beam as a mask, make the segment black
             if as_mask:
+                pass
                 # FIXME-RENDERING
-                stroke(0)
+                # stroke(0)
             # otherwise pick the color and set the level
             else:
+                pass
                 # FIXME-RENDERING
-                stroke( blendColor(seg_color, color(0,0,level_scale), MULTIPLY) )
+                # stroke( blendColor(seg_color, color(0,0,level_scale), MULTIPLY) )
         else:
+            pass
             # FIXME-RENDERING
-            noStroke()
+            # noStroke()
 
         # draw pie wedge for this cell
         # FIXME-RENDERING
-        arc(
-            X_CENTER + self.x_offset + x_adjust,
-            Y_CENTER+ self.y_offset + y_adjust,
+        print "segment"
+        print (
+            geometry.x_center + self.x_offset + x_adjust,
+            geometry.y_center + self.y_offset + y_adjust,
             abs(rad_X + rad_adjust),
             abs(rad_Y+ rad_adjust),
             seg_angle,
             seg_angle + self.rot_interval,)
+        # arc(
+        #     X_CENTER + self.x_offset + x_adjust,
+        #     Y_CENTER+ self.y_offset + y_adjust,
+        #     abs(rad_X + rad_adjust),
+        #     abs(rad_Y+ rad_adjust),
+        #     seg_angle,
+        #     seg_angle + self.rot_interval,)
 
     def set_midi_param(self, is_note, num, val):
         """set a control parameter based on passed midi message"""

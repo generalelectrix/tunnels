@@ -70,8 +70,8 @@ class BeamMatrixMinder (object):
 
     def update_LED(self, row, column):
         # if this element has data, turn it on
-        if self.has_data(row, column):
-            if self.is_look(row, column):
+        if self.element_has_data(row, column):
+            if self.element_is_look(row, column):
                 # its a look, make it red
                 set_clip_launch_LED(row, column, 1, 1)
             else:

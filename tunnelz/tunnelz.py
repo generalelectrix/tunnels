@@ -18,7 +18,7 @@ from .tunnel import Tunnel
 
 # midi interface configuration
 
-use_midi = True
+use_midi = False
 midi_debug = True
 
 use_APC = True
@@ -42,13 +42,6 @@ beam_matrix = BeamMatrixMinder()
 # Animation clipboard
 anim_clipboard = AnimationClipboard()
 
-is1080 = True
-
-# screem geometry
-if is1080:
-    x_size, y_size = (1920, 1080)
-else:
-    x_size, y_size = (1280, 720)
 
 def setup():
 
@@ -59,14 +52,6 @@ def setup():
     # strokeCap(SQUARE)
     # frameRate(30)
     # colorMode(HSB)
-
-    frameNumber = 0
-
-    # geometry
-    # FIXME-GEOMETRY
-    MAX_RADIUS = min(width, height)/2
-    X_CENTER = width/2
-    Y_CENTER = height/2
 
     # open midi outputs
     if use_midi:
@@ -121,8 +106,6 @@ def setup():
     # save a copy of the default tunnel for sanity. Don't erase it!
     beam_matrix.put_beam(4, 7, Tunnel())
 
-frame_number = 0
-
 # method called whenever processing draws a frame, basically the event loop
 def draw():
 
@@ -131,12 +114,6 @@ def draw():
     # background(0)
 
     mixer.draw_layers()
-
-    if frame_number % 240 == 0:
-        pass
-        #print frameRate
-
-    frame_number += 1
 
 def controller_change(channel, number, value):
     """Callback from midi library.
@@ -204,7 +181,7 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
         int channel, boolean chan_change, boolean is_cote, int num, int val
     """
     # ensure we don't retrieve null beams, make an exception for master channel
-    if channel < mixer.n_layers():
+    if channel < mixer.n_layers:
 
         # --- mixer parameters ---
 
@@ -246,7 +223,7 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
 
             # if nudge-: animation copy
             elif is_note and 0x65 == num:
-                anim_clipboard.copy( beam.get_current_animation())
+                anim_clipboard.copy(beam.get_current_animation())
 
             # beam save mode toggle
             elif is_note and 0x52 == num:
@@ -420,23 +397,4 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
                 # call the update method
                 beam.update_params()
                 update_knob_state(mixer.current_layer, beam)
-
-# FIXME-MIDI
-def send_CC(channel, number, val):
-    """wrapper method for sending midi control changes"""
-    # FIXME-MIDI
-    if use_midi:
-        if use_APC:
-            midi_busses[0].sendControllerChange(channel, number, val)
-        if use_iPad:
-            midi_busses[1].sendControllerChange(channel, number, val)
-
-# FIXME-MIDI
-def send_note(channel, number, velocity):
-    """wrapper method for sending midi notes"""
-    if use_midi:
-        if use_APC:
-            midi_busses[0].sendNoteOn(channel, number, velocity)
-        if use_iPad:
-            midi_busses[1].sendNoteOn(channel, number, velocity)
 
