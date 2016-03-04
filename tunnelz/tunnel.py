@@ -1,6 +1,7 @@
 from .animation import Animation
 from .beam import Beam
 from .color import color
+from .draw_commands import Arc
 from .geometry import geometry
 from copy import deepcopy
 from .button_LED import set_anim_select_LED
@@ -179,10 +180,12 @@ class Tunnel (Beam):
         # noFill()
 
         # loop over segments and draw arcs
+        arcs = []
         for i in xrange(self.segs):
 
-            self.draw_segment_with_animation(
-                rad_X, rad_Y, i, as_mask, level_scale)
+            arcs.append(self.draw_segment_with_animation(
+                rad_X, rad_Y, i, as_mask, level_scale))
+        return arcs
 
     def draw_segment_with_animation(
             self, rad_X, rad_Y, seg_num, as_mask, level_scale):
@@ -266,33 +269,43 @@ class Tunnel (Beam):
 
         # only draw something if the segment color isn't black.
         # FIXME-COLOR
+        # FIXME: this might be bugged
         if color(0, 0, 0) != seg_color:
 
             # if we're drawing this beam as a mask, make the segment black
             if as_mask:
-                pass
                 # FIXME-RENDERING
                 # stroke(0)
+                stroke = True
+                draw_color = color(0, 0, 0)
+                level = 255
             # otherwise pick the color and set the level
             else:
-                pass
                 # FIXME-RENDERING
                 # stroke( blendColor(seg_color, color(0,0,level_scale), MULTIPLY) )
+                stroke = True
+                level = level_scale
         else:
-            pass
             # FIXME-RENDERING
             # noStroke()
-
+            stroke = False
+            level = level_scale
         # draw pie wedge for this cell
         # FIXME-RENDERING
-        print "segment"
-        print (
-            geometry.x_center + self.x_offset + x_adjust,
-            geometry.y_center + self.y_offset + y_adjust,
-            abs(rad_X + rad_adjust),
-            abs(rad_Y+ rad_adjust),
-            seg_angle,
-            seg_angle + self.rot_interval,)
+        #print "segment"
+        return Arc(
+            level=level,
+            stroke=int(stroke),
+            stroke_weight=stroke_weight,
+            hue=seg_color.hue,
+            sat=seg_color.sat,
+            val=seg_color.val,
+            x=geometry.x_center + self.x_offset + x_adjust,
+            y=geometry.y_center + self.y_offset + y_adjust,
+            rad_x=abs(rad_X + rad_adjust),
+            rad_y=abs(rad_Y+ rad_adjust),
+            start=seg_angle,
+            stop=seg_angle + self.rot_interval,)
         # arc(
         #     X_CENTER + self.x_offset + x_adjust,
         #     Y_CENTER+ self.y_offset + y_adjust,

@@ -39,6 +39,7 @@ class Mixer (object):
         return mask_state
 
     def draw_layers(self):
+        draw_commands = []
         for i in xrange(self.n_layers):
             level = self.levels[i]
             bump = self.bump[i]
@@ -46,9 +47,10 @@ class Mixer (object):
             if level > 0 or bump:
                 beam = self.layers[i]
                 if bump:
-                    beam.display(255, self.mask[i])
+                    draw_commands.append(beam.display(255, self.mask[i]))
                 else:
-                    beam.display(level, self.mask[i])
+                    draw_commands.append(beam.display(level, self.mask[i]))
+        return draw_commands
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""

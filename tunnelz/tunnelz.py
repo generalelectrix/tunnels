@@ -113,7 +113,11 @@ def draw():
     # FIXME-RENDERING
     # background(0)
 
-    mixer.draw_layers()
+    layers = mixer.draw_layers()
+    # just dump one layer for now
+    with open('layer0.csv', 'w+') as draw_file:
+        for arc in layers[0]:
+            draw_file.write(','.join(str(val) for val in arc) + '\n')
 
 def controller_change(channel, number, value):
     """Callback from midi library.

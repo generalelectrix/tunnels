@@ -23,7 +23,7 @@ def make_resolution_data(x_size, y_size):
         x_nudge=(10*x_size)/1280,
         y_nudge=(10*x_size)/1280,)
 
-RESOLUTION = "1080p"
+RESOLUTION = "720p"
 
 RESOLUTIONS = {
     "1080p": make_resolution_data(1920, 1080),
