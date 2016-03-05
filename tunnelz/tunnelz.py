@@ -16,13 +16,14 @@ from .LED_control import (
     update_knob_state,)
 from .midi import midi_in, NoteOn, NoteOff, ControlChange
 from .mixer import Mixer
+from Queue import Empty
 import time
 from .tunnel import Tunnel
 
 # midi interface configuration
 
 use_midi = True
-midi_debug = True
+midi_debug = False
 
 use_APC = True
 APCDeviceNumIn = 3
@@ -108,6 +109,13 @@ def setup():
 
     # save a copy of the default tunnel for sanity. Don't erase it!
     beam_matrix.put_beam(4, 7, Tunnel())
+
+def run(framerate=1.0):
+    render_period = 1.0 / framerate
+    while 1:
+        process_control_events_until_render(render_period)
+        draw()
+
 
 # method called whenever processing draws a frame, basically the event loop
 def draw():
@@ -210,7 +218,7 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
     """Handle corrected incoming midi data.
 
     Args:
-        int channel, boolean chan_change, boolean is_cote, int num, int val
+        int channel, boolean chan_change, boolean is_note, int num, int val
     """
     # ensure we don't retrieve null beams, make an exception for master channel
     if channel < mixer.n_layers:

@@ -66,10 +66,10 @@ class MidiInput (object):
 
         queue = self.queue
         def parse(event, data):
-            b0, b1, b2 = event
+            (b0, b1, b2), _ = event
             event_type, channel = b0 >> 4, b0 & 7
-            message = event_dispatch[event_type](channel, b1, b2)
-            queue.put((event_type, message))
+            message = event_type_to_constructor[event_type](channel, b1, b2)
+            queue.put(message)
         port.set_callback(parse)
 
     def close_port(self, port_name):

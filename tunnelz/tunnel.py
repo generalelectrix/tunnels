@@ -464,3 +464,5 @@ class Tunnel (Beam):
                 return self.get_current_animation().duty_cycleI
             if num == 51:
                 return self.get_current_animation().smoothingI
+        # if we asked for any other value, return 0
+        return 0

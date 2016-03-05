@@ -50,6 +50,8 @@ class Mixer (object):
                     draw_commands.append(beam.display(255, self.mask[i]))
                 else:
                     draw_commands.append(beam.display(level, self.mask[i]))
+            else:
+                draw_commands.append([])
         return draw_commands
 
     def get_copy_of_current_look(self):

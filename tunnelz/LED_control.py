@@ -19,8 +19,6 @@ def update_knob_state(layer, beam):
     for knob_num in KNOB_NUMS:
         send_CC(0, knob_num, beam.get_midi_param(is_note=False, num=knob_num))
 
-    print "set anim LEDs"
-
     if isinstance(beam, Look):
         set_is_look_LED(layer, True)
         set_anim_type_LED(-1)
