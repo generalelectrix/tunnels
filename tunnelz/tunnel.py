@@ -96,9 +96,9 @@ class Tunnel (Beam):
 
         rot_speedI = self.rot_speedI
         if 65 < rot_speedI:
-            self.rot_speed = float((rot_speedI-65)/self.rot_speed_scale)
+            self.rot_speed = float((rot_speedI-65))/self.rot_speed_scale
         elif 63 > rot_speedI:
-            self.rot_speed = -float((-rot_speedI+63)/self.rot_speed_scale)
+            self.rot_speed = -float((-rot_speedI+63))/self.rot_speed_scale
         else:
             self.rot_speed = 0.0
 

@@ -18,8 +18,9 @@ void setup() {
   
   frameNumber = 0;
 }
-
-String drawFile = "/Users/Chris/src/pytunnel/layer0.csv";
+String testPattern = "/Users/Chris/src/pytunnel/testpattern.csv";
+String layer0 = "/Users/Chris/src/pytunnel/layer0.csv";
+String drawFile = layer0;
 
 Table drawTable;
 
@@ -29,6 +30,8 @@ int frameNumber;
 void draw() {
   
   background(0);
+  
+  noFill();
   
   drawTable = loadTable(drawFile);
   

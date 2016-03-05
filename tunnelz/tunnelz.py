@@ -1,5 +1,6 @@
 from .animation import AnimationClipboard
 from .beam_matrix_minder import BeamMatrixMinder
+from .draw_commands import write_layer_to_file
 from .LED_control import (
     set_bump_button_LED,
     set_mask_button_LED,
@@ -115,9 +116,8 @@ def draw():
 
     layers = mixer.draw_layers()
     # just dump one layer for now
-    with open('layer0.csv', 'w+') as draw_file:
-        for arc in layers[0]:
-            draw_file.write(','.join(str(val) for val in arc) + '\n')
+    file = 'layer0.csv'
+    write_layer_to_file(layers[0], file)
 
 def controller_change(channel, number, value):
     """Callback from midi library.

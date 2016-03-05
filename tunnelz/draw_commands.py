@@ -16,3 +16,8 @@ arc_args = (
     )
 
 Arc = namedtuple('Arc', arc_args)
+
+def write_layer_to_file(layer, file):
+    with open(file, 'w+') as draw_file:
+        for arc in layer:
+            draw_file.write(','.join(str(val) for val in arc) + '\n')
