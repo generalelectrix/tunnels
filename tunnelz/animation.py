@@ -75,9 +75,9 @@ class Animation (object):
 
         speedI = self.speedI
         if speedI > 65:
-            self.speed = -float((speedI - 65)/self.speed_scale)
+            self.speed = -float((speedI - 65))/self.speed_scale
         elif speedI < 63:
-            self.speed = float((-speedI + 63)/self.speed_scale)
+            self.speed = float((-speedI + 63))/self.speed_scale
         else:
             self.speed = 0.0
 
@@ -88,7 +88,7 @@ class Animation (object):
 
         self.duty_cycle = float(self.duty_cycleI / 127)
 
-        self.smoothing = float((pi/2) * (self.smoothingI / 127))
+        self.smoothing = (pi/2) * float(self.smoothingI) / 127
 
     def update_state(self):
         if self.active:

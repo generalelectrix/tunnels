@@ -110,7 +110,7 @@ def setup():
     # save a copy of the default tunnel for sanity. Don't erase it!
     beam_matrix.put_beam(4, 7, Tunnel())
 
-def run(framerate=1.0):
+def run(framerate=20.0):
     render_period = 1.0 / framerate
     while 1:
         process_control_events_until_render(render_period)

@@ -14,8 +14,9 @@ class BeamMatrixMinder (object):
     n_columns = 8 # ignoring master track
 
     def __init__(self):
-        self.is_look = np.empty((self.n_rows, self.n_columns), bool)
+        self.is_look = np.zeros((self.n_rows, self.n_columns), bool)
         self.has_data = np.array(self.is_look)
+
         self.beams = [[None for _ in xrange(self.n_columns)] for _ in xrange(self.n_rows)]
 
         # update LED state
