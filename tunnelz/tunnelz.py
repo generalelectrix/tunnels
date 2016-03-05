@@ -14,12 +14,14 @@ from .LED_control import (
     set_bottom_LED_rings,
     set_top_LED_rings,
     update_knob_state,)
+from .midi import midi_in, NoteOn, NoteOff, ControlChange
 from .mixer import Mixer
+import time
 from .tunnel import Tunnel
 
 # midi interface configuration
 
-use_midi = False
+use_midi = True
 midi_debug = True
 
 use_APC = True
@@ -119,6 +121,7 @@ def draw():
     file = 'layer0.csv'
     write_layer_to_file(layers[0], file)
 
+
 def controller_change(channel, number, value):
     """Callback from midi library.
 
@@ -177,6 +180,31 @@ def note_off(channel, pitch, velocity):
 def keep_note_channel_data(num):
     """Does this note come from a button whose channel data we care about?"""
     return num >= 0x30 and num <= 0x39
+
+message_dispatch = {
+    NoteOn: note_on,
+    NoteOff: note_off,
+    ControlChange: controller_change,
+}
+
+def process_control_events_until_render(time_left):
+    start = time.time()
+    while True:
+        time_until_render = time_left - (time.time() - start)
+        # if it is time to render, stop the command loop
+        if time_until_render <= 0.0:
+            break
+
+        # process control events
+        try:
+            # time out slightly before render time to improve framerate stability
+            message = midi_in.receive(timeout=time_until_render*0.95)
+        except Empty:
+            # fine if we didn't get a control event
+            pass
+        else:
+            # process the command
+            message_dispatch[type(message)](*message)
 
 def midi_input_handler(channel, chan_change, is_note, num, val):
     """Handle corrected incoming midi data.
