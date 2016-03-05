@@ -1,6 +1,6 @@
 from .animation import AnimationClipboard
 from .beam_matrix_minder import BeamMatrixMinder
-from .draw_commands import write_layer_to_file
+from .draw_commands import write_layers_to_file
 from .LED_control import (
     set_bump_button_LED,
     set_mask_button_LED,
@@ -110,7 +110,7 @@ def setup():
     # save a copy of the default tunnel for sanity. Don't erase it!
     beam_matrix.put_beam(4, 7, Tunnel())
 
-def run(framerate=20.0):
+def run(framerate=30.0):
     render_period = 1.0 / framerate
     while 1:
         process_control_events_until_render(render_period)
@@ -127,7 +127,7 @@ def draw():
     layers = mixer.draw_layers()
     # just dump one layer for now
     file = 'layer0.csv'
-    write_layer_to_file(layers[0], file)
+    write_layers_to_file(layers, file)
 
 
 def controller_change(channel, number, value):

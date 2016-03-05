@@ -80,7 +80,7 @@ class Tunnel (Beam):
 
         self.x_offset, self.y_offset = 0, 0
 
-        self.x_nudge = self.y_nudge = geometry.x_nudge, geometry.y_nudge
+        self.x_nudge, self.y_nudge = geometry.x_nudge, geometry.y_nudge
         self.thickness_scale = geometry.thickness_scale
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
@@ -236,8 +236,10 @@ class Tunnel (Beam):
 
         # now set the color
 
+        # FIXME: negative blacking doesn't work
         # blacking_mode: True for standard, False for inverted
-        blacking = self.blacking
+        # constrain min to 1 to avoid divide by zero error
+        blacking = max(self.blacking, 1)
         blacking_mode = blacking >= 0
 
         # if no blacking at all or if this is not a blacked segment, draw it
@@ -277,7 +279,7 @@ class Tunnel (Beam):
                 # FIXME-RENDERING
                 # stroke(0)
                 stroke = True
-                draw_color = color(0, 0, 0)
+                seg_color = color(0, 0, 0)
                 level = 255
             # otherwise pick the color and set the level
             else:

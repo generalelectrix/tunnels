@@ -1,4 +1,6 @@
 from collections import namedtuple
+import os
+import tempfile
 
 arc_args = (
     'level', # int 0-255
@@ -17,7 +19,10 @@ arc_args = (
 
 Arc = namedtuple('Arc', arc_args)
 
-def write_layer_to_file(layer, file):
-    with open(file, 'w+') as draw_file:
-        for arc in layer:
-            draw_file.write(','.join(str(val) for val in arc) + '\n')
+def write_layers_to_file(layers, file):
+    with tempfile.NamedTemporaryFile(
+            dir=os.path.dirname(file), delete=False) as tmpfile:
+        for layer in layers:
+            for arc in layer:
+                tmpfile.write(','.join(str(val) for val in arc) + '\n')
+    os.rename(tmpfile.name, file)

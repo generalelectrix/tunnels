@@ -12,7 +12,7 @@ void setup() {
   
   strokeCap(SQUARE);
   
-  frameRate(20);
+  frameRate(30);
   
   colorMode(HSB);
   
