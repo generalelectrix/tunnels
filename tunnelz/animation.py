@@ -1,7 +1,8 @@
 import copy
 from math import sin, pi
-from .util import unwrap
 from .waveforms import triangle, square, sawtooth
+
+TWOPI = 2*pi
 
 class Animation (object):
     """Wow, what a clusterfuck.
@@ -92,7 +93,7 @@ class Animation (object):
 
     def update_state(self):
         if self.active:
-            self.curr_angle = unwrap(self.curr_angle + self.speed)
+            self.curr_angle = (self.curr_angle + self.speed) % TWOPI
 
     def get_value(self, angle_offset):
         """Return the current value of the animation, with an offset."""
@@ -103,6 +104,27 @@ class Animation (object):
         if self.type == 0:
             # sine wave
             return float(self.weight * sin(angle))
+        elif self.type == 1:
+            # triangle wave
+            return float(self.weight * triangle(angle))
+        elif self.type == 2:
+            # square wave
+            return float(self.weight * square(angle, self.smoothing))
+        elif self.type == 3:
+            # sawtooth wave
+            return float(self.weight * sawtooth(angle, self.smoothing))
+
+    def get_value_vectorized(self, angle_offsets):
+        """Return the current value of the animation for an ndarray of offsets."""
+        shape = angle_offsets.shape
+
+        if not self.active:
+            return np.zeros(shape, float)
+
+        angle = angle_offset*self.n_periods + self.curr_angle
+        if self.type == 0:
+            # sine wave
+            return float(self.weight * np.sin(angle))
         elif self.type == 1:
             # triangle wave
             return float(self.weight * triangle(angle))

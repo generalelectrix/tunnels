@@ -6,12 +6,15 @@ from .geometry import geometry
 from copy import deepcopy
 from .button_LED import set_anim_select_LED
 from math import pi
+import numpy as np
 from .util import unwrap
 from .waveforms import sawtooth
 
 # scale overall radius, set > 1.0 to enable larger shapes than screen size
 MAX_RAD_MULT = 2.0
 MAX_ELLIPSE_ASPECT = 2.0
+
+TWOPI = 2*pi
 
 class Tunnel (Beam):
     """Ellipsoidal tunnels.
@@ -164,9 +167,9 @@ class Tunnel (Beam):
                 ellipse_adjust += anim.get_value(0);
 
 
-        # calulcate the rotation, wrap to -pi to +pi
-        self.curr_angle = unwrap(
-            self.curr_angle + self.rot_speed + rot_adjust/self.rot_speed_scale)
+        # calulcate the rotation, wrap to 0 to 2pi
+        self.curr_angle = (
+            self.curr_angle + self.rot_speed + rot_adjust/self.rot_speed_scale) % TWOPI
 
         radius = self.radius
         thickness = self.thickness
@@ -187,23 +190,21 @@ class Tunnel (Beam):
                 rad_X, rad_Y, i, as_mask, level_scale))
         return arcs
 
-    def draw_segment_with_animation(
-            self, rad_X, rad_Y, seg_num, as_mask, level_scale):
-        """actually draws a tunnel segment given animation parameters
-
-        Args:
-            float rad_X, float rad_Y, int seg_num, boolean as_mask, int level_scale
-        """
+    def draw_segments_with_animations(
+        self, rad_X, rad_Y, n_segs, as_mask, level_scale):
+        """Vectorized draw of all of the segments."""
         # parameters that animations may modify
-        rad_adjust = 0.
-        thickness_adjust = 0.
-        col_center_adjust = 0.
-        col_width_adjust = 0.
-        col_period_adjust = 0.
-        col_sat_adjust = 0.
-        x_adjust = 0
-        y_adjust = 0
+        rad_adjust = np.zeros(n_segs, float)
+        thickness_adjust = np.zeros(n_segs, float)
+        col_center_adjust = np.zeros(n_segs, float)
+        col_width_adjust = np.zeros(n_segs, float)
+        col_period_adjust = np.zeros(n_segs, float)
+        col_sat_adjust = np.zeros(n_segs, float)
+        x_adjust = np.zeros(n_segs, int)
+        y_adjust = np.zeros(n_segs, int)
+        seg_num = np.array(xrange(n_segs))
 
+        # 90 fps
         # the angle of this particular segment
         seg_angle = self.rot_interval*seg_num+self.curr_angle
         rel_angle = self.rot_interval*seg_num
@@ -229,6 +230,7 @@ class Tunnel (Beam):
             elif target == 12: # y offset
                     y_adjust += anim.get_value(0)*(geometry.y_size/2)/127
 
+        # 45 fps
         # the abs() is there to prevent negative width setting when using multiple animations.
         stroke_weight = abs(self.thickness*(1 + thickness_adjust/127))
         # FIXME-RENDERING: Processing draw call
@@ -261,7 +263,7 @@ class Tunnel (Beam):
                 hue = hue - 255
             while hue < 0:
                 hue = hue + 255
-
+        # 24 fps
             # FIXME-COLOR: use of Processing color object
             seg_color = color(hue, self.col_sat + col_sat_adjust, 255)
         # otherwise this is a blacked segment.
@@ -292,6 +294,9 @@ class Tunnel (Beam):
             # noStroke()
             stroke = False
             level = level_scale
+
+        # 20 fps
+
         # draw pie wedge for this cell
         # FIXME-RENDERING
         #print "segment"
@@ -308,13 +313,158 @@ class Tunnel (Beam):
             rad_y=abs(rad_Y+ rad_adjust),
             start=seg_angle,
             stop=seg_angle + self.rot_interval,)
-        # arc(
-        #     X_CENTER + self.x_offset + x_adjust,
-        #     Y_CENTER+ self.y_offset + y_adjust,
-        #     abs(rad_X + rad_adjust),
-        #     abs(rad_Y+ rad_adjust),
-        #     seg_angle,
-        #     seg_angle + self.rot_interval,)
+
+
+    # def draw_segment_with_animation(
+    #         self, rad_X, rad_Y, seg_num, as_mask, level_scale):
+    #     """actually draws a tunnel segment given animation parameters
+
+    #     Args:
+    #         float rad_X, float rad_Y, int seg_num, boolean as_mask, int level_scale
+    #     """
+
+
+
+    #     # parameters that animations may modify
+    #     rad_adjust = 0.
+    #     thickness_adjust = 0.
+    #     col_center_adjust = 0.
+    #     col_width_adjust = 0.
+    #     col_period_adjust = 0.
+    #     col_sat_adjust = 0.
+    #     x_adjust = 0
+    #     y_adjust = 0
+
+    #     # 90 fps
+    #     # the angle of this particular segment
+    #     seg_angle = self.rot_interval*seg_num+self.curr_angle
+    #     rel_angle = self.rot_interval*seg_num
+
+    #     for anim in self.anims:
+    #         target = anim.target
+
+    #         # what is this animation targeting?
+    #         if target == 2: # thickness
+    #                 thickness_adjust += anim.get_value(rel_angle)
+    #         elif target == 3: # radius
+    #                 rad_adjust += anim.get_value(rel_angle)
+    #         elif target == 5: # color center
+    #                 col_center_adjust += anim.get_value(0)
+    #         elif target == 6: # color width
+    #                 col_width_adjust += anim.get_value(0)
+    #         elif target == 7: # color periodicity
+    #                 col_period_adjust += anim.get_value(0) / 16
+    #         elif target == 8: # saturation
+    #                 col_sat_adjust += anim.get_value(rel_angle)
+    #         elif target == 11: # x offset
+    #                 x_adjust += anim.get_value(0)*(geometry.x_size/2)/127
+    #         elif target == 12: # y offset
+    #                 y_adjust += anim.get_value(0)*(geometry.y_size/2)/127
+
+    #     # 45 fps
+    #     # the abs() is there to prevent negative width setting when using multiple animations.
+    #     stroke_weight = abs(self.thickness*(1 + thickness_adjust/127))
+    #     # FIXME-RENDERING: Processing draw call
+    #     # strokeWeight( stroke_weight )
+
+    #     # now set the color
+
+    #     # FIXME: negative blacking doesn't work
+    #     # blacking_mode: True for standard, False for inverted
+    #     # constrain min to 1 to avoid divide by zero error
+    #     blacking = max(self.blacking, 1)
+    #     blacking_mode = blacking >= 0
+
+    #     # if no blacking at all or if this is not a blacked segment, draw it
+    #     # the blacking == -1 is a hack to remove the "all segments blacked" bug
+    #     black_this_segment = seg_num % abs(blacking) != 0
+    #     if (blacking == 0 or blacking == -1 or
+    #         blacking_mode != black_this_segment):
+
+    #         hue = (
+    #             self.col_center +
+    #             col_center_adjust +
+    #             (
+    #                 (self.col_width+col_width_adjust) *
+    #                 sawtooth(rel_angle*(self.col_spread+col_period_adjust), 0))
+    #             )
+
+    #         # wrap the hue index
+    #         while hue > 255:
+    #             hue = hue - 255
+    #         while hue < 0:
+    #             hue = hue + 255
+    #     # 24 fps
+    #         # FIXME-COLOR: use of Processing color object
+    #         seg_color = color(hue, self.col_sat + col_sat_adjust, 255)
+    #     # otherwise this is a blacked segment.
+    #     else:
+    #         # FIXME-COLOR
+    #         seg_color = color(0, 0, 0)
+
+    #     # only draw something if the segment color isn't black.
+    #     # FIXME-COLOR
+    #     # FIXME: this might be bugged
+    #     if color(0, 0, 0) != seg_color:
+
+    #         # if we're drawing this beam as a mask, make the segment black
+    #         if as_mask:
+    #             # FIXME-RENDERING
+    #             # stroke(0)
+    #             stroke = True
+    #             seg_color = color(0, 0, 0)
+    #             level = 255
+    #         # otherwise pick the color and set the level
+    #         else:
+    #             # FIXME-RENDERING
+    #             # stroke( blendColor(seg_color, color(0,0,level_scale), MULTIPLY) )
+    #             stroke = True
+    #             level = level_scale
+    #     else:
+    #         # FIXME-RENDERING
+    #         # noStroke()
+    #         stroke = False
+    #         level = level_scale
+
+    #     # 20 fps
+
+    #     # draw pie wedge for this cell
+    #     # FIXME-RENDERING
+    #     #print "segment"
+    #     return Arc(
+    #         level=level,
+    #         stroke=int(stroke),
+    #         stroke_weight=stroke_weight,
+    #         hue=seg_color.hue,
+    #         sat=seg_color.sat,
+    #         val=seg_color.val,
+    #         x=geometry.x_center + self.x_offset + x_adjust,
+    #         y=geometry.y_center + self.y_offset + y_adjust,
+    #         rad_x=abs(rad_X + rad_adjust),
+    #         rad_y=abs(rad_Y+ rad_adjust),
+    #         start=seg_angle,
+    #         stop=seg_angle + self.rot_interval,)
+    #     # 17 fps
+    #     # return Arc(
+    #     #     level=255,
+    #     #     stroke=1,
+    #     #     stroke_weight=10.0,
+    #     #     hue=100.,
+    #     #     sat=100.,
+    #     #     val=255,
+    #     #     x=0,
+    #     #     y=0,
+    #     #     rad_x=500,
+    #     #     rad_y=500,
+    #     #     start=0.,
+    #     #     stop=3.0)
+    #     # arc(
+    #     #     X_CENTER + self.x_offset + x_adjust,
+    #     #     Y_CENTER+ self.y_offset + y_adjust,
+    #     #     abs(rad_X + rad_adjust),
+    #     #     abs(rad_Y+ rad_adjust),
+    #     #     seg_angle,
+    #     #     seg_angle + self.rot_interval,)
 
     def set_midi_param(self, is_note, num, val):
         """set a control parameter based on passed midi message"""

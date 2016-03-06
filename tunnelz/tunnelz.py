@@ -22,7 +22,7 @@ from .tunnel import Tunnel
 
 # midi interface configuration
 
-use_midi = True
+use_midi = False
 midi_debug = False
 
 use_APC = True
@@ -118,16 +118,17 @@ def run(framerate=30.0):
 
 
 # method called whenever processing draws a frame, basically the event loop
-def draw():
+def draw(write=True):
 
     # black out everything to remove leftover pixels
     # FIXME-RENDERING
     # background(0)
 
     layers = mixer.draw_layers()
-    # just dump one layer for now
-    file = 'layer0.csv'
-    write_layers_to_file(layers, file)
+
+    if write:
+        file = 'layer0.csv'
+        write_layers_to_file(layers, file)
 
 
 def controller_change(channel, number, value):
