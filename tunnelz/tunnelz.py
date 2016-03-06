@@ -111,21 +111,27 @@ def setup():
     beam_matrix.put_beam(4, 7, Tunnel())
 
 def run(framerate=30.0):
+    frame_number = 0
     render_period = 1.0 / framerate
+    last = time.time()
     while 1:
         process_control_events_until_render(render_period)
         draw()
+        framenumber += 1
+        if framenumber % 240 == 0:
+
 
 
 # method called whenever processing draws a frame, basically the event loop
-def draw(write=True):
+def draw(write=True, print_=False):
 
     # black out everything to remove leftover pixels
     # FIXME-RENDERING
     # background(0)
 
     layers = mixer.draw_layers()
-
+    if print_:
+        print layers
     if write:
         file = 'layer0.csv'
         write_layers_to_file(layers, file)

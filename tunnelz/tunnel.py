@@ -3,11 +3,12 @@ from .beam import Beam
 from .color import color
 from .draw_commands import Arc
 from .geometry import geometry
+from itertools import izip
 from copy import deepcopy
 from .button_LED import set_anim_select_LED
 from math import pi
 import numpy as np
-from .waveforms import sawtooth
+from .waveforms import sawtooth, sawtooth_vector
 
 # scale overall radius, set > 1.0 to enable larger shapes than screen size
 MAX_RAD_MULT = 2.0
@@ -178,15 +179,15 @@ class Tunnel (Beam):
             thickness/2)
         rad_Y = radius - thickness/2
 
-        # FIXME-RENDERING: Processing draw call
-        # noFill()
+        arcs = self.draw_segments_with_animations(
+            rad_X, rad_Y, self.segs, as_mask, level_scale)
 
         # loop over segments and draw arcs
-        arcs = []
-        for i in xrange(self.segs):
+        # arcs = []
+        # for i in xrange(self.segs):
 
-            arcs.append(self.draw_segment_with_animation(
-                rad_X, rad_Y, i, as_mask, level_scale))
+        #     arcs.append(self.draw_segment_with_animation(
+        #         rad_X, rad_Y, i, as_mask, level_scale))
         return arcs
 
     def draw_segments_with_animations(
@@ -224,8 +225,8 @@ class Tunnel (Beam):
         col_width_adjust = np.zeros(shape, float)
         col_period_adjust = np.zeros(shape, float)
         col_sat_adjust = np.zeros(shape, float)
-        x_adjust = np.zeros(shape, int)
-        y_adjust = np.zeros(shape, int)
+        x_adjust = 0
+        y_adjust = 0
 
         # the angle of this particular segment
         seg_angle = self.rot_interval*seg_num+self.curr_angle
@@ -255,9 +256,30 @@ class Tunnel (Beam):
         # the abs() is there to prevent negative width setting when using multiple animations.
         stroke_weight = abs(self.thickness*(1 + thickness_adjust/127))
 
+        # geometry calculations
+        x_center = geometry.x_center + self.x_offset + int(x_adjust)
+        y_center = geometry.y_center + self.y_offset + int(y_adjust)
+        rad_x_vec = abs(rad_X + rad_adjust)
+        rad_y_vec = abs(rad_Y+ rad_adjust)
+        stop = seg_angle + self.rot_interval
+
+        arcs = []
         # now set the color and draw
         if as_mask:
-            level = 255
+            val_iter = izip(stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
+            for strk, r_x, r_y, start_angle, stop_angle in val_iter:
+                arcs.append(Arc(
+                    level=255,
+                    stroke_weight=strk,
+                    hue=0.0,
+                    sat=0.0,
+                    val=0,
+                    x=x_center,
+                    y=y_center,
+                    rad_x=r_x,
+                    rad_y=r_y,
+                    start=start_angle,
+                    stop=stop_angle))
         else:
             hue = (
                 self.col_center +
@@ -269,48 +291,26 @@ class Tunnel (Beam):
 
             hue = hue % 256
 
-
-            seg_color = color_vector(hue, self.col_sat + col_sat_adjust, 255)
+            sat = self.col_sat + col_sat_adjust
 
             level = level_scale
 
-        # only draw something if the segment color isn't black.
-        # FIXME-COLOR
-        # FIXME: this might be bugged
-        if color(0, 0, 0) != seg_color:
+            val_iter = izip(hue, sat, stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
 
-            # if we're drawing this beam as a mask, make the segment black
-            if as_mask:
-                # FIXME-RENDERING
-                # stroke(0)
-                stroke = True
-                seg_color = color(0, 0, 0)
-                level = 255
-            # otherwise pick the color and set the level
-            else:
-                # FIXME-RENDERING
-                # stroke( blendColor(seg_color, color(0,0,level_scale), MULTIPLY) )
-                stroke = True
-                level = level_scale
-
-        # 20 fps
-
-        # draw pie wedge for this cell
-        # FIXME-RENDERING
-        #print "segment"
-        return Arc(
-            level=level,
-            stroke=int(stroke),
-            stroke_weight=stroke_weight,
-            hue=seg_color.hue,
-            sat=seg_color.sat,
-            val=seg_color.val,
-            x=geometry.x_center + self.x_offset + x_adjust,
-            y=geometry.y_center + self.y_offset + y_adjust,
-            rad_x=abs(rad_X + rad_adjust),
-            rad_y=abs(rad_Y+ rad_adjust),
-            start=seg_angle,
-            stop=seg_angle + self.rot_interval,)
+            for h, s, strk, r_x, r_y, start_angle, stop_angle in val_iter:
+                arcs.append(Arc(
+                    level=level,
+                    stroke_weight=strk,
+                    hue=h,
+                    sat=s,
+                    val=255,
+                    x=x_center,
+                    y=y_center,
+                    rad_x=r_x,
+                    rad_y=r_y,
+                    start=start_angle,
+                    stop=stop_angle))
+        return arcs
 
 
     # def draw_segment_with_animation(

@@ -5,10 +5,6 @@ PI = pi
 HALF_PI = pi / 2.0
 TWOPI = 2*pi
 
-triangle_vector = vectorize(triangle)
-square_vector = vectorize(square)
-sawtooth_vector = vectorize(sawtooth)
-
 def triangle(angle):
     """Generate a point on a unit triangle wave from angle in radians."""
     angle = (angle % TWOPI) / TWOPI
@@ -59,3 +55,7 @@ def sawtooth(angle, smoothing):
         return (angle - TWOPI) / (PI - smoothing)
     else:
         return -(angle - PI)/smoothing
+
+triangle_vector = vectorize(triangle)
+square_vector = vectorize(square)
+sawtooth_vector = vectorize(sawtooth)

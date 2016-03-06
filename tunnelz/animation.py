@@ -2,6 +2,7 @@ import copy
 from math import sin, pi
 from .waveforms import (
     triangle, square, sawtooth, triangle_vector, square_vector, sawtooth_vector)
+import numpy as np
 
 TWOPI = 2*pi
 
