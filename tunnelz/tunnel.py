@@ -7,7 +7,6 @@ from copy import deepcopy
 from .button_LED import set_anim_select_LED
 from math import pi
 import numpy as np
-from .util import unwrap
 from .waveforms import sawtooth
 
 # scale overall radius, set > 1.0 to enable larger shapes than screen size
@@ -193,18 +192,41 @@ class Tunnel (Beam):
     def draw_segments_with_animations(
         self, rad_X, rad_Y, n_segs, as_mask, level_scale):
         """Vectorized draw of all of the segments."""
-        # parameters that animations may modify
-        rad_adjust = np.zeros(n_segs, float)
-        thickness_adjust = np.zeros(n_segs, float)
-        col_center_adjust = np.zeros(n_segs, float)
-        col_width_adjust = np.zeros(n_segs, float)
-        col_period_adjust = np.zeros(n_segs, float)
-        col_sat_adjust = np.zeros(n_segs, float)
-        x_adjust = np.zeros(n_segs, int)
-        y_adjust = np.zeros(n_segs, int)
+        # first determine which segments are going to be drawn at all using the
+        # blacking parameter
         seg_num = np.array(xrange(n_segs))
 
-        # 90 fps
+        # FIXME: negative blacking doesn't work
+        # blacking_mode: True for standard, False for inverted
+
+        blacking = self.blacking
+
+        # remove the "all segments blacked" bug
+        if blacking == -1:
+            blacking = 0
+
+        blacking_mode = blacking >= 0
+        if blacking >= 0:
+            # constrain min to 1 to avoid divide by zero error
+            blacking = max(self.blacking, 1)
+
+            draw_segment = seg_num % abs(blacking) == 0
+        else:
+            draw_segment = seg_num % abs(blacking) != 0
+
+        seg_num = seg_num[draw_segment]
+        shape = seg_num.shape
+
+        # parameters that animations may modify
+        rad_adjust = np.zeros(shape, float)
+        thickness_adjust = np.zeros(shape, float)
+        col_center_adjust = np.zeros(shape, float)
+        col_width_adjust = np.zeros(shape, float)
+        col_period_adjust = np.zeros(shape, float)
+        col_sat_adjust = np.zeros(shape, float)
+        x_adjust = np.zeros(shape, int)
+        y_adjust = np.zeros(shape, int)
+
         # the angle of this particular segment
         seg_angle = self.rot_interval*seg_num+self.curr_angle
         rel_angle = self.rot_interval*seg_num
@@ -214,9 +236,9 @@ class Tunnel (Beam):
 
             # what is this animation targeting?
             if target == 2: # thickness
-                    thickness_adjust += anim.get_value(rel_angle)
+                    thickness_adjust += anim.get_value_vector(rel_angle)
             elif target == 3: # radius
-                    rad_adjust += anim.get_value(rel_angle)
+                    rad_adjust += anim.get_value_vector(rel_angle)
             elif target == 5: # color center
                     col_center_adjust += anim.get_value(0)
             elif target == 6: # color width
@@ -224,52 +246,33 @@ class Tunnel (Beam):
             elif target == 7: # color periodicity
                     col_period_adjust += anim.get_value(0) / 16
             elif target == 8: # saturation
-                    col_sat_adjust += anim.get_value(rel_angle)
+                    col_sat_adjust += anim.get_value_vector(rel_angle)
             elif target == 11: # x offset
                     x_adjust += anim.get_value(0)*(geometry.x_size/2)/127
             elif target == 12: # y offset
                     y_adjust += anim.get_value(0)*(geometry.y_size/2)/127
 
-        # 45 fps
         # the abs() is there to prevent negative width setting when using multiple animations.
         stroke_weight = abs(self.thickness*(1 + thickness_adjust/127))
-        # FIXME-RENDERING: Processing draw call
-        # strokeWeight( stroke_weight )
 
-        # now set the color
-
-        # FIXME: negative blacking doesn't work
-        # blacking_mode: True for standard, False for inverted
-        # constrain min to 1 to avoid divide by zero error
-        blacking = max(self.blacking, 1)
-        blacking_mode = blacking >= 0
-
-        # if no blacking at all or if this is not a blacked segment, draw it
-        # the blacking == -1 is a hack to remove the "all segments blacked" bug
-        black_this_segment = seg_num % abs(blacking) != 0
-        if (blacking == 0 or blacking == -1 or
-            blacking_mode != black_this_segment):
-
+        # now set the color and draw
+        if as_mask:
+            level = 255
+        else:
             hue = (
                 self.col_center +
                 col_center_adjust +
                 (
                     (self.col_width+col_width_adjust) *
-                    sawtooth(rel_angle*(self.col_spread+col_period_adjust), 0))
+                    sawtooth_vector(rel_angle*(self.col_spread+col_period_adjust), 0))
                 )
 
-            # wrap the hue index
-            while hue > 255:
-                hue = hue - 255
-            while hue < 0:
-                hue = hue + 255
-        # 24 fps
-            # FIXME-COLOR: use of Processing color object
-            seg_color = color(hue, self.col_sat + col_sat_adjust, 255)
-        # otherwise this is a blacked segment.
-        else:
-            # FIXME-COLOR
-            seg_color = color(0, 0, 0)
+            hue = hue % 256
+
+
+            seg_color = color_vector(hue, self.col_sat + col_sat_adjust, 255)
+
+            level = level_scale
 
         # only draw something if the segment color isn't black.
         # FIXME-COLOR
@@ -289,11 +292,6 @@ class Tunnel (Beam):
                 # stroke( blendColor(seg_color, color(0,0,level_scale), MULTIPLY) )
                 stroke = True
                 level = level_scale
-        else:
-            # FIXME-RENDERING
-            # noStroke()
-            stroke = False
-            level = level_scale
 
         # 20 fps
 

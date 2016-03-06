@@ -1,6 +1,7 @@
 import copy
 from math import sin, pi
-from .waveforms import triangle, square, sawtooth
+from .waveforms import (
+    triangle, square, sawtooth, triangle_vector, square_vector, sawtooth_vector)
 
 TWOPI = 2*pi
 
@@ -114,7 +115,7 @@ class Animation (object):
             # sawtooth wave
             return float(self.weight * sawtooth(angle, self.smoothing))
 
-    def get_value_vectorized(self, angle_offsets):
+    def get_value_vector(self, angle_offsets):
         """Return the current value of the animation for an ndarray of offsets."""
         shape = angle_offsets.shape
 
@@ -124,16 +125,16 @@ class Animation (object):
         angle = angle_offset*self.n_periods + self.curr_angle
         if self.type == 0:
             # sine wave
-            return float(self.weight * np.sin(angle))
+            return self.weight * np.sin(angle)
         elif self.type == 1:
             # triangle wave
-            return float(self.weight * triangle(angle))
+            return self.weight * triangle_vector(angle)
         elif self.type == 2:
             # square wave
-            return float(self.weight * square(angle, self.smoothing))
+            return self.weight * square_vector(angle, self.smoothing)
         elif self.type == 3:
             # sawtooth wave
-            return float(self.weight * sawtooth(angle, self.smoothing))
+            return self.weight * sawtooth_vector(angle, self.smoothing)
 
 
 class AnimationClipboard (object):

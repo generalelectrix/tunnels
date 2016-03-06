@@ -1,8 +1,13 @@
 from math import pi
+from numpy import vectorize
 
 PI = pi
 HALF_PI = pi / 2.0
 TWOPI = 2*pi
+
+triangle_vector = vectorize(triangle)
+square_vector = vectorize(square)
+sawtooth_vector = vectorize(sawtooth)
 
 def triangle(angle):
     """Generate a point on a unit triangle wave from angle in radians."""
@@ -20,6 +25,12 @@ def square(angle, smoothing):
 
     angle = (angle % TWOPI)
 
+    if smoothing == 0.0:
+        if angle < PI:
+            return 1.0
+        else:
+            return 1.0
+
     if angle < smoothing:
         return angle/smoothing
     elif angle > (PI - smoothing) and angle < (PI + smoothing):
@@ -36,9 +47,15 @@ def sawtooth(angle, smoothing):
 
     angle = (angle % TWOPI)
 
-    if angle > PI - smoothing:
-        return PI/smoothing - angle/smoothing
-    elif angle < smoothing - PI:
-        return -PI/smoothing - angle/smoothing
+    if smoothing == 0.0:
+        if angle < PI:
+            return angle / PI
+        else:
+            return (angle - TWOPI) / PI
+
+    if angle < PI - smoothing:
+        return angle / (PI - smoothing)
+    elif angle > PI + smoothing:
+        return (angle - TWOPI) / (PI - smoothing)
     else:
-        return angle/(PI - smoothing)
+        return -(angle - PI)/smoothing

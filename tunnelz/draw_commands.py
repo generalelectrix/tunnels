@@ -4,7 +4,6 @@ import tempfile
 
 arc_args = (
     'level', # int 0-255
-    'stroke', # bool as 0 or 1
     'stroke_weight', # float
     'hue',
     'sat',
