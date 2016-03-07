@@ -6,7 +6,7 @@ try:
 except ImportError:
     from distutils.core import setup
 
-requires = ['numpy']
+requires = ['numpy', 'bidict']
 
 setup(
     name='tunnelz',

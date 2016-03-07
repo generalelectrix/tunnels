@@ -405,15 +405,15 @@ class Show (object):
 
                         if self.beam_matrix.element_has_data(row, channel):
 
-                            saved_beam_vault = self.beam_matrix.get_element(row, channel)
+                            saved_beam = self.beam_matrix.get_element(row, channel)
 
                             is_look = self.beam_matrix.element_is_look(row, channel)
 
                             if is_look and self.beam_matrix.waiting_for_look_edit:
-                                self.mixer.set_look(saved_beam_vault)
+                                self.mixer.set_look(saved_beam)
 
                             else:
-                                self.mixer.set_current_beam(saved_beam_vault.retrieve_copy(0))
+                                self.mixer.set_current_beam(saved_beam)
 
                             current_beam = self.mixer.get_current_beam()
                             update_knob_state(self.mixer.current_layer, current_beam)

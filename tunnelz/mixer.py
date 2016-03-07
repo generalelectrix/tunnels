@@ -1,6 +1,43 @@
 from .beam import Beam
-from .beam_vault import BeamVault
 from .look import Look
+
+class MixerUI (object):
+    """Handle user interactions for the mixer.
+
+    Owns a list of BeamUI, one for each mixer layer.
+    """
+    def __init__(self, mixer):
+        self.mixer = mixer
+        self._current_layer = 0
+        self.controllers = set()
+
+        # make fresh beam UIs
+        self.beam_ui = [BeamUI(beam) for beam in mixer.layers]
+
+    @property
+    def current_layer(self):
+        return self._current_layer
+
+    @current_layer.setter
+    def current_layer(self, layer):
+        """If we are changing which layer is current, update UI."""
+        if self._current_layer != layer:
+            self._current_layer = layer
+            for controller in self.controllers:
+                controller.set_mixer_layer(layer)
+
+    def get_current_beam(self):
+        """Return the beam in the currently selected layer."""
+        return self.mixer.get_beam_from_layer(self.current_layer)
+
+    def replace_current_beam(self, beam):
+        """Replace the beam in the currently selected layer with this beam.
+
+        Also re-associated the beam UI for that mixer layer.
+        """
+        self.mixer.put_beam_in_layer(self.current_layer, beam)
+        self.beam_ui[self.current_layer].associate_with(beam)
+
 
 class Mixer (object):
     """Holds a collection of beams in layers, and understands how they are mixed."""
@@ -56,16 +93,15 @@ class Mixer (object):
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""
-        return BeamVault(Look(self.layers, self.levels, self.mask))
+        return Look(self.layers, self.levels, self.mask)
 
-    def set_look(self, beam_vault_wrapped_look):
+    def set_look(self, look):
         """Unload a look into the mixer state, clobbering current state."""
         # It appears this method was ill-formed in the Java version, as a
         # incoming look's mask and level state does not clobber the mixer.
         # Seems like mask at least should clobber, or your ugly mask layer
         # becomes a positive.  Hell, here, I'll fix it right now.
         # TODO: should we clobber level as well?
-        look = beam_vault_wrapped_look.retrieve_copy(0)
 
         n_beams_in_look = len(look.layers)
 

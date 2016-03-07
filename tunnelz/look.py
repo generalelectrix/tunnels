@@ -7,20 +7,20 @@ class Look (Beam):
     def __init__(self, layers, levels, masks):
         """Construct a new look from the contents of a mixer.
 
-        This constructor does not copy anything.
+        This constructor copies everything handed to it.
 
         layers, levels, and masks are all lists of the mixer channel values.
         """
-        self.layers = layers
-        self.levels = levels
-        self.masks = masks
+        self.layers = [beam.copy() for beam in self.layers]
+        self.levels = list(levels)
+        self.masks = list(masks)
 
     def copy(self):
         """Return a deep copy of this look."""
         return Look(
-            layers=[beam.copy() for beam in self.layers],
-            levels=list(self.levels),
-            masks=list(self.masks),
+            layers=self.layers,
+            levels=self.levels,
+            masks=self.masks,
         )
 
     def display(self, level_scale, as_mask):

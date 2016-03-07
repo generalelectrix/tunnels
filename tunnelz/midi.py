@@ -8,10 +8,17 @@ NoteOn = namedtuple('NoteOn', ('channel', 'pitch', 'velocity'))
 NoteOff = namedtuple('NoteOff', ('channel', 'pitch', 'velocity'))
 ControlChange = namedtuple('ControlChange', ('channel', 'control', 'value'))
 
+NoteOnMapping = namedtuple('NoteOn', ('channel', 'pitch'))
+NoteOffMapping = namedtuple('NoteOff', ('channel', 'pitch'))
+ControlChangeMapping = namedtuple('ControlChange', ('channel', 'control'))
+
 message_type_to_event_type = {
     NoteOff: 8 << 4,
+    NoteOffMapping: 8 << 4,
     NoteOn: 9 << 4,
-    ControlChange: 11 << 4
+    NoteOnMapping: 9 << 4,
+    ControlChange: 11 << 4,
+    ControlChangeMapping: 11 << 4,
 }
 
 def list_ports():
@@ -40,6 +47,18 @@ class MidiOutput (object):
             log.debug("sending {}".format(message))
             b0 = message_type_to_event_type[type(message)] + message[0]
             event = (b0, message[1], message[2])
+            for port in self.ports.itervalues():
+                port.send_message(event)
+
+    def send_from_mapping(self, *messages):
+        """Send an arbitrary number of midi messages.
+
+        Messages should be passed in as tuples of (mapping, value).
+        """
+        for mapping, value in messages:
+            log.debug("sending {}".format(mapping, value))
+            b0 = message_type_to_event_type[type(mapping)] + mapping[0]
+            event = (b0, mapping[1], value)
             for port in self.ports.itervalues():
                 port.send_message(event)
 
