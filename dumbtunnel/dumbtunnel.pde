@@ -12,9 +12,11 @@ void setup() {
   
   strokeCap(SQUARE);
   
-  frameRate(30);
+  frameRate(60);
   
   colorMode(HSB);
+  
+  blendMode(ADD);
   
   frameNumber = 0;
 }
@@ -25,6 +27,8 @@ String drawFile = layer0;
 Table drawTable;
 
 int frameNumber;
+
+boolean useAlpha = false;
 
 // method called whenever processing draws a frame, basically the event loop
 void draw() {
@@ -48,15 +52,22 @@ void draw() {
     float start = row.getFloat(9);
     float stop = row.getFloat(10);
     
-    color segColor = color(hue_, sat, val);
-
     strokeWeight(strokeWeight_);
-    stroke( blendColor(segColor, color(0,0,level), MULTIPLY) );
+    
+    if (useAlpha) {
+      stroke( color(hue_, sat, val, level) );  
+    }
+    else {
+      color segColor = color(hue_, sat, val);
+      stroke( blendColor(segColor, color(0,0,level), MULTIPLY) );
+    }
   
     // draw pie wedge for this cell
     arc(x, y, radX, radY, start, stop);
  
   }
   frameNumber++;
-  println(frameRate);
+  if (frameNumber % 30 == 0) {
+    println(frameRate);
+  }
 }
