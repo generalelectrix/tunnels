@@ -3,10 +3,10 @@ int y_size = 720;
 
 void setup() {
   
-  size(x_size,y_size);
+  size(1280,720);
 
   background(0); //black
-  //smooth(); // anti-aliasing is SLOW
+  noSmooth();
   
   ellipseMode(RADIUS);
   
@@ -18,8 +18,8 @@ void setup() {
   
   frameNumber = 0;
 }
-String testPattern = "/Users/Chris/src/pytunnel/testpattern.csv";
-String layer0 = "/Users/Chris/src/pytunnel/layer0.csv";
+String testPattern = "/Users/fionakirkpatrick/src/pytunnel/testpattern.csv";
+String layer0 = "/Users/fionakirkpatrick/src/pytunnel/layer0.csv";
 String drawFile = layer0;
 
 Table drawTable;
@@ -37,30 +37,26 @@ void draw() {
   
   for (TableRow row : drawTable.rows()) {
     int level = row.getInt(0);
-    boolean stroke_ = boolean(row.getInt(1));
-    float strokeWeight_ = row.getFloat(2);
-    float hue_ = row.getFloat(3);
-    float sat = row.getFloat(4);
-    int val = row.getInt(5);
-    int x = row.getInt(6);
-    int y = row.getInt(7);
-    int radX = row.getInt(8);
-    int radY = row.getInt(9);
-    float start = row.getFloat(10);
-    float stop = row.getFloat(11);
+    float strokeWeight_ = row.getFloat(1);
+    float hue_ = row.getFloat(2);
+    float sat = row.getFloat(3);
+    int val = row.getInt(4);
+    int x = row.getInt(5);
+    int y = row.getInt(6);
+    int radX = row.getInt(7);
+    int radY = row.getInt(8);
+    float start = row.getFloat(9);
+    float stop = row.getFloat(10);
     
     color segColor = color(hue_, sat, val);
 
-    // only draw something if the segment color isn't black.
-    if (stroke_) {
-      strokeWeight(strokeWeight_);
-      stroke( blendColor(segColor, color(0,0,level), MULTIPLY) );
-    
-      // draw pie wedge for this cell
-      arc(x, y, radX, radY, start, stop);
-    }
+    strokeWeight(strokeWeight_);
+    stroke( blendColor(segColor, color(0,0,level), MULTIPLY) );
+  
+    // draw pie wedge for this cell
+    arc(x, y, radX, radY, start, stop);
+ 
   }
   frameNumber++;
   println(frameRate);
 }
-

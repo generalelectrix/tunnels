@@ -1,6 +1,10 @@
+import logging as log
+log.basicConfig(level=log.INFO)
+
 from .animation import AnimationClipboard
 from .beam_matrix_minder import BeamMatrixMinder
 from .draw_commands import write_layers_to_file
+from itertools import count
 from .LED_control import (
     set_bump_button_LED,
     set_mask_button_LED,
@@ -14,7 +18,7 @@ from .LED_control import (
     set_bottom_LED_rings,
     set_top_LED_rings,
     update_knob_state,)
-from .midi import midi_in, NoteOn, NoteOff, ControlChange
+from .midi import midi_in, midi_out, NoteOn, NoteOff, ControlChange
 from .mixer import Mixer
 from Queue import Empty
 import time
@@ -22,7 +26,7 @@ from .tunnel import Tunnel
 
 # midi interface configuration
 
-use_midi = False
+use_midi = True
 midi_debug = False
 
 use_APC = True
@@ -46,36 +50,12 @@ beam_matrix = BeamMatrixMinder()
 # Animation clipboard
 anim_clipboard = AnimationClipboard()
 
-
 def setup():
 
-    # FIXME-RENDERING
-    # background(0) #black
-    # #smooth() # anti-aliasing is SLOW
-    # ellipseMode(RADIUS)
-    # strokeCap(SQUARE)
-    # frameRate(30)
-    # colorMode(HSB)
-
     # open midi outputs
-    if use_midi:
-        pass
-        # FIXME-MIDI LIBRARY
-        # print all available midi devices
-
-        # midiBusses = new MidiBus[nMidiDev]
-        # MidiBus.list()
-
-        # if (useAPC) {
-        #     println("looking for an APC40 at input " + APCDeviceNumIn + ", output " + APCDeviceNumOut)
-        #     midiBusses[0] = new MidiBus(this, APCDeviceNumIn, APCDeviceNumOut)
-        # }
-
-        # if (useiPad) {
-        #     println("looking for an iPad at input " + iPadDeviceNumIn + ", output " + iPadDeviceNumOut)
-        #     midiBusses[1] = new MidiBus(this, iPadDeviceNumIn, iPadDeviceNumOut)
-        # }
-
+    #if use_midi:
+    midi_in.open_port(2)
+    midi_out.open_port(2)
     # open midi channels for each mixer channel and fill the mixer for now all tunnels.
     for i in xrange(mixer.n_layers):
 
@@ -83,6 +63,7 @@ def setup():
 
         # can change defaults as the list is propagated here:
         if not use_midi:
+            # maximally brutal test fixture
             mixer.set_level(i, 255)
 
             tunnel = mixer.get_beam_from_layer(i)
@@ -103,6 +84,14 @@ def setup():
 
             tunnel.update_params()
 
+            for i, anim in enumerate(tunnel.anims):
+                anim.typeI = 24 + i # use each waveform
+                anim.speedI = 0 + i*128/len(tunnel.anims) # various speeds
+                anim.weightI = 64 # finite weight
+                anim.targetI = 37 # hit thickness to do vector math
+                anim.n_periodsI = 3 # more than zero periods for vector math
+                anim.update_params()
+
     # pretend we just pushed track select 1
     if use_midi:
         midi_input_handler(0, True, True, 0x33, 127)
@@ -110,16 +99,20 @@ def setup():
     # save a copy of the default tunnel for sanity. Don't erase it!
     beam_matrix.put_beam(4, 7, Tunnel())
 
-def run(framerate=30.0):
-    frame_number = 0
+def run(framerate=30.0, n_frames=None):
     render_period = 1.0 / framerate
     last = time.time()
-    while 1:
-        process_control_events_until_render(render_period)
+    friter = count() if n_frames is None else xrange(n_frames)
+    render_dt = 0.0
+    for framenumber in friter:
+        process_control_events_until_render(render_period - render_dt)
+        start_render = time.time()
         draw()
-        framenumber += 1
-        if framenumber % 240 == 0:
-
+        end_render = time.time()
+        render_dt = end_render - start_render
+        if (framenumber + 1) % 30 == 0:
+            log.info("{} fps".format(30 / (end_render - last)))
+            last = end_render
 
 
 # method called whenever processing draws a frame, basically the event loop
@@ -148,7 +141,7 @@ def controller_change(channel, number, value):
 
     if midi_debug:
         fmt = "controller in\nchannel = {}\nnumber = {}\n value = {}"
-        print fmt.format(channel, number, value)
+        log.debug(fmt.format(channel, number, value))
 
     midi_input_handler(channel, False, False, number, value)
 
@@ -174,7 +167,7 @@ def note_on(channel, pitch, velocity):
 
     if midi_debug:
         fmt = "note on\nchannel = {}\npitch = {}\n velocity = {}"
-        print fmt.format(channel, pitch, velocity)
+        log.debug(fmt.format(channel, pitch, velocity))
 
     midi_input_handler(channel, channel_change, True, pitch, 127)
 
@@ -190,7 +183,7 @@ def note_off(channel, pitch, velocity):
 
     if midi_debug:
         fmt = "note off\nchannel = {}\npitch = {}\n velocity = {}"
-        print fmt.format(channel, pitch, velocity)
+        log.debug(fmt.format(channel, pitch, velocity))
 
 def keep_note_channel_data(num):
     """Does this note come from a button whose channel data we care about?"""
@@ -204,6 +197,7 @@ message_dispatch = {
 
 def process_control_events_until_render(time_left):
     start = time.time()
+    events_processed = 0
     while True:
         time_until_render = time_left - (time.time() - start)
         # if it is time to render, stop the command loop
@@ -220,6 +214,8 @@ def process_control_events_until_render(time_left):
         else:
             # process the command
             message_dispatch[type(message)](*message)
+            events_processed += 1
+    log.debug("{} events/sec".format(events_processed / time_left))
 
 def midi_input_handler(channel, chan_change, is_note, num, val):
     """Handle corrected incoming midi data.
@@ -227,6 +223,7 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
     Args:
         int channel, boolean chan_change, boolean is_note, int num, int val
     """
+    log.debug("handling midi input")
     # ensure we don't retrieve null beams, make an exception for master channel
     if channel < mixer.n_layers:
 
@@ -275,6 +272,8 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
             # beam save mode toggle
             elif is_note and 0x52 == num:
 
+                log.debug("beam save mode toggle")
+
                 # turn off look save mode
                 beam_matrix.waiting_for_look_save = False
                 set_look_save_LED(0)
@@ -302,6 +301,7 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
 
             # look save mode toggle
             elif is_note and 0x53 == num:
+                log.debug("look save mode toggle")
 
                 # turn off beam save mode
                 beam_matrix.waiting_for_beam_save = False
@@ -330,6 +330,8 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
             # delete saved element mode toggle
             elif is_note and 0x54 == num:
 
+                log.debug("delete saved element mode toggle")
+
                 # these buttons are radio
                 beam_matrix.waiting_for_beam_save = False
                 set_beam_save_LED(0)
@@ -354,6 +356,8 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
 
             # load look to edit mode toggle
             elif is_note and 0x56 == num:
+
+                log.debug("load look to edit mode toggle")
 
                 # these buttons are radio
                 beam_matrix.waiting_for_beam_save = False
@@ -380,6 +384,8 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
 
             # if we just pushed a beam save matrix button
             elif is_note and num >= 0x35 and num <= 0x39 and channel < 8:
+
+                log.debug("beam save matrix push")
 
                 # if we're in save mode
                 if beam_matrix.waiting_for_beam_save:
@@ -431,11 +437,13 @@ def midi_input_handler(channel, chan_change, is_note, num, val):
 
             # if beam-specific parameter:
             else:
+                log.debug("beam parameter")
 
                 beam.set_midi_param(is_note, num, val)
 
                 # update knob state if we've changed channel
                 if chan_change:
+                    log.debug("channel change")
                     set_track_select_LED_radio(mixer.current_layer)
                     set_bottom_LED_rings(mixer.current_layer, beam)
                     set_top_LED_rings(beam)

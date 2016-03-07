@@ -1,4 +1,5 @@
 from collections import namedtuple
+import logging as log
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
 from Queue import Queue
@@ -15,11 +16,8 @@ message_type_to_event_type = {
 
 def list_ports():
     """Print the available ports."""
-    print "Available input ports:"
-    MidiIn().get_ports()
-    print "\nAvailable output ports:"
-    MidiOut().get_ports()
-
+    log.info("Available input ports:\n{}".format(MidiIn().get_ports()))
+    log.info("Available output ports:\n{}".format(MidiOut().get_ports()))
 
 class MidiOutput (object):
     """Aggregate multiple midi outputs into one front end."""
@@ -39,6 +37,7 @@ class MidiOutput (object):
     def send(self, *messages):
         """Send an arbitrary number of midi messages."""
         for message in messages:
+            log.debug("sending {}".format(message))
             b0 = message_type_to_event_type[type(message)] + message[0]
             event = (b0, message[1], message[2])
             for port in self.ports.itervalues():
@@ -82,13 +81,13 @@ class MidiInput (object):
 
         Optionally specify a timeout in seconds.
         """
-        return self.queue.get(timeout=timeout)
+        message = self.queue.get(timeout=timeout)
+        log.debug("received {}".format(message))
+        return message
 
 # FIXME-GLOBAL BULLSHIT
 midi_in = MidiInput()
-midi_in.open_port(1)
 midi_out = MidiOutput()
-midi_out.open_port(1)
 
 
 # FIXME-GLOBAL

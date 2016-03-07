@@ -123,7 +123,7 @@ class Animation (object):
         if not self.active:
             return np.zeros(shape, float)
 
-        angle = angle_offset*self.n_periods + self.curr_angle
+        angle = angle_offsets*self.n_periods + self.curr_angle
         if self.type == 0:
             # sine wave
             return self.weight * np.sin(angle)
