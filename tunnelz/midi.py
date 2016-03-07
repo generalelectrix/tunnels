@@ -43,6 +43,18 @@ class MidiOutput (object):
             for port in self.ports.itervalues():
                 port.send_message(event)
 
+    def send_note(self, channel, pitch, velocity):
+        """Send a note on message."""
+        for name, port in self.ports.iteritems():
+            log.debug("sending note on to {}: {}, {}, {}".format(name, channel, pitch, velocity))
+            port.send_message((144 + channel, pitch, velocity))
+
+    def send_cc(self, channel, control, value):
+        """Send a control change message."""
+        for name, port in self.ports.iteritems():
+            log.debug("sending cc to {}: {}, {}, {}".format(name, channel, control, value))
+            port.send_message((176 + channel, control, value))
+
 # mapping between event type and constructor
 event_type_to_constructor = {
     8: NoteOff,
@@ -88,14 +100,3 @@ class MidiInput (object):
 # FIXME-GLOBAL BULLSHIT
 midi_in = MidiInput()
 midi_out = MidiOutput()
-
-
-# FIXME-GLOBAL
-def send_CC(channel, number, val):
-    """wrapper method for sending midi control changes"""
-    midi_out.send(ControlChange(channel, number, val))
-
-# FIXME-GLOBAL
-def send_note(channel, number, velocity):
-    """wrapper method for sending midi notes"""
-    midi_out.send(NoteOn(channel, number, velocity))

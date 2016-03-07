@@ -3,7 +3,8 @@ int y_size = 720;
 
 void setup() {
   
-  size(1280,720, FX2D);
+  //size(1280,720, FX2D);
+  size(1280,720);
 
   background(0); //black
   noSmooth();
