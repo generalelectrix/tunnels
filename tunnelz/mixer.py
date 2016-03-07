@@ -33,10 +33,18 @@ class MixerUI (object):
     def replace_current_beam(self, beam):
         """Replace the beam in the currently selected layer with this beam.
 
-        Also re-associated the beam UI for that mixer layer.
+        Also re-associate the beam UI for that mixer layer.
         """
         self.mixer.put_beam_in_layer(self.current_layer, beam)
-        self.beam_ui[self.current_layer].associate_with(beam)
+        self.beam_ui[self.current_layer].beam = beam
+
+    def get_copy_of_current_look(self):
+        return self.mixer.get_copy_of_current_look()
+
+    def set_look(self, look):
+        """Set the current look, clobbering mixer state."""
+        self.mixer.set_look(look)
+        # TODO: update beam and mixer UI
 
 
 class Mixer (object):

@@ -8,7 +8,10 @@ from .LED_control import (
 import numpy as np
 
 # states for beam matrix UI
-Idle, WaitForBeamSave, WaitForLookSave, WaitForDelete, WaitForLookEdit = xrange(5)
+Idle, BeamSave, LookSave, Delete, LookEdit = xrange(5)
+
+# beam button states
+ButtonEmpty, ButtonBeam, ButtonLook = xrange(3)
 
 class BeamMatrixUI (object):
     """Encapsulate the user interface to a beam matrix.
@@ -31,23 +34,52 @@ class BeamMatrixUI (object):
     @state.setter
     def state(self, state):
         """When state is updated, send UI update commands."""
-        self._state = state
-        for controller in self.controllers:
-            controller.set_beam_matrix_state(state)
+        if self._state is not state:
+            self._state = state
+            for controller in self.controllers:
+                controller.set_beam_matrix_state(state)
 
     def state_toggle(self, state):
         """Toggle state based on an input state command."""
-        if self.state == state:
+        if self.state is state:
             self.state = Idle
         else:
             self.state = state
 
+    def update_button(self, row, column, state):
+        for controller in self.controllers:
+            controller.set_button_state(row, column, state)
+
     def grid_button_press(self, row, column):
         """Respond to a grid button press."""
-        if self.state == Idle and self.beam_matrix.has_data[row][column]:
+        if self.state is Idle and self.beam_matrix.has_data[row][column]:
             # if idling, get a beam if there is one
             saved_beam = self.beam_matrix.get_element(row, channel)
             self.mixer_ui.replace_current_beam(saved_beam)
+        elif self.state is BeamSave:
+            # if we're saving a beam, dump it
+            beam = self.mixer_ui.get_current_beam()
+            self.beam_matrix.put_beam(row, column, beam)
+            self.update_button(row, column, ButtonBeam)
+            self.state = Idle
+        elif self.state is LookSave:
+            # dump mixer state into a saved look
+            look = self.mixer_ui.get_copy_of_current_look()
+            self.beam_matrix.put_look(row, column, look)
+            self.update_button(row, column, ButtonLook)
+            self.state = Idle
+        elif self.state is Delete:
+            # empty a button
+            self.beam_matrix.clear_element(row, column)
+            self.update_button(row, column, ButtonEmpty)
+            self.state = Idle
+        elif (self.state is LookEdit and
+            self.beam_matrix.has_data[row][column] and
+            self.beam_matrix.is_look[row][column]):
+            # only do anything if there is actually a look in the slot
+            look = self.beam_matrix.get_element(row, column)
+            self.mixer_ui.set_look(look)
+            self.state = Idle
 
 
 
