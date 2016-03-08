@@ -14,6 +14,10 @@ class MixerUI (object):
         # make fresh beam UIs
         self.beam_ui = [BeamUI(beam) for beam in mixer.layers]
 
+    def update_controllers(self, method, *args, **kwargs):
+        for controller in self.controllers:
+            getattr(controller, method)(*args, **kwargs)
+
     @property
     def current_layer(self):
         return self._current_layer
@@ -23,8 +27,7 @@ class MixerUI (object):
         """If we are changing which layer is current, update UI."""
         if self._current_layer != layer:
             self._current_layer = layer
-            for controller in self.controllers:
-                controller.set_mixer_layer(layer)
+            self.update_controllers('set_mixer_layer', layer)
 
     def get_current_beam(self):
         """Return the beam in the currently selected layer."""
@@ -35,8 +38,10 @@ class MixerUI (object):
 
         Also re-associate the beam UI for that mixer layer.
         """
-        self.mixer.put_beam_in_layer(self.current_layer, beam)
-        self.beam_ui[self.current_layer].beam = beam
+        layer = self.current_layer
+        self.mixer.put_beam_in_layer(layer, beam)
+        self.beam_ui[layer].beam = beam
+        self.ui.set_look_indicator(layer, isinstance(beam, Look))
 
     def get_copy_of_current_look(self):
         return self.mixer.get_copy_of_current_look()
@@ -45,6 +50,21 @@ class MixerUI (object):
         """Set the current look, clobbering mixer state."""
         self.mixer.set_look(look)
         # TODO: update beam and mixer UI
+
+    def set_level(self, layer, level):
+        self.mixer.set_level(layer, level)
+        self.update_controllers('set_level', layer, level)
+
+    def set_bump_button(self, layer, state):
+        if state:
+            self.mixer.bump_on(layer)
+        else:
+            self.mixer.bump_off(layer)
+        self.update_controllers('set_bump_button', layer, state)
+
+    def toggle_mask_state(self, layer):
+        state = self.mixer.toggle_mask_state(layer)
+        self.update_controllers('set_mask_button', layer, state)
 
 
 class Mixer (object):
@@ -55,19 +75,12 @@ class Mixer (object):
         self.levels = [0 for _ in xrange(n_layers)]
         self.bump = [False for _ in xrange(n_layers)]
         self.mask = [False for _ in xrange(n_layers)]
-        self.current_layer = 0
 
     def put_beam_in_layer(self, layer, beam):
         self.layers[layer] = beam
 
     def get_beam_from_layer(self, layer):
         return self.layers[layer]
-
-    def get_current_beam(self):
-        return self.layers[self.current_layer]
-
-    def set_current_beam(self, beam):
-        self.put_beam_in_layer(self.current_layer, beam)
 
     def set_level(self, layer, level):
         """level: int in [0, 255]"""

@@ -1,4 +1,5 @@
-from collections import namedtuple
+from collections import namedtuple, defaultdict
+from functools import partial
 import logging as log
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
@@ -8,9 +9,12 @@ NoteOn = namedtuple('NoteOn', ('channel', 'pitch', 'velocity'))
 NoteOff = namedtuple('NoteOff', ('channel', 'pitch', 'velocity'))
 ControlChange = namedtuple('ControlChange', ('channel', 'control', 'value'))
 
-NoteOnMapping = namedtuple('NoteOn', ('channel', 'pitch'))
-NoteOffMapping = namedtuple('NoteOff', ('channel', 'pitch'))
-ControlChangeMapping = namedtuple('ControlChange', ('channel', 'control'))
+MidiMapping = namedtuple('MidiMapping', ('channel', 'control', 'kind'))
+
+# use kind argument and partials to ensure that notes and CCs hash differently
+NoteOnMapping = partial(MidiMapping, kind='NoteOn')
+NoteOffMapping = partial(MidiMapping, kind='NoteOff')
+ControlChangeMapping = partial(MidiMapping, kind='ControlChange')
 
 message_type_to_event_type = {
     NoteOff: 8 << 4,
@@ -75,10 +79,10 @@ class MidiOutput (object):
             port.send_message((176 + channel, control, value))
 
 # mapping between event type and constructor
-event_type_to_constructor = {
-    8: NoteOff,
-    9: NoteOn,
-    11: ControlChange
+event_type_to_mapping = {
+    8: NoteOffMapping,
+    9: NoteOnMapping,
+    11: ControlChangeMapping,
 }
 
 class MidiInput (object):
@@ -88,6 +92,24 @@ class MidiInput (object):
         """Initialize the message queue."""
         self.queue = Queue()
         self.ports = {}
+        self.mappings = defaultdict(set)
+
+    def register_mappings(self, mappings):
+        """Register handlers for midi mappings.
+
+        mappings is an iterable of tuples of (MidiMapping, handler_method).
+        handler_method should be a callable that can handle a midi message.
+        """
+        for mapping, handler in mappings:
+            self.mappings[mapping].add(handler)
+
+    def unregister_mappings(self, mappings):
+        """Unregister a handler for an iterable of midi mappings.
+
+        mappings is an iterable of tuples of (MidiMapping, handler_method).
+        """
+        for mapping, handler in mappings:
+            self.mappings[mapping].discard(handler)
 
     def open_port(self, port_number):
         """Open a new midi port to feed the message queue."""
@@ -98,7 +120,7 @@ class MidiInput (object):
         def parse(event, data):
             (b0, b1, b2), _ = event
             event_type, channel = b0 >> 4, b0 & 7
-            message = event_type_to_constructor[event_type](channel, b1, b2)
+            message = (event_type_to_mapping[event_type](channel, b1), b2)
             queue.put(message)
         port.set_callback(parse)
 
@@ -115,6 +137,13 @@ class MidiInput (object):
         message = self.queue.get(timeout=timeout)
         log.debug("received {}".format(message))
         return message
+
+    def dispatch(self, mapping, payload):
+        """Dispatch a midi message to the registered handlers."""
+        handlers = self.mappings.get(mapping, tuple())
+        for handler in handlers:
+            handler.handle_message(mapping, payload)
+
 
 # FIXME-GLOBAL BULLSHIT
 midi_in = MidiInput()
