@@ -1,3 +1,4 @@
+from .animation import WaveformType, AnimationTarget
 from .beam_matrix_minder import (
     BeamSave, LookSave, Delete, LookEdit,
     ButtonEmpty, ButtonBeam, ButtonLook,
@@ -21,12 +22,21 @@ class MidiController (object):
     def __init__(self):
         self.controls = {}
 
+    def add_controls(self, control_map, callback):
+        """Attach a control map to a specified callback.
+
+        Returns the bidirectional version of the control map.
+        """
+        self.set_callback(control_map.itervalues(), callback)
+        return bidict(control_map)
+
     def set_callback(self, mappings, callback):
+        """Manually register a callback for an iterable of mappings."""
         for mapping in mappings:
             self.controls[mapping] = callback
 
 
-class BeamMatrixMidiController (object):
+class BeamMatrixMidiController (MidiController):
 
     # maps named controls to midi messages
     control_map = bidict({
@@ -63,8 +73,8 @@ class BeamMatrixMidiController (object):
         self.midi_out = midi_out
 
         # the controls which will be registered with the midi service
-        self.set_callback(grid_button_map.itervalues(), self.handle_grid_button)
-        self.set_callback(control_map.itervalues(), self.handle_state_button)
+        self.set_callback(self.grid_button_map.itervalues(), self.handle_grid_button)
+        self.set_callback(self.control_map.itervalues(), self.handle_state_button)
 
         midi_in.register_mappings(self.controls)
 
@@ -97,7 +107,7 @@ class BeamMatrixMidiController (object):
 
         self.midi_out.send_from_mapping(control_map, val)
 
-class MixerMidiController (object):
+class MixerMidiController (MidiController):
 
     def __init__(self, ui, midi_in, midi_out):
         """Fire up a fresh controller and register it with the UI."""
@@ -183,3 +193,88 @@ class MixerMidiController (object):
         mapping = self.look_indicators[layer]
         self.midi_out.send_from_mapping(mapping, int(state))
 
+
+class AnimationMidiController (MidiController):
+
+    def __init__(self, ui, midi_in, midi_out):
+        """Fire up a fresh controller and register it with the UI."""
+        super(AnimationMidiController, self).__init__()
+        self.ui = ui
+        ui.controllers.add(self)
+        self.midi_out = midi_out
+        self.knobs = self.add_controls({
+            'speed': ControlChangeMapping(0, 48),
+            'weight': ControlChangeMapping(0, 49),
+            #'duty_cycle': ControlChangeMapping(0, 50),
+            'smoothing': ControlChangeMapping(0, 51),
+            },
+            self.handle_knob)
+
+        self.type_buttons = self.add_controls({
+            WaveformType.Sine: NoteOnMapping(0, 24),
+            WaveformType.Triangle: NoteOnMapping(0, 25),
+            WaveformType.Square: NoteOnMapping(0, 26),
+            WaveformType.Sawtooth: NoteOnMapping(0, 27),
+            #WaveformType.Lorentz: NoteOnMapping(0, 28),
+            #WaveformType.Strange2: NoteOnMapping(0, 29),
+            #WaveformType.Random: NoteOnMapping(0, 30),
+            #WaveformType.Happiness: NoteOnMapping(0, 31),
+            },
+            self.handle_type_button)
+
+        self.periodicity_buttons = self.add_controls(
+            {n: NoteOnMapping(0, n) for n in xrange(16)},
+            self.handle_periodicity_button)
+
+        # FIXME-NUMERIC TARGETS
+        self.target_buttons = self.add_controls(
+            {target: NoteOnMapping(0, target+34)for target in AnimationTarget.VALUES},
+            self.handle_target_button)
+
+        self.clipboard_buttons = self.add_controls({
+            'copy': NoteOnMapping(0, 0x65),
+            'paste': NoteOnMapping(0, 0x64)},
+            self.handle_clipboard_button)
+
+        self.animation_select_buttons = self.add_controls({
+            n: NoteOnMapping(0, 0x57+n) for n in xrange(4)},
+            self.handle_animation_select_button)
+
+        # register input mappings
+        midi_in.register_mappings(self.controls)
+
+    @staticmethod
+    def speed_from_midi(val):
+        if val > 65:
+            return -float(val - 65)/62
+        elif val < 63:
+            return -float(val - 63)/63
+        else:
+            return 0.0
+
+    @staticmethod
+    def speed_to_midi(speed):
+        if speed < 0.0:
+            return min(int(-speed * 62 + 65), 127)
+        elif speed > 0.0:
+            return max(int(-speed * 63 + 63), 0)
+        else:
+            return 64
+
+    knob_value_from_midi = {
+        'speed': self.speed_from_midi,
+        'weight': lambda w: w,
+        #'duty_cycle': lambda d: d,
+        'smoothing': lambda val: float(val)/127
+    }
+
+    knob_value_to_midi = {
+        'speed': self.speed_to_midi,
+        'weight': lambda w: w,
+        #'duty_cycle': lambda d: d,
+        'smoothing': lambda s: min(int(s * 127), 127)
+    }
+
+    def handle_knob(self, mapping, value):
+        knob = self.knobs.inv[mapping]
+        self.anim.set_control_value(knob, self.knob_value_from_midi[knob](value))

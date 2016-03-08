@@ -1,4 +1,5 @@
 import numpy as np
+from .ui import UserInterface
 
 # states for beam matrix UI
 Idle = 'idle'
@@ -13,7 +14,7 @@ ButtonBeam = 'button_beam'
 ButtonLook = 'button_look'
 
 
-class BeamMatrixUI (object):
+class BeamMatrixUI (UserInterface):
     """Encapsulate the user interface to a beam matrix.
 
     The BeamMatrixUI depends on a MixerUI to retrieve and set the currently
@@ -21,9 +22,9 @@ class BeamMatrixUI (object):
     """
 
     def __init__(self, beam_matrix, mixer_ui):
+        super(BeamMatrixUI, self).__init__()
         self.beam_matrix = beam_matrix
         self.mixer_ui = mixer_ui
-        self.controllers = set()
 
         self._state = None
         self.initialize()
@@ -43,8 +44,7 @@ class BeamMatrixUI (object):
         """When state is updated, send UI update commands."""
         if self._state is not state:
             self._state = state
-            for controller in self.controllers:
-                controller.set_beam_matrix_state(state)
+            self.update_controllers('set_beam_matrix_state', state)
 
     def state_toggle(self, state):
         """Toggle state based on an input state command."""
@@ -54,8 +54,7 @@ class BeamMatrixUI (object):
             self.state = state
 
     def update_button(self, row, column, state):
-        for controller in self.controllers:
-            controller.set_button_state(row, column, state)
+        self.update_controllers('set_button_state', row, column, state)
 
     def grid_button_press(self, row, column):
         """Respond to a grid button press."""

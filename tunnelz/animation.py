@@ -3,8 +3,64 @@ from math import sin, pi
 from .waveforms import (
     triangle, square, sawtooth, triangle_vector, square_vector, sawtooth_vector)
 import numpy as np
+from .ui import UserInterface
 
 TWOPI = 2*pi
+HALFPI = pi/2
+
+# FIXME-NUMERIC TARGETS
+class AnimationTarget (object):
+    Rotation = 1#'rotation'
+    Thickness = 2#'thickness'
+    Radius = 3#'radius'
+    Ellipse = 4#'ellipse'
+    Color = 5#'color'
+    ColorSpread = 6#'colorspread'
+    ColorPeriodicity = 7#'colorperiodicity'
+    ColorDesaturation = 8#'colordesaturation'
+    Segments = 9#'segments'
+    Blacking = 10#'blacking'
+    PositionX = 11#'positionx'
+    PositionY = 12#'positiony'
+    PositionXY = 13#'positionxy'
+
+    VALUES = (
+        Rotation,
+        Thickness,
+        Radius,
+        Ellipse,
+        Color,
+        ColorSpread,
+        ColorPeriodicity,
+        ColorDesaturation,
+        #Segments,
+        #Blacking,
+        PositionX,
+        PositionY,
+        #PositionXY,
+    )
+
+
+class WaveformType (object):
+    Sine = 'sine'
+    Triangle = 'triangle'
+    Square = 'square'
+    Sawtooth = 'sawtooth'
+
+
+class AnimationUI (UserInterface):
+    def __init__(self, anim):
+        self.anim = anim
+        self.initialize()
+
+    def initialize(self):
+        # TODO:
+        pass
+
+    def set_control_value(self, control, value):
+        setattr(self.anim, control, value)
+        self.update_controllers('set_control_value', control, value)
+
 
 class Animation (object):
     """Wow, what a clusterfuck.
@@ -42,25 +98,20 @@ class Animation (object):
     boolean active;
     """
 
-    speed_scale = 200
+    max_speed = 0.31 # radians/frame; this is about 3pi/sec at 30 fps
     wave_smoothing = pi/8.0
 
     def __init__(self):
-        """Start with default (benign) state for an aniamtor."""
-        self.typeI = 24
-        self.speedI = 64
-        self.weightI = 0
-        self.targetI = 36
-        self.n_periodsI = 0
-        self.duty_cycleI = 0
-        self.smoothingI = 32
+        """Start with default (benign) state for an animator."""
+        self.type = WaveformType.Sine
+        self.target = AnimationTarget.Radius
+        self.speed = 0.0
+        self.weight = 0
+        self.n_periods = 0
+        self.duty_cycle = 0.0
+        self.smoothing = 0.25
 
         self.curr_angle = 0.0
-
-        # at the moment we create some rather important attributes for the first
-        # time in this method, due to differences in how Java and Python classes
-        # are declared.  Unpythonic but not broken, for now.
-        self.update_params()
 
     def copy(self):
         """At present, Animation only contains references to immutable types.
@@ -95,7 +146,7 @@ class Animation (object):
 
     def update_state(self):
         if self.active:
-            self.curr_angle = (self.curr_angle + self.speed) % TWOPI
+            self.curr_angle = (self.curr_angle + self.speed*self.max_speed) % TWOPI
 
     def get_value(self, angle_offset):
         """Return the current value of the animation, with an offset."""
@@ -111,10 +162,10 @@ class Animation (object):
             return float(self.weight * triangle(angle))
         elif self.type == 2:
             # square wave
-            return float(self.weight * square(angle, self.smoothing))
+            return float(self.weight * square(angle, self.smoothing*HALFPI))
         elif self.type == 3:
             # sawtooth wave
-            return float(self.weight * sawtooth(angle, self.smoothing))
+            return float(self.weight * sawtooth(angle, self.smoothing*HALFPI))
 
     def get_value_vector(self, angle_offsets):
         """Return the current value of the animation for an ndarray of offsets."""
@@ -132,10 +183,10 @@ class Animation (object):
             return self.weight * triangle_vector(angle)
         elif self.type == 2:
             # square wave
-            return self.weight * square_vector(angle, self.smoothing)
+            return self.weight * square_vector(angle, self.smoothing*HALFPI)
         elif self.type == 3:
             # sawtooth wave
-            return self.weight * sawtooth_vector(angle, self.smoothing)
+            return self.weight * sawtooth_vector(angle, self.smoothing*HALFPI)
 
 
 class AnimationClipboard (object):

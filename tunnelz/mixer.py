@@ -1,22 +1,19 @@
 from .beam import Beam
 from .look import Look
+from .ui import UserInterface
 
-class MixerUI (object):
+class MixerUI (UserInterface):
     """Handle user interactions for the mixer.
 
     Owns a list of BeamUI, one for each mixer layer.
     """
     def __init__(self, mixer):
+        super(MixerUI, self).__init__()
         self.mixer = mixer
         self._current_layer = 0
-        self.controllers = set()
 
         # make fresh beam UIs
         self.beam_ui = [BeamUI(beam) for beam in mixer.layers]
-
-    def update_controllers(self, method, *args, **kwargs):
-        for controller in self.controllers:
-            getattr(controller, method)(*args, **kwargs)
 
     @property
     def current_layer(self):
