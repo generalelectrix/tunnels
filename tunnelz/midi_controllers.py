@@ -19,8 +19,10 @@ def _build_grid_button_map():
 class MidiController (object):
     """Base class for midi controllers."""
 
-    def __init__(self):
+    def __init__(self, midi_in, midi_out):
         self.controls = {}
+        self.midi_in = midi_in
+        self.midi_out = midi_out
 
     def add_controls(self, control_map, callback):
         """Attach a control map to a specified callback.
@@ -34,6 +36,15 @@ class MidiController (object):
         """Manually register a callback for an iterable of mappings."""
         for mapping in mappings:
             self.controls[mapping] = callback
+
+    def _set_radio_button(self, set_value, control_map):
+        """Set only one out of a set of controls on."""
+        for value, mapping in control_map:
+            self.midi_out.send_from_mapping(mapping, int(value == set_value))
+
+    def register_callbacks(self):
+        """Register the control mapping callbacks with the midi input service."""
+        self.midi_in.register_mappings(self.controls)
 
 
 class BeamMatrixMidiController (MidiController):
@@ -67,16 +78,15 @@ class BeamMatrixMidiController (MidiController):
 
     def __init__(self, ui, midi_in, midi_out):
         """Fire up a fresh controller and register it with the UI."""
-        super(BeamMatrixMidiController, self).__init__()
+        super(BeamMatrixMidiController, self).__init__(midi_in, midi_out)
         self.ui = ui
         ui.controllers.add(self)
-        self.midi_out = midi_out
 
         # the controls which will be registered with the midi service
         self.set_callback(self.grid_button_map.itervalues(), self.handle_grid_button)
         self.set_callback(self.control_map.itervalues(), self.handle_state_button)
 
-        midi_in.register_mappings(self.controls)
+        self.register_callbacks()
 
     def handle_grid_button(self, mapping, payload):
         row, col = self.grid_button_map.inv[mapping]
@@ -87,13 +97,13 @@ class BeamMatrixMidiController (MidiController):
 
     def set_beam_matrix_state(self, state):
         """Send UI update commands based on the beam matrix state."""
-        led_state = state_to_led_state_map[state]
+        led_state = self.state_to_led_state_map[state]
         message_mappings = tuple(
             (mapping, getattr(led_state, control))
             for control, mapping in self.control_map.iteritems())
         self.midi_out.send_from_mapping(message_mappings)
 
-    def set_button_state(row, column, state):
+    def set_button_state(self, row, column, state):
         control_map = self.grid_button_map[(row, column)]
         status, color = self.button_state_value_map[state]
         if status == 0:
@@ -107,19 +117,39 @@ class BeamMatrixMidiController (MidiController):
 
         self.midi_out.send_from_mapping(control_map, val)
 
+class MetaControlMidiController (MidiController):
+
+    def __init__(self, ui, midi_in, midi_out):
+        super(MetaControlMidiController, self).__init__(midi_in, midi_out)
+        self.ui = ui
+        ui.controllers.add(self)
+
+        self.track_select = self.add_controls(
+            {chan: NoteOnMapping(chan, 0x33) for chan in xrange(ui.mixer_ui.mixer.n_layers)},
+            self.handle_current_layer)
+
+        self.register_callbacks()
+
+    def handle_current_layer(self, mapping, _):
+        chan = mapping[0]
+        self.ui.set_current_layer(chan)
+
+    def set_current_layer(self, layer):
+        """Emit the midi messages to change the selected mixer channel."""
+        self._set_radio_button(layer, self.track_select)
+
 class MixerMidiController (MidiController):
 
     def __init__(self, ui, midi_in, midi_out):
         """Fire up a fresh controller and register it with the UI."""
-        super(MixerMidiController, self).__init__()
+        super(MixerMidiController, self).__init__(midi_in, midi_out)
         self.ui = ui
         ui.controllers.add(self)
-        self.midi_out = midi_out
 
         self.channel_faders = bidict()
-        self.bump_buttons = bidict()
+        self.bump_button_on = bidict()
+        self.bump_button_off = bidict()
         self.mask_buttons = bidict()
-        self.track_select = bidict()
         self.look_indicators = bidict()
         # add controls for all mixer channels
         for chan in xrange(ui.mixer.n_layers):
@@ -127,7 +157,6 @@ class MixerMidiController (MidiController):
             self.bump_button_on[chan] = NoteOnMapping(chan, 0x32)
             self.bump_button_off[chan] = NoteOffMapping(chan, 0x32)
             self.mask_buttons[chan] = NoteOnMapping(chan, 0x31)
-            self.track_select[chan] = NoteOnMapping(chan, 0x33)
             self.look_indicators[chan] = NoteOnMapping(chan, 0x30)
 
         # update the controls
@@ -135,10 +164,9 @@ class MixerMidiController (MidiController):
         self.set_callback(self.bump_button_on.itervalues(), self.handle_bump_button_on)
         self.set_callback(self.bump_button_off.itervalues(), self.handle_bump_button_off)
         self.set_callback(self.mask_buttons.itervalues(), self.handle_mask_button)
-        self.set_callback(self.track_select.itervalues(), self.handle_track_select)
 
         # register input mappings
-        midi_in.register_mappings(self.controls)
+        self.register_callbacks()
 
     def handle_channel_fader(self, mapping, value):
         chan = self.channel_faders[mapping]
@@ -157,14 +185,6 @@ class MixerMidiController (MidiController):
     def handle_mask_button(self, mapping, _):
         chan = self.mask_buttons[mapping]
         self.ui.toggle_mask_state(chan)
-
-    def set_mixer_layer(self, layer):
-        """Emit the midi messages to change the selected mixer channel."""
-        for chan, mapping in self.track_select.iteritems():
-            if chan == layer:
-                self.midi_out.send_from_mapping(mapping, 0)
-            else:
-                self.midi_out.send_from_mapping(mapping, 1)
 
     def set_level(self, layer, level):
         """Emit midi messages to update layer level."""
@@ -198,10 +218,10 @@ class AnimationMidiController (MidiController):
 
     def __init__(self, ui, midi_in, midi_out):
         """Fire up a fresh controller and register it with the UI."""
-        super(AnimationMidiController, self).__init__()
+        super(AnimationMidiController, self).__init__(midi_in, midi_out)
         self.ui = ui
         ui.controllers.add(self)
-        self.midi_out = midi_out
+
         self.knobs = self.add_controls({
             'speed': ControlChangeMapping(0, 48),
             'weight': ControlChangeMapping(0, 49),
@@ -222,26 +242,27 @@ class AnimationMidiController (MidiController):
             },
             self.handle_type_button)
 
-        self.periodicity_buttons = self.add_controls(
+        self.n_periods_buttons = self.add_controls(
             {n: NoteOnMapping(0, n) for n in xrange(16)},
-            self.handle_periodicity_button)
+            self.handle_n_periods_button)
 
         # FIXME-NUMERIC TARGETS
         self.target_buttons = self.add_controls(
             {target: NoteOnMapping(0, target+34)for target in AnimationTarget.VALUES},
             self.handle_target_button)
 
-        self.clipboard_buttons = self.add_controls({
-            'copy': NoteOnMapping(0, 0x65),
-            'paste': NoteOnMapping(0, 0x64)},
-            self.handle_clipboard_button)
+        # TODO: move these functions somewhere else!  these are meta-animation controls
+        # self.clipboard_buttons = self.add_controls({
+        #     'copy': NoteOnMapping(0, 0x65),
+        #     'paste': NoteOnMapping(0, 0x64)},
+        #     self.handle_clipboard_button)
 
-        self.animation_select_buttons = self.add_controls({
-            n: NoteOnMapping(0, 0x57+n) for n in xrange(4)},
-            self.handle_animation_select_button)
+        # self.animation_select_buttons = self.add_controls({
+        #     n: NoteOnMapping(0, 0x57+n) for n in xrange(4)},
+        #     self.handle_animation_select_button)
 
         # register input mappings
-        midi_in.register_mappings(self.controls)
+        self.register_callbacks()
 
     @staticmethod
     def speed_from_midi(val):
@@ -262,14 +283,14 @@ class AnimationMidiController (MidiController):
             return 64
 
     knob_value_from_midi = {
-        'speed': self.speed_from_midi,
+        'speed': speed_from_midi,
         'weight': lambda w: w,
         #'duty_cycle': lambda d: d,
         'smoothing': lambda val: float(val)/127
     }
 
     knob_value_to_midi = {
-        'speed': self.speed_to_midi,
+        'speed': speed_to_midi,
         'weight': lambda w: w,
         #'duty_cycle': lambda d: d,
         'smoothing': lambda s: min(int(s * 127), 127)
@@ -277,4 +298,26 @@ class AnimationMidiController (MidiController):
 
     def handle_knob(self, mapping, value):
         knob = self.knobs.inv[mapping]
-        self.anim.set_control_value(knob, self.knob_value_from_midi[knob](value))
+        setattr(self.ui, knob, self.knob_value_from_midi[knob](value))
+
+    def set_knob(self, value, knob):
+        mapping = self.knobs[knob]
+        self.midi_out.send_from_mapping(mapping, self.knob_value_to_midi[knob](value))
+
+    def handle_type_button(self, mapping, _):
+        self.ui.type = self.type_buttons.inv[mapping]
+
+    def set_type(self, set_type):
+        self._set_radio_button(set_type, self.type_buttons)
+
+    def handle_n_periods_button(self, mapping, _):
+        self.ui.n_periods = self.n_periods_buttons.inv[mapping]
+
+    def set_n_periods(self, value):
+        self._set_radio_button(value, self.n_periods_buttons)
+
+    def handle_target_button(self, mapping, _):
+        self.ui.target = self.target_buttons.inv[mapping]
+
+    def set_target(self, target):
+        self._set_radio_button(target, self.target_buttons)

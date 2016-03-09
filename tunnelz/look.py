@@ -1,27 +1,21 @@
-from itertools import izip
 from .beam import Beam
 
 class Look (Beam):
     """A look is a beam that is actually a composite of several beams."""
 
-    def __init__(self, layers, levels, masks):
+    def __init__(self, layers):
         """Construct a new look from the contents of a mixer.
 
         This constructor copies everything handed to it.
 
         layers, levels, and masks are all lists of the mixer channel values.
         """
-        self.layers = [beam.copy() for beam in self.layers]
-        self.levels = list(levels)
-        self.masks = list(masks)
+        super(Look, self).__init__()
+        self.layers = [layer.copy() for layer in layers]
 
     def copy(self):
-        """Return a deep copy of this look."""
-        return Look(
-            layers=self.layers,
-            levels=self.levels,
-            masks=self.masks,
-        )
+        """Return a copy of this look."""
+        return Look(self.layers)
 
     def display(self, level_scale, as_mask):
         """Draw all the Beams in this Look.
@@ -30,8 +24,9 @@ class Look (Beam):
         as_mask: boolean
         """
 
-        for layer, level, mask in izip(self.layers, self.levels, self.masks):
+        for layer in self.layers:
             # only draw a layer if it isn't off
+            level = layer.level
             if level != 0:
                 scaled_level = level_scale * level / 255
-                layer.display(scaled_level, as_mask or mask)
+                layer.beam.display(scaled_level, as_mask or level.mask)

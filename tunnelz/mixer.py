@@ -3,50 +3,27 @@ from .look import Look
 from .ui import UserInterface
 
 class MixerUI (UserInterface):
-    """Handle user interactions for the mixer.
-
-    Owns a list of BeamUI, one for each mixer layer.
-    """
+    """Handle user interactions for the mixer."""
     def __init__(self, mixer):
         super(MixerUI, self).__init__()
         self.mixer = mixer
-        self._current_layer = 0
 
-        # make fresh beam UIs
-        self.beam_ui = [BeamUI(beam) for beam in mixer.layers]
+    def initialize(self):
+        for i, layer in enumerate(self.mixer.layers):
+            self.update_controllers('set_look_indicator', i, isinstance(layer.beam, Look))
+            self.update_controllers('set_level', i, layer.level)
+            self.update_controllers('set_bump_button', i, layer.bump)
+            self.update_controllers('set_mask_button', i, layer.mask)
 
-    @property
-    def current_layer(self):
-        return self._current_layer
-
-    @current_layer.setter
-    def current_layer(self, layer):
-        """If we are changing which layer is current, update UI."""
-        if self._current_layer != layer:
-            self._current_layer = layer
-            self.update_controllers('set_mixer_layer', layer)
-
-    def get_current_beam(self):
-        """Return the beam in the currently selected layer."""
-        return self.mixer.get_beam_from_layer(self.current_layer)
-
-    def replace_current_beam(self, beam):
-        """Replace the beam in the currently selected layer with this beam.
-
-        Also re-associate the beam UI for that mixer layer.
-        """
-        layer = self.current_layer
+    def put_beam_in_layer(self, layer, beam):
+        """Replace the beam in numbered layer with this beam."""
         self.mixer.put_beam_in_layer(layer, beam)
-        self.beam_ui[layer].beam = beam
-        self.ui.set_look_indicator(layer, isinstance(beam, Look))
-
-    def get_copy_of_current_look(self):
-        return self.mixer.get_copy_of_current_look()
+        self.update_controllers('set_look_indicator', layer, isinstance(beam, Look))
 
     def set_look(self, look):
         """Set the current look, clobbering mixer state."""
         self.mixer.set_look(look)
-        # TODO: update beam and mixer UI
+        self.initialize()
 
     def set_level(self, layer, level):
         self.mixer.set_level(layer, level)
@@ -64,47 +41,59 @@ class MixerUI (UserInterface):
         self.update_controllers('set_mask_button', layer, state)
 
 
+class MixerLayer (object):
+    """Data bag for the contents of a mixer channel."""
+    def __init__(self, beam, level, bump, mask):
+        self.beam = beam
+        self.level = level
+        self.bump = bump
+        self.mask = mask
+
+    def copy(self):
+        return MixerLayer(
+            beam=beam.copy(),
+            level=level,
+            bump=bump,
+            mask=mask)
+
+
 class Mixer (object):
     """Holds a collection of beams in layers, and understands how they are mixed."""
     def __init__(self, n_layers):
         self.n_layers = n_layers
-        self.layers = [Beam() for _ in xrange(n_layers)]
-        self.levels = [0 for _ in xrange(n_layers)]
-        self.bump = [False for _ in xrange(n_layers)]
-        self.mask = [False for _ in xrange(n_layers)]
+        self.layers = [MixerLayer(Beam(), 0, False, False) for _ in xrange(n_layers)]
 
     def put_beam_in_layer(self, layer, beam):
-        self.layers[layer] = beam
+        self.layers[layer].beam = beam
 
     def get_beam_from_layer(self, layer):
-        return self.layers[layer]
+        return self.layers[layer].beam
 
     def set_level(self, layer, level):
         """level: int in [0, 255]"""
-        self.levels[layer] = level
+        self.layers[layer].level = level
 
     def bump_on(self, layer):
-        self.bump[layer] = True
+        self.layers[layer].bump = True
 
     def bump_off(self, layer):
-        self.bump[layer] = False
+        self.layers[layer].bump = False
 
     def toggle_mask_state(self, layer):
-        self.mask[layer] = mask_state = not self.mask[layer]
+        self.layers[layer].mask = mask_state = not self.layers[layer].mask
         return mask_state
 
     def draw_layers(self):
         draw_commands = []
-        for i in xrange(self.n_layers):
-            level = self.levels[i]
-            bump = self.bump[i]
+        for layer in self.layers:
+            level = layer.level
+            bump = layer.bump
 
             if level > 0 or bump:
-                beam = self.layers[i]
                 if bump:
-                    draw_commands.append(beam.display(255, self.mask[i]))
+                    draw_commands.append(layer.beam.display(255, layer.mask))
                 else:
-                    draw_commands.append(beam.display(level, self.mask[i]))
+                    draw_commands.append(layer.beam.display(level, layer.mask))
             else:
                 draw_commands.append([])
         return draw_commands

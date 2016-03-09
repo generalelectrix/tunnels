@@ -50,53 +50,21 @@ class WaveformType (object):
 
 class AnimationUI (UserInterface):
     def __init__(self, anim):
-        self.anim = anim
+        super(AnimationUI, self).__init__(model=anim)
+
+        self.type = self.ui_model_property('type', 'set_type')
+        self.n_periods = self.ui_model_property('n_periods', 'set_n_periods')
+        self.target = self.ui_model_property('target', 'set_target')
+        self.speed = self.ui_model_property('speed', 'set_knob', knob='speed')
+        self.weight = self.ui_model_property('weight', 'set_knob', knob='weight')
+        #self.duty_cycle = self.ui_model_property('duty_cycle', 'set_knob', knob='duty_cycle')
+        self.smoothing = self.ui_model_property('smoothing', 'set_knob', knob='smoothing')
+
         self.initialize()
-
-    def initialize(self):
-        # TODO:
-        pass
-
-    def set_control_value(self, control, value):
-        setattr(self.anim, control, value)
-        self.update_controllers('set_control_value', control, value)
 
 
 class Animation (object):
-    """Wow, what a clusterfuck.
-
-    midi-driven parameters:
-    int typeI, speedI, weightI, targetI, nPeriodsI, dutyCycleI, smoothingI;
-
-    scaled parameters
-    int type; // 0 = sine, 1 = triangle, 2 = square, 3 = sawtooth
-    int nPeriods;
-    float speed;
-    int weight;
-    float dutyCycle;
-    float smoothing;
-    int target; // tricky to figure out how we want to do this...
-    /*
-        0 none
-        1 rotation
-        2 thickness
-        3 radius
-        4 ellipse
-        5 color
-        6 spread
-        7 periodicity
-        8 saturation
-        9 segments
-        10 blacking
-        11 x
-        12 y
-        13 x + y
-    */
-
-    // internal variables
-    float currAngle;
-    boolean active;
-    """
+    """Generate values from a waveform given appropriate parameters."""
 
     max_speed = 0.31 # radians/frame; this is about 3pi/sec at 30 fps
     wave_smoothing = pi/8.0
@@ -104,14 +72,18 @@ class Animation (object):
     def __init__(self):
         """Start with default (benign) state for an animator."""
         self.type = WaveformType.Sine
+        self.n_periods = 0
         self.target = AnimationTarget.Radius
         self.speed = 0.0
         self.weight = 0
-        self.n_periods = 0
         self.duty_cycle = 0.0
         self.smoothing = 0.25
 
         self.curr_angle = 0.0
+
+    @property
+    def active(self):
+        return self.weight > 0
 
     def copy(self):
         """At present, Animation only contains references to immutable types.
@@ -122,27 +94,6 @@ class Animation (object):
         this method will need to be revisited.
         """
         return copy.copy(self)
-
-    def update_params(self):
-        self.type = self.typeI - 24
-        self.n_periods = self.n_periodsI
-
-        speedI = self.speedI
-        if speedI > 65:
-            self.speed = -float((speedI - 65))/self.speed_scale
-        elif speedI < 63:
-            self.speed = float((-speedI + 63))/self.speed_scale
-        else:
-            self.speed = 0.0
-
-        self.weight = self.weightI
-        self.active = True if self.weightI > 0 else False
-
-        self.target = self.targetI - 35 + 1 # really need to do this mapping in a more explicit way...
-
-        self.duty_cycle = float(self.duty_cycleI / 127)
-
-        self.smoothing = (pi/2) * float(self.smoothingI) / 127
 
     def update_state(self):
         if self.active:
