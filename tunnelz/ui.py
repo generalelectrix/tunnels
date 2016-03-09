@@ -120,15 +120,17 @@ class UiModelProperty (object):
             getattr(controller, self.callback_name)(val, **self.kwargs)
 
 
-def ui_method(callback_name, result_filter_func=None):
+def ui_method(callback_name, result_filter_func=None, **decoargs):
     """Decorator to make a method act something like a ui property.
 
     Only use this decorator on methods in classes which subclass UserInterface.
 
     The wrapped method will be called.  The value it returns will be passed
     through an optional result_filter_func before being passed to the
-    observing controllers by calling their callback_name method.  The original
-    return value will then be returned.
+    observing controllers by calling their callback_name method with the
+    filtered result as the first argument, as well as any optional keyword
+    arguments passed to this decorator.  The original return value will then be
+    returned.
     """
     def ui_method_decorator(method):
         @wraps(method)
@@ -137,7 +139,7 @@ def ui_method(callback_name, result_filter_func=None):
             if result_filter_func is not None:
                 filtered_result = result_filter_func(result)
             for controller in self.controllers:
-                getattr(controller, callback_name)(filtered_result)
+                getattr(controller, callback_name)(filtered_result, **decoargs)
             return result
         return ui_method_wrapper
     return ui_method_decorator
