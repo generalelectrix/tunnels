@@ -128,6 +128,11 @@ class MetaControlMidiController (MidiController):
             {chan: NoteOnMapping(chan, 0x33) for chan in xrange(ui.mixer_ui.mixer.n_layers)},
             self.handle_current_layer)
 
+        # TODO: DRY out number of animators
+        self.animation_select_buttons = self.add_controls({
+            n: NoteOnMapping(0, 0x57+n) for n in xrange(4)},
+            self.handle_current_animator)
+
         self.register_callbacks()
 
     def handle_current_layer(self, mapping, _):
@@ -137,6 +142,13 @@ class MetaControlMidiController (MidiController):
     def set_current_layer(self, layer):
         """Emit the midi messages to change the selected mixer channel."""
         self._set_radio_button(layer, self.track_select)
+
+    def handle_current_animator(self, mapping, _):
+        n = self.animation_select_buttons.inv[mapping]
+        self.ui.set_current_animator(n)
+
+    def set_current_animator(self, anim_num):
+        self._set_radio_button(anim_num, self.animation_select_buttons)
 
 class MixerMidiController (MidiController):
 
@@ -251,15 +263,11 @@ class AnimationMidiController (MidiController):
             {target: NoteOnMapping(0, target+34)for target in AnimationTarget.VALUES},
             self.handle_target_button)
 
-        # TODO: move these functions somewhere else!  these are meta-animation controls
-        # self.clipboard_buttons = self.add_controls({
-        #     'copy': NoteOnMapping(0, 0x65),
-        #     'paste': NoteOnMapping(0, 0x64)},
-        #     self.handle_clipboard_button)
 
-        # self.animation_select_buttons = self.add_controls({
-        #     n: NoteOnMapping(0, 0x57+n) for n in xrange(4)},
-        #     self.handle_animation_select_button)
+        self.clipboard_buttons = self.add_controls({
+            'copy': NoteOnMapping(0, 0x65),
+            'paste': NoteOnMapping(0, 0x64)},
+            self.handle_clipboard_button)
 
         # register input mappings
         self.register_callbacks()

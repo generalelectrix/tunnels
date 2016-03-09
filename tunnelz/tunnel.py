@@ -8,6 +8,7 @@ from copy import deepcopy
 from .button_LED import set_anim_select_LED
 from math import pi
 import numpy as np
+from .ui import UserInterface
 from .waveforms import sawtooth, sawtooth_vector
 
 # scale overall radius, set > 1.0 to enable larger shapes than screen size
@@ -15,6 +16,47 @@ MAX_RAD_MULT = 2.0
 MAX_ELLIPSE_ASPECT = 2.0
 
 TWOPI = 2*pi
+
+
+class TunnelUI (UserInterface):
+
+    def __init__(self, tunnel):
+        super(TunnelUI, self).__init__(model=tunnel)
+
+        self.rot_speed = self.ui_model_property('rot_speed', 'set_knob', knob='rot_speed')
+        self.thickness = self.ui_model_property('thickness', 'set_knob', knob='thickness')
+        self.radius = self.ui_model_property('radius', 'set_knob', knob='radius')
+        self.ellipse_aspect = self.ui_model_property('ellipse_aspect', 'set_knob', knob='ellipse_aspect')
+        self.col_center = self.ui_model_property('col_center', 'set_knob', knob='col_center')
+        self.col_width = self.ui_model_property('col_width', 'set_knob', knob='col_width')
+        self.col_spread = self.ui_model_property('col_spread', 'set_knob', knob='col_spread')
+        self.col_sat = self.ui_model_property('col_sat', 'set_knob', knob='col_sat')
+        self.segs = self.ui_model_property('segs', 'set_knob', knob='segs')
+        self.blacking = self.ui_model_property('blacking', 'set_knob', knob='blacking')
+
+        self.x_nudge, self.y_nudge = geometry.x_nudge, geometry.y_nudge
+
+    def nudge_x_pos(self):
+        """Nudge the beam in the +x direction."""
+        self.model.x_offset += self.x_nudge
+
+    def nudge_x_neg(self):
+        """Nudge the beam in the -x direction."""
+        self.model.x_offset -= self.x_nudge
+
+    def nudge_y_pos(self):
+        """Nudge the beam in the +y direction."""
+        self.model.y_offset += self.y_nudge
+
+    def nudge_y_neg(self):
+        """Nudge the beam in the -y direction."""
+        self.model.y_offset -= self.y_nudge
+
+    def reset_beam_position(self):
+        """Reset the beam to center."""
+        self.model.x_offset = 0
+        self.model.y_offset = 0
+
 
 class Tunnel (Beam):
     """Ellipsoidal tunnels.
@@ -60,16 +102,16 @@ class Tunnel (Beam):
     int currAnim;
     """
     n_anim = 4
-    rot_speed_scale = 400
+    rot_speed_scale = 0.155 # tunnel rotates this many rad/frame
     blacking_scale = 4
 
     def __init__(self):
         """Default tunnel constructor."""
         super(Tunnel, self).__init__()
-        self.rot_speedI = 64
-        self.thicknessI = 32
-        self.radiusI = 64
-        self.ellipse_aspectI = 64
+        self.rot_speed = 0.0
+        self.thickness = 0.25
+        self.radius = 0.5
+        self.ellipse_aspect = 0.5
 
         self.col_centerI = 0
         self.col_widthI = 0
@@ -82,9 +124,6 @@ class Tunnel (Beam):
         self.curr_angle = 0.0
 
         self.x_offset, self.y_offset = 0, 0
-
-        self.x_nudge, self.y_nudge = geometry.x_nudge, geometry.y_nudge
-        self.thickness_scale = geometry.thickness_scale
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
 
@@ -104,13 +143,6 @@ class Tunnel (Beam):
             self.rot_speed = -float((-rot_speedI+63))/self.rot_speed_scale
         else:
             self.rot_speed = 0.0
-
-
-        self.thickness = float(self.thicknessI*self.thickness_scale)
-
-        # in pixels, I think
-        self.radius = int(MAX_RAD_MULT * geometry.max_radius * self.radiusI / 127)
-        self.ellipse_aspect = float(MAX_ELLIPSE_ASPECT * self.ellipse_aspectI / 127.)
 
         self.col_center = self.col_centerI * 2
         self.col_width = self.col_widthI
@@ -162,21 +194,20 @@ class Tunnel (Beam):
             # what is this animation targeting?
             # at least for non-chicklet-level targets...
             if target == 1: # rotation speed
-                rot_adjust += anim.get_value(0);
+                rot_adjust += anim.get_value(0)
             if target == 4: # ellipsing
-                ellipse_adjust += anim.get_value(0);
+                ellipse_adjust += anim.get_value(0)
 
 
         # calulcate the rotation, wrap to 0 to 2pi
         self.curr_angle = (
-            self.curr_angle + self.rot_speed + rot_adjust/self.rot_speed_scale) % TWOPI
+            self.curr_angle +
+            (self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
 
-        radius = self.radius
-        thickness = self.thickness
+        radius = int(MAX_RAD_MULT * geometry.max_radius * self.radius)
+        thickness = self.thickness * geometry.thickness_scale
 
-        rad_X = (
-            radius*(self.ellipse_aspect + (MAX_ELLIPSE_ASPECT * ellipse_adjust / 127) ) -
-            thickness/2)
+        rad_X = radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust)) - thickness/2
         rad_Y = radius - thickness/2
 
         arcs = self.draw_segments_with_animations(
@@ -464,114 +495,6 @@ class Tunnel (Beam):
     #     #     seg_angle,
     #     #     seg_angle + self.rot_interval,)
 
-    def set_midi_param(self, is_note, num, val):
-        """set a control parameter based on passed midi message"""
-        # define the mapping between APC40 and parameters and set values
-        unimplemented_animation_waveforms = (28, 29, 30, 31)
-        unimplemented_animation_targets = (43, 44, 47)
-
-        if is_note:
-            # ipad animation type select
-            if num >= 24 and num <= 31:
-
-                # haven't implemented these waveforms yet
-
-                if num not in unimplemented_animation_waveforms:
-                    anim = self.get_current_animation()
-                    anim.typeI = num
-                    anim.update_params()
-
-            # ipad periodicity select
-            elif num >= 0 and num <= 15:
-                anim = self.get_current_animation()
-                anim.n_periodsI = num
-                anim.update_params()
-
-            # ipad target select
-            elif (
-                num >= 35 and
-                num <= 47 and
-                num not in unimplemented_animation_targets
-            ):
-                anim = self.get_current_animation()
-                anim.targetI = num
-                anim.update_params()
-
-            # animation control buttons, for iPad control
-
-            # aniamtion select buttons:
-            elif num == 0x57: #anim 0
-                self.curr_anim = 0
-                set_anim_select_LED(0)
-            elif num == 0x58: #anim 1
-                self.curr_anim = 1
-                set_anim_select_LED(1)
-            elif num == 0x59: #anim 2
-                self.curr_anim = 2
-                set_anim_select_LED(2)
-            elif num == 0x5A: #anim 3
-                self.curr_anim = 3
-                set_anim_select_LED(3)
-
-            # directional controls
-            elif num == 0x5E: # up on D-pad
-                self.y_offset -= self.y_nudge
-            elif num == 0x5F: # down on D-pad
-                self.y_offset += self.y_nudge
-            elif num == 0x60: # right on D-pad
-                self.x_offset += self.x_nudge
-            elif num == 0x61: # left on D-pad
-                self.x_offset -= self.x_nudge
-            elif num == 0x62: # "shift" - beam center
-                self.x_offset = 0
-                self.y_offset = 0
-
-        else: # this is a control change
-            # color parameters: top of lower bank
-            if num == 16: # color center
-                self.col_centerI = val
-            elif num == 17: # color width
-                self.col_widthI = val
-            elif num == 18: # color spread
-                self.col_spreadI = val
-            elif num == 19: # saturation
-                self.col_satI = val
-
-            # geometry parameters: bottom of lower bank
-            elif num == 20: # rotation speed
-                self.rot_speedI = val
-            elif num == 21: # thickness
-                self.thicknessI = val
-            elif num == 22: # radius
-                self.radiusI = val
-            elif num == 23: # ellipse aspect ratio
-                self.ellipse_aspectI = val
-
-            # segments parameters: bottom of upper bank
-
-            elif num == 52: # number of segments
-                self.segsI = val
-            elif num == 53: # blacking
-                self.blackingI = val
-
-            # animation parameters: top of upper bank
-            # /* fix this code
-            elif num == 48:
-                anim = self.get_current_animation()
-                anim.speedI = val
-                anim.update_params()
-            elif num == 49:
-                anim = self.get_current_animation()
-                anim.weightI = val
-                anim.update_params()
-            elif num == 50:
-                anim = self.get_current_animation()
-                anim.duty_cycleI = val
-                anim.update_params()
-            elif num == 51:
-                anim = self.get_current_animation()
-                anim.smoothingI = val
-                anim.update_params()
 
     def get_midi_param(self, is_note, num):
         """get the midi-scaled value for a control parameter"""

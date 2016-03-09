@@ -60,8 +60,6 @@ class AnimationUI (UserInterface):
         #self.duty_cycle = self.ui_model_property('duty_cycle', 'set_knob', knob='duty_cycle')
         self.smoothing = self.ui_model_property('smoothing', 'set_knob', knob='smoothing')
 
-        self.initialize()
-
 
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""

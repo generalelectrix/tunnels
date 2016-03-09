@@ -19,7 +19,7 @@ def make_resolution_data(x_size, y_size):
         max_radius=min(x_size, y_size)/2,
         max_x_offset=x_size/2,
         max_y_offset=y_size/2,
-        thickness_scale=(2.7/1280)*x_size,
+        thickness_scale=0.27*x_size, # implies that maximum thickness is 0.27*x_size
         x_nudge=(10*x_size)/1280,
         y_nudge=(10*x_size)/1280,)
 
