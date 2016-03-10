@@ -43,7 +43,7 @@ class MidiController (object):
 
     def _set_radio_button(self, set_value, control_map):
         """Set only one out of a set of controls on."""
-        for value, mapping in control_map:
+        for value, mapping in control_map.iteritems():
             self.midi_out.send_from_mapping(mapping, int(value == set_value))
 
     def register_callbacks(self):
@@ -137,7 +137,7 @@ class BeamMatrixMidiController (MidiController):
         message_mappings = tuple(
             (mapping, getattr(led_state, control))
             for control, mapping in self.control_map.iteritems())
-        self.midi_out.send_from_mapping(message_mappings)
+        self.midi_out.send_from_mappings(message_mappings)
 
     def set_button_state(self, row, column, state):
         control_map = self.grid_button_map[(row, column)]
@@ -230,21 +230,21 @@ class MixerMidiController (MidiController):
         self.register_callbacks()
 
     def handle_channel_fader(self, mapping, value):
-        chan = self.channel_faders[mapping]
+        chan = self.channel_faders.inv[mapping]
         # map midi range to 255
         value = 0 if value == 0 else 2*value + 1
         self.ui.set_level(chan, value)
 
     def handle_bump_button_on(self, mapping, _):
-        chan = self.bump_button_on[mapping]
+        chan = self.bump_button_on.inv[mapping]
         self.ui.set_bump_button(chan, True)
 
     def handle_bump_button_off(self, mapping, _):
-        chan = self.bump_button_off[mapping]
+        chan = self.bump_button_off.inv[mapping]
         self.ui.set_bump_button(chan, False)
 
     def handle_mask_button(self, mapping, _):
-        chan = self.mask_buttons[mapping]
+        chan = self.mask_buttons.inv[mapping]
         self.ui.toggle_mask_state(chan)
 
     def set_level(self, layer, level):

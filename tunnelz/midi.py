@@ -17,12 +17,9 @@ NoteOffMapping = partial(MidiMapping, kind='NoteOff')
 ControlChangeMapping = partial(MidiMapping, kind='ControlChange')
 
 message_type_to_event_type = {
-    NoteOff: 8 << 4,
-    NoteOffMapping: 8 << 4,
-    NoteOn: 9 << 4,
-    NoteOnMapping: 9 << 4,
-    ControlChange: 11 << 4,
-    ControlChangeMapping: 11 << 4,
+    'NoteOff': 8 << 4,
+    'NoteOn': 9 << 4,
+    'ControlChange': 11 << 4,
 }
 
 def list_ports():
@@ -45,26 +42,21 @@ class MidiOutput (object):
         port = self.ports.pop(port_name)
         port.close_port()
 
-    def send(self, *messages):
-        """Send an arbitrary number of midi messages."""
-        for message in messages:
-            log.debug("sending {}".format(message))
-            b0 = message_type_to_event_type[type(message)] + message[0]
-            event = (b0, message[1], message[2])
-            for port in self.ports.itervalues():
-                port.send_message(event)
-
-    def send_from_mapping(self, *messages):
+    def send_from_mappings(self, *messages):
         """Send an arbitrary number of midi messages.
 
         Messages should be passed in as tuples of (mapping, value).
         """
         for mapping, value in messages:
-            log.debug("sending {}".format(mapping, value))
-            b0 = message_type_to_event_type[type(mapping)] + mapping[0]
-            event = (b0, mapping[1], value)
-            for port in self.ports.itervalues():
-                port.send_message(event)
+            self.send_from_mapping(mapping, value)
+
+    def send_from_mapping(self, mapping, value):
+        """Send a midi message from a mapping and a payload."""
+        log.debug("sending {}, {}".format(mapping, value))
+        b0 = message_type_to_event_type[mapping.kind] + mapping[0]
+        event = (b0, mapping[1], value)
+        for port in self.ports.itervalues():
+            port.send_message(event)
 
     def send_note(self, channel, pitch, velocity):
         """Send a note on message."""
@@ -100,7 +92,7 @@ class MidiInput (object):
         mappings is an iterable of tuples of (MidiMapping, handler_method).
         handler_method should be a callable that can handle a midi message.
         """
-        for mapping, handler in mappings:
+        for mapping, handler in mappings.iteritems():
             self.mappings[mapping].add(handler)
 
     def unregister_mappings(self, mappings):
@@ -108,7 +100,7 @@ class MidiInput (object):
 
         mappings is an iterable of tuples of (MidiMapping, handler_method).
         """
-        for mapping, handler in mappings:
+        for mapping, handler in mappings.iteritems():
             self.mappings[mapping].discard(handler)
 
     def open_port(self, port_number):
@@ -143,4 +135,4 @@ class MidiInput (object):
         """Dispatch a midi message to the registered handlers."""
         handlers = self.mappings.get(mapping, tuple())
         for handler in handlers:
-            handler.handle_message(mapping, payload)
+            handler(mapping, payload)

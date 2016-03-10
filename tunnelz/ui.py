@@ -75,11 +75,11 @@ class UserInterface (object):
         for prop in self._model_properties:
             val = getattr(self.model, prop.attribute)
             for controller in self.controllers:
-                getattr(controller, prop.callback_name)(val)
+                getattr(controller, prop.callback_name)(val, **prop.kwargs)
         for prop in self._properties:
             val = prop.val
             for controller in self.controllers:
-                getattr(controller, prop.callback_name)(val)
+                getattr(controller, prop.callback_name)(val, **prop.kwargs)
 
 
 class UiModel (object):
