@@ -10,8 +10,8 @@ from .midi import NoteOnMapping, NoteOffMapping, ControlChangeMapping
 
 def _build_grid_button_map():
     mapping = {}
-    for row in BeamMatrixMinder.n_rows:
-        for column in BeamMatrixMinder.n_columns:
+    for row in xrange(BeamMatrixMinder.n_rows):
+        for column in xrange(BeamMatrixMinder.n_columns):
             mapping[(row, column)] = NoteOnMapping(column, row + 0x35)
     return bidict(mapping)
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 from tunnelz.draw_commands import Arc, write_layer_to_file
-from tunnelz.color import color
 from tunnelz.geometry import geometry as geo
 from math import pi
 

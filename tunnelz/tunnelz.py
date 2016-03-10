@@ -45,10 +45,11 @@ class Show (object):
         self.setup_controllers()
 
         # initialize the UIs
-        # TODO: UI initialization
+        self.mixer_ui.initialize()
+        self.tunnel_ui.initialize()
+        self.animator_ui.initialize()
 
-        # pretend we just pushed track select 0
-        self.meta_ui.set_current_layer(0)
+        # done!
 
     def setup_models(self):
         """Instantiate all of the model objects."""

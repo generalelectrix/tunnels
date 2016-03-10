@@ -5,7 +5,7 @@ deals with the few actions that need to be coordinated across each of them.
 """
 from .animation import AnimationClipboard
 from .beam_matrix_minder import BeamMatrixUI
-from .ui import UserInterface, ui_method
+from .ui import UserInterface
 
 class MetaUI (UserInterface):
 
@@ -21,6 +21,7 @@ class MetaUI (UserInterface):
 
     def initialize(self):
         super(MetaUI, self).initialize()
+        self.beam_matrix_ui.initialize()
         self._update_current_layer()
 
     def set_current_layer(self, layer):

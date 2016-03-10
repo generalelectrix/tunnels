@@ -1,5 +1,5 @@
 import numpy as np
-from .ui import UserInterface, ui_method
+from .ui import UserInterface
 
 # states for beam matrix UI
 Idle = 'idle'

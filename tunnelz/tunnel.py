@@ -1,15 +1,13 @@
 from .animation import Animation, AnimationTarget
 from .beam import Beam
-from .color import color
 from .draw_commands import Arc
 from .geometry import geometry
 from itertools import izip
 from copy import deepcopy
-from .button_LED import set_anim_select_LED
 from math import pi
 import numpy as np
 from .ui import UserInterface
-from .waveforms import sawtooth, sawtooth_vector
+from .waveforms import sawtooth_vector
 
 # scale overall radius, set > 1.0 to enable larger shapes than screen size
 MAX_RAD_MULT = 2.0
