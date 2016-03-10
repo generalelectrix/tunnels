@@ -105,16 +105,16 @@ class Animation (object):
             return 0.
 
         angle = angle_offset*self.n_periods + self.curr_angle
-        if self.type == 0:
+        if self.type == WaveformType.Sine:
             # sine wave
             return float(self.weight * sin(angle))
-        elif self.type == 1:
+        elif self.type == WaveformType.Triangle:
             # triangle wave
             return float(self.weight * triangle(angle))
-        elif self.type == 2:
+        elif self.type == WaveformType.Square:
             # square wave
             return float(self.weight * square(angle, self.smoothing*HALFPI))
-        elif self.type == 3:
+        elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
             return float(self.weight * sawtooth(angle, self.smoothing*HALFPI))
 
@@ -126,16 +126,16 @@ class Animation (object):
             return np.zeros(shape, float)
 
         angle = angle_offsets*self.n_periods + self.curr_angle
-        if self.type == 0:
+        if self.type == WaveformType.Sine:
             # sine wave
             return self.weight * np.sin(angle)
-        elif self.type == 1:
+        elif self.type == WaveformType.Triangle:
             # triangle wave
             return self.weight * triangle_vector(angle)
-        elif self.type == 2:
+        elif self.type == WaveformType.Square:
             # square wave
             return self.weight * square_vector(angle, self.smoothing*HALFPI)
-        elif self.type == 3:
+        elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
             return self.weight * sawtooth_vector(angle, self.smoothing*HALFPI)
 

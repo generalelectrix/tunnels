@@ -149,10 +149,10 @@ class Tunnel (Beam):
         rad_y = radius - thickness/2
 
         return self.draw_segments_with_animations(
-            rad_x, rad_y, self.segs, as_mask, level_scale)
+            rad_x, rad_y, self.segs, as_mask, level_scale, thickness)
 
     def draw_segments_with_animations(
-            self, rad_x, rad_y, n_segs, as_mask, level_scale):
+            self, rad_x, rad_y, n_segs, as_mask, level_scale, thickness):
         """Vectorized draw of all of the segments."""
         # first determine which segments are going to be drawn at all using the
         # blacking parameter
@@ -185,7 +185,7 @@ class Tunnel (Beam):
         x_adjust = 0
         y_adjust = 0
 
-        rot_interval = self.segs / TWOPI
+        rot_interval = TWOPI / self.segs
         # the angle of this particular segment
         seg_angle = rot_interval*seg_num+self.curr_angle
         rel_angle = rot_interval*seg_num
@@ -212,7 +212,7 @@ class Tunnel (Beam):
                 y_adjust += anim.get_value(0)*(geometry.y_size/2)/127
 
         # the abs() is there to prevent negative width setting when using multiple animations.
-        stroke_weight = abs(self.thickness*(1 + thickness_adjust/127))
+        stroke_weight = abs(thickness*(1 + thickness_adjust/127))
 
         # geometry calculations
         x_center = geometry.x_center + self.x_offset + int(x_adjust)
@@ -234,8 +234,8 @@ class Tunnel (Beam):
                     val=0,
                     x=x_center,
                     y=y_center,
-                    rad_x=r_x,
-                    rad_y=r_y,
+                    rad_x=int(r_x),
+                    rad_y=int(r_y),
                     start=start_angle,
                     stop=stop_angle))
         else:
@@ -262,8 +262,8 @@ class Tunnel (Beam):
                     val=255,
                     x=x_center,
                     y=y_center,
-                    rad_x=r_x,
-                    rad_y=r_y,
+                    rad_x=int(r_x),
+                    rad_y=int(r_y),
                     start=start_angle,
                     stop=stop_angle))
         return arcs

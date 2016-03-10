@@ -3,8 +3,8 @@ int y_size = 720;
 
 void setup() {
   
-  //size(1280,720, FX2D);
-  size(1280,720);
+  size(1280,720, FX2D);
+  //size(1280,720);
 
   background(0); //black
   noSmooth();
@@ -13,16 +13,16 @@ void setup() {
   
   strokeCap(SQUARE);
   
-  frameRate(60);
+  frameRate(30);
   
   colorMode(HSB);
   
-  blendMode(ADD);
+  //blendMode(ADD);
   
   frameNumber = 0;
 }
-String testPattern = "/Users/fionakirkpatrick/src/pytunnel/testpattern.csv";
-String layer0 = "/Users/fionakirkpatrick/src/pytunnel/layer0.csv";
+String testPattern = "/Users/Chris/src/pytunnel/testpattern.csv";
+String layer0 = "/Users/Chris/src/pytunnel/layer0.csv";
 String drawFile = layer0;
 
 Table drawTable;

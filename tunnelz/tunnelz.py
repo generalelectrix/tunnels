@@ -68,7 +68,6 @@ class Show (object):
                 tunnel.col_spread = 1.0
                 tunnel.col_sat = 0.25
 
-                tunnel.thickness = 40
                 tunnel.rot_speedI = float(i / N_BEAMS)
 
                 tunnel.blacking = 0
