@@ -1,27 +1,25 @@
 from functools import wraps
 from weakref import WeakSet
 
+class UserInterfaceMeta (type):
+    """Metaclass for user interface creation.
+
+    Ensures that various class-level attributes are initialized separately for
+    each UI class.
+    """
+    pass
+
+
 class UserInterface (object):
     """Base class for UIs.  Mostly responsible for implementing Observer.
 
     Maintains observing controllers using a weak reference set.
     """
+    __metaclass__ = UserInterfaceMeta
     def __init__(self, model):
         """Initialize a user interface to an underlying model object."""
         self.model = model
         self.controllers = WeakSet()
-        self._model_properties = set()
-        self._properties = set()
-
-    def model_alias(self):
-        """Return a safe property alias to the model object.
-
-        Use this for convenience in UIs where aliasing 'model' to some other
-        name is convenient, while not having to remember to also reassign the
-        alias.  For UIs that will only ever refer to one model, this is not
-        necessary.
-        """
-        return UiModel()
 
     def swap_model(self, model):
         """Swap in a new model object and reinitialize controllers."""
@@ -32,6 +30,16 @@ class UserInterface (object):
         """Call a named method on the controllers."""
         for controller in self.controllers:
             getattr(controller, method)(*args, **kwargs)
+
+    def initialize(self):
+        self.propfac.initialize(self, self.model)
+
+
+class UiPropertyFactory (object):
+    """Factory class for creating smart UI properties."""
+    def __init__(self):
+        self.model_properties = set()
+        self.ui_properties = set()
 
     def ui_model_property(self, attribute, callback_name, **kwargs):
         """Create a new UI-observed property into a model object attribute.
@@ -48,9 +56,10 @@ class UserInterface (object):
             **kwargs: any extra keyword arguments to pass to the callback
         """
         uiprop = UiModelProperty(attribute, callback_name, kwargs)
-        self._model_properties.add(uiprop)
+        self.model_properties.add(uiprop)
         return uiprop
 
+    # FIXME: this is now class-level and needs to key its values by instance!
     def ui_property(self, initial_value, callback_name, **kwargs):
         """Create a new UI-observed property.
 
@@ -63,22 +72,18 @@ class UserInterface (object):
             **kwargs: any extra keyword arguments to pass to the callback
         """
         uiprop = UiProperty(initial_value, callback_name, kwargs)
-        self._properties.add(uiprop)
+        self.ui_properties.add(uiprop)
         return uiprop
 
-    def initialize(self):
-        """Notify the controllers of the current value of every property.
-
-        Inheriting classes should extend this method to include more complex
-        controls besides ui properties.
-        """
-        for prop in self._model_properties:
-            val = getattr(self.model, prop.attribute)
-            for controller in self.controllers:
+    def initialize(self, ui, model):
+        """Notify the controllers of the current value of every property."""
+        for prop in self.model_properties:
+            val = getattr(model, prop.attribute)
+            for controller in ui.controllers:
                 getattr(controller, prop.callback_name)(val, **prop.kwargs)
-        for prop in self._properties:
+        for prop in self.ui_properties:
             val = prop.val
-            for controller in self.controllers:
+            for controller in ui.controllers:
                 getattr(controller, prop.callback_name)(val, **prop.kwargs)
 
 
@@ -115,6 +120,7 @@ class UiModelProperty (object):
         return getattr(obj.model, self.attribute)
 
     def __set__(self, obj, val):
+        print "setting {}.{} to {}".format(obj.model, self.attribute, val)
         setattr(obj.model, self.attribute, val)
         for controller in obj.controllers:
             getattr(controller, self.callback_name)(val, **self.kwargs)
