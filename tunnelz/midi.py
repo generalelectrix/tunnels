@@ -130,21 +130,17 @@ class MidiInput (object):
         port.close_port()
 
     def receive(self, timeout=None):
-        """Block until a message appears on the queue.
+        """Block until a message appears on the queue, then dispatch it.
 
         Optionally specify a timeout in seconds.
         """
         message = self.queue.get(timeout=timeout)
         log.debug("received {}".format(message))
+        self._dispatch(*message)
         return message
 
-    def dispatch(self, mapping, payload):
+    def _dispatch(self, mapping, payload):
         """Dispatch a midi message to the registered handlers."""
         handlers = self.mappings.get(mapping, tuple())
         for handler in handlers:
             handler.handle_message(mapping, payload)
-
-
-# FIXME-GLOBAL BULLSHIT
-midi_in = MidiInput()
-midi_out = MidiOutput()

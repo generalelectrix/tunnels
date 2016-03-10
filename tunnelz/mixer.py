@@ -1,14 +1,15 @@
-from .beam import Beam
+from .tunnel import Tunnel
 from .look import Look
 from .ui import UserInterface
 
 class MixerUI (UserInterface):
     """Handle user interactions for the mixer."""
     def __init__(self, mixer):
-        super(MixerUI, self).__init__()
+        super(MixerUI, self).__init__(mixer)
         self.mixer = mixer
 
     def initialize(self):
+        super(MixerUI, self).initialize()
         for i, layer in enumerate(self.mixer.layers):
             self.update_controllers('set_look_indicator', i, isinstance(layer.beam, Look))
             self.update_controllers('set_level', i, layer.level)
@@ -43,7 +44,7 @@ class MixerUI (UserInterface):
 
 class MixerLayer (object):
     """Data bag for the contents of a mixer channel."""
-    def __init__(self, beam, level, bump, mask):
+    def __init__(self, beam, level=0, bump=False, mask=False):
         self.beam = beam
         self.level = level
         self.bump = bump
@@ -51,17 +52,17 @@ class MixerLayer (object):
 
     def copy(self):
         return MixerLayer(
-            beam=beam.copy(),
-            level=level,
-            bump=bump,
-            mask=mask)
+            beam=self.beam.copy(),
+            level=self.level,
+            bump=self.bump,
+            mask=self.mask)
 
 
 class Mixer (object):
     """Holds a collection of beams in layers, and understands how they are mixed."""
     def __init__(self, n_layers):
         self.n_layers = n_layers
-        self.layers = [MixerLayer(Beam(), 0, False, False) for _ in xrange(n_layers)]
+        self.layers = [MixerLayer(Tunnel()) for _ in xrange(n_layers)]
 
     def put_beam_in_layer(self, layer, beam):
         self.layers[layer].beam = beam
@@ -100,7 +101,7 @@ class Mixer (object):
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""
-        return Look(self.layers, self.levels, self.mask)
+        return Look(self.layers)
 
     def set_look(self, look):
         """Unload a look into the mixer state, clobbering current state."""
@@ -110,12 +111,4 @@ class Mixer (object):
         # becomes a positive.  Hell, here, I'll fix it right now.
         # TODO: should we clobber level as well?
 
-        n_beams_in_look = len(look.layers)
-
-        for i in xrange(self.n_layers):
-            if i < n_beams_in_look:
-                self.layers[i] = look.layers[i]
-                self.mask[i] = look.mask[i]
-            else:
-                self.layers[i] = Beam()
-                self.mask[i] = False
+        self.layers = look.copy().layers

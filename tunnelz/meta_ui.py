@@ -3,6 +3,7 @@
 Ideally, UIs shouldn't need to know about each other, and this orchestrator
 deals with the few actions that need to be coordinated across each of them.
 """
+from .animation import AnimationClipboard
 from .beam_matrix_minder import BeamMatrixUI
 from .ui import UserInterface, ui_method
 
@@ -14,14 +15,13 @@ class MetaUI (UserInterface):
         self.beam_ui = beam_ui
         self.animator_ui = animator_ui
         self.beam_matrix_ui = BeamMatrixUI(beam_matrix, self)
+        self.animation_clipboard = AnimationClipboard()
 
         self.current_layer = self.ui_property(0, 'set_current_layer')
 
-        self.initialize()
-
     def initialize(self):
         super(MetaUI, self).initialize()
-        # TODO: initialize useful properties
+        self._update_current_layer()
 
     def set_current_layer(self, layer):
         """Set which layer is the current layer being edited.
@@ -77,3 +77,16 @@ class MetaUI (UserInterface):
             self.animator_ui.swap_model(animator)
             self.update_controllers('set_current_animator', anim_num)
 
+    def animation_copy(self):
+        """Copy the current animator to the clipboard."""
+        # TODO: which animator is authoritatively the current one - the current
+        # beam's current animator, or the one loaded into the animator ui?
+        self.animation_clipboard.copy(self.animator_ui.model)
+
+    def animation_paste(self):
+        """Paste the clipboard into the current beam's current animator slot."""
+        animator = self.animation_clipboard.paste()
+        if animator is not None:
+            beam = self.get_current_beam()
+            beam.replace_current_animation(animator)
+            self.animator_ui.swap_model(animator)

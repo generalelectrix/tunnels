@@ -17,7 +17,7 @@ class AnimationTarget (object):
     Color = 5#'color'
     ColorSpread = 6#'colorspread'
     ColorPeriodicity = 7#'colorperiodicity'
-    ColorDesaturation = 8#'colordesaturation'
+    ColorSaturation = 8#'colorsaturation'
     Segments = 9#'segments'
     Blacking = 10#'blacking'
     PositionX = 11#'positionx'
@@ -32,7 +32,7 @@ class AnimationTarget (object):
         Color,
         ColorSpread,
         ColorPeriodicity,
-        ColorDesaturation,
+        ColorSaturation,
         #Segments,
         #Blacking,
         PositionX,
@@ -46,6 +46,8 @@ class WaveformType (object):
     Triangle = 'triangle'
     Square = 'square'
     Sawtooth = 'sawtooth'
+
+    VALUES = (Sine, Triangle, Square, Sawtooth)
 
 
 class AnimationUI (UserInterface):
@@ -73,7 +75,7 @@ class Animation (object):
         self.n_periods = 0
         self.target = AnimationTarget.Radius
         self.speed = 0.0
-        self.weight = 0
+        self.weight = 0 # 0 to 255
         self.duty_cycle = 0.0
         self.smoothing = 0.25
 
@@ -142,11 +144,9 @@ class AnimationClipboard (object):
     """Class for storing a deep copy of an animation to support copy/paste."""
     def __init__(self):
         self.anim = None
-        self.has_data = False
 
     def copy(self, to_copy):
         self.anim = to_copy.copy()
-        self.has_data = True
 
     def paste(self):
         return self.anim.copy()

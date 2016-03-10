@@ -26,7 +26,6 @@ class BeamMatrixUI (UserInterface):
         self.beam_matrix = beam_matrix
         self.meta_ui = meta_ui
         self.state = self.ui_property(Idle, 'set_beam_matrix_state')
-        self.initialize()
 
     def initialize(self):
         super(BeamMatrixUI, self).initialize()

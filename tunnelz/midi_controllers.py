@@ -29,10 +29,14 @@ class MidiController (object):
 
         Returns the bidirectional version of the control map.
         """
-        self.set_callback(control_map.itervalues(), callback)
+        self.set_callback_for_mappings(control_map.itervalues(), callback)
         return bidict(control_map)
 
-    def set_callback(self, mappings, callback):
+    def set_callback(self, mapping, callback):
+        """Register a callback for a single mapping."""
+        self.controls[mapping] = callback
+
+    def set_callback_for_mappings(self, mappings, callback):
         """Manually register a callback for an iterable of mappings."""
         for mapping in mappings:
             self.controls[mapping] = callback
@@ -45,6 +49,36 @@ class MidiController (object):
     def register_callbacks(self):
         """Register the control mapping callbacks with the midi input service."""
         self.midi_in.register_mappings(self.controls)
+
+    # --- helper functions for useful knobs ---
+
+    @staticmethod
+    def bipolar_from_midi(val):
+        """MIDI knob to a bipolar float, with detent."""
+        if val > 65:
+            return -float(val - 65)/62
+        elif val < 63:
+            return -float(val - 63)/63
+        else:
+            return 0.0
+
+    @staticmethod
+    def bipolar_to_midi(val):
+        """Bipolar float to a midi knob."""
+        if val < 0.0:
+            return min(int(-val * 62 + 65), 127)
+        elif val > 0.0:
+            return max(int(-val * 63 + 63), 0)
+        else:
+            return 64
+
+    @staticmethod
+    def unipolar_from_midi(val):
+        return val / 127.0
+
+    @staticmethod
+    def unipolar_to_midi(val):
+        return int(val * 127)
 
 
 class BeamMatrixMidiController (MidiController):
@@ -83,8 +117,10 @@ class BeamMatrixMidiController (MidiController):
         ui.controllers.add(self)
 
         # the controls which will be registered with the midi service
-        self.set_callback(self.grid_button_map.itervalues(), self.handle_grid_button)
-        self.set_callback(self.control_map.itervalues(), self.handle_state_button)
+        self.set_callback_for_mappings(
+            self.grid_button_map.itervalues(), self.handle_grid_button)
+        self.set_callback_for_mappings(
+            self.control_map.itervalues(), self.handle_state_button)
 
         self.register_callbacks()
 
@@ -133,6 +169,9 @@ class MetaControlMidiController (MidiController):
             n: NoteOnMapping(0, 0x57+n) for n in xrange(4)},
             self.handle_current_animator)
 
+        self.set_callback(NoteOnMapping(0, 0x65), self.handle_animation_copy)
+        self.set_callback(NoteOnMapping(0, 0x64), self.handle_animation_paste)
+
         self.register_callbacks()
 
     def handle_current_layer(self, mapping, _):
@@ -149,6 +188,12 @@ class MetaControlMidiController (MidiController):
 
     def set_current_animator(self, anim_num):
         self._set_radio_button(anim_num, self.animation_select_buttons)
+
+    def handle_animation_copy(self, _, val):
+        self.ui.animation_copy()
+
+    def handle_animation_paste(self, _, val):
+        self.ui.animation_paste()
 
 class MixerMidiController (MidiController):
 
@@ -172,10 +217,14 @@ class MixerMidiController (MidiController):
             self.look_indicators[chan] = NoteOnMapping(chan, 0x30)
 
         # update the controls
-        self.set_callback(self.channel_faders.itervalues(), self.handle_channel_fader)
-        self.set_callback(self.bump_button_on.itervalues(), self.handle_bump_button_on)
-        self.set_callback(self.bump_button_off.itervalues(), self.handle_bump_button_off)
-        self.set_callback(self.mask_buttons.itervalues(), self.handle_mask_button)
+        self.set_callback_for_mappings(
+            self.channel_faders.itervalues(), self.handle_channel_fader)
+        self.set_callback_for_mappings(
+            self.bump_button_on.itervalues(), self.handle_bump_button_on)
+        self.set_callback_for_mappings(
+            self.bump_button_off.itervalues(), self.handle_bump_button_off)
+        self.set_callback_for_mappings(
+            self.mask_buttons.itervalues(), self.handle_mask_button)
 
         # register input mappings
         self.register_callbacks()
@@ -226,6 +275,101 @@ class MixerMidiController (MidiController):
         self.midi_out.send_from_mapping(mapping, int(state))
 
 
+class TunnelMidiController (MidiController):
+
+    def __init__(self, ui, midi_in, midi_out):
+        super(TunnelMidiController, self).__init__(midi_in, midi_out)
+        self.ui = ui
+        ui.controllers.add(self)
+
+        self.unipolar_knobs = self.add_controls({
+            'thickness': ControlChangeMapping(0, 21),
+            'radius': ControlChangeMapping(0, 22),
+            'col_center': ControlChangeMapping(0, 16),
+            'col_width': ControlChangeMapping(0, 17),
+            'col_spread': ControlChangeMapping(0, 18),
+            'col_sat': ControlChangeMapping(0, 19),},
+            self.handle_unipolar_knob)
+
+        self.bipolar_knobs = self.add_controls({
+            'rot_speed': ControlChangeMapping(0, 20),
+            'ellipse_aspect': ControlChangeMapping(0, 23),},
+            self.handle_bipolar_knob)
+
+        self.segs_mapping = ControlChangeMapping(0, 52)
+        self.blacking_mapping = ControlChangeMapping(0, 53)
+
+        self.set_callback(self.segs_mapping, self.handle_segs)
+        self.set_callback(self.blacking_mapping, self.handle_blacking)
+
+        self.nudge_x_pos_mapping = NoteOnMapping(0, 0x60)
+        self.nudge_x_neg_mapping = NoteOnMapping(0, 0x61)
+        self.nudge_y_pos_mapping = NoteOnMapping(0, 0x5F)
+        self.nudge_y_neg_mapping = NoteOnMapping(0, 0x5E)
+        self.position_reset_mapping = NoteOnMapping(0, 0x62)
+
+        self.set_callback(self.nudge_x_pos_mapping, self.handle_nudge_x_pos)
+        self.set_callback(self.nudge_x_neg_mapping, self.handle_nudge_x_neg)
+        self.set_callback(self.nudge_y_pos_mapping, self.handle_nudge_y_pos)
+        self.set_callback(self.nudge_y_neg_mapping, self.handle_nudge_y_neg)
+        self.set_callback(self.position_reset_mapping, self.handle_reset_beam_position)
+
+        self.register_callbacks()
+
+    def handle_unipolar_knob(self, mapping, val):
+        knob = self.unipolar_knobs.inv[mapping]
+        setattr(self.ui, knob, self.unipolar_from_midi(val))
+
+    def set_unipolar(self, val, knob):
+        mapping = self.unipolar_knobs[knob]
+        self.midi_out.send_from_mapping(mapping, self.unipolar_to_midi(val))
+
+    def handle_bipolar_knob(self, mapping, val):
+        knob = self.bipolar_knobs.inv[mapping]
+        setattr(self.ui, knob, self.bipolar_from_midi(val))
+
+    def set_bipolar(self, val, knob):
+        mapping = self.bipolar_knobs[knob]
+        self.midi_out.send_from_mapping(mapping, self.bipolar_to_midi(val))
+
+    def handle_segs(self, _, val):
+        """Convert midi to number of segments."""
+        self.ui.segments = (val + 1)
+
+    def set_segs(self, segs):
+        """Convert number of segs back to midi."""
+        self.midi_out.send_from_mapping(self.segs_mapping, segs - 1)
+
+    def handle_blacking(self, _, val):
+        """Convert midi to blacking.
+
+        Blacking is a bipolar knob on the range [-16, 16].
+        """
+        self.ui.blacking = int((2*(val / 127.0) - 1) * 16)
+
+    def set_blacking(self, blacking):
+        """Convert blacking back to midi.
+
+        Blacking is a bipolar knob on the range [-16, 16].
+        """
+        midi_blacking = int(127*((blacking / 16.0) + 1) / 2)
+        self.midi_out.send_from_mapping(self.blacking_mapping, midi_blacking)
+
+    def handle_nudge_x_pos(self, _, val):
+        self.ui.nudge_x_pos()
+
+    def handle_nudge_x_neg(self, _, val):
+        self.ui.nudge_x_neg()
+
+    def handle_nudge_y_pos(self, _, val):
+        self.ui.nudge_y_pos()
+
+    def handle_nudge_y_neg(self, _, val):
+        self.ui.nudge_y_neg()
+
+    def handle_reset_beam_position(self, _, val):
+        self.ui.reset_beam_position()
+
 class AnimationMidiController (MidiController):
 
     def __init__(self, ui, midi_in, midi_out):
@@ -241,6 +385,20 @@ class AnimationMidiController (MidiController):
             'smoothing': ControlChangeMapping(0, 51),
             },
             self.handle_knob)
+
+        self.knob_value_from_midi = {
+            'speed': self.bipolar_from_midi,
+            'weight': lambda w: w,
+            #'duty_cycle': lambda d: d,
+            'smoothing': lambda val: float(val)/127
+        }
+
+        self.knob_value_to_midi = {
+            'speed': self.bipolar_to_midi,
+            'weight': lambda w: w,
+            #'duty_cycle': lambda d: d,
+            'smoothing': lambda s: min(int(s * 127), 127)
+        }
 
         self.type_buttons = self.add_controls({
             WaveformType.Sine: NoteOnMapping(0, 24),
@@ -263,46 +421,8 @@ class AnimationMidiController (MidiController):
             {target: NoteOnMapping(0, target+34)for target in AnimationTarget.VALUES},
             self.handle_target_button)
 
-
-        self.clipboard_buttons = self.add_controls({
-            'copy': NoteOnMapping(0, 0x65),
-            'paste': NoteOnMapping(0, 0x64)},
-            self.handle_clipboard_button)
-
         # register input mappings
         self.register_callbacks()
-
-    @staticmethod
-    def speed_from_midi(val):
-        if val > 65:
-            return -float(val - 65)/62
-        elif val < 63:
-            return -float(val - 63)/63
-        else:
-            return 0.0
-
-    @staticmethod
-    def speed_to_midi(speed):
-        if speed < 0.0:
-            return min(int(-speed * 62 + 65), 127)
-        elif speed > 0.0:
-            return max(int(-speed * 63 + 63), 0)
-        else:
-            return 64
-
-    knob_value_from_midi = {
-        'speed': speed_from_midi,
-        'weight': lambda w: w,
-        #'duty_cycle': lambda d: d,
-        'smoothing': lambda val: float(val)/127
-    }
-
-    knob_value_to_midi = {
-        'speed': speed_to_midi,
-        'weight': lambda w: w,
-        #'duty_cycle': lambda d: d,
-        'smoothing': lambda s: min(int(s * 127), 127)
-    }
 
     def handle_knob(self, mapping, value):
         knob = self.knobs.inv[mapping]
