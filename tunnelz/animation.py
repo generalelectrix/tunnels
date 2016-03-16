@@ -3,7 +3,7 @@ from math import sin, pi
 from .waveforms import (
     triangle, square, sawtooth, triangle_vector, square_vector, sawtooth_vector)
 import numpy as np
-from .ui import UserInterface
+from .ui import UserInterface, UiModelProperty
 
 TWOPI = 2*pi
 HALFPI = pi/2
@@ -56,7 +56,7 @@ class AnimationUI (UserInterface):
     target = UiModelProperty('target', 'set_target')
     speed = UiModelProperty('speed', 'set_knob', knob='speed')
     weight = UiModelProperty('weight', 'set_knob', knob='weight')
-    duty_cycle = UiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
+    #duty_cycle = UiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
     smoothing = UiModelProperty('smoothing', 'set_knob', knob='smoothing')
 
 class Animation (object):

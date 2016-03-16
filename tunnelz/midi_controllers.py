@@ -1,6 +1,6 @@
 from .animation import WaveformType, AnimationTarget
 from .beam_matrix_minder import (
-    BeamSave, LookSave, Delete, LookEdit,
+    Idle, BeamSave, LookSave, Delete, LookEdit,
     ButtonEmpty, ButtonBeam, ButtonLook,
     BeamMatrixMinder,)
 from bidict import bidict
@@ -94,13 +94,13 @@ class BeamMatrixMidiController (MidiController):
     BeamMatrixLEDState = namedtuple(
     "BeamMatrixLEDState", (BeamSave, LookSave, LookEdit, Delete))
 
-    state_to_led_state_map = dict(
-        Idle=BeamMatrixLEDState(0, 0, 0, 0),
-        BeamSave=BeamMatrixLEDState(2, 0, 0, 0),
-        LookSave=BeamMatrixLEDState(0, 2, 0, 0),
-        LookEdit=BeamMatrixLEDState(0, 0, 2, 0),
-        Delete=BeamMatrixLEDState(0, 0, 0, 2)
-    )
+    state_to_led_state_map = {
+        Idle: BeamMatrixLEDState(0, 0, 0, 0),
+        BeamSave: BeamMatrixLEDState(2, 0, 0, 0),
+        LookSave: BeamMatrixLEDState(0, 2, 0, 0),
+        LookEdit: BeamMatrixLEDState(0, 0, 2, 0),
+        Delete: BeamMatrixLEDState(0, 0, 0, 2),
+    }
 
     grid_button_map = _build_grid_button_map()
 

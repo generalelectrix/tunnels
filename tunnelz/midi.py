@@ -42,7 +42,7 @@ class MidiOutput (object):
         port = self.ports.pop(port_name)
         port.close_port()
 
-    def send_from_mappings(self, *messages):
+    def send_from_mappings(self, messages):
         """Send an arbitrary number of midi messages.
 
         Messages should be passed in as tuples of (mapping, value).

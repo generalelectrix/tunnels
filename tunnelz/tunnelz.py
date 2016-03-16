@@ -48,7 +48,7 @@ class Show (object):
         self.mixer_ui.initialize()
         self.tunnel_ui.initialize()
         self.animator_ui.initialize()
-
+        self.meta_ui.initialize()
         # done!
 
     def setup_models(self):

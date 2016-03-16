@@ -29,8 +29,8 @@ class BeamMatrixUI (UserInterface):
 
     def initialize(self):
         super(BeamMatrixUI, self).initialize()
-        for row in self.beam_matrix.n_rows:
-            for col in self.beam_matrix.n_columns:
+        for row in xrange(self.beam_matrix.n_rows):
+            for col in xrange(self.beam_matrix.n_columns):
                 self.update_button(row, col, ButtonEmpty)
 
     def state_toggle(self, state):
