@@ -1,13 +1,56 @@
 from functools import wraps
 from weakref import WeakSet
 
+
+class UiProperty (object):
+    """Descriptor for creating observed properties."""
+    def __init__(self, initial_value, callback_name, **kwargs):
+        self.val = initial_value
+        self.callback_name = callback_name
+        self.kwargs = kwargs
+    def __get__(self, obj, objtype):
+        return self.val
+
+    def __set__(self, obj, val):
+        self.val = val
+        for controller in obj.controllers:
+            getattr(controller, self.callback_name)(val, **self.kwargs)
+
+class UiModelProperty (object):
+    """Descriptor for creating UI-observed properties of model attributes."""
+    def __init__(self, attribute, callback_name=None, **kwargs):
+        self.attribute = attribute
+        self.callback_name = callback_name if callback_name is not None else attribute
+        self.kwargs = kwargs
+    def __get__(self, obj, objtype):
+        return getattr(obj.model, self.attribute)
+
+    def __set__(self, obj, val):
+        print "setting {}.{} to {}".format(obj.model, self.attribute, val)
+        setattr(obj.model, self.attribute, val)
+        for controller in obj.controllers:
+            getattr(controller, self.callback_name)(val, **self.kwargs)
+
+
 class UserInterfaceMeta (type):
     """Metaclass for user interface creation.
 
     Ensures that various class-level attributes are initialized separately for
-    each UI class.
+    each UI class.  Provides
     """
-    pass
+    def __new__(cls, clsname, bases, dct):
+        dct['model_properties'] = model_properties = set()
+        dct['ui_properties'] = ui_properties = set()
+
+        for value in dct.itervalues():
+            if isinstance(value, UiProperty):
+                ui_properties.add(value)
+            elif isinstance(value, UiModelProperty):
+                model_properties.add(value)
+
+        inst = super(UserInterfaceMeta, cls).__new__(cls, clsname, bases, dct)
+
+        return inst
 
 
 class UserInterface (object):
@@ -32,98 +75,14 @@ class UserInterface (object):
             getattr(controller, method)(*args, **kwargs)
 
     def initialize(self):
-        self.propfac.initialize(self, self.model)
-
-
-class UiPropertyFactory (object):
-    """Factory class for creating smart UI properties."""
-    def __init__(self):
-        self.model_properties = set()
-        self.ui_properties = set()
-
-    def ui_model_property(self, attribute, callback_name, **kwargs):
-        """Create a new UI-observed property into a model object attribute.
-
-        The controllers will NOT be informed of the creation of this property.
-        They should be initialized through the use of the initialize method.
-
-        Changing the model that this UI refers to will also take effect in the
-        UI properties.
-
-        Args:
-            attribute: the underlying model attribute to map this property to
-            callback_name: the callback to call on the controllers
-            **kwargs: any extra keyword arguments to pass to the callback
-        """
-        uiprop = UiModelProperty(attribute, callback_name, kwargs)
-        self.model_properties.add(uiprop)
-        return uiprop
-
-    # FIXME: this is now class-level and needs to key its values by instance!
-    def ui_property(self, initial_value, callback_name, **kwargs):
-        """Create a new UI-observed property.
-
-        The controllers will NOT be informed of the creation of this property.
-        They should be initialized through the use of the initialize method.
-
-        Args:
-            initial_value: the initial value to set this property to
-            callback_name: the callback to call on the controllers
-            **kwargs: any extra keyword arguments to pass to the callback
-        """
-        uiprop = UiProperty(initial_value, callback_name, kwargs)
-        self.ui_properties.add(uiprop)
-        return uiprop
-
-    def initialize(self, ui, model):
-        """Notify the controllers of the current value of every property."""
         for prop in self.model_properties:
-            val = getattr(model, prop.attribute)
-            for controller in ui.controllers:
+            val = getattr(self.model, prop.attribute)
+            for controller in self.controllers:
                 getattr(controller, prop.callback_name)(val, **prop.kwargs)
         for prop in self.ui_properties:
             val = prop.val
-            for controller in ui.controllers:
+            for controller in self.controllers:
                 getattr(controller, prop.callback_name)(val, **prop.kwargs)
-
-
-class UiModel (object):
-    """Convenience descriptor for safely aliasing the model object."""
-    def __get__(self, obj, objtype):
-        return obj.model
-
-    def __set__(self, obj, new_model):
-        obj.swap_model(new_model)
-
-
-class UiProperty (object):
-    """Descriptor for creating observed properties."""
-    def __init__(self, initial_value, callback_name, kwargs):
-        self.val = initial_value
-        self.callback_name = callback_name
-        self.kwargs = kwargs
-    def __get__(self, obj, objtype):
-        return self.val
-
-    def __set__(self, obj, val):
-        self.val = val
-        for controller in obj.controllers:
-            getattr(controller, self.callback_name)(val, **self.kwargs)
-
-class UiModelProperty (object):
-    """Descriptor for creating UI-observed properties of model attributes."""
-    def __init__(self, attribute, callback_name=None, kwargs=None):
-        self.attribute = attribute
-        self.callback_name = callback_name if callback_name is not None else attribute
-        self.kwargs = {} if kwargs is None else kwargs
-    def __get__(self, obj, objtype):
-        return getattr(obj.model, self.attribute)
-
-    def __set__(self, obj, val):
-        print "setting {}.{} to {}".format(obj.model, self.attribute, val)
-        setattr(obj.model, self.attribute, val)
-        for controller in obj.controllers:
-            getattr(controller, self.callback_name)(val, **self.kwargs)
 
 
 def ui_method(callback_name, result_filter_func=None, **decoargs):

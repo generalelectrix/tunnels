@@ -1,18 +1,19 @@
 from nose.tools import assert_equal, assert_in
-from tunnelz.ui import UserInterface
+from tunnelz.ui import UserInterface, UiProperty, UiModelProperty
 
 UIP0DEF = 'ui prop 0 default'
 UIP1DEF = 'ui prop 1 default'
 
 class TestUI (UserInterface):
 
+    modelprop0 = UiModelProperty('modelprop0', 'callback0')
+    modelprop1 = UiModelProperty('modelprop1', 'callback1', extra_arg='test_kw0')
+
+    uiprop0 = UiProperty(UIP0DEF, 'uicallback0')
+    uiprop1 = UiProperty(UIP1DEF, 'uicallback1', extra_arg='test_kw1')
+
     def __init__(self, model):
         super(TestUI, self).__init__(model)
-        self.modelprop0 = self.ui_model_property('modelprop0', 'callback0')
-        self.modelprop1 = self.ui_model_property('modelprop1', 'callback1', extra_arg='test_kw0')
-
-        self.uiprop0 = self.ui_property(UIP0DEF, 'uicallback0')
-        self.uiprop1 = self.ui_property(UIP1DEF, 'uicallback1', extra_arg='test_kw1')
 
 TP0DEF = 'test prop 0 default'
 TP1DEF = 'test prop 1 default'
