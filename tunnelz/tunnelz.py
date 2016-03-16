@@ -1,7 +1,6 @@
 import logging as log
 from .animation import WaveformType, AnimationTarget, AnimationUI
 from .beam_matrix_minder import BeamMatrixMinder
-from .draw_commands import write_layers_to_file
 from itertools import count
 from .meta_ui import MetaUI
 from .midi import MidiInput, MidiOutput
@@ -157,10 +156,10 @@ class Show (object):
         # FIXME-RENDERING
         # background(0)
 
-        layers = self.mixer.draw_layers()
+        dc_agg = self.mixer.draw_layers()
         if print_:
-            print layers
+            print dc_agg
         if write:
             file = 'layer0.csv'
-            write_layers_to_file(layers, file)
+            dc_agg.write_to_file(file)
 

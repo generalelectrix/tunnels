@@ -1,6 +1,5 @@
 from .animation import Animation, AnimationTarget
 from .beam import Beam
-from .draw_commands import Arc
 from .geometry import geometry
 from itertools import izip
 from copy import deepcopy
@@ -109,12 +108,13 @@ class Tunnel (Beam):
         """Replace the current animation with another."""
         self.anims[self.curr_anim] = new_anim
 
-    def display(self, level_scale, as_mask):
+    def display(self, level_scale, as_mask, dc_agg):
         """Draw the current state of the beam.
 
         Args:
             level_scale: int in [0, 255]
             as_mask (bool): draw this beam as a masking layer
+            dc_agg (DrawCommandAggregator)
         """
         # ensure we don't exceed the set bounds of the screen
         self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
@@ -149,10 +149,10 @@ class Tunnel (Beam):
         rad_y = radius - thickness/2
 
         return self.draw_segments_with_animations(
-            rad_x, rad_y, self.segs, as_mask, level_scale, thickness)
+            rad_x, rad_y, self.segs, as_mask, level_scale, thickness, dc_agg)
 
     def draw_segments_with_animations(
-            self, rad_x, rad_y, n_segs, as_mask, level_scale, thickness):
+            self, rad_x, rad_y, n_segs, as_mask, level_scale, thickness, dc_agg):
         """Vectorized draw of all of the segments."""
         # first determine which segments are going to be drawn at all using the
         # blacking parameter
@@ -226,7 +226,7 @@ class Tunnel (Beam):
         if as_mask:
             val_iter = izip(stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
             for strk, r_x, r_y, start_angle, stop_angle in val_iter:
-                arcs.append(Arc(
+                dc_agg.draw_arc(
                     level=255,
                     stroke_weight=strk,
                     hue=0.0,
@@ -237,7 +237,7 @@ class Tunnel (Beam):
                     rad_x=int(r_x),
                     rad_y=int(r_y),
                     start=start_angle,
-                    stop=stop_angle))
+                    stop=stop_angle)
         else:
             hue = (
                 255*self.col_center +
@@ -254,7 +254,7 @@ class Tunnel (Beam):
             val_iter = izip(hue, sat, stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
 
             for h, s, strk, r_x, r_y, start_angle, stop_angle in val_iter:
-                arcs.append(Arc(
+                dc_agg.draw_arc(
                     level=level_scale,
                     stroke_weight=strk,
                     hue=h,
@@ -265,5 +265,5 @@ class Tunnel (Beam):
                     rad_x=int(r_x),
                     rad_y=int(r_y),
                     start=start_angle,
-                    stop=stop_angle))
+                    stop=stop_angle)
         return arcs

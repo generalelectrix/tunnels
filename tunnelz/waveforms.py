@@ -1,5 +1,6 @@
 from math import pi
 from numpy import vectorize
+from scipy import signal
 
 PI = pi
 HALF_PI = pi / 2.0
@@ -56,6 +57,12 @@ def sawtooth(angle, smoothing):
     else:
         return -(angle - PI)/smoothing
 
-triangle_vector = vectorize(triangle)
+def sawtooth_vector(angles, smoothing):
+    """Generate wavetooth wave points from angle in radians and smoothing."""
+    width = 1.0 - smoothing / PI
+    return signal.sawtooth(angles + width/2.0, width)
+
+def triangle_vector(angles):
+    return signal.sawtooth(angles, 0.5)
+
 square_vector = vectorize(square)
-sawtooth_vector = vectorize(sawtooth)

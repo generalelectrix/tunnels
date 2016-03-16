@@ -1,27 +1,36 @@
-from collections import namedtuple
-import os
-import tempfile
+from .draw_commands_pb2 import DrawCommands
 
-arc_args = (
-    'level', # int 0-255
-    'stroke_weight', # float
-    'hue',
-    'sat',
-    'val',
-    'x', # int
-    'y', # int
-    'rad_x', #int
-    'rad_y', #int
-    'start', #float
-    'stop' #float
-    )
+class DrawCommandAggregator (object):
 
-Arc = namedtuple('Arc', arc_args)
+    def __init__(self):
+        self.dc = DrawCommands()
 
-def write_layers_to_file(layers, file):
-    with tempfile.NamedTemporaryFile(
-            dir=os.path.dirname(file), delete=False) as tmpfile:
-        for layer in layers:
-            for arc in layer:
-                tmpfile.write(','.join(str(val) for val in arc) + '\n')
-    os.rename(tmpfile.name, file)
+    def draw_arc(
+            self,
+            level,
+            stroke_weight,
+            hue,
+            sat,
+            val,
+            x,
+            y,
+            rad_x,
+            rad_y,
+            start,
+            stop,):
+        arc = self.dc.arcs.add()
+        arc.level = level
+        arc.stroke_weight = stroke_weight
+        arc.hue = hue
+        arc.sat = sat
+        arc.val = val
+        arc.x = x
+        arc.y = y
+        arc.rad_x = rad_x
+        arc.rad_y = rad_y
+        arc.start = start
+        arc.stop = stop
+
+    def write_to_file(self, path):
+        with open(path, 'w+') as f:
+            f.write(self.dc.SerializeToString())

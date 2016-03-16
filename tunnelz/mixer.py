@@ -1,3 +1,4 @@
+from .draw_commands import DrawCommandAggregator
 from .tunnel import Tunnel
 from .look import Look
 from .ui import UserInterface
@@ -85,19 +86,17 @@ class Mixer (object):
         return mask_state
 
     def draw_layers(self):
-        draw_commands = []
+        dc_agg = DrawCommandAggregator()
         for layer in self.layers:
             level = layer.level
             bump = layer.bump
 
             if level > 0 or bump:
                 if bump:
-                    draw_commands.append(layer.beam.display(255, layer.mask))
+                    layer.beam.display(255, layer.mask, dc_agg)
                 else:
-                    draw_commands.append(layer.beam.display(level, layer.mask))
-            else:
-                draw_commands.append([])
-        return draw_commands
+                    layer.beam.display(level, layer.mask, dc_agg)
+        return dc_agg
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""
