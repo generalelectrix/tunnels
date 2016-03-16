@@ -59,6 +59,10 @@ def test_basic_properties():
 
     cont.cb_results = []
 
+    # make sure UI properties have been set up correctly
+    assert_equal(ui._uiprop0, UIP0DEF)
+    assert_equal(ui._uiprop1, UIP1DEF)
+
     ui.modelprop0 = 'changed mp0'
     assert_equal(model.modelprop0, 'changed mp0')
     assert_equal(ui.modelprop0, 'changed mp0')

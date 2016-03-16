@@ -5,9 +5,11 @@ deals with the few actions that need to be coordinated across each of them.
 """
 from .animation import AnimationClipboard
 from .beam_matrix_minder import BeamMatrixUI
-from .ui import UserInterface
+from .ui import UserInterface, UiProperty
 
 class MetaUI (UserInterface):
+
+    current_layer = UiProperty(0, 'set_current_layer')
 
     def __init__(self, mixer_ui, beam_ui, animator_ui, beam_matrix):
         super(MetaUI, self).__init__(None)
@@ -16,8 +18,6 @@ class MetaUI (UserInterface):
         self.animator_ui = animator_ui
         self.beam_matrix_ui = BeamMatrixUI(beam_matrix, self)
         self.animation_clipboard = AnimationClipboard()
-
-        self.current_layer = self.ui_property(0, 'set_current_layer')
 
     def initialize(self):
         super(MetaUI, self).initialize()

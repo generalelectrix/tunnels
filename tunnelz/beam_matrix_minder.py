@@ -1,5 +1,5 @@
 import numpy as np
-from .ui import UserInterface
+from .ui import UserInterface, UiProperty
 
 # states for beam matrix UI
 Idle = 'idle'
@@ -20,12 +20,12 @@ class BeamMatrixUI (UserInterface):
     The BeamMatrixUI depends on a MetaUI to retrieve and set the currently
     selected beam.  It is normally owned by the MetaUI.
     """
+    state = UiProperty(Idle, 'set_beam_matrix_state')
 
     def __init__(self, beam_matrix, meta_ui):
         super(BeamMatrixUI, self).__init__(model=beam_matrix)
         self.beam_matrix = beam_matrix
         self.meta_ui = meta_ui
-        self.state = self.ui_property(Idle, 'set_beam_matrix_state')
 
     def initialize(self):
         super(BeamMatrixUI, self).initialize()

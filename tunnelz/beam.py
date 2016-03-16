@@ -1,26 +1,4 @@
-class BeamUI (object):
-    """Base class for UIs for beams."""
-    def __init__(self, beam):
-        self._beam = beam
-        self.controllers = set()
 
-    @property
-    def beam(self):
-        return self._beam
-
-    @beam.setter
-    def beam(self, beam):
-        """Associate this UI with a new beam object and update state."""
-        if self.beam is not beam:
-            self._beam = beam
-            self.update()
-
-    def update(self):
-        """Update the UI state to reflect the current state of the beam.
-
-        Send commands to controllers directly or indirectly here.
-        """
-        pass
 
 
 class Beam (object):

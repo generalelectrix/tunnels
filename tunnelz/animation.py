@@ -51,17 +51,13 @@ class WaveformType (object):
 
 
 class AnimationUI (UserInterface):
-    def __init__(self, anim):
-        super(AnimationUI, self).__init__(model=anim)
-
-        self.type = self.ui_model_property('type', 'set_type')
-        self.n_periods = self.ui_model_property('n_periods', 'set_n_periods')
-        self.target = self.ui_model_property('target', 'set_target')
-        self.speed = self.ui_model_property('speed', 'set_knob', knob='speed')
-        self.weight = self.ui_model_property('weight', 'set_knob', knob='weight')
-        #self.duty_cycle = self.ui_model_property('duty_cycle', 'set_knob', knob='duty_cycle')
-        self.smoothing = self.ui_model_property('smoothing', 'set_knob', knob='smoothing')
-
+    type = UiModelProperty('type', 'set_type')
+    n_periods = UiModelProperty('n_periods', 'set_n_periods')
+    target = UiModelProperty('target', 'set_target')
+    speed = UiModelProperty('speed', 'set_knob', knob='speed')
+    weight = UiModelProperty('weight', 'set_knob', knob='weight')
+    duty_cycle = UiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
+    smoothing = UiModelProperty('smoothing', 'set_knob', knob='smoothing')
 
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""
