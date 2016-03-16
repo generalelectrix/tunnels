@@ -5,16 +5,19 @@ from weakref import WeakSet
 class UiProperty (object):
     """Descriptor for creating observed properties."""
     def __init__(self, initial_value, callback_name, **kwargs):
-        self.val = initial_value
+        self.initial_val = initial_value
         self.callback_name = callback_name
         self.kwargs = kwargs
+        self.attribute = None
+
     def __get__(self, obj, objtype):
-        return self.val
+        return getattr(obj, self.attribute)
 
     def __set__(self, obj, val):
-        self.val = val
+        setattr(obj, self.attribute, val)
         for controller in obj.controllers:
             getattr(controller, self.callback_name)(val, **self.kwargs)
+
 
 class UiModelProperty (object):
     """Descriptor for creating UI-observed properties of model attributes."""
@@ -39,16 +42,29 @@ class UserInterfaceMeta (type):
     each UI class.  Provides
     """
     def __new__(cls, clsname, bases, dct):
-        dct['model_properties'] = model_properties = set()
-        dct['ui_properties'] = ui_properties = set()
+        new_dct = {}
 
-        for value in dct.itervalues():
+        new_dct['model_properties'] = model_properties = set()
+        new_dct['ui_properties'] = ui_properties = set()
+
+        for key, value in dct.iteritems():
+            new_dct[key] = value
+
+            # for UiProperties, do the legwork to create a property
             if isinstance(value, UiProperty):
+                # make a private version of the attribute, set its initial value
+                private_key = '_' + key
+                new_dct[private_key] = value.initial_val
+
+                # tell the UiProperty the private attribute to read/write
+                value.attribute = private_key
+
+                # keep track of the ui properties for iteration
                 ui_properties.add(value)
             elif isinstance(value, UiModelProperty):
                 model_properties.add(value)
 
-        inst = super(UserInterfaceMeta, cls).__new__(cls, clsname, bases, dct)
+        inst = super(UserInterfaceMeta, cls).__new__(cls, clsname, bases, new_dct)
 
         return inst
 
@@ -77,12 +93,10 @@ class UserInterface (object):
     def initialize(self):
         for prop in self.model_properties:
             val = getattr(self.model, prop.attribute)
-            for controller in self.controllers:
-                getattr(controller, prop.callback_name)(val, **prop.kwargs)
+            self.update_controllers(prop.callback_name, val, **prop.kwargs)
         for prop in self.ui_properties:
-            val = prop.val
-            for controller in self.controllers:
-                getattr(controller, prop.callback_name)(val, **prop.kwargs)
+            val = getattr(self, prop.attribute)
+            self.update_controllers(prop.callback_name, val, **prop.kwargs)
 
 
 def ui_method(callback_name, result_filter_func=None, **decoargs):

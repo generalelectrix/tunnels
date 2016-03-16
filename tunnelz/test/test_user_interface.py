@@ -7,10 +7,10 @@ UIP1DEF = 'ui prop 1 default'
 class TestUI (UserInterface):
 
     modelprop0 = UiModelProperty('modelprop0', 'callback0')
-    modelprop1 = UiModelProperty('modelprop1', 'callback1', extra_arg='test_kw0')
+    modelprop1 = UiModelProperty('modelprop1', 'callback1', extra_arg='test_mp1exarg')
 
     uiprop0 = UiProperty(UIP0DEF, 'uicallback0')
-    uiprop1 = UiProperty(UIP1DEF, 'uicallback1', extra_arg='test_kw1')
+    uiprop1 = UiProperty(UIP1DEF, 'uicallback1', extra_arg='test_uip1exarg')
 
     def __init__(self, model):
         super(TestUI, self).__init__(model)
@@ -51,15 +51,54 @@ def test_basic_properties():
     cont = TestController(ui)
 
     ui.initialize()
-    assert_in(('uicb1', UIP1DEF, 'test_kw1'), cont.cb_results)
+    assert_in(('uicb1', UIP1DEF, 'test_uip1exarg'), cont.cb_results)
     assert_in(('uicb0', UIP0DEF), cont.cb_results)
-    assert_in(('cb1', TP1DEF, 'test_kw0'), cont.cb_results)
+    assert_in(('cb1', TP1DEF, 'test_mp1exarg'), cont.cb_results)
     assert_in(('cb0', TP0DEF), cont.cb_results)
+    assert_equal(len(cont.cb_results), 4)
 
     cont.cb_results = []
 
     ui.modelprop0 = 'changed mp0'
-    print ui.modelprop0
     assert_equal(model.modelprop0, 'changed mp0')
+    assert_equal(ui.modelprop0, 'changed mp0')
     assert_equal(cont.cb_results.pop(), ('cb0', 'changed mp0'))
     assert not cont.cb_results
+
+    ui.modelprop1 = 'changed mp1'
+    assert_equal(model.modelprop1, 'changed mp1')
+    assert_equal(ui.modelprop1, 'changed mp1')
+    assert_equal(cont.cb_results.pop(), ('cb1', 'changed mp1', 'test_mp1exarg'))
+    assert not cont.cb_results
+
+    ui.uiprop0 = 'changed uip0'
+    assert_equal(ui.uiprop0, 'changed uip0')
+    assert_equal(cont.cb_results.pop(), ('uicb0', 'changed uip0'))
+    assert not cont.cb_results
+
+    ui.uiprop1 = 'changed uip1'
+    assert_equal(ui.uiprop1, 'changed uip1')
+    assert_equal(cont.cb_results.pop(), ('uicb1', 'changed uip1', 'test_uip1exarg'))
+    assert not cont.cb_results
+
+    # now test multiple instances of connected to multiple models
+    model1 = TestModel()
+    ui1 = TestUI(model1)
+    cont1 = TestController(ui1)
+
+    ui1.initialize()
+    assert_in(('uicb1', UIP1DEF, 'test_uip1exarg'), cont1.cb_results)
+    assert_in(('uicb0', UIP0DEF), cont1.cb_results)
+    assert_in(('cb1', TP1DEF, 'test_mp1exarg'), cont1.cb_results)
+    assert_in(('cb0', TP0DEF), cont1.cb_results)
+    assert_equal(len(cont1.cb_results), 4)
+
+    cont1.cb_results = []
+
+    # check to make sure our original UI and model is untouched
+    assert_equal(model.modelprop0, 'changed mp0')
+    assert_equal(ui.modelprop0, 'changed mp0')
+    assert_equal(model.modelprop1, 'changed mp1')
+    assert_equal(ui.modelprop1, 'changed mp1')
+    assert_equal(ui.uiprop0, 'changed uip0')
+    assert_equal(ui.uiprop1, 'changed uip1')
