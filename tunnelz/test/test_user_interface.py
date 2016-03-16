@@ -95,6 +95,13 @@ def test_basic_properties():
 
     cont1.cb_results = []
 
+    assert_equal(model1.modelprop0, TP0DEF)
+    assert_equal(ui1.modelprop0, TP0DEF)
+    assert_equal(model1.modelprop1, TP1DEF)
+    assert_equal(ui1.modelprop1, TP1DEF)
+    assert_equal(ui1.uiprop0, UIP0DEF)
+    assert_equal(ui1.uiprop1, UIP1DEF)
+
     # check to make sure our original UI and model is untouched
     assert_equal(model.modelprop0, 'changed mp0')
     assert_equal(ui.modelprop0, 'changed mp0')
@@ -102,3 +109,13 @@ def test_basic_properties():
     assert_equal(ui.modelprop1, 'changed mp1')
     assert_equal(ui.uiprop0, 'changed uip0')
     assert_equal(ui.uiprop1, 'changed uip1')
+
+    # make sure models swap correctly
+    # now the UI properties should be the same but the model properties should
+    # update
+    ui1.swap_model(model)
+    assert_in(('uicb1', UIP1DEF, 'test_uip1exarg'), cont1.cb_results)
+    assert_in(('uicb0', UIP0DEF), cont1.cb_results)
+    assert_in(('cb1', 'changed mp1', 'test_mp1exarg'), cont1.cb_results)
+    assert_in(('cb0', 'changed mp0'), cont1.cb_results)
+    assert_equal(len(cont1.cb_results), 4)

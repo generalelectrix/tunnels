@@ -29,7 +29,6 @@ class UiModelProperty (object):
         return getattr(obj.model, self.attribute)
 
     def __set__(self, obj, val):
-        print "setting {}.{} to {}".format(obj.model, self.attribute, val)
         setattr(obj.model, self.attribute, val)
         for controller in obj.controllers:
             getattr(controller, self.callback_name)(val, **self.kwargs)
@@ -83,6 +82,7 @@ class UserInterface (object):
     def swap_model(self, model):
         """Swap in a new model object and reinitialize controllers."""
         self.model = model
+        # TODO: no need to update UI properties here as they won't change
         self.initialize()
 
     def update_controllers(self, method, *args, **kwargs):
