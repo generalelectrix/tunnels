@@ -226,18 +226,18 @@ class Tunnel (Beam):
         if as_mask:
             val_iter = izip(stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
             for strk, r_x, r_y, start_angle, stop_angle in val_iter:
-                dc_agg.draw_arc(
-                    level=255,
-                    stroke_weight=strk,
-                    hue=0.0,
-                    sat=0.0,
-                    val=0,
-                    x=x_center,
-                    y=y_center,
-                    rad_x=int(r_x),
-                    rad_y=int(r_y),
-                    start=start_angle,
-                    stop=stop_angle)
+                dc_agg.draw_arc((
+                    255,
+                    strk,
+                    0.0,
+                    0.0,
+                    0,
+                    x_center,
+                    y_center,
+                    int(r_x),
+                    int(r_y),
+                    start_angle,
+                    stop_angle))
         else:
             hue = (
                 255*self.col_center +
@@ -254,16 +254,16 @@ class Tunnel (Beam):
             val_iter = izip(hue, sat, stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
 
             for h, s, strk, r_x, r_y, start_angle, stop_angle in val_iter:
-                dc_agg.draw_arc(
-                    level=level_scale,
-                    stroke_weight=strk,
-                    hue=h,
-                    sat=s,
-                    val=255,
-                    x=x_center,
-                    y=y_center,
-                    rad_x=int(r_x),
-                    rad_y=int(r_y),
-                    start=start_angle,
-                    stop=stop_angle)
+                dc_agg.draw_arc((
+                    level_scale,
+                    strk,
+                    h,
+                    s,
+                    255,
+                    x_center,
+                    y_center,
+                    int(r_x),
+                    int(r_y),
+                    start_angle,
+                    stop_angle))
         return arcs
