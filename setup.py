@@ -7,7 +7,7 @@ except ImportError:
     from distutils.core import setup, Extension
 import numpy
 
-requires = ['numpy', 'scipy', 'bidict', 'cython']
+requires = ['numpy', 'scipy', 'bidict', 'cython', 'msgpack']
 
 extensions = [
     Extension(

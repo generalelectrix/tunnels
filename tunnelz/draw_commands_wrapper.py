@@ -61,7 +61,7 @@ class DrawCommandAggregatorMsgpack (object):
     def write_to_file(self, path):
         with tempfile.NamedTemporaryFile(
                 dir=os.path.dirname(path), delete=False) as tmpfile:
-            msgpack.pack(self.arcs, tmpfile)
+            msgpack.pack(self.arcs, tmpfile, use_single_floats=True)
         os.rename(tmpfile.name, path)
 
 
