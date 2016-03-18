@@ -1,7 +1,7 @@
 import copy
 from math import sin, pi
-from .waveforms import (
-    triangle, square, sawtooth, triangle_vector, square_vector, sawtooth_vector)
+from .waveforms import triangle_vector, square_vector, sawtooth_vector
+from .waveforms_purepython import triangle, square, sawtooth
 import numpy as np
 from .ui import UserInterface, UiModelProperty
 
@@ -127,7 +127,7 @@ class Animation (object):
             return self.weight * np.sin(angle)
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            return self.weight * triangle_vector(angle)
+            return self.weight * triangle_vector(angle, self.smoothing*HALFPI)
         elif self.type == WaveformType.Square:
             # square wave
             return self.weight * square_vector(angle, self.smoothing*HALFPI)
