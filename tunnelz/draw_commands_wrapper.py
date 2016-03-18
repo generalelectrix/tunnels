@@ -5,6 +5,7 @@ from itertools import izip
 from collections import namedtuple
 import os
 import tempfile
+import msgpack
 
 arc_args = (
     'level', # int 0-255
@@ -46,6 +47,21 @@ class DrawCommandAggregatorDumb (object):
                 dir=os.path.dirname(path), delete=False) as tmpfile:
             for arc in self.arcs:
                 tmpfile.write(arc_to_str(arc))
+        os.rename(tmpfile.name, path)
+
+
+class DrawCommandAggregatorMsgpack (object):
+
+    def __init__(self):
+        self.arcs = []
+
+    def draw_arc(self, arc_args):
+        self.arcs.append(arc_args)
+
+    def write_to_file(self, path):
+        with tempfile.NamedTemporaryFile(
+                dir=os.path.dirname(path), delete=False) as tmpfile:
+            msgpack.pack(self.arcs, tmpfile)
         os.rename(tmpfile.name, path)
 
 
@@ -116,4 +132,4 @@ class DrawCommandAggregatorCapnProto (object):
             self.dc.write(tmpfile)
         os.rename(tmpfile.name, path)
 
-DrawCommandAggregator = DrawCommandAggregatorDumb
+DrawCommandAggregator = DrawCommandAggregatorMsgpack
