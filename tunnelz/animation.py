@@ -1,7 +1,13 @@
 import copy
 from math import sin, pi
-from .waveforms import triangle_vector, square_vector, sawtooth_vector
-from .waveforms_purepython import triangle, square, sawtooth
+from .waveforms import (
+    triangle,
+    square,
+    sawtooth,
+    triangle_vector,
+    square_vector,
+    sawtooth_vector,
+)
 import numpy as np
 from .ui import UserInterface, UiModelProperty
 
@@ -71,7 +77,7 @@ class Animation (object):
         self.n_periods = 0
         self.target = AnimationTarget.Radius
         self.speed = 0.0
-        self.weight = 0 # 0 to 255
+        self.weight = 0.0 # unipolar float
         self.duty_cycle = 0.0
         self.smoothing = 0.25
 
@@ -79,7 +85,7 @@ class Animation (object):
 
     @property
     def active(self):
-        return self.weight > 0
+        return self.weight > 0.0
 
     def copy(self):
         """At present, Animation only contains references to immutable types.
@@ -103,16 +109,16 @@ class Animation (object):
         angle = angle_offset*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            return float(self.weight * sin(angle))
+            return 127 * self.weight * sin(angle)
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            return float(self.weight * triangle(angle))
+            return 127 * self.weight * triangle(angle)
         elif self.type == WaveformType.Square:
             # square wave
-            return float(self.weight * square(angle, self.smoothing*HALFPI))
+            return 127 * self.weight * square(angle, self.smoothing*HALFPI)
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            return float(self.weight * sawtooth(angle, self.smoothing*HALFPI))
+            return 127 * self.weight * sawtooth(angle, self.smoothing*HALFPI)
 
     def get_value_vector(self, angle_offsets):
         """Return the current value of the animation for an ndarray of offsets."""
@@ -124,16 +130,16 @@ class Animation (object):
         angle = angle_offsets*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            return self.weight * np.sin(angle)
+            return 127 * self.weight * np.sin(angle)
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            return self.weight * triangle_vector(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * triangle_vector(angle, self.smoothing*HALFPI)
         elif self.type == WaveformType.Square:
             # square wave
-            return self.weight * square_vector(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * square_vector(angle, self.smoothing*HALFPI)
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            return self.weight * sawtooth_vector(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * sawtooth_vector(angle, self.smoothing*HALFPI)
 
 
 class AnimationClipboard (object):

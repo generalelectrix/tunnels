@@ -46,6 +46,10 @@ class MetaUI (UserInterface):
         self.mixer_ui.put_beam_in_layer(self.current_layer, beam)
         self._update_current_layer()
 
+    def get_copy_of_current_look(self):
+        """Get a copy of the current mixer state."""
+        return self.mixer_ui.mixer.get_copy_of_current_look()
+
     def set_look(self, look):
         """Replace the entire mixer state with the contents of a look."""
         self.mixer_ui.set_look(look)

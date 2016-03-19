@@ -20,7 +20,7 @@ class TunnelUI (UserInterface):
     rot_speed = UiModelProperty('rot_speed', 'set_bipolar', knob='rot_speed')
     thickness = UiModelProperty('thickness', 'set_unipolar', knob='thickness')
     radius = UiModelProperty('radius', 'set_unipolar', knob='radius')
-    ellipse_aspect = UiModelProperty('ellipse_aspect', 'set_bipolar', knob='ellipse_aspect')
+    ellipse_aspect = UiModelProperty('ellipse_aspect', 'set_unipolar', knob='ellipse_aspect')
     col_center = UiModelProperty('col_center', 'set_unipolar', knob='col_center')
     col_width = UiModelProperty('col_width', 'set_unipolar', knob='col_width')
     col_spread = UiModelProperty('col_spread', 'set_unipolar', knob='col_spread')
@@ -75,7 +75,7 @@ class Tunnel (Beam):
         self.rot_speed = 0.0 # bipolar float
         self.thickness = 0.25 # unipolar float
         self.radius = 0.5 # unipolar float
-        self.ellipse_aspect = 0.5 # bipolar float
+        self.ellipse_aspect = 0.5 # unipolar float
 
         self.col_center = 0.0 # unipolar float
         self.col_width = 0.0 # unipolar float
@@ -140,12 +140,12 @@ class Tunnel (Beam):
         # calulcate the rotation, wrap to 0 to 2pi
         self.curr_angle = (
             self.curr_angle +
-            (self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
+            (-self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
 
         radius = int(MAX_RAD_MULT * geometry.max_radius * self.radius)
         thickness = self.thickness * geometry.thickness_scale
 
-        rad_x = radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust)) - thickness/2
+        rad_x = radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust/127)) - thickness/2
         rad_y = radius - thickness/2
 
         return self.draw_segments_with_animations(

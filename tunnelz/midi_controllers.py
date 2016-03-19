@@ -288,12 +288,14 @@ class TunnelMidiController (MidiController):
             'col_center': ControlChangeMapping(0, 16),
             'col_width': ControlChangeMapping(0, 17),
             'col_spread': ControlChangeMapping(0, 18),
-            'col_sat': ControlChangeMapping(0, 19),},
+            'col_sat': ControlChangeMapping(0, 19),
+            'ellipse_aspect': ControlChangeMapping(0, 23),
+            },
             self.handle_unipolar_knob)
 
         self.bipolar_knobs = self.add_controls({
             'rot_speed': ControlChangeMapping(0, 20),
-            'ellipse_aspect': ControlChangeMapping(0, 23),},
+            },
             self.handle_bipolar_knob)
 
         self.segs_mapping = ControlChangeMapping(0, 52)
@@ -334,7 +336,7 @@ class TunnelMidiController (MidiController):
 
     def handle_segs(self, _, val):
         """Convert midi to number of segments."""
-        self.ui.segments = (val + 1)
+        self.ui.segs = (val + 1)
 
     def set_segs(self, segs):
         """Convert number of segs back to midi."""
@@ -388,14 +390,14 @@ class AnimationMidiController (MidiController):
 
         self.knob_value_from_midi = {
             'speed': self.bipolar_from_midi,
-            'weight': lambda w: w,
+            'weight': self.unipolar_from_midi,
             #'duty_cycle': lambda d: d,
             'smoothing': lambda val: float(val)/127
         }
 
         self.knob_value_to_midi = {
             'speed': self.bipolar_to_midi,
-            'weight': lambda w: w,
+            'weight': self.unipolar_to_midi,
             #'duty_cycle': lambda d: d,
             'smoothing': lambda s: min(int(s * 127), 127)
         }
