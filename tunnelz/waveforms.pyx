@@ -8,7 +8,7 @@ cdef float PI = np.pi
 cdef float HALF_PI = np.pi / 2.0
 cdef float TWOPI = 2*np.pi
 
-cdef inline triangle (float angle):
+cpdef inline triangle (float angle):
     """Generate a point on a unit triangle wave from angle in radians."""
     angle = (angle % TWOPI) / TWOPI
 
@@ -19,7 +19,7 @@ cdef inline triangle (float angle):
     else:
         return 2.0 - 4.0 * angle
 
-cdef inline float square(float angle, float smoothing):
+cpdef inline float square(float angle, float smoothing):
     """Generate a point on a square wave from angle in radians and smoothing."""
 
     angle = (angle % TWOPI)
@@ -41,7 +41,7 @@ cdef inline float square(float angle, float smoothing):
     else:
         return -1.0
 
-cdef inline float sawtooth(float angle, float smoothing):
+cpdef inline float sawtooth(float angle, float smoothing):
     """Generate a point on a sawtooth wave from angle in radians and smoothing."""
 
     angle = (angle % TWOPI)

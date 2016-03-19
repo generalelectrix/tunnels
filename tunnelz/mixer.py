@@ -1,4 +1,4 @@
-from .draw_commands_wrapper import DrawCommandAggregator
+from .draw_commands import DrawCommandAggregator
 from .tunnel import Tunnel
 from .look import Look
 from .ui import UserInterface
