@@ -1,11 +1,35 @@
 import org.msgpack.MessagePack;
+import org.msgpack.packer.Packer;
 import org.msgpack.unpacker.Unpacker;
+import org.msgpack.annotation.Message;
+import org.msgpack.template.Template;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.ByteArrayInputStream;
+import java.util.*;
+import java.nio.file.*;
 
 int x_size = 1280;
 int y_size = 720;
 
 MessagePack msgpack = new MessagePack();
+
+@Message
+public static class DrawArc {
+  public int level;
+  public float strokeWeight;
+  public float hue;
+  public float sat;
+  public int val;
+  public int x;
+  public int y;
+  public int radX;
+  public int radY;
+  public float start;
+  public float stop;
+}
+
+Template arcListTemplate = Templates.tList(msgpack.lookup(DrawArc.class));
 
 void setup() {
   
@@ -19,17 +43,20 @@ void setup() {
   
   strokeCap(SQUARE);
   
-  frameRate(30);
+  frameRate(10.0);
   
   colorMode(HSB);
   
   //blendMode(ADD);
   
   frameNumber = 0;
+
 }
 String testPattern = "/Users/Chris/src/pytunnel/testpattern.csv";
 String layer0 = "/Users/Chris/src/pytunnel/layer0.csv";
 String drawFile = layer0;
+
+Path drawFilePath = Paths.get(drawFile);
 
 Table drawTable;
 
@@ -62,51 +89,38 @@ void draw() {
   
   noFill();
   
-  int startTime = millis();
+  //int startTime = millis();
   try {
-    FileInputStream inputFile = new FileInputStream(drawFile);
-    Unpacker unpacker = msgpack.createUnpacker(inputFile);
-    int nCalls = unpacker.readArrayBegin();
+    //FileInputStream inputFile = new FileInputStream(drawFile);
+    byte[] drawBytes = Files.readAllBytes(drawFilePath);
+    ByteArrayInputStream byteStream = new ByteArrayInputStream(drawBytes);
+    Unpacker unpacker = msgpack.createUnpacker(byteStream);
     
-    for (int i=0; i<nCalls; i++) {
-      unpacker.readArrayBegin();
-      int level = unpacker.readInt();
-      float strokeWeight_ = unpacker.readFloat();
-      float hue_ = unpacker.readFloat();
-      float sat = unpacker.readFloat();
-      int val = unpacker.readInt();
-      int x = unpacker.readInt();
-      int y = unpacker.readInt();
-      int radX = unpacker.readInt();
-      int radY = unpacker.readInt();
-      float start = unpacker.readFloat();
-      float stop = unpacker.readFloat();
-      unpacker.readArrayEnd();
-      /*
-      strokeWeight(strokeWeight_);
+    List<DrawArc> arcs = unpacker.read(arcListTemplate);
+    for (DrawArc arc: arcs) {
+      
+      strokeWeight(arc.strokeWeight);
       
       if (useAlpha) {
-        stroke( color(hue_, sat, val, level) );  
+        stroke( color(arc.hue, arc.sat, arc.val, arc.level) );  
       }
       else {
-        color segColor = color(hue_, sat, val);
-        stroke( blendColor(segColor, color(0,0,level), MULTIPLY) );
+        color segColor = color(arc.hue, arc.sat, arc.val);
+        stroke( blendColor(segColor, color(0,0,arc.level), MULTIPLY) );
       }
     
       // draw pie wedge for this cell
-      arc(x, y, radX, radY, start, stop);
-      */
+      arc(arc.x, arc.y, arc.radX, arc.radY, arc.start, arc.stop);
+      
     }
-    unpacker.readArrayEnd();
-    inputFile.close();
   }
   catch (Exception e) {
     println("An exception ocurred: " + e.getMessage());
   }
   frameNumber++;
-  int endTime = millis();
+  //int endTime = millis();
   if (frameNumber % 30 == 0) {
     println(frameRate);
-    println(endTime - startTime);
+    //println(endTime - startTime);
   }
 }
