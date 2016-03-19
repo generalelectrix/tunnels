@@ -8,6 +8,7 @@ import java.io.FileOutputStream;
 import java.io.ByteArrayInputStream;
 import java.util.*;
 import java.nio.file.*;
+import org.zeromq.ZMQ;
 
 int x_size = 1280;
 int y_size = 720;
@@ -31,10 +32,15 @@ public static class DrawArc {
 
 Template arcListTemplate = Templates.tList(msgpack.lookup(DrawArc.class));
 
+ZMQ.Context context = ZMQ.context(1);
+
+//  Socket to talk to server
+ZMQ.Socket drawSocket = context.socket(ZMQ.SUB);
+
 void setup() {
   
-  size(1280,720, FX2D);
-  //size(1280,720);
+  //size(1280,720, FX2D);
+  size(1280,720);
 
   background(0); //black
   noSmooth();
@@ -43,14 +49,23 @@ void setup() {
   
   strokeCap(SQUARE);
   
-  frameRate(10.0);
+  frameRate(300.0);
   
   colorMode(HSB);
   
   //blendMode(ADD);
   
   frameNumber = 0;
+  
+  drawSocket.connect("tcp://localhost:6000");
 
+  byte[] filter = new byte[0];
+  drawSocket.subscribe(filter);
+}
+
+void stop() {
+  drawSocket.close();
+  context.term();
 }
 String testPattern = "/Users/Chris/src/pytunnel/testpattern.csv";
 String layer0 = "/Users/Chris/src/pytunnel/layer0.csv";
@@ -63,6 +78,27 @@ Table drawTable;
 int frameNumber;
 
 boolean useAlpha = false;
+
+List<DrawArc> getNewestFrame() throws IOException {
+  // initial, blocking receive
+  byte[] message;
+  message = drawSocket.recv();
+  // now drain the buffer
+  while (true) {
+    byte[] newestMessage = drawSocket.recv(ZMQ.DONTWAIT);
+    if (newestMessage == null) {
+      break;
+    }
+    else {
+      message = newestMessage;
+    }
+  }
+  
+  ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
+  Unpacker unpacker = msgpack.createUnpacker(byteStream);
+    
+  return unpacker.read(arcListTemplate);
+}
 
 // method called whenever processing draws a frame, basically the event loop
 void draw() {
@@ -92,27 +128,26 @@ void draw() {
   //int startTime = millis();
   try {
     //FileInputStream inputFile = new FileInputStream(drawFile);
-    byte[] drawBytes = Files.readAllBytes(drawFilePath);
-    ByteArrayInputStream byteStream = new ByteArrayInputStream(drawBytes);
-    Unpacker unpacker = msgpack.createUnpacker(byteStream);
+    //byte[] drawBytes = Files.readAllBytes(drawFilePath);
+    List<DrawArc> arcs = getNewestFrame();
     
-    List<DrawArc> arcs = unpacker.read(arcListTemplate);
-    for (DrawArc arc: arcs) {
+      for (DrawArc toDraw: arcs) {
+        
+        strokeWeight(toDraw.strokeWeight);
+        
+        if (useAlpha) {
+          stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );  
+        }
+        else {
+          color segColor = color(toDraw.hue, toDraw.sat, toDraw.val);
+          stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
+        }
       
-      strokeWeight(arc.strokeWeight);
-      
-      if (useAlpha) {
-        stroke( color(arc.hue, arc.sat, arc.val, arc.level) );  
-      }
-      else {
-        color segColor = color(arc.hue, arc.sat, arc.val);
-        stroke( blendColor(segColor, color(0,0,arc.level), MULTIPLY) );
+        // draw pie wedge for this cell
+        arc(toDraw.x, toDraw.y, toDraw.radX, toDraw.radY, toDraw.start, toDraw.stop);
+        
       }
     
-      // draw pie wedge for this cell
-      arc(arc.x, arc.y, arc.radX, arc.radY, arc.start, arc.stop);
-      
-    }
   }
   catch (Exception e) {
     println("An exception ocurred: " + e.getMessage());

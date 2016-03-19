@@ -150,7 +150,7 @@ class Show (object):
             log.debug("{} events/sec".format(events_processed / time_left))
 
     # method called whenever processing draws a frame, basically the event loop
-    def draw(self, write=True, print_=False):
+    def draw(self, socket=True, write=False, print_=False):
 
         # black out everything to remove leftover pixels
         # FIXME-RENDERING
@@ -162,4 +162,6 @@ class Show (object):
         if write:
             file = 'layer0.csv'
             dc_agg.write_to_file(file)
+        if socket:
+            dc_agg.write_to_socket()
 

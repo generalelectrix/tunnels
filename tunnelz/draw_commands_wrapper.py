@@ -6,6 +6,7 @@ from collections import namedtuple
 import os
 import tempfile
 import msgpack
+import zmq
 
 arc_args = (
     'level', # int 0-255
@@ -33,6 +34,11 @@ def write_layers_to_file(layers, file):
             for arc in layer:
                 tmpfile.write(','.join(str(val) for val in arc) + '\n')
     os.rename(tmpfile.name, file)
+
+# temporary hack, refactor this later
+context = zmq.Context()
+socket = context.socket(zmq.PUB)
+socket.bind("tcp://*:6000")
 
 class DrawCommandAggregatorDumb (object):
 
@@ -63,6 +69,10 @@ class DrawCommandAggregatorMsgpack (object):
                 dir=os.path.dirname(path), delete=False) as tmpfile:
             msgpack.pack(self.arcs, tmpfile, use_single_float=True)
         os.rename(tmpfile.name, path)
+
+
+    def write_to_socket(self):
+        socket.send(msgpack.dumps(self.arcs, use_single_float=True))
 
 
 class DrawCommandAggregatorProtoBuf (object):
