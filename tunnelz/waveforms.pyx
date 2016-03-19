@@ -27,7 +27,7 @@ cpdef inline float square(float angle, float smoothing):
         if angle < PI:
             return 1.0
         else:
-            return 1.0
+            return -1.0
 
     if angle < smoothing:
         return angle/smoothing
