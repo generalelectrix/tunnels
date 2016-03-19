@@ -2,7 +2,6 @@ from __future__ import division
 from math import pi
 import numpy as np
 cimport numpy as np
-from scipy import signal
 
 cdef float PI = np.pi
 cdef float HALF_PI = np.pi / 2.0

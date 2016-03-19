@@ -7,16 +7,18 @@ except ImportError:
     from distutils.core import setup, Extension
 import numpy
 
-requires = ['numpy', 'scipy', 'bidict', 'cython', 'msgpack']
+requires = ['numpy', 'bidict', 'cython', 'msgpack']
 
 extensions = [
     Extension(
-        "tunnelz/waveforms",
+        "tunnelz.waveforms",
         ["tunnelz/waveforms.pyx"],
-        include_dirs=[numpy.get_include()],)]
+        include_dirs=[numpy.get_include(), "."],
+    )]
 
 setup(
     name='tunnelz',
+    packages=['tunnelz'],
     install_requires=requires,
     license='GPL2',
     ext_modules=cythonize(extensions),
