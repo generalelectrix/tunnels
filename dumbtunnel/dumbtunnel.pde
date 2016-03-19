@@ -3,18 +3,19 @@ import org.msgpack.packer.Packer;
 import org.msgpack.unpacker.Unpacker;
 import org.msgpack.annotation.Message;
 import org.msgpack.template.Template;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.ByteArrayInputStream;
-import java.util.*;
-import java.nio.file.*;
+import java.util.List;
 import org.zeromq.ZMQ;
 
-int x_size = 1280;
-int y_size = 720;
+// use alpha blending?  (expensive)
+boolean useAlpha = false;
 
+int frameNumber;
+
+// Global deserialization
 MessagePack msgpack = new MessagePack();
 
+// MessagePack helper class
 @Message
 public static class DrawArc {
   public int level;
@@ -32,53 +33,13 @@ public static class DrawArc {
 
 Template arcListTemplate = Templates.tList(msgpack.lookup(DrawArc.class));
 
+// Global 0mq frame receive socket
 ZMQ.Context context = ZMQ.context(1);
-
-//  Socket to talk to server
 ZMQ.Socket drawSocket = context.socket(ZMQ.SUB);
 
-void setup() {
-  
-  //size(1280,720, FX2D);
-  size(1280,720);
+String serverAddress = "tcp://localhost:6000";
 
-  background(0); //black
-  noSmooth();
-  
-  ellipseMode(RADIUS);
-  
-  strokeCap(SQUARE);
-  
-  frameRate(300.0);
-  
-  colorMode(HSB);
-  
-  //blendMode(ADD);
-  
-  frameNumber = 0;
-  
-  drawSocket.connect("tcp://localhost:6000");
-
-  byte[] filter = new byte[0];
-  drawSocket.subscribe(filter);
-}
-
-void stop() {
-  drawSocket.close();
-  context.term();
-}
-String testPattern = "/Users/Chris/src/pytunnel/testpattern.csv";
-String layer0 = "/Users/Chris/src/pytunnel/layer0.csv";
-String drawFile = layer0;
-
-Path drawFilePath = Paths.get(drawFile);
-
-Table drawTable;
-
-int frameNumber;
-
-boolean useAlpha = false;
-
+/// Drain the incoming frame buffer and return the freshest frame.
 List<DrawArc> getNewestFrame() throws IOException {
   // initial, blocking receive
   byte[] message;
@@ -94,41 +55,52 @@ List<DrawArc> getNewestFrame() throws IOException {
     }
   }
   
+  // Unpack the msgpack draw commands
   ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
   Unpacker unpacker = msgpack.createUnpacker(byteStream);
     
   return unpacker.read(arcListTemplate);
 }
 
-// method called whenever processing draws a frame, basically the event loop
-void draw() {
+void setup() {
+  
+  //size(1280,720, FX2D);
+  size(1280,720);
 
+  background(0); //black
+  noSmooth();
   
-  /*
-  drawTable = loadTable(drawFile);
+  // turn off that annoying extra beam
+  noCursor();
   
-  for (TableRow row : drawTable.rows()) {
-    int level = row.getInt(0);
-    float strokeWeight_ = row.getFloat(1);
-    float hue_ = row.getFloat(2);
-    float sat = row.getFloat(3);
-    int val = row.getInt(4);
-    int x = row.getInt(5);
-    int y = row.getInt(6);
-    int radX = row.getInt(7);
-    int radY = row.getInt(8);
-    float start = row.getFloat(9);
-    float stop = row.getFloat(10);
-  */
+  ellipseMode(RADIUS);
+  strokeCap(SQUARE);
+  colorMode(HSB);
+  //blendMode(ADD);
+  
+  frameRate(300.0);
+  
+  frameNumber = 0;
+  
+  // connect to the server and accept every message
+  drawSocket.connect(serverAddress);
+
+  byte[] filter = new byte[0];
+  drawSocket.subscribe(filter);
+}
+
+void stop() {
+  drawSocket.close();
+  context.term();
+}
+
+void draw() {
   
   background(0);
-  
   noFill();
   
   //int startTime = millis();
   try {
-    //FileInputStream inputFile = new FileInputStream(drawFile);
-    //byte[] drawBytes = Files.readAllBytes(drawFilePath);
     List<DrawArc> arcs = getNewestFrame();
     
       for (DrawArc toDraw: arcs) {
@@ -152,6 +124,7 @@ void draw() {
   catch (Exception e) {
     println("An exception ocurred: " + e.getMessage());
   }
+  
   frameNumber++;
   //int endTime = millis();
   if (frameNumber % 30 == 0) {
