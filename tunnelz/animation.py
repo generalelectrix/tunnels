@@ -9,7 +9,7 @@ from .waveforms import (
     sawtooth_vector,
 )
 import numpy as np
-from .ui import UserInterface, UiModelProperty
+from .model_interface import ModelInterface, MiModelProperty
 
 TWOPI = 2*pi
 HALFPI = pi/2
@@ -56,14 +56,14 @@ class WaveformType (object):
     VALUES = (Sine, Triangle, Square, Sawtooth)
 
 
-class AnimationUI (UserInterface):
-    type = UiModelProperty('type', 'set_type')
-    n_periods = UiModelProperty('n_periods', 'set_n_periods')
-    target = UiModelProperty('target', 'set_target')
-    speed = UiModelProperty('speed', 'set_knob', knob='speed')
-    weight = UiModelProperty('weight', 'set_knob', knob='weight')
-    #duty_cycle = UiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
-    smoothing = UiModelProperty('smoothing', 'set_knob', knob='smoothing')
+class AnimationMI (ModelInterface):
+    type = MiModelProperty('type', 'set_type')
+    n_periods = MiModelProperty('n_periods', 'set_n_periods')
+    target = MiModelProperty('target', 'set_target')
+    speed = MiModelProperty('speed', 'set_knob', knob='speed')
+    weight = MiModelProperty('weight', 'set_knob', knob='weight')
+    #duty_cycle = MiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
+    smoothing = MiModelProperty('smoothing', 'set_knob', knob='smoothing')
 
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""

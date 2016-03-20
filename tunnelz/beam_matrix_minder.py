@@ -1,5 +1,5 @@
 import numpy as np
-from .ui import UserInterface, UiProperty
+from .model_interface import ModelInterface, MiProperty
 
 # states for beam matrix UI
 Idle = 'idle'
@@ -14,21 +14,21 @@ ButtonBeam = 'button_beam'
 ButtonLook = 'button_look'
 
 
-class BeamMatrixUI (UserInterface):
-    """Encapsulate the user interface to a beam matrix.
+class BeamMatrixMI (ModelInterface):
+    """Encapsulate the interface to a beam matrix.
 
-    The BeamMatrixUI depends on a MetaUI to retrieve and set the currently
-    selected beam.  It is normally owned by the MetaUI.
+    The BeamMatrixMI depends on a MetaMI to retrieve and set the currently
+    selected beam.  It is normally owned by the MetaMI.
     """
-    state = UiProperty(Idle, 'set_beam_matrix_state')
+    state = MiProperty(Idle, 'set_beam_matrix_state')
 
-    def __init__(self, beam_matrix, meta_ui):
-        super(BeamMatrixUI, self).__init__(model=beam_matrix)
+    def __init__(self, beam_matrix, meta_mi):
+        super(BeamMatrixMI, self).__init__(model=beam_matrix)
         self.beam_matrix = beam_matrix
-        self.meta_ui = meta_ui
+        self.meta_mi = meta_mi
 
     def initialize(self):
-        super(BeamMatrixUI, self).initialize()
+        super(BeamMatrixMI, self).initialize()
         for row in xrange(self.beam_matrix.n_rows):
             for col in xrange(self.beam_matrix.n_columns):
                 self.update_button(row, col, ButtonEmpty)
@@ -48,16 +48,16 @@ class BeamMatrixUI (UserInterface):
         if self.state == Idle and self.beam_matrix.element_has_data(row, column):
             # if idling, get a beam if there is one
             saved_beam = self.beam_matrix.get_element(row, column)
-            self.meta_ui.replace_current_beam(saved_beam)
+            self.meta_mi.replace_current_beam(saved_beam)
         elif self.state == BeamSave:
             # if we're saving a beam, dump it
-            beam = self.meta_ui.get_current_beam()
+            beam = self.meta_mi.get_current_beam()
             self.beam_matrix.put_beam(row, column, beam)
             self.update_button(row, column, ButtonBeam)
             self.state = Idle
         elif self.state == LookSave:
             # dump mixer state into a saved look
-            look = self.meta_ui.get_copy_of_current_look()
+            look = self.meta_mi.get_copy_of_current_look()
             self.beam_matrix.put_look(row, column, look)
             self.update_button(row, column, ButtonLook)
             self.state = Idle
@@ -71,7 +71,7 @@ class BeamMatrixUI (UserInterface):
             self.beam_matrix.element_is_look(row, column)):
             # only do anything if there is actually a look in the slot
             look = self.beam_matrix.get_element(row, column)
-            self.meta_ui.set_look(look)
+            self.meta_mi.set_look(look)
             self.state = Idle
 
 

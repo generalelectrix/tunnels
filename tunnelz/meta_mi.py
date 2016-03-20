@@ -4,24 +4,24 @@ Ideally, UIs shouldn't need to know about each other, and this orchestrator
 deals with the few actions that need to be coordinated across each of them.
 """
 from .animation import AnimationClipboard
-from .beam_matrix_minder import BeamMatrixUI
-from .ui import UserInterface, UiProperty
+from .beam_matrix_minder import BeamMatrixMI
+from .model_interface import ModelInterface, MiProperty
 
-class MetaUI (UserInterface):
+class MetaMI (ModelInterface):
 
-    current_layer = UiProperty(0, 'set_current_layer')
+    current_layer = MiProperty(0, 'set_current_layer')
 
-    def __init__(self, mixer_ui, beam_ui, animator_ui, beam_matrix):
-        super(MetaUI, self).__init__(None)
-        self.mixer_ui = mixer_ui
-        self.beam_ui = beam_ui
-        self.animator_ui = animator_ui
-        self.beam_matrix_ui = BeamMatrixUI(beam_matrix, self)
+    def __init__(self, mixer_mi, beam_mi, animator_mi, beam_matrix):
+        super(MetaMI, self).__init__(None)
+        self.mixer_mi = mixer_mi
+        self.beam_mi = beam_mi
+        self.animator_mi = animator_mi
+        self.beam_matrix_mi = BeamMatrixMI(beam_matrix, self)
         self.animation_clipboard = AnimationClipboard()
 
     def initialize(self):
-        super(MetaUI, self).initialize()
-        self.beam_matrix_ui.initialize()
+        super(MetaMI, self).initialize()
+        self.beam_matrix_mi.initialize()
         self._update_current_layer()
 
     def set_current_layer(self, layer):
@@ -39,33 +39,33 @@ class MetaUI (UserInterface):
 
     def get_current_beam(self):
         """Return the beam which is currently being edited."""
-        return self.mixer_ui.mixer.get_beam_from_layer(self.current_layer)
+        return self.mixer_mi.mixer.get_beam_from_layer(self.current_layer)
 
     def replace_current_beam(self, beam):
         """Replace the beam in the layer which is currently being edited."""
-        self.mixer_ui.put_beam_in_layer(self.current_layer, beam)
+        self.mixer_mi.put_beam_in_layer(self.current_layer, beam)
         self._update_current_layer()
 
     def get_copy_of_current_look(self):
         """Get a copy of the current mixer state."""
-        return self.mixer_ui.mixer.get_copy_of_current_look()
+        return self.mixer_mi.mixer.get_copy_of_current_look()
 
     def set_look(self, look):
         """Replace the entire mixer state with the contents of a look."""
-        self.mixer_ui.set_look(look)
+        self.mixer_mi.set_look(look)
         self._update_current_layer()
 
     def _update_current_layer(self):
         """If we're done something that requires a full UI redraw, call this."""
-        # TODO: alter mixer UI to add this interface?  Do I care?
+        # TODO: alter mixer MI to add this interface?  Do I care?
         active_beam = self.get_current_beam()
-        self.beam_ui.swap_model(active_beam)
+        self.beam_mi.swap_model(active_beam)
 
         # TODO: do we want to store this in the beam?  It implies that our
         # stateful meta-UI abstraction is a bit leaky, but it may provide a
         # nicer user experience.
         active_animator = active_beam.get_current_animation()
-        self.animator_ui.swap_model(active_animator)
+        self.animator_mi.swap_model(active_animator)
 
     def set_current_animator(self, anim_num):
         """Set which animator is being edited.
@@ -79,14 +79,14 @@ class MetaUI (UserInterface):
         if anim_num != beam.curr_anim:
             beam.curr_anim = anim_num
             animator = beam.get_current_animation()
-            self.animator_ui.swap_model(animator)
+            self.animator_mi.swap_model(animator)
             self.update_controllers('set_current_animator', anim_num)
 
     def animation_copy(self):
         """Copy the current animator to the clipboard."""
         # TODO: which animator is authoritatively the current one - the current
         # beam's current animator, or the one loaded into the animator ui?
-        self.animation_clipboard.copy(self.animator_ui.model)
+        self.animation_clipboard.copy(self.animator_mi.model)
 
     def animation_paste(self):
         """Paste the clipboard into the current beam's current animator slot."""
@@ -94,4 +94,4 @@ class MetaUI (UserInterface):
         if animator is not None:
             beam = self.get_current_beam()
             beam.replace_current_animation(animator)
-            self.animator_ui.swap_model(animator)
+            self.animator_mi.swap_model(animator)

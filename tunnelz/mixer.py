@@ -1,16 +1,16 @@
 from .draw_commands import DrawCommandAggregator
 from .tunnel import Tunnel
 from .look import Look
-from .ui import UserInterface
+from .model_interface import ModelInterface
 
-class MixerUI (UserInterface):
-    """Handle user interactions for the mixer."""
+class MixerMI (ModelInterface):
+    """Handle model interactions for the mixer."""
     def __init__(self, mixer):
-        super(MixerUI, self).__init__(mixer)
+        super(MixerMI, self).__init__(mixer)
         self.mixer = mixer
 
     def initialize(self):
-        super(MixerUI, self).initialize()
+        super(MixerMI, self).initialize()
         for i, layer in enumerate(self.mixer.layers):
             self.update_controllers('set_look_indicator', i, isinstance(layer.beam, Look))
             self.update_controllers('set_level', i, layer.level)

@@ -1,8 +1,8 @@
 import logging as log
-from .animation import WaveformType, AnimationTarget, AnimationUI
+from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
 from itertools import count
-from .meta_ui import MetaUI
+from .meta_mi import MetaMI
 from .midi import MidiInput, MidiOutput
 from .midi_controllers import (
     BeamMatrixMidiController,
@@ -10,10 +10,10 @@ from .midi_controllers import (
     MixerMidiController,
     TunnelMidiController,
     AnimationMidiController,)
-from .mixer import Mixer, MixerUI
+from .mixer import Mixer, MixerMI
 from Queue import Empty
 import time
-from .tunnel import Tunnel, TunnelUI
+from .tunnel import Tunnel, TunnelMI
 
 # how many beams you like?
 N_BEAMS = 8
@@ -32,22 +32,22 @@ class Show (object):
 
         starting_beam = self.mixer.layers[0].beam
 
-        # instantiate UIs
-        self.mixer_ui = mixer_ui = MixerUI(self.mixer)
-        self.tunnel_ui = tunnel_ui = TunnelUI(starting_beam)
-        self.animator_ui = animator_ui = AnimationUI(starting_beam.get_current_animation())
+        # instantiate MIs
+        self.mixer_mi = mixer_mi = MixerMI(self.mixer)
+        self.tunnel_mi = tunnel_mi = TunnelMI(starting_beam)
+        self.animator_mi = animator_mi = AnimationMI(starting_beam.get_current_animation())
 
-        # top-level ui
-        self.meta_ui = MetaUI(mixer_ui, tunnel_ui, animator_ui, self.beam_matrix)
+        # top-level mi
+        self.meta_mi = MetaMI(mixer_mi, tunnel_mi, animator_mi, self.beam_matrix)
 
         # setup all control surfaces
         self.setup_controllers()
 
-        # initialize the UIs
-        self.mixer_ui.initialize()
-        self.tunnel_ui.initialize()
-        self.animator_ui.initialize()
-        self.meta_ui.initialize()
+        # initialize the MIs
+        self.mixer_mi.initialize()
+        self.tunnel_mi.initialize()
+        self.animator_mi.initialize()
+        self.meta_mi.initialize()
         # done!
 
     def setup_models(self):
@@ -97,19 +97,19 @@ class Show (object):
             midi_out.open_port(2)
 
             self.metacontrol_midi_controller = MetaControlMidiController(
-                self.meta_ui, midi_in, midi_out)
+                self.meta_mi, midi_in, midi_out)
 
             self.bm_midi_controller = BeamMatrixMidiController(
-                self.meta_ui.beam_matrix_ui, midi_in, midi_out)
+                self.meta_mi.beam_matrix_mi, midi_in, midi_out)
 
             self.mixer_midi_controller = MixerMidiController(
-                self.mixer_ui, midi_in, midi_out)
+                self.mixer_mi, midi_in, midi_out)
 
             self.tunnel_midi_controller = TunnelMidiController(
-                self.tunnel_ui, midi_in, midi_out)
+                self.tunnel_mi, midi_in, midi_out)
 
             self.animation_midi_controller = AnimationMidiController(
-                self.animator_ui, midi_in, midi_out)
+                self.animator_mi, midi_in, midi_out)
 
     def run(self, framerate=30.0, n_frames=None, verbose=False):
 

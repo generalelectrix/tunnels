@@ -2,7 +2,7 @@ from functools import wraps
 from weakref import WeakSet
 
 
-class UiProperty (object):
+class MiProperty (object):
     """Descriptor for creating observed properties."""
     def __init__(self, initial_value, callback_name, **kwargs):
         self.initial_val = initial_value
@@ -19,7 +19,7 @@ class UiProperty (object):
             getattr(controller, self.callback_name)(val, **self.kwargs)
 
 
-class UiModelProperty (object):
+class MiModelProperty (object):
     """Descriptor for creating UI-observed properties of model attributes."""
     def __init__(self, attribute, callback_name=None, **kwargs):
         self.attribute = attribute
@@ -34,23 +34,23 @@ class UiModelProperty (object):
             getattr(controller, self.callback_name)(val, **self.kwargs)
 
 
-class UserInterfaceMeta (type):
-    """Metaclass for user interface creation.
+class ModelInterfaceMeta (type):
+    """Metaclass for model interface creation.
 
     Ensures that various class-level attributes are initialized separately for
-    each UI class.  Provides
+    each MI class.  Provides
     """
     def __new__(cls, clsname, bases, dct):
         new_dct = {}
 
         new_dct['model_properties'] = model_properties = set()
-        new_dct['ui_properties'] = ui_properties = set()
+        new_dct['mi_properties'] = mi_properties = set()
 
         for key, value in dct.iteritems():
             new_dct[key] = value
 
             # for UiProperties, do the legwork to create a property
-            if isinstance(value, UiProperty):
+            if isinstance(value, MiProperty):
                 # make a private version of the attribute, set its initial value
                 private_key = '_' + key
                 new_dct[private_key] = value.initial_val
@@ -59,21 +59,21 @@ class UserInterfaceMeta (type):
                 value.attribute = private_key
 
                 # keep track of the ui properties for iteration
-                ui_properties.add(value)
-            elif isinstance(value, UiModelProperty):
+                mi_properties.add(value)
+            elif isinstance(value, MiModelProperty):
                 model_properties.add(value)
 
-        inst = super(UserInterfaceMeta, cls).__new__(cls, clsname, bases, new_dct)
+        inst = super(ModelInterfaceMeta, cls).__new__(cls, clsname, bases, new_dct)
 
         return inst
 
 
-class UserInterface (object):
+class ModelInterface (object):
     """Base class for UIs.  Mostly responsible for implementing Observer.
 
     Maintains observing controllers using a weak reference set.
     """
-    __metaclass__ = UserInterfaceMeta
+    __metaclass__ = ModelInterfaceMeta
     def __init__(self, model):
         """Initialize a user interface to an underlying model object."""
         self.model = model
@@ -94,31 +94,6 @@ class UserInterface (object):
         for prop in self.model_properties:
             val = getattr(self.model, prop.attribute)
             self.update_controllers(prop.callback_name, val, **prop.kwargs)
-        for prop in self.ui_properties:
+        for prop in self.mi_properties:
             val = getattr(self, prop.attribute)
             self.update_controllers(prop.callback_name, val, **prop.kwargs)
-
-
-def ui_method(callback_name, result_filter_func=None, **decoargs):
-    """Decorator to make a method act something like a ui property.
-
-    Only use this decorator on methods in classes which subclass UserInterface.
-
-    The wrapped method will be called.  The value it returns will be passed
-    through an optional result_filter_func before being passed to the
-    observing controllers by calling their callback_name method with the
-    filtered result as the first argument, as well as any optional keyword
-    arguments passed to this decorator.  The original return value will then be
-    returned.
-    """
-    def ui_method_decorator(method):
-        @wraps(method)
-        def ui_method_wrapper(self, *args, **kwargs):
-            filtered_result = result = method(self, *args, **kwargs)
-            if result_filter_func is not None:
-                filtered_result = result_filter_func(result)
-            for controller in self.controllers:
-                getattr(controller, callback_name)(filtered_result, **decoargs)
-            return result
-        return ui_method_wrapper
-    return ui_method_decorator

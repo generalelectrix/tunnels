@@ -5,7 +5,7 @@ from itertools import izip
 from copy import deepcopy
 from math import pi
 import numpy as np
-from .ui import UserInterface, UiModelProperty
+from .model_interface import ModelInterface, MiModelProperty
 from .waveforms import sawtooth_vector
 
 # scale overall radius, set > 1.0 to enable larger shapes than screen size
@@ -15,21 +15,21 @@ MAX_ELLIPSE_ASPECT = 2.0
 TWOPI = 2*pi
 
 
-class TunnelUI (UserInterface):
+class TunnelMI (ModelInterface):
 
-    rot_speed = UiModelProperty('rot_speed', 'set_bipolar', knob='rot_speed')
-    thickness = UiModelProperty('thickness', 'set_unipolar', knob='thickness')
-    radius = UiModelProperty('radius', 'set_unipolar', knob='radius')
-    ellipse_aspect = UiModelProperty('ellipse_aspect', 'set_unipolar', knob='ellipse_aspect')
-    col_center = UiModelProperty('col_center', 'set_unipolar', knob='col_center')
-    col_width = UiModelProperty('col_width', 'set_unipolar', knob='col_width')
-    col_spread = UiModelProperty('col_spread', 'set_unipolar', knob='col_spread')
-    col_sat = UiModelProperty('col_sat', 'set_unipolar', knob='col_sat')
-    segs = UiModelProperty('segs', 'set_segs')
-    blacking = UiModelProperty('blacking', 'set_blacking')
+    rot_speed = MiModelProperty('rot_speed', 'set_bipolar', knob='rot_speed')
+    thickness = MiModelProperty('thickness', 'set_unipolar', knob='thickness')
+    radius = MiModelProperty('radius', 'set_unipolar', knob='radius')
+    ellipse_aspect = MiModelProperty('ellipse_aspect', 'set_unipolar', knob='ellipse_aspect')
+    col_center = MiModelProperty('col_center', 'set_unipolar', knob='col_center')
+    col_width = MiModelProperty('col_width', 'set_unipolar', knob='col_width')
+    col_spread = MiModelProperty('col_spread', 'set_unipolar', knob='col_spread')
+    col_sat = MiModelProperty('col_sat', 'set_unipolar', knob='col_sat')
+    segs = MiModelProperty('segs', 'set_segs')
+    blacking = MiModelProperty('blacking', 'set_blacking')
 
     def __init__(self, tunnel):
-        super(TunnelUI, self).__init__(model=tunnel)
+        super(TunnelMI, self).__init__(model=tunnel)
 
         self.x_nudge, self.y_nudge = geometry.x_nudge, geometry.y_nudge
 
