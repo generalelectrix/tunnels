@@ -1,8 +1,12 @@
 
 
-
+#TODO: formalize as an ABC
 class Beam (object):
     """Generic Beam base class."""
+
+    # avoid a lot of isinstance checking.
+    # TODO: refactor how looks work to avoid needing this!
+    is_look = False
 
     def __init__(self):
         self.curr_anim = 0
@@ -18,7 +22,7 @@ class Beam (object):
         """
         pass
 
-    def display(self, level_scale, as_mask):
+    def display(self, level_scale, as_mask, dc_agg):
         """Render this beam, using scaled level and masking parameter.
 
         Subclasses should override this method.

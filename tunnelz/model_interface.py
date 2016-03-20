@@ -14,9 +14,10 @@ class MiProperty (object):
         return getattr(obj, self.attribute)
 
     def __set__(self, obj, val):
-        setattr(obj, self.attribute, val)
-        for controller in obj.controllers:
-            getattr(controller, self.callback_name)(val, **self.kwargs)
+        if obj.active:
+            setattr(obj, self.attribute, val)
+            for controller in obj.controllers:
+                getattr(controller, self.callback_name)(val, **self.kwargs)
 
 
 class MiModelProperty (object):
@@ -26,12 +27,16 @@ class MiModelProperty (object):
         self.callback_name = callback_name if callback_name is not None else attribute
         self.kwargs = kwargs
     def __get__(self, obj, objtype):
-        return getattr(obj.model, self.attribute)
+        if obj.active:
+            return getattr(obj.model, self.attribute)
+        else:
+            return None
 
     def __set__(self, obj, val):
-        setattr(obj.model, self.attribute, val)
-        for controller in obj.controllers:
-            getattr(controller, self.callback_name)(val, **self.kwargs)
+        if obj.active:
+            setattr(obj.model, self.attribute, val)
+            for controller in obj.controllers:
+                getattr(controller, self.callback_name)(val, **self.kwargs)
 
 
 class ModelInterfaceMeta (type):
@@ -68,6 +73,15 @@ class ModelInterfaceMeta (type):
         return inst
 
 
+def only_if_active(method):
+    """Decorator to only run a MI method if the MI is active."""
+    @wraps(method)
+    def call_if_active(self, *args, **kwargs):
+        if self.active:
+            return method(self, *args, **kwargs)
+    return call_if_active
+
+
 class ModelInterface (object):
     """Base class for UIs.  Mostly responsible for implementing Observer.
 
@@ -79,17 +93,22 @@ class ModelInterface (object):
         self.model = model
         self.controllers = WeakSet()
 
+        # keep track of whether or not this interface should respond to commands
+        self.active = True
+
     def swap_model(self, model):
         """Swap in a new model object and reinitialize controllers."""
         self.model = model
         # TODO: no need to update UI properties here as they won't change
         self.initialize()
 
+    @only_if_active
     def update_controllers(self, method, *args, **kwargs):
         """Call a named method on the controllers."""
         for controller in self.controllers:
             getattr(controller, method)(*args, **kwargs)
 
+    @only_if_active
     def initialize(self):
         for prop in self.model_properties:
             val = getattr(self.model, prop.attribute)

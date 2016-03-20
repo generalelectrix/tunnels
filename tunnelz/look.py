@@ -3,6 +3,8 @@ from .beam import Beam
 class Look (Beam):
     """A look is a beam that is actually a composite of several beams."""
 
+    is_look = True
+
     def __init__(self, layers):
         """Construct a new look from the contents of a mixer.
 
@@ -17,7 +19,7 @@ class Look (Beam):
         """Return a copy of this look."""
         return Look(self.layers)
 
-    def display(self, level_scale, as_mask):
+    def display(self, level_scale, as_mask, dc_agg):
         """Draw all the Beams in this Look.
 
         level: int in [0, 255]
@@ -29,4 +31,4 @@ class Look (Beam):
             level = layer.level
             if level != 0:
                 scaled_level = level_scale * level / 255
-                layer.beam.display(scaled_level, as_mask or level.mask)
+                layer.beam.display(scaled_level, as_mask or layer.mask, dc_agg)

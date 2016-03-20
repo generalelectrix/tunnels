@@ -84,24 +84,33 @@ class MidiInput (object):
         """Initialize the message queue."""
         self.queue = Queue()
         self.ports = {}
-        self.mappings = defaultdict(set)
+        #self.mappings = defaultdict(set)
+        self.controllers = set()
 
-    def register_mappings(self, mappings):
-        """Register handlers for midi mappings.
+    def register_controller(self, controller):
+        """Register a midi controller with the input service."""
+        self.controllers.add(controller)
 
-        mappings is an iterable of tuples of (MidiMapping, handler_method).
-        handler_method should be a callable that can handle a midi message.
-        """
-        for mapping, handler in mappings.iteritems():
-            self.mappings[mapping].add(handler)
+    def unregister_controller(self, controller):
+        """Unregister a midi controller from the input service."""
+        self.controllers.discard(controller)
 
-    def unregister_mappings(self, mappings):
-        """Unregister a handler for an iterable of midi mappings.
+    # def register_mappings(self, mappings):
+    #     """Register handlers for midi mappings.
 
-        mappings is an iterable of tuples of (MidiMapping, handler_method).
-        """
-        for mapping, handler in mappings.iteritems():
-            self.mappings[mapping].discard(handler)
+    #     mappings is an iterable of tuples of (MidiMapping, handler_method).
+    #     handler_method should be a callable that can handle a midi message.
+    #     """
+    #     for mapping, handler in mappings.iteritems():
+    #         self.mappings[mapping].add(handler)
+
+    # def unregister_mappings(self, mappings):
+    #     """Unregister a handler for an iterable of midi mappings.
+
+    #     mappings is an iterable of tuples of (MidiMapping, handler_method).
+    #     """
+    #     for mapping, handler in mappings.iteritems():
+    #         self.mappings[mapping].discard(handler)
 
     def open_port(self, port_number):
         """Open a new midi port to feed the message queue."""
@@ -133,6 +142,7 @@ class MidiInput (object):
 
     def _dispatch(self, mapping, payload):
         """Dispatch a midi message to the registered handlers."""
-        handlers = self.mappings.get(mapping, tuple())
-        for handler in handlers:
-            handler(mapping, payload)
+        for controller in self.controllers:
+            handler = controller.controls.get(mapping, None)
+            if handler is not None:
+                handler(mapping, payload)

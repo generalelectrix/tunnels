@@ -5,7 +5,7 @@ from itertools import izip
 from copy import deepcopy
 from math import pi
 import numpy as np
-from .model_interface import ModelInterface, MiModelProperty
+from .model_interface import ModelInterface, MiModelProperty, only_if_active
 from .waveforms import sawtooth_vector
 
 # scale overall radius, set > 1.0 to enable larger shapes than screen size
@@ -33,22 +33,27 @@ class TunnelMI (ModelInterface):
 
         self.x_nudge, self.y_nudge = geometry.x_nudge, geometry.y_nudge
 
+    @only_if_active
     def nudge_x_pos(self):
         """Nudge the beam in the +x direction."""
         self.model.x_offset += self.x_nudge
 
+    @only_if_active
     def nudge_x_neg(self):
         """Nudge the beam in the -x direction."""
         self.model.x_offset -= self.x_nudge
 
+    @only_if_active
     def nudge_y_pos(self):
         """Nudge the beam in the +y direction."""
         self.model.y_offset += self.y_nudge
 
+    @only_if_active
     def nudge_y_neg(self):
         """Nudge the beam in the -y direction."""
         self.model.y_offset -= self.y_nudge
 
+    @only_if_active
     def reset_beam_position(self):
         """Reset the beam to center."""
         self.model.x_offset = 0

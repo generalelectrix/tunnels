@@ -48,7 +48,7 @@ class MidiController (object):
 
     def register_callbacks(self):
         """Register the control mapping callbacks with the midi input service."""
-        self.midi_in.register_mappings(self.controls)
+        self.midi_in.register_controller(self)
 
     # --- helper functions for useful knobs ---
 
@@ -111,7 +111,7 @@ class BeamMatrixMidiController (MidiController):
     }
 
     def __init__(self, mi, midi_in, midi_out):
-        """Fire up a fresh controller and register it with the UI."""
+        """Fire up a fresh controller and register it with the MI."""
         super(BeamMatrixMidiController, self).__init__(midi_in, midi_out)
         self.mi = mi
         mi.controllers.add(self)
