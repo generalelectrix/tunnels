@@ -52,23 +52,11 @@ class MidiOutput (object):
 
     def send_from_mapping(self, mapping, value):
         """Send a midi message from a mapping and a payload."""
-        log.debug("sending {}, {}".format(mapping, value))
         b0 = message_type_to_event_type[mapping.kind] + mapping[0]
         event = (b0, mapping[1], value)
-        for port in self.ports.itervalues():
+        for name, port in self.ports.iteritems():
+            log.debug("sending {}, {} to {}".format(mapping, value, name))
             port.send_message(event)
-
-    def send_note(self, channel, pitch, velocity):
-        """Send a note on message."""
-        for name, port in self.ports.iteritems():
-            log.debug("sending note on to {}: {}, {}, {}".format(name, channel, pitch, velocity))
-            port.send_message((144 + channel, pitch, velocity))
-
-    def send_cc(self, channel, control, value):
-        """Send a control change message."""
-        for name, port in self.ports.iteritems():
-            log.debug("sending cc to {}: {}, {}, {}".format(name, channel, control, value))
-            port.send_message((176 + channel, control, value))
 
 # mapping between event type and constructor
 event_type_to_mapping = {

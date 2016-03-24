@@ -15,18 +15,27 @@ from Queue import Empty
 import time
 from .tunnel import Tunnel, TunnelMI
 
+import json
+
 # how many beams you like?
 N_BEAMS = 8
 
+# TODO: more flexible configuration
 class Show (object):
     """Encapsulate the show runtime environment."""
-    def __init__(self, use_midi=True):
-        log.basicConfig(level=log.DEBUG)
+    def __init__(self, config_file="show.cfg"):
+        with open(config_file, 'r') as cfg:
+            self.config = config = json.load(cfg)
+
+        if config["log_level"] == "debug":
+            log.basicConfig(level=log.DEBUG)
+        else:
+            log.basicConfig(level=log.INFO)
 
         self.midi_in = midi_in = MidiInput()
         self.midi_out = midi_out = MidiOutput()
 
-        self.use_midi = use_midi
+        self.use_midi = config['use_midi']
 
         self.setup_models()
 
@@ -92,9 +101,10 @@ class Show (object):
             midi_in = self.midi_in
             midi_out = self.midi_out
 
-            #FIXME-midi port configuration
-            midi_in.open_port(2)
-            midi_out.open_port(2)
+            midi_ports = self.config['midi_ports']
+            for port in midi_ports:
+                midi_in.open_port(port)
+                midi_out.open_port(port)
 
             self.metacontrol_midi_controller = MetaControlMidiController(
                 self.meta_mi, midi_in, midi_out)
@@ -117,13 +127,16 @@ class Show (object):
         last = time.time()
         friter = count() if n_frames is None else xrange(n_frames)
         render_dt = 0.0
+
+        report_framerate = self.config["report_framerate"]
+
         for framenumber in friter:
             self.process_control_events_until_render(render_period - render_dt, verbose=False)
             start_render = time.time()
             self.draw()
             end_render = time.time()
             render_dt = end_render - start_render
-            if (framenumber + 1) % 30 == 0:
+            if report_framerate and (framenumber + 1) % 30 == 0:
                 log.info("{} fps".format(30 / (end_render - last)))
                 last = end_render
 
