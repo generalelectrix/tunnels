@@ -155,8 +155,8 @@ class Tunnel (Beam):
             if target == AnimationTarget.Ellipse: # ellipsing
                 ellipse_adjust += anim.get_value(0)
 
-        radius = int(MAX_RAD_MULT * geometry.max_radius * self.radius)
-        thickness = self.thickness * geometry.thickness_scale
+        radius = geometry.max_radius * self.radius
+        thickness = self.thickness
 
         rad_x = radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust/127)) - thickness/2
         rad_y = radius - thickness/2
@@ -220,16 +220,16 @@ class Tunnel (Beam):
             elif target == AnimationTarget.ColorSaturation:
                 col_sat_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.PositionX:
-                x_adjust += anim.get_value(0)*(geometry.x_size/2)/127
+                x_adjust += anim.get_value(0)/127
             elif target == AnimationTarget.PositionY:
-                y_adjust += anim.get_value(0)*(geometry.y_size/2)/127
+                y_adjust += anim.get_value(0)/127
 
         # the abs() is there to prevent negative width setting when using multiple animations.
         stroke_weight = abs(thickness*(1 + thickness_adjust/127))
 
         # geometry calculations
-        x_center = geometry.x_center + self.x_offset + int(x_adjust)
-        y_center = geometry.y_center + self.y_offset + int(y_adjust)
+        x_center = self.x_offset + x_adjust
+        y_center = self.y_offset + y_adjust
         rad_x_vec = abs(rad_x + rad_adjust)
         rad_y_vec = abs(rad_y+ rad_adjust)
         stop = seg_angle + rot_interval

@@ -23,12 +23,13 @@ def make_resolution_data(x_size, y_size):
         x_nudge=(10*x_size)/1280,
         y_nudge=(10*x_size)/1280,)
 
-RESOLUTION = "720p"
+Geometry = namedtuple("Geometry",
+    ("max_radius", "max_x_offset", "max_y_offset", "x_nudge", "y_nudge"))
 
-RESOLUTIONS = {
-    "1080p": make_resolution_data(1920, 1080),
-    "720p": make_resolution_data(1280, 720),
-}
-
-geometry = RESOLUTIONS[RESOLUTION]
+geometry = Geometry(
+    max_radius=2.0,
+    max_x_offset=1.0,
+    max_y_offset=1.0,
+    x_nudge=0.025,
+    y_nudge=0.025)
 
