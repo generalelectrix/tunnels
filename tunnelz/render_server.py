@@ -114,6 +114,7 @@ class RenderServer (object):
                     self.command.put((FRAME, mixer))
                     return True
                 elif req == FATAL_ERROR:
+                    self._stop()
                     raise payload
         return False
 
@@ -195,5 +196,5 @@ def run_server(command, response, port, framerate, report):
 
     except Exception as err:
         # some exception we didn't catch
-        response.put(FATAL_ERROR, err)
+        response.put((FATAL_ERROR, err))
         return

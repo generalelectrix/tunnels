@@ -387,7 +387,7 @@ class AnimationMidiController (MidiController):
         self.knobs = self.add_controls({
             'speed': ControlChangeMapping(0, 48),
             'weight': ControlChangeMapping(0, 49),
-            #'duty_cycle': ControlChangeMapping(0, 50),
+            'duty_cycle': ControlChangeMapping(0, 50),
             'smoothing': ControlChangeMapping(0, 51),
             },
             self.handle_knob)
@@ -395,15 +395,15 @@ class AnimationMidiController (MidiController):
         self.knob_value_from_midi = {
             'speed': self.bipolar_from_midi,
             'weight': self.unipolar_from_midi,
-            #'duty_cycle': lambda d: d,
-            'smoothing': lambda val: float(val)/127
+            'duty_cycle': self.unipolar_from_midi,
+            'smoothing': self.unipolar_from_midi
         }
 
         self.knob_value_to_midi = {
             'speed': self.bipolar_to_midi,
             'weight': self.unipolar_to_midi,
-            #'duty_cycle': lambda d: d,
-            'smoothing': lambda s: min(int(s * 127), 127)
+            'duty_cycle': self.unipolar_to_midi,
+            'smoothing': self.unipolar_to_midi,
         }
 
         self.type_buttons = self.add_controls({

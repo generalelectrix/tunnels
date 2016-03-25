@@ -245,8 +245,8 @@ class Tunnel (Beam):
                 col_center_adjust +
                 (
                     (127*self.col_width+col_width_adjust) *
-                    sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0))
-                )
+                    sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0)
+                ))
 
             hue = hue % 256
 

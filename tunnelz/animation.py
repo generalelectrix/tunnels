@@ -1,9 +1,11 @@
 import copy
 from math import sin, pi
 from .waveforms import (
+    sine,
     triangle,
     square,
     sawtooth,
+    sine_vector,
     triangle_vector,
     square_vector,
     sawtooth_vector,
@@ -62,7 +64,7 @@ class AnimationMI (ModelInterface):
     target = MiModelProperty('target', 'set_target')
     speed = MiModelProperty('speed', 'set_knob', knob='speed')
     weight = MiModelProperty('weight', 'set_knob', knob='weight')
-    #duty_cycle = MiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
+    duty_cycle = MiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
     smoothing = MiModelProperty('smoothing', 'set_knob', knob='smoothing')
 
 class Animation (object):
@@ -78,7 +80,7 @@ class Animation (object):
         self.target = AnimationTarget.Radius
         self.speed = 0.0
         self.weight = 0.0 # unipolar float
-        self.duty_cycle = 0.0
+        self.duty_cycle = 1.0
         self.smoothing = 0.25
 
         self.curr_angle = 0.0
@@ -109,16 +111,16 @@ class Animation (object):
         angle = angle_offset*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            return 127 * self.weight * sin(angle)
+            return 127 * self.weight * sine(angle, self.smoothing*HALFPI, self.duty_cycle)
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            return 127 * self.weight * triangle(angle)
+            return 127 * self.weight * triangle(angle, self.smoothing*HALFPI, self.duty_cycle)
         elif self.type == WaveformType.Square:
             # square wave
-            return 127 * self.weight * square(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * square(angle, self.smoothing*HALFPI, self.duty_cycle)
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            return 127 * self.weight * sawtooth(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * sawtooth(angle, self.smoothing*HALFPI, self.duty_cycle)
 
     def get_value_vector(self, angle_offsets):
         """Return the current value of the animation for an ndarray of offsets."""
@@ -130,16 +132,16 @@ class Animation (object):
         angle = angle_offsets*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            return 127 * self.weight * np.sin(angle)
+            return 127 * self.weight * sine_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            return 127 * self.weight * triangle_vector(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * triangle_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
         elif self.type == WaveformType.Square:
             # square wave
-            return 127 * self.weight * square_vector(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * square_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            return 127 * self.weight * sawtooth_vector(angle, self.smoothing*HALFPI)
+            return 127 * self.weight * sawtooth_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
 
 
 class AnimationClipboard (object):
