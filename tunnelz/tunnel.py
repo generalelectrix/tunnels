@@ -71,7 +71,7 @@ class Tunnel (Beam):
     TODO: docstring
     """
     n_anim = 4
-    rot_speed_scale = 0.08 # tunnel rotates this many rad/frame
+    rot_speed_scale = 0.15 # tunnel rotates this many rad/frame
     blacking_scale = 4
 
     def __init__(self):
@@ -224,8 +224,8 @@ class Tunnel (Beam):
         # geometry calculations
         x_center = self.x_offset + x_adjust
         y_center = self.y_offset + y_adjust
-        rad_x_vec = abs(rad_x + rad_adjust)
-        rad_y_vec = abs(rad_y+ rad_adjust)
+        rad_x_vec = abs(rad_x + rad_adjust/255)
+        rad_y_vec = abs(rad_y+ rad_adjust/255)
         stop = seg_angle + rot_interval
 
         arcs = []
