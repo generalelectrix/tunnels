@@ -54,23 +54,27 @@ class MidiController (object):
 
     @staticmethod
     def bipolar_from_midi(val):
-        """MIDI knob to a bipolar float, with detent."""
-        if val > 65:
-            return -float(val - 65)/62
-        elif val < 63:
-            return -float(val - 63)/63
+        """MIDI knob to a bipolar float."""
+        if val > 64:
+            return float(val - 64)/63
+        elif val < 64:
+            return float(val - 64)/64
         else:
             return 0.0
+        # there are issues with adding a detent in this way, as the knob stays
+        # snapped in place when you try to turn it away from 0!  Need to add the
+        # detent logic at a lower level, unfortunately.
+        # if val > 65:
+        #     return -float(val - 65)/62
+        # elif val < 63:
+        #     return -float(val - 63)/63
+        # else:
+        #     return 0.0
 
     @staticmethod
     def bipolar_to_midi(val):
         """Bipolar float to a midi knob."""
-        if val < 0.0:
-            return min(int(-val * 62 + 65), 127)
-        elif val > 0.0:
-            return max(int(-val * 63 + 63), 0)
-        else:
-            return 64
+        return min(int(((val + 1.0) / 2.0) * 128), 127)
 
     @staticmethod
     def unipolar_from_midi(val):

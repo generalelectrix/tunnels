@@ -99,7 +99,7 @@ class Animation (object):
 
     def update_state(self):
         if self.active:
-            self.curr_angle = (self.curr_angle + self.speed*self.max_speed) % TWOPI
+            self.curr_angle = (self.curr_angle - self.speed*self.max_speed) % TWOPI
 
     def get_value(self, angle_offset):
         """Return the current value of the animation, with an offset."""

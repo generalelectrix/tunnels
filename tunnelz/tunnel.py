@@ -145,7 +145,7 @@ class Tunnel (Beam):
         # calulcate the rotation, wrap to 0 to 2pi
         self.curr_angle = (
             self.curr_angle +
-            (-self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
+            (self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
 
         radius = int(MAX_RAD_MULT * geometry.max_radius * self.radius)
         thickness = self.thickness * geometry.thickness_scale
