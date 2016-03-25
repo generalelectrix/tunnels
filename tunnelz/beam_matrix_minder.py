@@ -38,7 +38,7 @@ class BeamMatrixMI (ModelInterface):
                     else:
                         state = ButtonBeam
 
-                self.update_button(row, col, ButtonEmpty)
+                self.update_button(row, col, state)
 
     def state_toggle(self, state):
         """Toggle state based on an input state command."""
