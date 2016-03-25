@@ -1,4 +1,3 @@
-from .draw_commands import DrawCommandAggregator
 from .tunnel import Tunnel
 from .look import Look
 from .model_interface import ModelInterface
@@ -86,7 +85,7 @@ class Mixer (object):
         return mask_state
 
     def draw_layers(self):
-        dc_agg = DrawCommandAggregator()
+        dc_agg = []
         for layer in self.layers:
             level = layer.level
             bump = layer.bump

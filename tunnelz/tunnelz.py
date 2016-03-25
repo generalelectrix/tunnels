@@ -12,6 +12,7 @@ from .midi_controllers import (
     AnimationMidiController,)
 from .mixer import Mixer, MixerMI
 from Queue import Empty
+from .render_server import RenderServer
 import time
 from .tunnel import Tunnel, TunnelMI
 
@@ -57,6 +58,7 @@ class Show (object):
         self.tunnel_mi.initialize()
         self.animator_mi.initialize()
         self.meta_mi.initialize()
+
         # done!
 
     def setup_models(self):
@@ -123,60 +125,32 @@ class Show (object):
             self.animation_midi_controller = AnimationMidiController(
                 self.animator_mi, midi_in, midi_out)
 
-    def run(self, framerate=30.0, n_frames=None, verbose=False):
-
-        render_period = 1.0 / framerate
-        last = time.time()
-        friter = count() if n_frames is None else xrange(n_frames)
-        render_dt = 0.0
+    def run(self, framerate=30.0, n_frames=None, control_timeout=0.001):
 
         report_framerate = self.config["report_framerate"]
 
-        for framenumber in friter:
-            self.process_control_events_until_render(render_period - render_dt, verbose=False)
-            start_render = time.time()
-            self.draw()
-            end_render = time.time()
-            render_dt = end_render - start_render
-            if report_framerate and (framenumber + 1) % 30 == 0:
-                log.info("{} fps".format(30 / (end_render - last)))
-                last = end_render
+        frame_number = 0
 
-    def process_control_events_until_render(self, time_left, verbose=False):
-        start = time.time()
-        events_processed = 0
-        midi_in = self.midi_in
-        while True:
-            time_until_render = time_left - (time.time() - start)
-            # if it is time to render, stop the command loop
-            if time_until_render <= 0.0:
-                break
+        # start up the render server
+        render_server = RenderServer(framerate=framerate)
 
-            # process control events
-            try:
-                # time out slightly before render time to improve framerate stability
-                midi_in.receive(timeout=time_until_render*0.95)
-                events_processed += 1
-            except Empty:
-                # fine if we didn't get a control event
-                pass
+        render_server.start()
 
-        if verbose:
-            log.debug("{} events/sec".format(events_processed / time_left))
+        try:
+            while n_frames is None or frame_number < n_frames:
+                # process a control event if one is pending
+                try:
+                    # time out slightly before render time to improve framerate stability
+                    self.midi_in.receive(timeout=control_timeout)
+                except Empty:
+                    # fine if we didn't get a control event
+                    pass
 
-    # method called whenever processing draws a frame, basically the event loop
-    def draw(self, socket=True, write=False, print_=False):
+                # pass the mixer if it is time to render a frame
+                rendered = render_server.pass_frame_if_requested(self.mixer)
+                if rendered:
+                    frame_number += 1
+        finally:
+            render_server.stop()
 
-        # black out everything to remove leftover pixels
-        # FIXME-RENDERING
-        # background(0)
-
-        dc_agg = self.mixer.draw_layers()
-        if print_:
-            print dc_agg
-        if write:
-            file = 'layer0.csv'
-            dc_agg.write_to_file(file)
-        if socket:
-            dc_agg.write_to_socket()
 

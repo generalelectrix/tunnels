@@ -119,7 +119,7 @@ class Tunnel (Beam):
         Args:
             level_scale: int in [0, 255]
             as_mask (bool): draw this beam as a masking layer
-            dc_agg (DrawCommandAggregator)
+            dc_agg (list to aggregate draw commands)
         """
         # ensure we don't exceed the set bounds of the screen
         self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
@@ -231,7 +231,7 @@ class Tunnel (Beam):
         if as_mask:
             val_iter = izip(stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
             for strk, r_x, r_y, start_angle, stop_angle in val_iter:
-                dc_agg.draw_arc((
+                dc_agg.append((
                     255,
                     strk,
                     0.0,
@@ -259,7 +259,7 @@ class Tunnel (Beam):
             val_iter = izip(hue, sat, stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
 
             for h, s, strk, r_x, r_y, start_angle, stop_angle in val_iter:
-                dc_agg.draw_arc((
+                dc_agg.append((
                     level_scale,
                     strk,
                     h,
