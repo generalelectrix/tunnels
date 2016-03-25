@@ -67,15 +67,24 @@ float thicknessScale = 0.5;
 int xCenter, yCenter, xSize, ySize;
 
 void setup() {
-  
-  //size(1280,720, FX2D);
+  /*
   size(1280,720);
-  
   criticalSize = 720;
   xSize = 1280;
   ySize = 720;
-  xCenter = 640;
-  yCenter = 360;
+  */
+  /*
+  size(1920,1080);
+  criticalSize = 1080;
+  xSize = 1920;
+  ySize = 1080;
+  */
+  size(192,108);
+  criticalSize = 108;
+  xSize = 192;
+  ySize = 108;
+  xCenter = xSize / 2;
+  yCenter = ySize / 2;
 
   background(0); //black
   noSmooth();
