@@ -28,9 +28,9 @@ Geometry = namedtuple("Geometry",
 
 # TODO: move this to a presets file and share it with dumbtunnel?
 geometry = Geometry(
-    max_radius=2.0, # 2x size of screen min dimension
-    max_x_offset=1.0, # edge of screen
-    max_y_offset=1.0, # edge of screen
+    max_radius=1.0, # x screen min dimension
+    max_x_offset=0.5, # x screen x_size
+    max_y_offset=0.5, # x screen y_size
     x_nudge=0.025, # fraction of half-screen
     y_nudge=0.025, # fraction of half-screen
     thickness_scale=0.5) # half size of screen min dimension

@@ -62,15 +62,20 @@ List<DrawArc> getNewestFrame() throws IOException {
   return unpacker.read(arcListTemplate);
 }
 
-int critical_size;
-float thickness_scale = 0.5;
+int criticalSize;
+float thicknessScale = 0.5;
+int xCenter, yCenter, xSize, ySize;
 
 void setup() {
   
   //size(1280,720, FX2D);
   size(1280,720);
   
-  critical_size = 720;
+  criticalSize = 720;
+  xSize = 1280;
+  ySize = 720;
+  xCenter = 640;
+  yCenter = 360;
 
   background(0); //black
   noSmooth();
@@ -110,7 +115,7 @@ void draw() {
     
       for (DrawArc toDraw: arcs) {
         
-        strokeWeight(toDraw.thickness * critical_size * thickness_scale);
+        strokeWeight(toDraw.thickness * criticalSize * thicknessScale);
         
         if (useAlpha) {
           stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );  
@@ -121,10 +126,10 @@ void draw() {
         }
       
         // draw pie wedge for this cell
-        arc(toDraw.x * critical_size,
-            toDraw.y * critical_size,
-            toDraw.radX * critical_size,
-            toDraw.radY * critical_size,
+        arc(toDraw.x * xSize + xCenter,
+            toDraw.y * ySize + yCenter,
+            toDraw.radX * criticalSize,
+            toDraw.radY * criticalSize,
             toDraw.start,
             toDraw.stop);
       }

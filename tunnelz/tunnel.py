@@ -56,8 +56,8 @@ class TunnelMI (ModelInterface):
     @only_if_active
     def reset_beam_position(self):
         """Reset the beam to center."""
-        self.model.x_offset = 0
-        self.model.y_offset = 0
+        self.model.x_offset = 0.0
+        self.model.y_offset = 0.0
 
 
 class Tunnel (Beam):
