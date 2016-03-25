@@ -134,7 +134,9 @@ class Show (object):
         # start up the render server
         render_server = RenderServer(framerate=framerate, report=report_framerate)
 
+        log.info("Starting render server...")
         render_server.start()
+        log.info("Render server started.")
 
         try:
             while n_frames is None or frame_number < n_frames:
@@ -152,5 +154,6 @@ class Show (object):
                     frame_number += 1
         finally:
             render_server.stop()
+            log.info("Shut down render server.")
 
 
