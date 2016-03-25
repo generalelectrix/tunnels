@@ -94,7 +94,7 @@ class Tunnel (Beam):
 
         self.curr_angle = 0.0
 
-        self.x_offset, self.y_offset = 0, 0
+        self.x_offset, self.y_offset = 0.0, 0.0
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
 
@@ -158,18 +158,12 @@ class Tunnel (Beam):
         radius = geometry.max_radius * self.radius
         thickness = self.thickness
 
-        rad_x = radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust/127)) - thickness/2
-        rad_y = radius - thickness/2
+        rad_x = (
+            radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust/127))
+            - thickness*geometry.thickness_scale/2)
+        rad_y = radius - thickness*geometry.thickness_scale/2
 
-        return self.draw_segments_with_animations(
-            rad_x, rad_y, self.segs, as_mask, level_scale, thickness, dc_agg)
-
-    def draw_segments_with_animations(
-            self, rad_x, rad_y, n_segs, as_mask, level_scale, thickness, dc_agg):
-        """Vectorized draw of all of the segments."""
-        # first determine which segments are going to be drawn at all using the
-        # blacking parameter
-        seg_num = np.array(xrange(n_segs))
+        seg_num = np.array(xrange(self.segs))
 
         blacking = self.blacking
         # remove the "all segments blacked" bug
@@ -247,8 +241,8 @@ class Tunnel (Beam):
                     0,
                     x_center,
                     y_center,
-                    int(r_x),
-                    int(r_y),
+                    r_x,
+                    r_y,
                     start_angle,
                     stop_angle))
         else:
@@ -275,8 +269,8 @@ class Tunnel (Beam):
                     255,
                     x_center,
                     y_center,
-                    int(r_x),
-                    int(r_y),
+                    r_x,
+                    r_y,
                     start_angle,
                     stop_angle))
         return arcs
