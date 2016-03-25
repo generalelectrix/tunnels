@@ -146,22 +146,8 @@ class Tunnel (Beam):
             as_mask (bool): draw this beam as a masking layer
             dc_agg (list to aggregate draw commands)
         """
-        ellipse_adjust = 0.0
-
-        # get relevant values for non-aggregated fields
-        for anim in self.anims:
-            target = anim.target
-
-            if target == AnimationTarget.Ellipse: # ellipsing
-                ellipse_adjust += anim.get_value(0)
-
         radius = geometry.max_radius * self.radius
         thickness = self.thickness
-
-        rad_x = (
-            radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust/127))
-            - thickness*geometry.thickness_scale/2)
-        rad_y = radius - thickness*geometry.thickness_scale/2
 
         seg_num = np.array(xrange(self.segs))
 
@@ -183,14 +169,15 @@ class Tunnel (Beam):
         shape = seg_num.shape
 
         # parameters that animations may modify
+        ellipse_adjust = np.zeros(shape, float)
         rad_adjust = np.zeros(shape, float)
         thickness_adjust = np.zeros(shape, float)
         col_center_adjust = np.zeros(shape, float)
         col_width_adjust = np.zeros(shape, float)
         col_period_adjust = np.zeros(shape, float)
         col_sat_adjust = np.zeros(shape, float)
-        x_adjust = 0
-        y_adjust = 0
+        x_adjust = np.zeros(shape, float)
+        y_adjust = np.zeros(shape, float)
 
         rot_interval = TWOPI / self.segs
         # the angle of this particular segment
@@ -205,42 +192,49 @@ class Tunnel (Beam):
                 thickness_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.Radius:
                 rad_adjust += anim.get_value_vector(rel_angle)
+            if target == AnimationTarget.Ellipse: # ellipsing
+                ellipse_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.Color:
-                col_center_adjust += anim.get_value(0)
+                col_center_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.ColorSpread:
-                col_width_adjust += anim.get_value(0)
+                col_width_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.ColorPeriodicity:
-                col_period_adjust += anim.get_value(0) / 16
+                col_period_adjust += anim.get_value_vector(rel_angle) / 16
             elif target == AnimationTarget.ColorSaturation:
                 col_sat_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.PositionX:
-                x_adjust += anim.get_value(0)/127
+                x_adjust += anim.get_value_vector(rel_angle)/127
             elif target == AnimationTarget.PositionY:
-                y_adjust += anim.get_value(0)/127
+                y_adjust += anim.get_value_vector(rel_angle)/127
 
         # the abs() is there to prevent negative width setting when using multiple animations.
         stroke_weight = abs(thickness*(1 + thickness_adjust/127))
 
+        thickness_allowance = thickness*geometry.thickness_scale/2
+
+        rad_x = abs((
+            radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust/127))
+            - thickness_allowance) + rad_adjust/255)
+        rad_y = abs(radius - thickness_allowance + rad_adjust/255)
+
         # geometry calculations
         x_center = self.x_offset + x_adjust
         y_center = self.y_offset + y_adjust
-        rad_x_vec = abs(rad_x + rad_adjust/255)
-        rad_y_vec = abs(rad_y+ rad_adjust/255)
         stop = seg_angle + rot_interval
 
         arcs = []
         # now set the color and draw
         if as_mask:
-            val_iter = izip(stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
-            for strk, r_x, r_y, start_angle, stop_angle in val_iter:
+            val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
+            for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
                 dc_agg.append((
                     255,
                     strk,
                     0.0,
                     0.0,
                     0,
-                    x_center,
-                    y_center,
+                    x,
+                    y,
                     r_x,
                     r_y,
                     start_angle,
@@ -258,17 +252,17 @@ class Tunnel (Beam):
 
             sat = 255*self.col_sat + col_sat_adjust
 
-            val_iter = izip(hue, sat, stroke_weight, rad_x_vec, rad_y_vec, seg_angle, stop)
+            val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
 
-            for h, s, strk, r_x, r_y, start_angle, stop_angle in val_iter:
+            for h, s, strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
                 dc_agg.append((
                     level_scale,
                     strk,
                     h,
                     s,
                     255,
-                    x_center,
-                    y_center,
+                    x,
+                    y,
                     r_x,
                     r_y,
                     start_angle,
