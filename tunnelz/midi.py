@@ -45,7 +45,11 @@ class MidiOutput (object):
         # FIXME: should only send to APC40, not everything
         if name == akai_apc40.DEVICE_NAME:
             for note, val in akai_apc40.KNOB_SETTINGS:
-                self.send_from_mapping(ControlChangeMapping(0, note), val)
+                mapping = ControlChangeMapping(0, note)
+                b0 = message_type_to_event_type[mapping.kind] + mapping[0]
+                event = (b0, mapping[1], val)
+                log.debug("sending {}, {} to {}".format(mapping, val, name))
+                port.send_message(event)
 
     def close_port(self, port_name):
         """Remove and close a port."""
