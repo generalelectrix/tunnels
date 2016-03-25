@@ -75,6 +75,7 @@ class MetaMI (ModelInterface):
         active_animator = active_beam.get_current_animation()
         if not islook:
             self.animator_mi.swap_model(active_animator)
+        self.set_current_animator(active_beam.curr_anim)
 
     def set_current_animator(self, anim_num):
         """Set which animator is being edited.
@@ -86,11 +87,10 @@ class MetaMI (ModelInterface):
         """
         beam = self.get_current_beam()
         if not beam.is_look:
-            if anim_num != beam.curr_anim:
-                beam.curr_anim = anim_num
-                animator = beam.get_current_animation()
-                self.animator_mi.swap_model(animator)
-                self.update_controllers('set_current_animator', anim_num)
+            beam.curr_anim = anim_num
+            animator = beam.get_current_animation()
+            self.animator_mi.swap_model(animator)
+            self.update_controllers('set_current_animator', anim_num)
 
     def animation_copy(self):
         """Copy the current animator to the clipboard."""

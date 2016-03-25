@@ -31,6 +31,13 @@ class BeamMatrixMI (ModelInterface):
         super(BeamMatrixMI, self).initialize()
         for row in xrange(self.beam_matrix.n_rows):
             for col in xrange(self.beam_matrix.n_columns):
+                state = ButtonEmpty
+                if self.beam_matrix.element_has_data(row, col):
+                    if self.beam_matrix.element_is_look(row, col):
+                        state = ButtonLook
+                    else:
+                        state = ButtonBeam
+
                 self.update_button(row, col, ButtonEmpty)
 
     def state_toggle(self, state):

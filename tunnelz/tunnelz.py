@@ -76,14 +76,16 @@ class Show (object):
                 tunnel.col_spread = 1.0
                 tunnel.col_sat = 0.25
 
-                tunnel.rot_speedI = float(i / N_BEAMS)
+                tunnel.rot_speed = -1.0 + (2.0 * float(i) / float(N_BEAMS))
 
                 tunnel.blacking = 0
+
+                tunnel.radius = (0.1*i) % 1.0
 
                 for i, anim in enumerate(tunnel.anims):
                     anim.type = WaveformType.VALUES[i]
                     anim.speed = float(i)/len(tunnel.anims) # various speeds
-                    anim.weight = 64 # finite weight
+                    anim.weight = 0.5 # finite weight
                     anim.target = AnimationTarget.Thickness # hit thickness to do vector math
                     anim.n_periods = 3 # more than zero periods for vector math
 

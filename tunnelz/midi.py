@@ -4,6 +4,7 @@ import logging as log
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
 from Queue import Queue
+import akai_apc40
 
 NoteOn = namedtuple('NoteOn', ('channel', 'pitch', 'velocity'))
 NoteOff = namedtuple('NoteOff', ('channel', 'pitch', 'velocity'))
@@ -27,6 +28,7 @@ def list_ports():
     log.info("Available input ports:\n{}".format(MidiIn().get_ports()))
     log.info("Available output ports:\n{}".format(MidiOut().get_ports()))
 
+
 class MidiOutput (object):
     """Aggregate multiple midi outputs into one front end."""
     def __init__(self):
@@ -36,6 +38,14 @@ class MidiOutput (object):
         """Add a new port to send messages to."""
         port, name = open_midiport(port_number, type_="output")
         self.ports[name] = port
+
+        # TODO: this type of situation should not be special-cased here
+        # individual controller initialization should be handled in a general-
+        # purpose fashion.
+        # FIXME: should only send to APC40, not everything
+        if name == akai_apc40.DEVICE_NAME:
+            for note, val in akai_apc40.KNOB_SETTINGS:
+                self.send_from_mapping(ControlChangeMapping(0, note), val)
 
     def close_port(self, port_name):
         """Remove and close a port."""
@@ -54,9 +64,9 @@ class MidiOutput (object):
         """Send a midi message from a mapping and a payload."""
         b0 = message_type_to_event_type[mapping.kind] + mapping[0]
         event = (b0, mapping[1], value)
-        for name, port in self.ports.iteritems():
+        for name, p in self.ports.iteritems():
             log.debug("sending {}, {} to {}".format(mapping, value, name))
-            port.send_message(event)
+            p.send_message(event)
 
 # mapping between event type and constructor
 event_type_to_mapping = {
