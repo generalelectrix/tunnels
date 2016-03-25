@@ -132,7 +132,7 @@ class Show (object):
         frame_number = 0
 
         # start up the render server
-        render_server = RenderServer(framerate=framerate)
+        render_server = RenderServer(framerate=framerate, report=report_framerate)
 
         render_server.start()
 

@@ -113,6 +113,31 @@ class Tunnel (Beam):
         """Replace the current animation with another."""
         self.anims[self.curr_anim] = new_anim
 
+    def update_state(self):
+        """Update the state of this tunnel in preparation for drawing a frame."""
+        # ensure we don't exceed the set bounds of the screen
+        self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
+        self.y_offset = min(max(self.y_offset, -geometry.max_y_offset), geometry.max_y_offset)
+
+        rot_adjust = 0.0
+
+        # update the state of the animations and get relevant values
+        for anim in self.anims:
+
+            anim.update_state()
+            target = anim.target
+
+            # what is this animation targeting?
+            # at least for non-chicklet-level targets...
+            if target == AnimationTarget.Rotation: # rotation speed
+                rot_adjust += anim.get_value(0)
+
+        # calulcate the rotation, wrap to 0 to 2pi
+        self.curr_angle = (
+            self.curr_angle +
+            (self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
+
+
     def display(self, level_scale, as_mask, dc_agg):
         """Draw the current state of the beam.
 
@@ -121,31 +146,14 @@ class Tunnel (Beam):
             as_mask (bool): draw this beam as a masking layer
             dc_agg (list to aggregate draw commands)
         """
-        # ensure we don't exceed the set bounds of the screen
-        self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
-        self.y_offset = min(max(self.y_offset, -geometry.max_y_offset), geometry.max_y_offset)
+        ellipse_adjust = 0.0
 
-        rot_adjust, ellipse_adjust = 0.0, 0.0
-
-        # update the state of the animations and get relevant values
+        # get relevant values for non-aggregated fields
         for anim in self.anims:
-
-            anim.update_state()
-
             target = anim.target
 
-            # what is this animation targeting?
-            # at least for non-chicklet-level targets...
-            if target == AnimationTarget.Rotation: # rotation speed
-                rot_adjust += anim.get_value(0)
-            elif target == AnimationTarget.Ellipse: # ellipsing
+            if target == AnimationTarget.Ellipse: # ellipsing
                 ellipse_adjust += anim.get_value(0)
-
-
-        # calulcate the rotation, wrap to 0 to 2pi
-        self.curr_angle = (
-            self.curr_angle +
-            (self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
 
         radius = int(MAX_RAD_MULT * geometry.max_radius * self.radius)
         thickness = self.thickness * geometry.thickness_scale

@@ -107,6 +107,10 @@ class RenderServer (object):
                 return False
             else:
                 if req == FRAME_REQ:
+                    # update the state of the beams
+                    for layer in mixer.layers:
+                        layer.beam.update_state()
+
                     self.command.put((FRAME, mixer))
                     return True
                 elif req == FATAL_ERROR:
