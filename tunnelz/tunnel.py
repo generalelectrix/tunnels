@@ -71,7 +71,7 @@ class Tunnel (Beam):
     TODO: docstring
     """
     n_anim = 4
-    rot_speed_scale = 0.155 # tunnel rotates this many rad/frame
+    rot_speed_scale = 0.08 # tunnel rotates this many rad/frame
     blacking_scale = 4
 
     def __init__(self):
