@@ -113,7 +113,7 @@ class Tunnel (Beam):
         """Replace the current animation with another."""
         self.anims[self.curr_anim] = new_anim
 
-    def update_state(self):
+    def update_state(self, delta_t):
         """Update the state of this tunnel in preparation for drawing a frame."""
         # ensure we don't exceed the set bounds of the screen
         self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
@@ -124,7 +124,7 @@ class Tunnel (Beam):
         # update the state of the animations and get relevant values
         for anim in self.anims:
 
-            anim.update_state()
+            anim.update_state(delta_t)
             target = anim.target
 
             # what is this animation targeting?
@@ -135,7 +135,8 @@ class Tunnel (Beam):
         # calulcate the rotation, wrap to 0 to 2pi
         self.curr_angle = (
             self.curr_angle +
-            (self.rot_speed + rot_adjust)*self.rot_speed_scale) % TWOPI
+            # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
+            (self.rot_speed*delta_t*30. + rot_adjust)*self.rot_speed_scale) % TWOPI
 
 
     def display(self, level_scale, as_mask, dc_agg):

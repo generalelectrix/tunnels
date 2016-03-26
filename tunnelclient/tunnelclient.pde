@@ -67,18 +67,18 @@ float thicknessScale = 0.5;
 int xCenter, yCenter, xSize, ySize;
 
 void setup() {
-  
+  /*
   size(1280,720);
   criticalSize = 720;
   xSize = 1280;
   ySize = 720;
+  */
   
-  /*
   size(1920,1080);
   criticalSize = 1080;
   xSize = 1920;
   ySize = 1080;
-  */
+  
   /*
   size(192,108);
   criticalSize = 108;

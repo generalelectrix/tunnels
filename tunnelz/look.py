@@ -19,10 +19,10 @@ class Look (Beam):
         """Return a copy of this look."""
         return Look(self.layers)
 
-    def update_state(self):
+    def update_state(self, delta_t):
         """Update the state of all Beams in this Look."""
         for layer in self.layers:
-            layer.beam.update_state()
+            layer.beam.update_state(delta_t)
 
     def display(self, level_scale, as_mask, dc_agg):
         """Draw all the Beams in this Look.

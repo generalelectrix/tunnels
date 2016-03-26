@@ -5,6 +5,7 @@ from multiprocessing import Process, Queue
 from Queue import Empty
 import msgpack
 import zmq
+import sys, traceback
 
 arc_args = (
     'level', # int 0-255
@@ -54,6 +55,7 @@ class RenderServer (object):
         self.response = None
         self.server_proc = None
         self.report = report
+        self.last_draw = 0.0
 
     def start(self):
         """Launch an instance of the render server."""
@@ -70,7 +72,7 @@ class RenderServer (object):
             resp, payload = response.get()
 
             if resp == FATAL_ERROR:
-                raise payload
+                raise Exception(payload[0], payload[1])
             elif resp == FRAME_REQ:
                 # unclear how this happened.  kill the server and raise an error
                 self._stop()
@@ -82,6 +84,7 @@ class RenderServer (object):
                     "Render server returned an unknown response: {}".format(resp))
 
             self.running = True
+            self.last_draw = time()
 
     def _stop(self):
         """Kill the server."""
@@ -107,15 +110,17 @@ class RenderServer (object):
                 return False
             else:
                 if req == FRAME_REQ:
+                    now = time()
                     # update the state of the beams
                     for layer in mixer.layers:
-                        layer.beam.update_state()
+                        layer.beam.update_state(now - self.last_draw)
 
                     self.command.put((FRAME, mixer))
+                    self.last_draw = now
                     return True
                 elif req == FATAL_ERROR:
                     self._stop()
-                    raise payload
+                    raise xception(payload[0], payload[1])
         return False
 
 def run_server(command, response, port, framerate, report):
@@ -181,7 +186,8 @@ def run_server(command, response, port, framerate, report):
             arcs = payload.draw_layers()
             socket.send(msgpack.dumps(arcs, use_single_float=True))
 
-            render_times.append(time() - start)
+            dur = time() - start
+            render_times.append(dur)
 
             # now wait until it is approximately time to start this process again
             sleep(frame_period - sum(render_times) / buffer_size)
@@ -189,12 +195,13 @@ def run_server(command, response, port, framerate, report):
             # debugging purposes
             frame_number += 1
 
-            if report and frame_number % 30 == 0:
+            if report:# and frame_number % 1 == 0:
                 now = time()
-                log.debug("Framerate: {}".format(30 / (now - log_time)))
+                log.debug("Framerate: {}".format(1 / (now - log_time)))
                 log_time = now
 
     except Exception as err:
         # some exception we didn't catch
-        response.put((FATAL_ERROR, err))
+        _, _, tb = sys.exc_info()
+        response.put((FATAL_ERROR, (err, traceback.format_tb)))
         return
