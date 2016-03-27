@@ -11,7 +11,7 @@ from .waveforms import (
     sawtooth_vector,
 )
 import numpy as np
-from .model_interface import ModelInterface, MiModelProperty
+from .model_interface import ModelInterface, MiModelProperty, only_if_active
 
 TWOPI = 2*pi
 HALFPI = pi/2
@@ -60,12 +60,29 @@ class WaveformType (object):
 
 class AnimationMI (ModelInterface):
     type = MiModelProperty('type', 'set_type')
+    pulse = MiModelProperty('pulse', 'set_pulse')
+    invert = MiModelProperty('invert', 'set_invert')
     n_periods = MiModelProperty('n_periods', 'set_n_periods')
     target = MiModelProperty('target', 'set_target')
     speed = MiModelProperty('speed', 'set_knob', knob='speed')
     weight = MiModelProperty('weight', 'set_knob', knob='weight')
     duty_cycle = MiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
     smoothing = MiModelProperty('smoothing', 'set_knob', knob='smoothing')
+
+    def initialize(self):
+        super(AnimationMI, self).initialize()
+        self.update_controllers('set_pulse', val)
+        self.update_controllers('set_invert', val)
+
+    @only_if_active
+    def toggle_pulse(self):
+        val = self.model.pulse = not self.model.pulse
+        self.update_controllers('set_pulse', val)
+
+    @only_if_active
+    def toggle_invert(self):
+        val = self.model.invert = not self.model.invert
+        self.update_controllers('set_invert', val)
 
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""
@@ -76,6 +93,8 @@ class Animation (object):
     def __init__(self):
         """Start with default (benign) state for an animator."""
         self.type = WaveformType.Sine
+        self.pulse = False
+        self.invert = False
         self.n_periods = 0
         self.target = AnimationTarget.Radius
         self.speed = 0.0
@@ -111,16 +130,32 @@ class Animation (object):
         angle = angle_offset*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            return 127 * self.weight * sine(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * sine(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            return 127 * self.weight * triangle(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * triangle(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
         elif self.type == WaveformType.Square:
             # square wave
-            return 127 * self.weight * square(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * square(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            return 127 * self.weight * sawtooth(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * sawtooth(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
 
     def get_value_vector(self, angle_offsets):
         """Return the current value of the animation for an ndarray of offsets."""
@@ -132,16 +167,32 @@ class Animation (object):
         angle = angle_offsets*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            return 127 * self.weight * sine_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * sine_vector(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            return 127 * self.weight * triangle_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * triangle_vector(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
         elif self.type == WaveformType.Square:
             # square wave
-            return 127 * self.weight * square_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * square_vector(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            return 127 * self.weight * sawtooth_vector(angle, self.smoothing*HALFPI, self.duty_cycle)
+            result = 127 * self.weight * sawtooth_vector(angle, self.smoothing*HALFPI, self.duty_cycle, self.pulse)
+            if self.invert:
+                return -1.0 * result
+            else:
+                return result
 
 
 class AnimationClipboard (object):

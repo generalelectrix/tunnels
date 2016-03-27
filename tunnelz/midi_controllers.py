@@ -35,6 +35,7 @@ class MidiController (object):
     def set_callback(self, mapping, callback):
         """Register a callback for a single mapping."""
         self.controls[mapping] = callback
+        return mapping
 
     def set_callback_for_mappings(self, mappings, callback):
         """Manually register a callback for an iterable of mappings."""
@@ -424,8 +425,11 @@ class AnimationMidiController (MidiController):
 
         # FIXME-NUMERIC TARGETS
         self.target_buttons = self.add_controls(
-            {target: NoteOnMapping(0, target+34)for target in AnimationTarget.VALUES},
+            {target: NoteOnMapping(0, target+34) for target in AnimationTarget.VALUES},
             self.handle_target_button)
+
+        self.pulse_button = self.set_callback(NoteOnMapping(1, 0), self.handle_pulse_button)
+        self.invert_button = self.set_callback(NoteOnMapping(1, 1), self.handle_invert_button)
 
         # register input mappings
         self.register_callbacks()
@@ -443,6 +447,18 @@ class AnimationMidiController (MidiController):
 
     def set_type(self, set_type):
         self._set_radio_button(set_type, self.type_buttons)
+
+    def handle_pulse_button(self, mapping, _):
+        self.mi.toggle_pulse()
+
+    def set_pulse(self, val):
+        self.midi_out.send_from_mapping(self.pulse_button, int(val))
+
+    def handle_invert_button(self, mapping, _):
+        self.mi.toggle_invert()
+
+    def set_invert(self, val):
+        self.midi_out.send_from_mapping(self.invert_button, int(val))
 
     def handle_n_periods_button(self, mapping, _):
         self.mi.n_periods = self.n_periods_buttons.inv[mapping]
