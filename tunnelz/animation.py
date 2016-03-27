@@ -71,8 +71,8 @@ class AnimationMI (ModelInterface):
 
     def initialize(self):
         super(AnimationMI, self).initialize()
-        self.update_controllers('set_pulse', val)
-        self.update_controllers('set_invert', val)
+        self.update_controllers('set_pulse', self.model.pulse)
+        self.update_controllers('set_invert', self.model.invert)
 
     @only_if_active
     def toggle_pulse(self):

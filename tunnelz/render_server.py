@@ -120,7 +120,7 @@ class RenderServer (object):
                     return True
                 elif req == FATAL_ERROR:
                     self._stop()
-                    raise xception(payload[0], payload[1])
+                    raise Exception(payload[0], payload[1])
         return False
 
 def run_server(command, response, port, framerate, report):
@@ -203,5 +203,5 @@ def run_server(command, response, port, framerate, report):
     except Exception as err:
         # some exception we didn't catch
         _, _, tb = sys.exc_info()
-        response.put((FATAL_ERROR, (err, traceback.format_tb)))
+        response.put((FATAL_ERROR, (err, traceback.format_tb(tb))))
         return
