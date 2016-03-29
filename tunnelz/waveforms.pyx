@@ -1,3 +1,9 @@
+"""Definitions of commonly-used waveform functions.
+
+Angles should be passed as floats on the range [0.0, 1.0].  These "radial units"
+minimize unneded scalings and rescalings involving pi.  Unifying as many control
+parameters as possible to the same scaling significantly lubricates UI.
+"""
 from __future__ import division
 from math import pi
 import numpy as np
@@ -9,21 +15,21 @@ cdef float HALF_PI = np.pi / 2.0
 cdef float TWOPI = 2*np.pi
 
 cpdef inline sine(float angle, float smoothing, float duty_cycle, bool pulse):
-    angle = (angle % TWOPI)
+    angle = angle % 1.0
 
-    if angle > duty_cycle * TWOPI or duty_cycle == 0.0:
+    if angle > duty_cycle or duty_cycle == 0.0:
         return 0.0
     else:
         angle = angle / duty_cycle
         if pulse:
             angle = (angle - HALF_PI)
-            return (np.sin(angle) + 1.0) / 2.0
+            return (np.sin(TWOPI * angle) + 1.0) / 2.0
         else:
-            return np.sin(angle)
+            return np.sin(TWOPI * angle)
 
 cpdef inline triangle (float angle, float smoothing, float duty_cycle, bool pulse):
-    """Generate a point on a unit triangle wave from angle in radians."""
-    angle = (angle % TWOPI) / TWOPI
+    """Generate a point on a unit triangle wave from angle."""
+    angle = angle % 1.0
 
     if angle > duty_cycle or duty_cycle == 0.0:
         return 0.0
@@ -43,11 +49,11 @@ cpdef inline triangle (float angle, float smoothing, float duty_cycle, bool puls
                 return 2.0 - 4.0 * angle
 
 cpdef inline float square(float angle, float smoothing, float duty_cycle, bool pulse):
-    """Generate a point on a square wave from angle in radians and smoothing."""
+    """Generate a point on a square wave from angle and smoothing."""
 
-    angle = (angle % TWOPI)
+    angle = angle % 1.0
 
-    if angle > duty_cycle * TWOPI or duty_cycle == 0.0:
+    if angle > duty_cycle or duty_cycle == 0.0:
         return 0.0
     else:
         angle = angle / duty_cycle
@@ -56,28 +62,28 @@ cpdef inline float square(float angle, float smoothing, float duty_cycle, bool p
 
         else:
             if smoothing == 0.0:
-                if angle < PI:
+                if angle < 0.5:
                     return 1.0
                 else:
                     return -1.0
 
             if angle < smoothing:
-                return angle/smoothing
-            elif angle > (PI - smoothing) and angle < (PI + smoothing):
-                return -(angle - PI)/smoothing
-            elif angle > (TWOPI - smoothing):
-                return (angle - TWOPI)/smoothing
-            elif angle >= smoothing and angle <= PI - smoothing:
+                return angle / smoothing
+            elif angle > (0.5 - smoothing) and angle < (0.5 + smoothing):
+                return -(angle - 0.5)/smoothing
+            elif angle > (1.0 - smoothing):
+                return (angle - 1.0)/smoothing
+            elif angle >= smoothing and angle <= 0.5 - smoothing:
                 return 1.0
             else:
                 return -1.0
 
 cpdef inline float sawtooth(float angle, float smoothing, float duty_cycle, bool pulse):
-    """Generate a point on a sawtooth wave from angle in radians and smoothing."""
+    """Generate a point on a sawtooth wave from angle and smoothing."""
 
-    angle = (angle % TWOPI)
+    angle = angle % 1.0
 
-    if angle > duty_cycle * TWOPI or duty_cycle == 0.0:
+    if angle > duty_cycle or duty_cycle == 0.0:
         return 0.0
     else:
         angle = angle / duty_cycle
@@ -85,17 +91,17 @@ cpdef inline float sawtooth(float angle, float smoothing, float duty_cycle, bool
             return sawtooth(angle/2.0, smoothing, 1.0, False)
 
         if smoothing == 0.0:
-            if angle < PI:
-                return angle / PI
+            if angle < 0.5:
+                return 2.0 * angle
             else:
-                return (angle - TWOPI) / PI
+                return 2.0 * (angle - 1.0)
 
-        if angle < PI - smoothing:
-            return angle / (PI - smoothing)
-        elif angle > PI + smoothing:
-            return (angle - TWOPI) / (PI - smoothing)
+        if angle < 0.5 - smoothing:
+            return angle / (0.5 - smoothing)
+        elif angle > 0.5 + smoothing:
+            return (angle - 1.0) / (0.5 - smoothing)
         else:
-            return -(angle - PI)/smoothing
+            return -(angle - 0.5)/smoothing
 
 def sine_vector(np.ndarray[np.float_t, ndim=1] angles, np.float smoothing, np.float duty_cycle, bool pulse):
     cdef int size = angles.shape[0]

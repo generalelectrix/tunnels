@@ -54,11 +54,11 @@ List<DrawArc> getNewestFrame() throws IOException {
       message = newestMessage;
     }
   }
-  
+
   // Unpack the msgpack draw commands
   ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
   Unpacker unpacker = msgpack.createUnpacker(byteStream);
-    
+
   return unpacker.read(arcListTemplate);
 }
 
@@ -73,38 +73,38 @@ void setup() {
   xSize = 1280;
   ySize = 720;
   */
-  
+
   size(1920,1080);
   criticalSize = 1080;
   xSize = 1920;
   ySize = 1080;
-  
+
   /*
   size(192,108);
   criticalSize = 108;
   xSize = 192;
   ySize = 108;
   */
-  
+
   xCenter = xSize / 2;
   yCenter = ySize / 2;
-  
+
 
   background(0); //black
   noSmooth();
-  
+
   // turn off that annoying extra beam
   noCursor();
-  
+
   ellipseMode(RADIUS);
   strokeCap(SQUARE);
   colorMode(HSB);
   //blendMode(ADD);
-  
+
   frameRate(300.0);
-  
+
   frameNumber = 0;
-  
+
   // connect to the server and accept every message
   drawSocket.connect(serverAddress);
 
@@ -118,40 +118,40 @@ void stop() {
 }
 
 void draw() {
-  
+
   background(0);
   noFill();
-  
+
   //int startTime = millis();
   try {
     List<DrawArc> arcs = getNewestFrame();
-    
+
       for (DrawArc toDraw: arcs) {
-        
+
         strokeWeight(toDraw.thickness * criticalSize * thicknessScale);
-        
+
         if (useAlpha) {
-          stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );  
+          stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );
         }
         else {
           color segColor = color(toDraw.hue, toDraw.sat, toDraw.val);
           stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
         }
-      
+
         // draw pie wedge for this cell
         arc(toDraw.x * xSize + xCenter,
             toDraw.y * ySize + yCenter,
             toDraw.radX * criticalSize,
             toDraw.radY * criticalSize,
-            toDraw.start,
-            toDraw.stop);
+            toDraw.start * TWO_PI,
+            toDraw.stop * TWO_PI);
       }
-    
+
   }
   catch (Exception e) {
     println("An exception ocurred: " + e.getMessage());
   }
-  
+
   frameNumber++;
   //int endTime = millis();
   if (frameNumber % 30 == 0) {

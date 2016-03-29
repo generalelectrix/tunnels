@@ -71,7 +71,7 @@ class Tunnel (Beam):
     TODO: docstring
     """
     n_anim = 4
-    rot_speed_scale = 0.15 # tunnel rotates this many rad/frame
+    rot_speed_scale = 0.023 # tunnel rotates this many radial units/frame at 30fps
     blacking_scale = 4
 
     def __init__(self):
@@ -132,11 +132,11 @@ class Tunnel (Beam):
             if target == AnimationTarget.Rotation: # rotation speed
                 rot_adjust += anim.get_value(0)
 
-        # calulcate the rotation, wrap to 0 to 2pi
+        # calulcate the rotation, wrap to 0 to 1
         self.curr_angle = (
             self.curr_angle +
             # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.rot_speed*delta_t*30. + rot_adjust)*self.rot_speed_scale) % TWOPI
+            (self.rot_speed*delta_t*30. + rot_adjust)*self.rot_speed_scale) % 1.0
 
 
     def display(self, level_scale, as_mask, dc_agg):
@@ -180,7 +180,7 @@ class Tunnel (Beam):
         x_adjust = np.zeros(shape, float)
         y_adjust = np.zeros(shape, float)
 
-        rot_interval = TWOPI / self.segs
+        rot_interval = 1.0 / self.segs
         # the angle of this particular segment
         seg_angle = rot_interval*seg_num+self.curr_angle
         rel_angle = rot_interval*seg_num
@@ -246,7 +246,7 @@ class Tunnel (Beam):
                 col_center_adjust +
                 (
                     (127*self.col_width+col_width_adjust) *
-                    sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
+                    sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0)
                 ))
 
             hue = hue % 256
