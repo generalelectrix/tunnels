@@ -130,28 +130,28 @@ class Animation (object):
         angle = angle_offset*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            result = 127 * self.weight * sine(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * sine(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:
                 return result
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            result = 127 * self.weight * triangle(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * triangle(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:
                 return result
         elif self.type == WaveformType.Square:
             # square wave
-            result = 127 * self.weight * square(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * square(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:
                 return result
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            result = 127 * self.weight * sawtooth(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * sawtooth(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:
@@ -167,28 +167,28 @@ class Animation (object):
         angle = angle_offsets*self.n_periods + self.curr_angle
         if self.type == WaveformType.Sine:
             # sine wave
-            result = 127 * self.weight * sine_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * sine_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:
                 return result
         elif self.type == WaveformType.Triangle:
             # triangle wave
-            result = 127 * self.weight * triangle_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * triangle_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:
                 return result
         elif self.type == WaveformType.Square:
             # square wave
-            result = 127 * self.weight * square_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * square_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:
                 return result
         elif self.type == WaveformType.Sawtooth:
             # sawtooth wave
-            result = 127 * self.weight * sawtooth_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+            result = self.weight * sawtooth_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
             if self.invert:
                 return -1.0 * result
             else:

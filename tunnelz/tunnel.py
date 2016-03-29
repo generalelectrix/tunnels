@@ -192,31 +192,31 @@ class Tunnel (Beam):
             if target == AnimationTarget.Thickness:
                 thickness_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.Radius:
-                rad_adjust += anim.get_value_vector(rel_angle)
+                rad_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
             if target == AnimationTarget.Ellipse: # ellipsing
                 ellipse_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.Color:
-                col_center_adjust += anim.get_value_vector(rel_angle)
+                col_center_adjust += anim.get_value_vector(rel_angle) * 0.5
             elif target == AnimationTarget.ColorSpread:
                 col_width_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.ColorPeriodicity:
-                col_period_adjust += anim.get_value_vector(rel_angle) / 16
+                col_period_adjust += anim.get_value_vector(rel_angle) * 8
             elif target == AnimationTarget.ColorSaturation:
-                col_sat_adjust += anim.get_value_vector(rel_angle)
+                col_sat_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
             elif target == AnimationTarget.PositionX:
-                x_adjust += anim.get_value_vector(rel_angle)/127
+                x_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.PositionY:
-                y_adjust += anim.get_value_vector(rel_angle)/127
+                y_adjust += anim.get_value_vector(rel_angle)
 
         # the abs() is there to prevent negative width setting when using multiple animations.
-        stroke_weight = abs(thickness*(1 + thickness_adjust/127))
+        stroke_weight = abs(thickness*(1 + thickness_adjust))
 
         thickness_allowance = thickness*geometry.thickness_scale/2
 
         rad_x = abs((
-            radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust/127))
-            - thickness_allowance) + rad_adjust/255)
-        rad_y = abs(radius - thickness_allowance + rad_adjust/255)
+            radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust))
+            - thickness_allowance) + rad_adjust)
+        rad_y = abs(radius - thickness_allowance + rad_adjust)
 
         # geometry calculations
         x_center = self.x_offset + x_adjust
@@ -242,16 +242,15 @@ class Tunnel (Beam):
                     stop_angle))
         else:
             hue = (
-                255*self.col_center +
-                col_center_adjust +
+                255*(self.col_center + col_center_adjust) +
                 (
-                    (127*self.col_width+col_width_adjust) *
+                    127*(self.col_width+col_width_adjust) *
                     sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0)
                 ))
 
             hue = hue % 256
 
-            sat = 255*self.col_sat + col_sat_adjust
+            sat = 255*(self.col_sat + col_sat_adjust)
 
             val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
 
