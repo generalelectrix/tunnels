@@ -30,6 +30,22 @@ public static class DrawArc {
   public float start;
   public float stop;
   public float rotAngle;
+  
+  public String toString() {
+      return
+        "level: " + this.level +
+        " thickness: " + this.thickness +
+        " hue: " + this.hue +
+        " sat: " + this.sat +
+        " val: " + this.val +
+        " x: " + this.x +
+        " y: " + this.y +
+        " radX: " + this.radX +
+        " radY: " + this.radY +
+        " start: " + this.start +
+        " stop: " + this.stop +
+        " rotAngle: " + this.rotAngle;
+  }
 }
 
 Template arcListTemplate = Templates.tList(msgpack.lookup(DrawArc.class));
@@ -130,7 +146,7 @@ void drawFrame() {
   try {
     List<DrawArc> arcs = getNewestFrame();
     println("got frame " + frameNumber);
-    println("drawing " + arcs.size());
+    println(arcs.get(0).toString());
 
     for (DrawArc toDraw: arcs) {
 
