@@ -45,18 +45,18 @@ float thicknessScale = 0.5;
 int xCenter, yCenter, xSize, ySize;
 
 void setup() {
-  /*
+  
   size(1280,720);
   criticalSize = 720;
   xSize = 1280;
   ySize = 720;
-  */
-
+  
+  /*
   size(1920,1080);
   criticalSize = 1080;
   xSize = 1920;
   ySize = 1080;
-
+  */
   /*
   size(192,108);
   criticalSize = 108;
@@ -129,35 +129,37 @@ void drawFrame() {
   //int startTime = millis();
   try {
     List<DrawArc> arcs = getNewestFrame();
+    println("got frame " + frameNumber);
+    println("drawing " + arcs.size());
 
-      for (DrawArc toDraw: arcs) {
+    for (DrawArc toDraw: arcs) {
 
-        strokeWeight(toDraw.thickness * criticalSize * thicknessScale);
+      strokeWeight(toDraw.thickness * criticalSize * thicknessScale);
 
-        if (useAlpha) {
-          stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );
-        }
-        else {
-          color segColor = color(toDraw.hue, toDraw.sat, toDraw.val);
-          stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
-        }
-        
-        // use coordinate transformations for rotate the ellipse axis the appropriate amount
-        pushMatrix();
-        translate(toDraw.x * xSize + xCenter, toDraw.y * ySize + yCenter);
-        rotate(toDraw.rotAngle * TWO_PI);
-
-        // draw pie wedge for this cell
-        arc(0,
-            0,
-            toDraw.radX * criticalSize,
-            toDraw.radY * criticalSize,
-            toDraw.start * TWO_PI,
-            toDraw.stop * TWO_PI);
-        
-        // restore original coordinate system
-        popMatrix();
+      if (useAlpha) {
+        stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );
       }
+      else {
+        color segColor = color(toDraw.hue, toDraw.sat, toDraw.val);
+        stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
+      }
+      
+      // use coordinate transformations for rotate the ellipse axis the appropriate amount
+      //pushMatrix();
+      //translate(toDraw.x * xSize + xCenter, toDraw.y * ySize + yCenter);
+      //rotate(toDraw.rotAngle * TWO_PI);
+
+      // draw pie wedge for this cell
+      arc(toDraw.x * xSize + xCenter,
+          toDraw.y * ySize + yCenter,
+          toDraw.radX * criticalSize,
+          toDraw.radY * criticalSize,
+          toDraw.start * TWO_PI,
+          toDraw.stop * TWO_PI);
+      
+      // restore original coordinate system
+      //popMatrix();
+    }
 
   }
   catch (Exception e) {
