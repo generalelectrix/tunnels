@@ -39,29 +39,6 @@ ZMQ.Socket drawSocket = context.socket(ZMQ.SUB);
 
 String serverAddress = "tcp://localhost:6000";
 
-/// Drain the incoming frame buffer and return the freshest frame.
-List<DrawArc> getNewestFrame() throws IOException {
-  // initial, blocking receive
-  byte[] message;
-  message = drawSocket.recv();
-  // now drain the buffer
-  while (true) {
-    byte[] newestMessage = drawSocket.recv(ZMQ.DONTWAIT);
-    if (newestMessage == null) {
-      break;
-    }
-    else {
-      message = newestMessage;
-    }
-  }
-
-  // Unpack the msgpack draw commands
-  ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
-  Unpacker unpacker = msgpack.createUnpacker(byteStream);
-
-  return unpacker.read(arcListTemplate);
-}
-
 int criticalSize;
 float thicknessScale = 0.5;
 int xCenter, yCenter, xSize, ySize;
@@ -101,8 +78,6 @@ void setup() {
   colorMode(HSB);
   //blendMode(ADD);
 
-  frameRate(300.0);
-
   frameNumber = 0;
 
   // connect to the server and accept every message
@@ -110,6 +85,11 @@ void setup() {
 
   byte[] filter = new byte[0];
   drawSocket.subscribe(filter);
+
+  // continuously wait for and draw frames
+  while (true) {
+    drawFrame();
+  }
 }
 
 void stop() {
@@ -117,7 +97,30 @@ void stop() {
   context.term();
 }
 
-void draw() {
+/// Drain the incoming frame buffer and return the freshest frame.
+List<DrawArc> getNewestFrame() throws IOException {
+  // initial, blocking receive
+  byte[] message;
+  message = drawSocket.recv();
+  // now drain the buffer
+  while (true) {
+    byte[] newestMessage = drawSocket.recv(ZMQ.DONTWAIT);
+    if (newestMessage == null) {
+      break;
+    }
+    else {
+      message = newestMessage;
+    }
+  }
+
+  // Unpack the msgpack draw commands
+  ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
+  Unpacker unpacker = msgpack.createUnpacker(byteStream);
+
+  return unpacker.read(arcListTemplate);
+}
+
+void drawFrame() {
 
   background(0);
   noFill();
@@ -153,9 +156,4 @@ void draw() {
   }
 
   frameNumber++;
-  //int endTime = millis();
-  if (frameNumber % 30 == 0) {
-    println(frameRate);
-    //println(endTime - startTime);
-  }
 }
