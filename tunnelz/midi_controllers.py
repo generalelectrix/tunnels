@@ -300,11 +300,12 @@ class TunnelMidiController (MidiController):
 
         self.bipolar_knobs = self.add_controls({
             'rot_speed': ControlChangeMapping(0, 20),
+            'marquee_speed': ControlChangeMapping(0, 52),
             },
             self.handle_bipolar_knob)
 
-        self.segs_mapping = ControlChangeMapping(0, 52)
-        self.blacking_mapping = ControlChangeMapping(0, 53)
+        self.segs_mapping = ControlChangeMapping(0, 53)
+        self.blacking_mapping = ControlChangeMapping(0, 54)
 
         self.set_callback(self.segs_mapping, self.handle_segs)
         self.set_callback(self.blacking_mapping, self.handle_blacking)

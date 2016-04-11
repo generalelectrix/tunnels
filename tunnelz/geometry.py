@@ -6,7 +6,7 @@ __all__ = (
 )
 
 Geometry = namedtuple("Geometry",
-    ("max_radius", "max_x_offset", "max_y_offset", "x_nudge", "y_nudge", "thickness_scale"))
+    ("max_size", "max_x_offset", "max_y_offset", "x_nudge", "y_nudge", "thickness_scale"))
 
 # TODO: move this to a presets file and share it with dumbtunnel?
 geometry = Geometry(
