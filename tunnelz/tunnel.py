@@ -8,19 +8,20 @@ import numpy as np
 from .model_interface import ModelInterface, MiModelProperty, only_if_active
 from .waveforms import sawtooth_vector
 
-# scale overall radius, set > 1.0 to enable larger shapes than screen size
-MAX_RAD_MULT = 2.0
-MAX_ELLIPSE_ASPECT = 2.0
+# scale overall size, set > 1.0 to enable larger shapes than screen size
+MAX_SIZE_MULT = 2.0
+MAX_ASPECT = 2.0
 
 TWOPI = 2*pi
 
 
 class TunnelMI (ModelInterface):
 
+    marquee_speed = MiModelProperty('marquee_speed', 'set_bipolar', knob='marquee_speed')
     rot_speed = MiModelProperty('rot_speed', 'set_bipolar', knob='rot_speed')
     thickness = MiModelProperty('thickness', 'set_unipolar', knob='thickness')
-    radius = MiModelProperty('radius', 'set_unipolar', knob='radius')
-    ellipse_aspect = MiModelProperty('ellipse_aspect', 'set_unipolar', knob='ellipse_aspect')
+    size = MiModelProperty('size', 'set_unipolar', knob='size')
+    aspect_ratio = MiModelProperty('aspect_ratio', 'set_unipolar', knob='aspect_ratio')
     col_center = MiModelProperty('col_center', 'set_unipolar', knob='col_center')
     col_width = MiModelProperty('col_width', 'set_unipolar', knob='col_width')
     col_spread = MiModelProperty('col_spread', 'set_unipolar', knob='col_spread')
@@ -72,15 +73,17 @@ class Tunnel (Beam):
     """
     n_anim = 4
     rot_speed_scale = 0.023 # tunnel rotates this many radial units/frame at 30fps
+    marquee_speed_scale = 0.023 # marquee rotates this many radial units/frame at 30fps
     blacking_scale = 4
 
     def __init__(self):
         """Default tunnel constructor."""
         super(Tunnel, self).__init__()
+        self.marquee_speed = 0.0 # bipolar float
         self.rot_speed = 0.0 # bipolar float
         self.thickness = 0.25 # unipolar float
-        self.radius = 0.5 # unipolar float
-        self.ellipse_aspect = 0.5 # unipolar float
+        self.size = 0.5 # unipolar float
+        self.aspect_ratio = 0.5 # unipolar float
 
         self.col_center = 0.0 # unipolar float
         self.col_width = 0.0 # unipolar float
@@ -92,11 +95,14 @@ class Tunnel (Beam):
         # TODO: regularize segs and blacking interface into regular float knobs
         self.blacking = 2 # number of segments to black; int on range [-16, 16]
 
-        self.curr_angle = 0.0
+        self.curr_rot_angle = 0.0
+        self.curr_marquee_angle = 0.0
 
         self.x_offset, self.y_offset = 0.0, 0.0
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
+
+        self.curr_anim = 0
 
     def copy(self):
         """Use deep_copy to recursively copy this Tunnel."""
@@ -119,7 +125,8 @@ class Tunnel (Beam):
         self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
         self.y_offset = min(max(self.y_offset, -geometry.max_y_offset), geometry.max_y_offset)
 
-        rot_adjust = 0.0
+        rot_angle_adjust = 0.0
+        marquee_angle_adjust = 0.0
 
         # update the state of the animations and get relevant values
         for anim in self.anims:
@@ -130,13 +137,19 @@ class Tunnel (Beam):
             # what is this animation targeting?
             # at least for non-chicklet-level targets...
             if target == AnimationTarget.Rotation: # rotation speed
-                rot_adjust += anim.get_value(0)
+                rot_angle_adjust += anim.get_value(0)
+            elif target == AnimationTarget.MarqueeRotation: # marquee rotation speed
+                marquee_angle_adjust += anim.get_value(0)
 
         # calulcate the rotation, wrap to 0 to 1
-        self.curr_angle = (
-            self.curr_angle +
+        self.curr_rot_angle += (
             # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.rot_speed*delta_t*30. + rot_adjust)*self.rot_speed_scale) % 1.0
+            (self.rot_speed*delta_t*30. + rot_angle_adjust)*self.rot_speed_scale) % 1.0
+
+        # calulcate the marquee angle, wrap to 0 to 1
+        self.curr_marquee_angle += (
+            # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
+            (self.marquee_speed*delta_t*30. + marquee_angle_adjust)*self.marquee_speed_scale) % 1.0
 
 
     def display(self, level_scale, as_mask, dc_agg):
@@ -147,7 +160,7 @@ class Tunnel (Beam):
             as_mask (bool): draw this beam as a masking layer
             dc_agg (list to aggregate draw commands)
         """
-        radius = geometry.max_radius * self.radius
+        size = geometry.max_size * self.size
         thickness = self.thickness
 
         seg_num = np.array(xrange(self.segs))
@@ -170,7 +183,7 @@ class Tunnel (Beam):
         shape = seg_num.shape
 
         # parameters that animations may modify
-        ellipse_adjust = np.zeros(shape, float)
+        aspect_ratio_adjust = np.zeros(shape, float)
         rad_adjust = np.zeros(shape, float)
         thickness_adjust = np.zeros(shape, float)
         col_center_adjust = np.zeros(shape, float)
@@ -180,10 +193,10 @@ class Tunnel (Beam):
         x_adjust = np.zeros(shape, float)
         y_adjust = np.zeros(shape, float)
 
-        rot_interval = 1.0 / self.segs
+        marquee_interval = 1.0 / self.segs
         # the angle of this particular segment
-        seg_angle = rot_interval*seg_num+self.curr_angle
-        rel_angle = rot_interval*seg_num
+        seg_angle = marquee_interval*seg_num+self.curr_marquee_angle
+        rel_angle = marquee_interval*seg_num
 
         for anim in self.anims:
             target = anim.target
@@ -191,10 +204,10 @@ class Tunnel (Beam):
             # what is this animation targeting?
             if target == AnimationTarget.Thickness:
                 thickness_adjust += anim.get_value_vector(rel_angle)
-            elif target == AnimationTarget.Radius:
+            elif target == AnimationTarget.Size:
                 rad_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
-            if target == AnimationTarget.Ellipse: # ellipsing
-                ellipse_adjust += anim.get_value_vector(rel_angle)
+            if target == AnimationTarget.AspectRatio: # ellipsing
+                aspect_ratio_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.Color:
                 col_center_adjust += anim.get_value_vector(rel_angle) * 0.5
             elif target == AnimationTarget.ColorSpread:
@@ -214,16 +227,18 @@ class Tunnel (Beam):
         thickness_allowance = thickness*geometry.thickness_scale/2
 
         rad_x = abs((
-            radius*(MAX_ELLIPSE_ASPECT * (self.ellipse_aspect + ellipse_adjust))
+            size*(MAX_ASPECT * (self.aspect_ratio + aspect_ratio_adjust))
             - thickness_allowance) + rad_adjust)
-        rad_y = abs(radius - thickness_allowance + rad_adjust)
+        rad_y = abs(size - thickness_allowance + rad_adjust)
 
         # geometry calculations
         x_center = self.x_offset + x_adjust
         y_center = self.y_offset + y_adjust
-        stop = seg_angle + rot_interval
+        stop = seg_angle + marquee_interval
 
         arcs = []
+
+        rot_angle = self.curr_rot_angle
         # now set the color and draw
         if as_mask:
             val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
@@ -239,7 +254,8 @@ class Tunnel (Beam):
                     r_x,
                     r_y,
                     start_angle,
-                    stop_angle))
+                    stop_angle,
+                    rot_angle))
         else:
             hue = (
                 255*(self.col_center + col_center_adjust) +
@@ -266,5 +282,6 @@ class Tunnel (Beam):
                     r_x,
                     r_y,
                     start_angle,
-                    stop_angle))
+                    stop_angle,
+                    rot_angle))
         return arcs

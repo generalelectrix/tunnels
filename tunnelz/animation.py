@@ -18,14 +18,15 @@ HALFPI = pi/2
 
 # FIXME-NUMERIC TARGETS
 class AnimationTarget (object):
+    MarqueeRotation = 0#'marquee_rotation'
     Rotation = 1#'rotation'
     Thickness = 2#'thickness'
-    Radius = 3#'radius'
-    Ellipse = 4#'ellipse'
+    Size = 3#'size'
+    AspectRatio = 4#'aspect_ratio'
     Color = 5#'color'
-    ColorSpread = 6#'colorspread'
-    ColorPeriodicity = 7#'colorperiodicity'
-    ColorSaturation = 8#'colorsaturation'
+    ColorSpread = 6#'color_spread'
+    ColorPeriodicity = 7#'color_periodicity'
+    ColorSaturation = 8#'color_saturation'
     Segments = 9#'segments'
     Blacking = 10#'blacking'
     PositionX = 11#'positionx'
@@ -33,10 +34,11 @@ class AnimationTarget (object):
     PositionXY = 13#'positionxy'
 
     VALUES = (
+        MarqueeRotation,
         Rotation,
         Thickness,
-        Radius,
-        Ellipse,
+        Size,
+        AspectRatio,
         Color,
         ColorSpread,
         ColorPeriodicity,
@@ -96,7 +98,7 @@ class Animation (object):
         self.pulse = False
         self.invert = False
         self.n_periods = 0
-        self.target = AnimationTarget.Radius
+        self.target = AnimationTarget.Size
         self.speed = 0.0
         self.weight = 0.0 # unipolar float
         self.duty_cycle = 1.0

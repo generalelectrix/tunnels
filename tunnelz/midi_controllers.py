@@ -289,12 +289,12 @@ class TunnelMidiController (MidiController):
 
         self.unipolar_knobs = self.add_controls({
             'thickness': ControlChangeMapping(0, 21),
-            'radius': ControlChangeMapping(0, 22),
+            'size': ControlChangeMapping(0, 22),
             'col_center': ControlChangeMapping(0, 16),
             'col_width': ControlChangeMapping(0, 17),
             'col_spread': ControlChangeMapping(0, 18),
             'col_sat': ControlChangeMapping(0, 19),
-            'ellipse_aspect': ControlChangeMapping(0, 23),
+            'aspect_ratio': ControlChangeMapping(0, 23),
             },
             self.handle_unipolar_knob)
 

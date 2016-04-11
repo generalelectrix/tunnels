@@ -19,6 +19,7 @@ arc_args = (
     'rad_y', #int
     'start', #float
     'stop' #float
+    'rot_angle' #float
     )
 
 Arc = namedtuple('Arc', arc_args)

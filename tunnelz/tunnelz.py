@@ -63,39 +63,54 @@ class Show (object):
 
     def setup_models(self):
         """Instantiate all of the model objects."""
-        self.mixer = mixer = Mixer(N_BEAMS)
+        self.mixer = Mixer(N_BEAMS)
 
         # if we're not using midi, set up test tunnels
-        if not self.use_midi:
-            for i, layer in enumerate(mixer.layers):
-
-                # maximally brutal test fixture
-                layer.level = 255
-
-                tunnel = layer.beam
-
-                tunnel.col_width = 0.25
-                tunnel.col_spread = 1.0
-                tunnel.col_sat = 0.25
-
-                tunnel.rot_speed = -1.0 + (2.0 * float(i) / float(N_BEAMS))
-
-                tunnel.blacking = 0
-
-                tunnel.radius = (0.1*i) % 1.0
-
-                for i, anim in enumerate(tunnel.anims):
-                    anim.type = WaveformType.VALUES[i]
-                    anim.speed = float(i)/len(tunnel.anims) # various speeds
-                    anim.weight = 0.5 # finite weight
-                    anim.target = AnimationTarget.Thickness # hit thickness to do vector math
-                    anim.n_periods = 3 # more than zero periods for vector math
+        if self.config.get('stress_test', False):
+            self.setup_stress_test()
+        elif self.config.get('rotation_test', False):
+            self.setup_rotation_test()
 
         # beam matrix minder
         self.beam_matrix = beam_matrix = BeamMatrixMinder()
 
         # save a copy of the default tunnel for sanity. Don't erase it!
         beam_matrix.put_beam(4, 7, Tunnel())
+
+    def setup_stress_test(self):
+        """Set up all mixer tunnels to do everything at once."""
+        for i, layer in enumerate(self.mixer.layers):
+
+            # maximally brutal test fixture
+            layer.level = 255
+
+            tunnel = layer.beam
+
+            tunnel.col_width = 0.25
+            tunnel.col_spread = 1.0
+            tunnel.col_sat = 0.25
+
+            tunnel.marquee_speed = -1.0 + (2.0 * float(i) / float(N_BEAMS))
+
+            tunnel.blacking = 0
+
+            tunnel.radius = (0.1*i) % 1.0
+
+            for i, anim in enumerate(tunnel.anims):
+                anim.type = WaveformType.VALUES[i]
+                anim.speed = float(i)/len(tunnel.anims) # various speeds
+                anim.weight = 0.5 # finite weight
+                anim.target = AnimationTarget.Thickness # hit thickness to do vector math
+                anim.n_periods = 3 # more than zero periods for vector math
+
+    def setup_rotation_test(self):
+        """Set up one tunnel to test rotation feature."""
+        layer = self.mixer.layers[0]
+        layer.level = 255
+        tunnel = layer.beam
+
+        tunnel.aspect_ratio = 0.75
+        tunnel.rot_speed = 0.2
 
     def setup_controllers(self):
         self.setup_midi()

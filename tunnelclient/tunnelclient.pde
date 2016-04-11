@@ -29,6 +29,7 @@ public static class DrawArc {
   public float radY;
   public float start;
   public float stop;
+  public float rotAngle;
 }
 
 Template arcListTemplate = Templates.tList(msgpack.lookup(DrawArc.class));
@@ -140,14 +141,22 @@ void drawFrame() {
           color segColor = color(toDraw.hue, toDraw.sat, toDraw.val);
           stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
         }
+        
+        // use coordinate transformations for rotate the ellipse axis the appropriate amount
+        pushMatrix();
+        translate(toDraw.x * xSize + xCenter, toDraw.y * ySize + yCenter);
+        rotate(toDraw.rotAngle * TWO_PI);
 
         // draw pie wedge for this cell
-        arc(toDraw.x * xSize + xCenter,
-            toDraw.y * ySize + yCenter,
+        arc(0,
+            0,
             toDraw.radX * criticalSize,
             toDraw.radY * criticalSize,
             toDraw.start * TWO_PI,
             toDraw.stop * TWO_PI);
+        
+        // restore original coordinate system
+        popMatrix();
       }
 
   }
