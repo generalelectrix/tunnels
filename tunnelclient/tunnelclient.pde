@@ -139,13 +139,18 @@ void draw() {
           stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
         }
 
+        pushMatrix();
+        translate(toDraw.x * xSize + xCenter, toDraw.y * ySize + yCenter);
+        rotate(toDraw.rotAngle * TWO_PI);
+
         // draw pie wedge for this cell
-        arc(toDraw.x * xSize + xCenter,
-            toDraw.y * ySize + yCenter,
+        arc(0,
+            0,
             toDraw.radX * criticalSize,
             toDraw.radY * criticalSize,
             toDraw.start * TWO_PI,
             toDraw.stop * TWO_PI);
+        popMatrix();
       }
 
   }

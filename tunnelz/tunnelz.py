@@ -112,6 +112,11 @@ class Show (object):
         tunnel.aspect_ratio = 0.75
         tunnel.rot_speed = 0.2
 
+        xMove = tunnel.anims[0]
+        xMove.speed = 0.2
+        xMove.weight = 0.5
+        xMove.target = AnimationTarget.PositionX
+
     def setup_controllers(self):
         self.setup_midi()
 

@@ -142,12 +142,14 @@ class Tunnel (Beam):
                 marquee_angle_adjust += anim.get_value(0)
 
         # calulcate the rotation, wrap to 0 to 1
-        self.curr_rot_angle += (
+        self.curr_rot_angle = (
+            self.curr_rot_angle +
             # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
             (self.rot_speed*delta_t*30. + rot_angle_adjust)*self.rot_speed_scale) % 1.0
 
         # calulcate the marquee angle, wrap to 0 to 1
-        self.curr_marquee_angle += (
+        self.curr_marquee_angle = (
+            self.curr_marquee_angle +
             # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
             (self.marquee_speed*delta_t*30. + marquee_angle_adjust)*self.marquee_speed_scale) % 1.0
 
