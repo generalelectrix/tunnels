@@ -30,22 +30,6 @@ public static class DrawArc {
   public float start;
   public float stop;
   public float rotAngle;
-  
-  public String toString() {
-      return
-        "level: " + this.level +
-        " thickness: " + this.thickness +
-        " hue: " + this.hue +
-        " sat: " + this.sat +
-        " val: " + this.val +
-        " x: " + this.x +
-        " y: " + this.y +
-        " radX: " + this.radX +
-        " radY: " + this.radY +
-        " start: " + this.start +
-        " stop: " + this.stop +
-        " rotAngle: " + this.rotAngle;
-  }
 }
 
 Template arcListTemplate = Templates.tList(msgpack.lookup(DrawArc.class));
@@ -55,6 +39,29 @@ ZMQ.Context context = ZMQ.context(1);
 ZMQ.Socket drawSocket = context.socket(ZMQ.SUB);
 
 String serverAddress = "tcp://localhost:6000";
+
+/// Drain the incoming frame buffer and return the freshest frame.
+List<DrawArc> getNewestFrame() throws IOException {
+  // initial, blocking receive
+  byte[] message;
+  message = drawSocket.recv();
+  // now drain the buffer
+  while (true) {
+    byte[] newestMessage = drawSocket.recv(ZMQ.DONTWAIT);
+    if (newestMessage == null) {
+      break;
+    }
+    else {
+      message = newestMessage;
+    }
+  }
+
+  // Unpack the msgpack draw commands
+  ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
+  Unpacker unpacker = msgpack.createUnpacker(byteStream);
+
+  return unpacker.read(arcListTemplate);
+}
 
 int criticalSize;
 float thicknessScale = 0.5;
@@ -95,6 +102,8 @@ void setup() {
   colorMode(HSB);
   //blendMode(ADD);
 
+  frameRate(300.0);
+
   frameNumber = 0;
 
   // connect to the server and accept every message
@@ -102,11 +111,6 @@ void setup() {
 
   byte[] filter = new byte[0];
   drawSocket.subscribe(filter);
-
-  // continuously wait for and draw frames
-  while (true) {
-    drawFrame();
-  }
 }
 
 void stop() {
@@ -114,30 +118,7 @@ void stop() {
   context.term();
 }
 
-/// Drain the incoming frame buffer and return the freshest frame.
-List<DrawArc> getNewestFrame() throws IOException {
-  // initial, blocking receive
-  byte[] message;
-  message = drawSocket.recv();
-  // now drain the buffer
-  while (true) {
-    byte[] newestMessage = drawSocket.recv(ZMQ.DONTWAIT);
-    if (newestMessage == null) {
-      break;
-    }
-    else {
-      message = newestMessage;
-    }
-  }
-
-  // Unpack the msgpack draw commands
-  ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
-  Unpacker unpacker = msgpack.createUnpacker(byteStream);
-
-  return unpacker.read(arcListTemplate);
-}
-
-void drawFrame() {
+void draw() {
 
   background(0);
   noFill();
@@ -145,37 +126,27 @@ void drawFrame() {
   //int startTime = millis();
   try {
     List<DrawArc> arcs = getNewestFrame();
-    println("got frame " + frameNumber);
-    println(arcs.get(0).toString());
 
-    for (DrawArc toDraw: arcs) {
+      for (DrawArc toDraw: arcs) {
 
-      strokeWeight(toDraw.thickness * criticalSize * thicknessScale);
+        strokeWeight(toDraw.thickness * criticalSize * thicknessScale);
 
-      if (useAlpha) {
-        stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );
+        if (useAlpha) {
+          stroke( color(toDraw.hue, toDraw.sat, toDraw.val, toDraw.level) );
+        }
+        else {
+          color segColor = color(toDraw.hue, toDraw.sat, toDraw.val);
+          stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
+        }
+
+        // draw pie wedge for this cell
+        arc(toDraw.x * xSize + xCenter,
+            toDraw.y * ySize + yCenter,
+            toDraw.radX * criticalSize,
+            toDraw.radY * criticalSize,
+            toDraw.start * TWO_PI,
+            toDraw.stop * TWO_PI);
       }
-      else {
-        color segColor = color(toDraw.hue, toDraw.sat, toDraw.val);
-        stroke( blendColor(segColor, color(0,0,toDraw.level), MULTIPLY) );
-      }
-      
-      // use coordinate transformations for rotate the ellipse axis the appropriate amount
-      //pushMatrix();
-      //translate(toDraw.x * xSize + xCenter, toDraw.y * ySize + yCenter);
-      //rotate(toDraw.rotAngle * TWO_PI);
-
-      // draw pie wedge for this cell
-      arc(toDraw.x * xSize + xCenter,
-          toDraw.y * ySize + yCenter,
-          toDraw.radX * criticalSize,
-          toDraw.radY * criticalSize,
-          toDraw.start * TWO_PI,
-          toDraw.stop * TWO_PI);
-      
-      // restore original coordinate system
-      //popMatrix();
-    }
 
   }
   catch (Exception e) {
@@ -183,4 +154,9 @@ void drawFrame() {
   }
 
   frameNumber++;
+  //int endTime = millis();
+  if (frameNumber % 30 == 0) {
+    println(frameRate);
+    //println(endTime - startTime);
+  }
 }
