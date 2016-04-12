@@ -76,6 +76,11 @@ class Tunnel (Beam):
     marquee_speed_scale = 0.023 # marquee rotates this many radial units/frame at 30fps
     blacking_scale = 4
 
+    class Shapes (object):
+        Tunnel = 'tunnel'
+
+        VALUES = set([Tunnel,])
+
     def __init__(self):
         """Default tunnel constructor."""
         super(Tunnel, self).__init__()
@@ -103,6 +108,10 @@ class Tunnel (Beam):
         self.anims = [Animation() for _ in xrange(self.n_anim)]
 
         self.curr_anim = 0
+
+        # dispatch
+        self.display_as = self.Shapes.Tunnel
+
 
     def copy(self):
         """Use deep_copy to recursively copy this Tunnel."""
@@ -153,9 +162,12 @@ class Tunnel (Beam):
             # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
             (self.marquee_speed*delta_t*30. + marquee_angle_adjust)*self.marquee_speed_scale) % 1.0
 
-
     def display(self, level_scale, as_mask, dc_agg):
-        """Draw the current state of the beam.
+        """Call whichever draw method is currently assigned to this beam."""
+        self._display_calls[self.display_as](self, level_scale, as_mask, dc_agg)
+
+    def display_tunnel(self, level_scale, as_mask, dc_agg):
+        """Draw the current state of the beam as a tunnel.
 
         Args:
             level_scale: int in [0, 255]
@@ -287,3 +299,5 @@ class Tunnel (Beam):
                     stop_angle,
                     rot_angle))
         return arcs
+
+    _display_calls = {Shapes.Tunnel: display_tunnel}
