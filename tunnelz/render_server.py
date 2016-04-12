@@ -24,6 +24,23 @@ arc_args = (
 
 Arc = namedtuple('Arc', arc_args)
 
+
+line_args = (
+    'level', # int 0-255
+    'stroke_weight', # float
+    'hue',
+    'sat',
+    'val',
+    'x', # int
+    'y', # int
+    'length', #int
+    'start', #float
+    'stop' #float
+    'rot_angle' #float
+    )
+
+Line = namedtuple('Line', line_args)
+
 def create_pub_socket(port):
     """Create a zmq PUB socket on a given port."""
     # TODO: learn about zmq context and if we should only have one of these.
