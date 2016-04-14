@@ -15,6 +15,7 @@ int frameNumber;
 MessagePack msgpack = new MessagePack();
 
 Template parsedArcListTemplate = Templates.tList(msgpack.lookup(ParsedArc.class));
+Template parsedLineListTemplate = Templates.tList(msgpack.lookup(ParsedLine.class));
 
 // Global 0mq frame receive socket
 ZMQ.Context context = ZMQ.context(1);
@@ -96,6 +97,10 @@ List<Draw> getNewestFrame() throws IOException {
   // Unpack the msgpack draw commands
   ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
   Unpacker unpacker = msgpack.createUnpacker(byteStream);
+  
+  // Messages are packed as an array of type flags followed by an array of draw commands
+  // These arrays should be the same length.
+  
 
   List<ParsedArc> parsedArcs = unpacker.read(parsedArcListTemplate);
   List<Draw> drawArcs = new ArrayList<Draw>();
@@ -143,7 +148,7 @@ class DrawArc implements Draw {
   }
 }
 
-// MessagePack helper class
+// MessagePack helper classes
 @Message
 static class ParsedArc {
   int level;
@@ -155,6 +160,21 @@ static class ParsedArc {
   float y;
   float radX;
   float radY;
+  float start;
+  float stop;
+  float rotAngle;
+}
+
+@Message
+static class ParsedLine {
+  int level;
+  float thickness;
+  float hue;
+  float sat;
+  int val;
+  float x;
+  float y;
+  float length;
   float start;
   float stop;
   float rotAngle;

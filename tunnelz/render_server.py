@@ -41,6 +41,16 @@ line_args = (
 
 Line = namedtuple('Line', line_args)
 
+class DrawCommandAggregator (object):
+    """Collect and flag draw commands."""
+    def __init__(self):
+        self.draw_calls = []
+        self.draw_flags = []
+
+    def add_draw_call(self, flag, draw_args):
+        self.draw_calls.append(draw_args)
+        self.draw_flags.append(flag)
+
 def create_pub_socket(port):
     """Create a zmq PUB socket on a given port."""
     # TODO: learn about zmq context and if we should only have one of these.
@@ -201,8 +211,11 @@ def run_server(command, response, port, framerate, report):
                 raise RenderServerError("Unrecognized command: {}".format(action))
 
             # render the payload we received
-            arcs = payload.draw_layers()
-            socket.send(msgpack.dumps(arcs, use_single_float=True))
+            draw_agg = payload.draw_layers()
+
+            socket.send(msgpack.dumps(
+                (draw_agg.draw_flags, draw_agg.draw_args),
+                use_single_float=True))
 
             dur = time() - start
             render_times.append(dur)

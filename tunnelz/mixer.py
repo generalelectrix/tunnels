@@ -1,6 +1,7 @@
 from .tunnel import Tunnel
 from .look import Look
 from .model_interface import ModelInterface
+from .render_server import DrawCommandAggregator
 
 class MixerMI (ModelInterface):
     """Handle model interactions for the mixer."""
@@ -85,7 +86,7 @@ class Mixer (object):
         return mask_state
 
     def draw_layers(self):
-        dc_agg = []
+        dc_agg = DrawCommandAggregator()
         for layer in self.layers:
             level = layer.level
             bump = layer.bump

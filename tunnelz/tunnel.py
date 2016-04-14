@@ -78,8 +78,9 @@ class Tunnel (Beam):
 
     class Shapes (object):
         Tunnel = 'tunnel'
+        Line = 'line'
 
-        VALUES = set([Tunnel,])
+        VALUES = set([Tunnel, Line])
 
     def __init__(self):
         """Default tunnel constructor."""
@@ -163,16 +164,12 @@ class Tunnel (Beam):
             (self.marquee_speed*delta_t*30. + marquee_angle_adjust)*self.marquee_speed_scale) % 1.0
 
     def display(self, level_scale, as_mask, dc_agg):
-        """Call whichever draw method is currently assigned to this beam."""
-        self._display_calls[self.display_as](self, level_scale, as_mask, dc_agg)
-
-    def display_tunnel(self, level_scale, as_mask, dc_agg):
-        """Draw the current state of the beam as a tunnel.
+        """Draw the current state of the beam.
 
         Args:
             level_scale: int in [0, 255]
             as_mask (bool): draw this beam as a masking layer
-            dc_agg (list to aggregate draw commands)
+            dc_agg (draw command aggregator)
         """
         size = geometry.max_size * self.size
         thickness = self.thickness
@@ -198,7 +195,7 @@ class Tunnel (Beam):
 
         # parameters that animations may modify
         aspect_ratio_adjust = np.zeros(shape, float)
-        rad_adjust = np.zeros(shape, float)
+        size_adjust = np.zeros(shape, float)
         thickness_adjust = np.zeros(shape, float)
         col_center_adjust = np.zeros(shape, float)
         col_width_adjust = np.zeros(shape, float)
@@ -219,7 +216,7 @@ class Tunnel (Beam):
             if target == AnimationTarget.Thickness:
                 thickness_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.Size:
-                rad_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
+                size_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
             if target == AnimationTarget.AspectRatio: # ellipsing
                 aspect_ratio_adjust += anim.get_value_vector(rel_angle)
             elif target == AnimationTarget.Color:
@@ -240,64 +237,114 @@ class Tunnel (Beam):
 
         thickness_allowance = thickness*geometry.thickness_scale/2
 
-        rad_x = abs((
-            size*(MAX_ASPECT * (self.aspect_ratio + aspect_ratio_adjust))
-            - thickness_allowance) + rad_adjust)
-        rad_y = abs(size - thickness_allowance + rad_adjust)
-
         # geometry calculations
         x_center = self.x_offset + x_adjust
         y_center = self.y_offset + y_adjust
         stop = seg_angle + marquee_interval
 
-        arcs = []
-
         rot_angle = self.curr_rot_angle
         # now set the color and draw
-        if as_mask:
-            val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
-            for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
-                dc_agg.append((
-                    255,
-                    strk,
-                    0.0,
-                    0.0,
-                    0,
-                    x,
-                    y,
-                    r_x,
-                    r_y,
-                    start_angle,
-                    stop_angle,
-                    rot_angle))
+
+        if self.display_as == self.Shapes.Tunnel:
+            rad_x = abs((
+                size*(MAX_ASPECT * (self.aspect_ratio + aspect_ratio_adjust))
+                - thickness_allowance) + size_adjust)
+            rad_y = abs(size - thickness_allowance + size_adjust)
+
+            if as_mask:
+                val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
+                for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
+                    dc_agg.add_draw_call(self.display_as,
+                        (
+                        255,
+                        strk,
+                        0.0,
+                        0.0,
+                        0,
+                        x,
+                        y,
+                        r_x,
+                        r_y,
+                        start_angle,
+                        stop_angle,
+                        rot_angle))
+            else:
+                hue = (
+                    255*(self.col_center + col_center_adjust) +
+                    (
+                        127*(self.col_width+col_width_adjust) *
+                        sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
+                    ))
+
+                hue = hue % 256
+
+                sat = 255*(self.col_sat + col_sat_adjust)
+
+                val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
+
+                for h, s, strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
+                    dc_agg.add_draw_call(self.display_as,
+                        (
+                        level_scale,
+                        strk,
+                        h,
+                        s,
+                        255,
+                        x,
+                        y,
+                        r_x,
+                        r_y,
+                        start_angle,
+                        stop_angle,
+                        rot_angle))
+
+        elif self.display_as == self.Shapes.Line:
+            length = abs(size + size_adjust)
+            if as_mask:
+                val_iter = izip(stroke_weight, x_center, y_center, length, seg_angle, stop)
+                for strk, x, y, linelen, start_angle, stop_angle in val_iter:
+                    dc_agg.add_draw_call(self.display_as,
+                        (
+                        255,
+                        strk,
+                        0.0,
+                        0.0,
+                        0,
+                        x,
+                        y,
+                        linelen,
+                        start_angle,
+                        stop_angle,
+                        rot_angle))
+            else:
+                hue = (
+                    255*(self.col_center + col_center_adjust) +
+                    (
+                        127*(self.col_width+col_width_adjust) *
+                        sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
+                    ))
+
+                hue = hue % 256
+
+                sat = 255*(self.col_sat + col_sat_adjust)
+
+                val_iter = izip(hue, sat, stroke_weight, x_center, y_center, length, seg_angle, stop)
+
+                for h, s, strk, x, y, linelen, start_angle, stop_angle in val_iter:
+                    dc_agg.add_draw_call(self.display_as,
+                        (
+                        level_scale,
+                        strk,
+                        h,
+                        s,
+                        255,
+                        x,
+                        y,
+                        linelen,
+                        start_angle,
+                        stop_angle,
+                        rot_angle))
         else:
-            hue = (
-                255*(self.col_center + col_center_adjust) +
-                (
-                    127*(self.col_width+col_width_adjust) *
-                    sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
-                ))
-
-            hue = hue % 256
-
-            sat = 255*(self.col_sat + col_sat_adjust)
-
-            val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
-
-            for h, s, strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
-                dc_agg.append((
-                    level_scale,
-                    strk,
-                    h,
-                    s,
-                    255,
-                    x,
-                    y,
-                    r_x,
-                    r_y,
-                    start_angle,
-                    stop_angle,
-                    rot_angle))
-        return arcs
+            raise NotImplementedError(self.display_as)
 
     _display_calls = {Shapes.Tunnel: display_tunnel}
