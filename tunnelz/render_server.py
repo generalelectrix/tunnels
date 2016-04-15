@@ -213,9 +213,11 @@ def run_server(command, response, port, framerate, report):
             # render the payload we received
             draw_agg = payload.draw_layers()
 
-            socket.send(msgpack.dumps(
-                (draw_agg.draw_flags, draw_agg.draw_args),
-                use_single_float=True))
+            serialized = msgpack.dumps(
+                (draw_agg.draw_flags, draw_agg.draw_calls),
+                use_single_float=True)
+
+            socket.send(serialized)
 
             dur = time() - start
             render_times.append(dur)

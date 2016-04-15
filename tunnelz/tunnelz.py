@@ -104,18 +104,21 @@ class Show (object):
                 anim.n_periods = 3 # more than zero periods for vector math
 
     def setup_rotation_test(self):
-        """Set up one tunnel to test rotation feature."""
+        """Set up one tunnel to test line feature."""
         layer = self.mixer.layers[0]
         layer.level = 255
         tunnel = layer.beam
+        tunnel.display_as = Tunnel.Shapes.Line
 
-        tunnel.aspect_ratio = 0.75
-        tunnel.rot_speed = 0.2
+        tunnel.segs = 40
+
+        tunnel.rot_speed = 0.0
+        tunnel.marquee_speed = 0.2
 
         xMove = tunnel.anims[0]
         xMove.speed = 0.2
         xMove.weight = 0.5
-        xMove.target = AnimationTarget.PositionX
+        xMove.target = AnimationTarget.Size
 
     def setup_controllers(self):
         self.setup_midi()

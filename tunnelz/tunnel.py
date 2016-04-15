@@ -77,8 +77,8 @@ class Tunnel (Beam):
     blacking_scale = 4
 
     class Shapes (object):
-        Tunnel = 'tunnel'
-        Line = 'line'
+        Tunnel = 0
+        Line = 1
 
         VALUES = set([Tunnel, Line])
 
@@ -153,15 +153,15 @@ class Tunnel (Beam):
 
         # calulcate the rotation, wrap to 0 to 1
         self.curr_rot_angle = (
-            self.curr_rot_angle +
+            (self.curr_rot_angle +
             # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.rot_speed*delta_t*30. + rot_angle_adjust)*self.rot_speed_scale) % 1.0
+            (self.rot_speed*delta_t*30. + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
 
         # calulcate the marquee angle, wrap to 0 to 1
         self.curr_marquee_angle = (
-            self.curr_marquee_angle +
+            (self.curr_marquee_angle +
             # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.marquee_speed*delta_t*30. + marquee_angle_adjust)*self.marquee_speed_scale) % 1.0
+            (self.marquee_speed*delta_t*30. + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
 
     def display(self, level_scale, as_mask, dc_agg):
         """Draw the current state of the beam.
@@ -206,7 +206,7 @@ class Tunnel (Beam):
 
         marquee_interval = 1.0 / self.segs
         # the angle of this particular segment
-        seg_angle = marquee_interval*seg_num+self.curr_marquee_angle
+        seg_angle = (marquee_interval*seg_num+self.curr_marquee_angle) % 1.0
         rel_angle = marquee_interval*seg_num
 
         for anim in self.anims:
@@ -240,7 +240,7 @@ class Tunnel (Beam):
         # geometry calculations
         x_center = self.x_offset + x_adjust
         y_center = self.y_offset + y_adjust
-        stop = seg_angle + marquee_interval
+        stop = (seg_angle + marquee_interval) % 1.0
 
         rot_angle = self.curr_rot_angle
         # now set the color and draw
@@ -300,6 +300,7 @@ class Tunnel (Beam):
 
         elif self.display_as == self.Shapes.Line:
             length = abs(size + size_adjust)
+
             if as_mask:
                 val_iter = izip(stroke_weight, x_center, y_center, length, seg_angle, stop)
                 for strk, x, y, linelen, start_angle, stop_angle in val_iter:
@@ -346,5 +347,3 @@ class Tunnel (Beam):
                         rot_angle))
         else:
             raise NotImplementedError(self.display_as)
-
-    _display_calls = {Shapes.Tunnel: display_tunnel}
