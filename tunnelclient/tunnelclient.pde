@@ -76,6 +76,74 @@ void stop() {
     context.term();
 }
 
+/// Unpack a yet-to-be-determined shape or shape collection.
+List<Draw> unpackEntity(Unpacker unpacker) throws IOException {
+    // unpack the opening brace
+    unpacker.readArrayBegin();
+
+    // read the type flag
+    int type = unpacker.readInt();
+
+    List<Draw> unpacked;
+
+    if (type == 0) {
+        unpacked = unpackShapeCollection(unpacker);
+    }
+    else {
+        unpacked = unpackShape(unpacker, type);
+    }
+
+    // unpack the closing brace
+    unpacker.readArrayEnd();
+
+    return unpacked;
+}
+
+/// Unpack the internals of a serialized shape.
+List<Draw> unpackShape(Unpacker unpacker, int shapeType) throws IOException {
+
+    List<Draw> toDraw = new ArrayList<Draw>();
+
+    // switch on shape type flag and parse the resuling array
+    switch(shapeType) {
+        case 1: // arcs
+            List<ParsedArc> arcs = unpacker.read(parsedArcListTmpl);
+            for (ParsedArc arc : arcs) {
+                toDraw.add(new DrawArc(arc));
+            }
+            break;
+        case 2: // lines
+            List<ParsedLine> lines = unpacker.read(parsedLineListTmpl);
+            for (ParsedLine line : lines) {
+                toDraw.add(new DrawLine(line));
+            }
+            break;
+    }
+
+    return toDraw;
+}
+
+/// Unpack a serialzed ShapeCollection.
+List<Draw> unpackShapeCollection(Unpacker unpacker) throws IOException {
+    // unpack the number of entities in this collection
+    int nEntities = unpacker.readInt();
+
+    // unpack the opening brace
+    unpacker.readArrayBegin();
+
+    List<Draw> toDraw = new ArrayList<Draw>();
+
+    // loop over the expected number of entities and unpack them
+    for (int i = 0; i < nEntities; i++) {
+        toDraw.addAll(unpackEntity(unpacker));
+    }
+
+    // unpack the closing brace
+    unpacker.readArrayEnd();
+
+    return toDraw;
+}
+
 /// Drain the incoming frame buffer and return the freshest frame.
 List<Draw> getNewestFrame() throws IOException {
     // initial, blocking receive
@@ -95,33 +163,21 @@ List<Draw> getNewestFrame() throws IOException {
     // Unpack the msgpack draw commands
     ByteArrayInputStream byteStream = new ByteArrayInputStream(message);
     Unpacker unpacker = msgpack.createUnpacker(byteStream);
-    // Python serializes as an array of two arrays
+
+    // read the opening brace
     unpacker.readArrayBegin();
 
-    // Messages are packed as an array of type flags followed by an array of draw commands
-    // These arrays should be the same length.
-    // Draw flags are numeric for compactness.
-    // 0 = arc
-    // 1 = line
+    // read the message header, consisting of the frame number and frame time
+    int frameNumber = unpacker.readInt();
+    long frameTime = unpacker.readLong();
 
-    int[] drawTypes = unpacker.read(int[].class);
+    // read the list of draw commands
+    List<Draw> toDraw = unpackEntity(unpacker);
 
-    List<Draw> drawCalls = new ArrayList<Draw>();
+    // read the closing brace, for completeness
+    unpacker.readArrayEnd();
 
-    unpacker.readArrayBegin();
-
-    for (int dt : drawTypes) {
-        switch(dt) {
-            case 0: // arc
-                drawCalls.add(new DrawArc(unpacker.read(ParsedArc.class)));
-                break;
-            case 1: // line
-                drawCalls.add(new DrawLine(unpacker.read(ParsedLine.class)));
-                break;
-        }
-    }
-
-    return drawCalls;
+    return toDraw;
 }
 
 public static interface Draw {
@@ -240,6 +296,8 @@ static class ParsedLine {
     float rotAngle;
 }
 
+Template parsedArcListTmpl = Templates.tList(msgpack.lookup(ParsedArc.class));
+Template parsedLineListTmpl = Templates.tList(msgpack.lookup(ParsedLine.class));
 
 void draw() {
 
