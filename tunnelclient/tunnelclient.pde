@@ -180,40 +180,120 @@ List<Draw> getNewestFrame() throws IOException {
     return toDraw;
 }
 
+/// Encapsulate a stack o' draw calls and handle interpolation.
+class TunnelShape implements Draw {
+    List<DrawArc> drawArcs;
+
+    TunnelShape(List<ParsedArc> drawParams) {
+        this.drawArcs = new ArrayList<DrawArc>();
+        for (ParsedArc params : drawParams) {
+            this.drawArcs.add(new DrawArc(params));
+        }
+    }
+
+    /// Interpolate this TunnelShape with another
+    Draw interpolateWith(TunnelShape interpWith, double alpha) {
+        // if the two have differing numbers of draw calls, use whichever is
+        // closer to alpha
+        if (this.drawArcs.size() != interpWith.drawArcs.size()){
+            if (alpha < 0.5) {
+                return this;
+            }
+            else {
+                return interpWith;
+            }
+        }
+        // otherwise, interpolate!
+        return this;
+    }
+
+    void draw() {
+        for (DrawArc da : this.drawArcs) {
+            da.draw();
+        }
+    }
+}
+
 public static interface Draw {
     public abstract void draw();
 }
 
+int interp(int x1, int x2, double alpha) {
+    return int(x1 * (1.0 - alpha) + x2 * (alpha))
+}
+
+float interp(float x1, float x2, double alpha) {
+    return float(x1 * (1.0 - alpha) + x2 * (alpha))
+}
+
+/// Interpolate angles correctly.
+float interpRadial(float r1, float r2, double alpha) {
+
+}
+
 class DrawArc implements Draw {
-    ParsedArc params;
+    int level;
+    float thickness;
+    float hue;
+    float sat;
+    int val;
+    float x;
+    float y;
+    float radX;
+    float radY;
+    float start;
+    float stop;
+    float rotAngle;
 
     DrawArc(ParsedArc ps) {
-        params = ps;
+        level = ps.level;
+        thickness = ps.thickness;
+        hue = ps.hue;
+        sat = ps.sat;
+        val = ps.val;
+        x = ps.x;
+        y = ps.y;
+        radX = ps.radX;
+        radY = ps.radY;
+        start = ps.start;
+        stop = ps.stop;
+        rotAngle = ps.rotAngle;
+    }
+
+    /// Interpolate this DrawArc with another
+    DrawArc interpolateWith(DrawArc other, double alpha) {
+        return DrawArc(
+            interp(this.level, other.level, alpha),
+            interp(this.thickness, other.thickness, alpha),
+
+            )
     }
 
     void draw() {
-        ParsedArc params = this.params;
-        strokeWeight(params.thickness * criticalSize * thicknessScale);
+        strokeWeight(this.thickness * criticalSize * thicknessScale);
 
         if (useAlpha) {
-            stroke( color(params.hue, params.sat, params.val, params.level) );
+            stroke( color(this.hue, this.sat, this.val, this.level) );
         }
         else {
-            color segColor = color(params.hue, params.sat, params.val);
-            stroke( blendColor(segColor, color(0,0,params.level), MULTIPLY) );
+            color segColor = color(this.hue, this.sat, this.val);
+            stroke( blendColor(segColor, color(0,0,this.level), MULTIPLY) );
         }
 
         pushMatrix();
-        translate(params.x * xSize + xCenter, params.y * ySize + yCenter);
-        rotate(params.rotAngle * TWO_PI);
+        translate(this.x * xSize + xCenter, this.y * ySize + yCenter);
+        rotate(this.rotAngle * TWO_PI);
+
+        float start = this.start;
+        float stop = this.stop;
 
         // draw pie wedge for this cell
         arc(0,
             0,
-            params.radX * criticalSize,
-            params.radY * criticalSize,
-            params.start * TWO_PI,
-            params.stop * TWO_PI);
+            this.radX * criticalSize,
+            this.radY * criticalSize,
+            this.start * TWO_PI,
+            this.stop * TWO_PI);
         popMatrix();
     }
 }
@@ -241,23 +321,26 @@ class DrawLine implements Draw {
         translate(params.x * xSize + xCenter, params.y * ySize + yCenter);
         rotate(params.rotAngle * TWO_PI);
 
+        float start = params.start;
+        float stop = params.stop % 1.0;
+
         // handle special cases to make beams appear nicely
-        if (params.stop < params.start) {
+        if (stop < start) {
             // TODO: lower size bound on drawing a line to avoid floating point
             // anomalies
-            line((-0.5 + params.start) * params.length * criticalSize * lineLengthScale,
+            line((-0.5 + start) * params.length * criticalSize * lineLengthScale,
                  0,
                  0.5 * params.length * criticalSize * lineLengthScale,
                  0);
             line(-0.5 * params.length * criticalSize * lineLengthScale,
                  0,
-                 (-0.5 + params.stop) * params.length * criticalSize * lineLengthScale,
+                 (-0.5 + stop) * params.length * criticalSize * lineLengthScale,
                  0);
         }
         else {
-            line((-0.5 + params.start) * params.length * criticalSize * lineLengthScale,
+            line((-0.5 + start) * params.length * criticalSize * lineLengthScale,
                  0,
-                 (-0.5 + params.stop) * params.length * criticalSize * lineLengthScale,
+                 (-0.5 + stop) * params.length * criticalSize * lineLengthScale,
                  0);
         }
         popMatrix();

@@ -238,7 +238,9 @@ class Tunnel (Beam):
         # geometry calculations
         x_center = self.x_offset + x_adjust
         y_center = self.y_offset + y_adjust
-        stop = (seg_angle + marquee_interval) % 1.0
+
+        # this angle may exceed 1.0
+        stop = (seg_angle + marquee_interval)
 
         rot_angle = self.curr_rot_angle
         # now set the color and draw

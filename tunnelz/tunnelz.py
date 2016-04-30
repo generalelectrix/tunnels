@@ -15,6 +15,7 @@ from Queue import Empty
 from .render_server import RenderServer
 import time
 from .tunnel import Tunnel, TunnelMI
+from .shapes import Line
 
 import json
 
@@ -69,6 +70,8 @@ class Show (object):
             self.setup_stress_test()
         elif self.config.get('rotation_test', False):
             self.setup_rotation_test()
+        elif self.config.get('aliasing_test', False):
+            self.setup_aliasing_test()
 
         # beam matrix minder
         self.beam_matrix = beam_matrix = BeamMatrixMinder()
@@ -107,17 +110,26 @@ class Show (object):
         layer = self.mixer.layers[0]
         layer.level = 255
         tunnel = layer.beam
-        tunnel.display_as = Tunnel.Shapes.Line
+        tunnel.display_as = Line
 
         tunnel.segs = 40
 
         tunnel.rot_speed = 0.0
         tunnel.marquee_speed = 0.2
 
-        xMove = tunnel.anims[0]
-        xMove.speed = 0.2
-        xMove.weight = 0.5
-        xMove.target = AnimationTarget.Size
+        # xMove = tunnel.anims[0]
+        # xMove.speed = 0.2
+        # xMove.weight = 0.5
+        # xMove.target = AnimationTarget.Size
+
+    def setup_aliasing_test(self):
+        """Set up one tunnel to test render smoothness."""
+        layer = self.mixer.layers[0]
+        layer.level = 255
+        tunnel = layer.beam
+
+        tunnel.rot_speed = 0.0
+        tunnel.marquee_speed = 0.05
 
     def setup_controllers(self):
         self.setup_midi()
