@@ -6,7 +6,6 @@ import org.msgpack.template.Template;
 import java.io.ByteArrayInputStream;
 import java.util.List;
 import org.zeromq.ZMQ;
-import java.math.BigInteger;
 
 // use alpha blending?  (expensive)
 boolean useAlpha = false;

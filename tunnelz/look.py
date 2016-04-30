@@ -1,4 +1,5 @@
 from .beam import Beam
+from .shapes import ShapeCollection
 
 class Look (Beam):
     """A look is a beam that is actually a composite of several beams."""
@@ -24,16 +25,18 @@ class Look (Beam):
         for layer in self.layers:
             layer.beam.update_state(delta_t)
 
-    def display(self, level_scale, as_mask, dc_agg):
+    def display(self, level_scale, as_mask):
         """Draw all the Beams in this Look.
 
         level: int in [0, 255]
         as_mask: boolean
         """
-
+        drawn_layers = []
         for layer in self.layers:
             # only draw a layer if it isn't off
             level = layer.level
             if level != 0:
                 scaled_level = level_scale * level / 255
-                layer.beam.display(scaled_level, as_mask or layer.mask, dc_agg)
+                drawn_layers.append(layer.beam.display(
+                    scaled_level, as_mask or layer.mask))
+        return (ShapeCollection, len(drawn_layers), drawn_layers)

@@ -15,19 +15,19 @@ class Beam (object):
         """Return a deep copy of this beam."""
         raise NotImplementedError("Beam subclasses must implement deep copy.")
 
-    def update_params(self):
+    def update_state(self, timestep):
         """Update beam parameters based on current state.
-
-        Subclasses may override this method.
-        """
-        pass
-
-    def display(self, level_scale, as_mask, dc_agg):
-        """Render this beam, using scaled level and masking parameter.
 
         Subclasses should override this method.
         """
         pass
+
+    def display(self, level_scale, as_mask):
+        """Render this beam, using scaled level and masking parameter.
+
+        Subclasses should override this method.
+        """
+        raise NotImplementedError("Beam subclasses must implement display")
 
     def get_current_animation(self):
         return None

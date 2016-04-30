@@ -21,7 +21,6 @@ import json
 # how many beams you like?
 N_BEAMS = 8
 
-# TODO: more flexible configuration
 class Show (object):
     """Encapsulate the show runtime environment."""
     def __init__(self, config_file="show.cfg"):
@@ -148,33 +147,64 @@ class Show (object):
             self.animation_midi_controller = AnimationMidiController(
                 self.animator_mi, midi_in, midi_out)
 
-    def run(self, framerate=30.0, n_frames=None, control_timeout=0.001):
+    def run(self, update_interval=20, n_frames=None, control_timeout=0.001):
+        """Run the show loop.
+
+        Args:
+            update_interval (int): number of milliseconds between beam state updates
+            n_frames (None or int): if None, run forever.  if finite number, only
+                run for this many state updates.
+        """
 
         report_framerate = self.config["report_framerate"]
 
-        frame_number = 0
+        update_number = 0
 
         # start up the render server
-        render_server = RenderServer(framerate=framerate, report=report_framerate)
+        render_server = RenderServer(report=report_framerate)
 
         log.info("Starting render server...")
         render_server.start()
         log.info("Render server started.")
 
+        time_millis = lambda: int(time.time()*1000)
+
+        last_update = time_millis()
+
+        last_rendered_frame = -1
+
         try:
-            while n_frames is None or frame_number < n_frames:
+            while n_frames is None or update_number < n_frames:
                 # process a control event if one is pending
                 try:
-                    # time out slightly before render time to improve framerate stability
                     self.midi_in.receive(timeout=control_timeout)
                 except Empty:
                     # fine if we didn't get a control event
                     pass
 
-                # pass the mixer if it is time to render a frame
-                rendered = render_server.pass_frame_if_requested(self.mixer)
-                if rendered:
-                    frame_number += 1
+                # compute updates until we're current
+                now = time_millis()
+                time_since_last_update = now - last_update
+
+                while time_since_last_update > update_interval:
+                    # update the state of the beams
+                    for layer in self.mixer.layers:
+                        layer.beam.update_state(update_interval)
+
+                    last_update += update_interval
+                    now = time_millis()
+                    time_since_last_update = now - last_update
+                    update_number += 1
+
+
+                # pass the mixer the render process is ready to draw another frame
+                # and it hasn't drawn this frame yet
+                if update_number > last_rendered_frame:
+                    rendered = render_server.pass_frame_if_ready(
+                        update_number, last_update, self.mixer)
+                    if rendered:
+                        last_rendered_frame = update_number
+
         finally:
             render_server.stop()
             log.info("Shut down render server.")

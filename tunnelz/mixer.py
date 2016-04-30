@@ -1,7 +1,7 @@
 from .tunnel import Tunnel
 from .look import Look
 from .model_interface import ModelInterface
-from .render_server import DrawCommandAggregator
+from .shapes import ShapeCollection
 
 class MixerMI (ModelInterface):
     """Handle model interactions for the mixer."""
@@ -86,17 +86,17 @@ class Mixer (object):
         return mask_state
 
     def draw_layers(self):
-        dc_agg = DrawCommandAggregator()
+        draw_commands = []
         for layer in self.layers:
             level = layer.level
             bump = layer.bump
 
             if level > 0 or bump:
                 if bump:
-                    layer.beam.display(255, layer.mask, dc_agg)
+                    draw_commands.append(layer.beam.display(255, layer.mask))
                 else:
-                    layer.beam.display(level, layer.mask, dc_agg)
-        return dc_agg
+                    draw_commands.append(layer.beam.display(level, layer.mask))
+        return (ShapeCollection, len(draw_commands), draw_commands)
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""

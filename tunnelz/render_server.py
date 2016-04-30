@@ -1,12 +1,34 @@
-from collections import namedtuple, deque
+from collections import deque
 import logging as log
 from time import time, sleep
 from multiprocessing import Process, Queue
 from Queue import Empty
 import msgpack
 import zmq
-import sys, traceback
+import sys
+import traceback
 
+"""Guide to serialized render format
+
+We define a simple, recursive data structure, with two types of entities:
+ShapeCollection and Shape
+ShapeCollection serves as a (possibly heterogeneous) collection of Shapes and
+other ShapeCollections.
+Shape serves as a collection of draw calls of a uniform type (ie all arcs, all
+lines, etc.)
+The format is quite simple:
+ShapeCollection:
+(SHAPE_COLLECTION_FLAG, NUMBER_OF_ENTITIES, (list of entities))
+Shape:
+(SHAPE_TYPE_FLAG, (list of draw call arguments))
+
+The overall packet has a header as well, such that the full structure looks like
+(FRAME_NUMBER, UPDATED_TIME, TOP_LEVEL_SHAPE_COLLECTION)
+(int, int, ShapeCollection)
+where UPDATED_TIME is milliseconds since the epoch
+"""
+
+# this is unused but serves as documentation
 arc_args = (
     'level', # int 0-255
     'stroke_weight', # float
@@ -22,9 +44,7 @@ arc_args = (
     'rot_angle' #float
     )
 
-Arc = namedtuple('Arc', arc_args)
-
-
+# this is unused but serves as documentation
 line_args = (
     'level', # int 0-255
     'stroke_weight', # float
@@ -38,18 +58,6 @@ line_args = (
     'stop' #float
     'rot_angle' #float
     )
-
-Line = namedtuple('Line', line_args)
-
-class DrawCommandAggregator (object):
-    """Collect and flag draw commands."""
-    def __init__(self):
-        self.draw_calls = []
-        self.draw_flags = []
-
-    def add_draw_call(self, flag, draw_args):
-        self.draw_calls.append(draw_args)
-        self.draw_flags.append(flag)
 
 def create_pub_socket(port):
     """Create a zmq PUB socket on a given port."""
@@ -73,17 +81,21 @@ class RenderServerError (Exception):
     pass
 
 class RenderServer (object):
-    """Responsible for launching and communicating with a render server."""
+    """Responsible for launching and communicating with a render server process."""
 
-    def __init__(self, port=6000, framerate=30.0, report=False):
+    def __init__(self, port=6000, report=False):
+        """Create a new render server handle.
+
+        Args:
+            port: port to open the server on
+            report (bool): have the render process print debugging information
+        """
         self.port = port
-        self.framerate = framerate
         self.running = False
         self.command = None
         self.response = None
         self.server_proc = None
         self.report = report
-        self.last_draw = 0.0
 
     def start(self):
         """Launch an instance of the render server."""
@@ -93,7 +105,7 @@ class RenderServer (object):
 
             self.server_proc = server_proc = Process(
                 target=run_server,
-                args=(command, response, self.port, self.framerate, self.report))
+                args=(command, response, self.port, self.report))
 
             server_proc.start()
             # wait for server to succeed or fail
@@ -112,7 +124,6 @@ class RenderServer (object):
                     "Render server returned an unknown response: {}".format(resp))
 
             self.running = True
-            self.last_draw = time()
 
     def _stop(self):
         """Kill the server."""
@@ -129,8 +140,11 @@ class RenderServer (object):
         if self.running:
             self._stop()
 
-    def pass_frame_if_requested(self, mixer):
-        """Pass the render server a frame if we have a request pending."""
+    def pass_frame_if_ready(self, update_number, update_time, mixer):
+        """Pass the render server a frame if it is ready to draw one.
+
+        Returns a boolean indicating if a frame was drawn or not.
+        """
         if self.running:
             try:
                 req, payload = self.response.get(block=False)
@@ -138,32 +152,23 @@ class RenderServer (object):
                 return False
             else:
                 if req == FRAME_REQ:
-                    now = time()
-                    # update the state of the beams
-                    for layer in mixer.layers:
-                        layer.beam.update_state(now - self.last_draw)
-
-                    self.command.put((FRAME, mixer))
-                    self.last_draw = now
+                    self.command.put((FRAME, (update_number, update_time, mixer)))
                     return True
                 elif req == FATAL_ERROR:
                     self._stop()
-                    raise Exception(payload[0], payload[1])
+                    raise RenderServerError(payload[0], payload[1])
+                else:
+                    raise RenderServerError(
+                        "Unknown response: {}, {}".format(req, payload))
         return False
 
-def run_server(command, response, port, framerate, report):
+def run_server(command, response, port, report):
     """Run the frame drawing service.
-
-    The server runs as fast as it can, up to a specified framerate limit.  When
-    it completes rendering a frame and sending it on the network, it waits until
-    it is ready to draw another frame.  It then requests the model from the
-    control process, renders it, sends it, and repeats.  The server keeps track
-    of a smoothed processing time to help keep a constant framerate.
 
     The control protocol for the server's command queue is as follows:
     (command, payload)
     Examples are
-    (FRAME, mixer) -> data payload to draw a frame
+    (FRAME, update_number, frame_time, mixer) -> data payload to draw a frame
     (QUIT, _) -> quit the server thread
 
     The server communicates with the control thread over the response queue.
@@ -175,27 +180,13 @@ def run_server(command, response, port, framerate, report):
     try:
         socket = create_pub_socket(port)
 
-        # initialize the buffer to smooth render time
-        # smooth five frames
-        buffer_size = 5
-        render_times = deque(maxlen=buffer_size)
-        for _ in xrange(buffer_size):
-            render_times.append(0.0)
-
-        frame_period = 1.0 / framerate
-
-        frame_number = 0
-
         # we're ready to render
         response.put((RUNNING, None))
 
         log_time = time()
 
         while 1:
-            # time how long it takes to render this frame
-            start = time()
-
-            # request a frame from the controller
+            # ready to draw a frame
             response.put((FRAME_REQ, None))
 
             # wait for a reply
@@ -210,23 +201,15 @@ def run_server(command, response, port, framerate, report):
                 # we could try again, but who knows how we even got here
                 raise RenderServerError("Unrecognized command: {}".format(action))
 
+            frame_number, frame_time, mixer = payload
             # render the payload we received
-            draw_agg = payload.draw_layers()
+            draw_collection = mixer.draw_layers()
 
             serialized = msgpack.dumps(
-                (draw_agg.draw_flags, draw_agg.draw_calls),
+                (frame_number, frame_time, draw_collection),
                 use_single_float=True)
 
             socket.send(serialized)
-
-            dur = time() - start
-            render_times.append(dur)
-
-            # now wait until it is approximately time to start this process again
-            sleep(frame_period - sum(render_times) / buffer_size)
-
-            # debugging purposes
-            frame_number += 1
 
             if report:# and frame_number % 1 == 0:
                 now = time()

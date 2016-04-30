@@ -7,6 +7,7 @@ from math import pi
 import numpy as np
 from .model_interface import ModelInterface, MiModelProperty, only_if_active
 from .waveforms import sawtooth_vector
+import shapes
 
 # scale overall size, set > 1.0 to enable larger shapes than screen size
 MAX_SIZE_MULT = 2.0
@@ -76,12 +77,6 @@ class Tunnel (Beam):
     marquee_speed_scale = 0.023 # marquee rotates this many radial units/frame at 30fps
     blacking_scale = 4
 
-    class Shapes (object):
-        Tunnel = 0
-        Line = 1
-
-        VALUES = set([Tunnel, Line])
-
     def __init__(self):
         """Default tunnel constructor."""
         super(Tunnel, self).__init__()
@@ -111,7 +106,7 @@ class Tunnel (Beam):
         self.curr_anim = 0
 
         # dispatch
-        self.display_as = self.Shapes.Tunnel
+        self.display_as = shapes.Tunnel
 
 
     def copy(self):
@@ -130,7 +125,11 @@ class Tunnel (Beam):
         self.anims[self.curr_anim] = new_anim
 
     def update_state(self, delta_t):
-        """Update the state of this tunnel in preparation for drawing a frame."""
+        """Update the state of this tunnel in preparation for drawing a frame.
+
+        Args:
+            delta_t (int): evolution time in milliseconds
+        """
         # ensure we don't exceed the set bounds of the screen
         self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
         self.y_offset = min(max(self.y_offset, -geometry.max_y_offset), geometry.max_y_offset)
@@ -154,22 +153,21 @@ class Tunnel (Beam):
         # calulcate the rotation, wrap to 0 to 1
         self.curr_rot_angle = (
             (self.curr_rot_angle +
-            # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.rot_speed*delta_t*30. + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
+            # delta_t*0.03 implies the same speed scale as we had at 30fps with evolution tied to frame
+            (self.rot_speed*delta_t*0.03 + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
 
         # calulcate the marquee angle, wrap to 0 to 1
         self.curr_marquee_angle = (
             (self.curr_marquee_angle +
-            # delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.marquee_speed*delta_t*30. + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
+            # delta_t*0.03 implies the same speed scale as we had at 30fps with evolution tied to frame
+            (self.marquee_speed*delta_t*0.03 + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
 
-    def display(self, level_scale, as_mask, dc_agg):
-        """Draw the current state of the beam.
+    def display(self, level_scale, as_mask):
+        """Return the current state of the beam.
 
         Args:
             level_scale: int in [0, 255]
             as_mask (bool): draw this beam as a masking layer
-            dc_agg (draw command aggregator)
         """
         size = geometry.max_size * self.size
         thickness = self.thickness
@@ -245,7 +243,9 @@ class Tunnel (Beam):
         rot_angle = self.curr_rot_angle
         # now set the color and draw
 
-        if self.display_as == self.Shapes.Tunnel:
+        draw_calls = []
+
+        if self.display_as == shapes.Tunnel:
             rad_x = abs((
                 size*(MAX_ASPECT * (self.aspect_ratio + aspect_ratio_adjust))
                 - thickness_allowance) + size_adjust)
@@ -254,8 +254,7 @@ class Tunnel (Beam):
             if as_mask:
                 val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
                 for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
-                    dc_agg.add_draw_call(self.display_as,
-                        (
+                    draw_calls.append((
                         255,
                         strk,
                         0.0,
@@ -283,8 +282,7 @@ class Tunnel (Beam):
                 val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
 
                 for h, s, strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
-                    dc_agg.add_draw_call(self.display_as,
-                        (
+                    draw_calls.append((
                         level_scale,
                         strk,
                         h,
@@ -298,14 +296,13 @@ class Tunnel (Beam):
                         stop_angle,
                         rot_angle))
 
-        elif self.display_as == self.Shapes.Line:
+        elif self.display_as == shapes.Line:
             length = abs(size + size_adjust)
 
             if as_mask:
                 val_iter = izip(stroke_weight, x_center, y_center, length, seg_angle, stop)
                 for strk, x, y, linelen, start_angle, stop_angle in val_iter:
-                    dc_agg.add_draw_call(self.display_as,
-                        (
+                    draw_calls.append((
                         255,
                         strk,
                         0.0,
@@ -332,8 +329,7 @@ class Tunnel (Beam):
                 val_iter = izip(hue, sat, stroke_weight, x_center, y_center, length, seg_angle, stop)
 
                 for h, s, strk, x, y, linelen, start_angle, stop_angle in val_iter:
-                    dc_agg.add_draw_call(self.display_as,
-                        (
+                    draw_calls.append((
                         level_scale,
                         strk,
                         h,
@@ -347,3 +343,5 @@ class Tunnel (Beam):
                         rot_angle))
         else:
             raise NotImplementedError(self.display_as)
+
+        return self.display_as, draw_calls

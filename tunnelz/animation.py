@@ -89,7 +89,7 @@ class AnimationMI (ModelInterface):
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""
 
-    max_speed = 0.05 # radial units/frame; this is about 3pi/sec at 30 fps
+    max_speed = 0.0015 # radial units/ms; this is 3pi/sec
     wave_smoothing_scale = 0.25
 
     def __init__(self):
@@ -122,7 +122,7 @@ class Animation (object):
 
     def update_state(self, delta_t):
         if self.active:
-            self.curr_angle = (self.curr_angle - self.speed*self.max_speed*delta_t*30.) % 1.0
+            self.curr_angle = (self.curr_angle - self.speed*self.max_speed*delta_t) % 1.0
 
     def get_value(self, angle_offset):
         """Return the current value of the animation, with an offset."""
