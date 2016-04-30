@@ -180,6 +180,8 @@ List<Draw> getNewestFrame() throws IOException {
     return toDraw;
 }
 
+
+
 /// Encapsulate a stack o' draw calls and handle interpolation.
 class TunnelShape implements Draw {
     List<DrawArc> drawArcs;
@@ -191,20 +193,29 @@ class TunnelShape implements Draw {
         }
     }
 
+    TunnelShape(List<DrawArc> drawArcs) {
+        this.drawArcs = drawArcs;
+    }
+
     /// Interpolate this TunnelShape with another
-    Draw interpolateWith(TunnelShape interpWith, double alpha) {
+    Draw interpolateWith(TunnelShape other, double alpha) {
         // if the two have differing numbers of draw calls, use whichever is
         // closer to alpha
-        if (this.drawArcs.size() != interpWith.drawArcs.size()){
-            if (alpha < 0.5) {
-                return this;
-            }
-            else {
-                return interpWith;
-            }
+        if (this.drawArcs.size() != other.drawArcs.size()){
+            return (alpha < 0.5) ? this : other;
         }
         // otherwise, interpolate!
-        return this;
+        Iterator<DrawArc> thisArcs = this.drawArcs.iterator();
+        Iterator<DrawArc> otherArcs = other.drawArcs.iterator();
+
+        List<DrawArc> interpolated = new ArrayList<DrawArc>();
+
+        while (thisArcs.hasNext() && otherArcs.hasNext()) {
+            DrawArc thisArc = thisArcs.next();
+            DrawArc otherArc = otherArcs.next();
+            interpolated.add(thisArc.interpolateWith(otherArc, alpha));
+        }
+        return new TunnelShape(interpolated);
     }
 
     void draw() {
@@ -212,23 +223,50 @@ class TunnelShape implements Draw {
             da.draw();
         }
     }
+
+    /// Interpolate this TunnelShape with something else.
+    Draw interpolateWith(LineShape interpWith, float alpha) {
+        return (alpha < 0.5) ? this : interpWith;
+    }
 }
 
 public static interface Draw {
     public abstract void draw();
 }
 
-int interp(int x1, int x2, double alpha) {
-    return int(x1 * (1.0 - alpha) + x2 * (alpha))
+int interp(int x1, int x2, float alpha) {
+    return round(x1 + (x2 - x1) * alpha);
 }
 
-float interp(float x1, float x2, double alpha) {
-    return float(x1 * (1.0 - alpha) + x2 * (alpha))
+int interp(int x1, int x2, float alpha, int maxJump) {
+    int delta = x2 - x1;
+    if (abs(delta) > maxJump) {
+        return (alpha < 0.5) ? x1 : x2;
+    }
+    return round(x1 + (delta) * alpha);
 }
 
-/// Interpolate angles correctly.
-float interpRadial(float r1, float r2, double alpha) {
+float interp(float x1, float x2, float alpha) {
+    return x1 + (x2 - x1) * alpha;
+}
 
+float interp(float x1, float x2, float alpha, float maxJump) {
+    float delta = x2 - x1;
+    if (abs(delta) > maxJump) {
+        return (alpha < 0.5) ? x1 : x2;
+    }
+    return x1 + (delta) * alpha;
+}
+
+/// Interpolate angles on [0.0, 1.0) correctly.
+/// If the difference in angles is greater than maxJump, don't interpolate.
+/// Instead, return the input to which alpha is closer.
+float interpRadial(float r1, float r2, float alpha, float maxJump) {
+    float angleDiff = ((r2 - r1 + 0.5) % 1.0) - 0.5;
+    if (angleDiff > maxJump) {
+        return (alpha < 0.5) ? r1 : r2;
+    }
+    return (r1 + angleDiff*alpha) % 1.0;
 }
 
 class DrawArc implements Draw {
@@ -245,6 +283,12 @@ class DrawArc implements Draw {
     float stop;
     float rotAngle;
 
+
+    // Don't interpolate more than 5% of screen size.
+    float interpLimit = 0.05;
+    // Don't interpolate angles over more than 2% of a circle.
+    float radialInterpLimit = 0.02;
+
     DrawArc(ParsedArc ps) {
         level = ps.level;
         thickness = ps.thickness;
@@ -260,13 +304,50 @@ class DrawArc implements Draw {
         rotAngle = ps.rotAngle;
     }
 
+    DrawArc(
+            int level,
+            float thickness,
+            float hue,
+            float sat,
+            int val,
+            float x,
+            float y,
+            float radX,
+            float radY,
+            float start,
+            float stop,
+            float rotAngle) {
+        this.level = level;
+        this.thickness = thickness;
+        this.hue = hue;
+        this.sat = sat;
+        this.val = val;
+        this.x = x;
+        this.y = y;
+        this.radX = radX;
+        this.radY = radY;
+        this.start = start;
+        this.stop = stop;
+        this.rotAngle = rotAngle;
+    }
+
     /// Interpolate this DrawArc with another
-    DrawArc interpolateWith(DrawArc other, double alpha) {
-        return DrawArc(
+    DrawArc interpolateWith(DrawArc other, float alpha) {
+        boolean useFirst = alpha < 0.5;
+        return new DrawArc(
             interp(this.level, other.level, alpha),
             interp(this.thickness, other.thickness, alpha),
-
-            )
+            useFirst ? this.hue : other.hue,
+            useFirst ? this.sat : other.sat,
+            useFirst ? this.val : other.val,
+            interp(this.x, other.x, alpha, this.interpLimit),
+            interp(this.y, other.y, alpha, this.interpLimit),
+            interp(this.radX, other.radX, alpha, this.interpLimit),
+            interp(this.radY, other.radY, alpha, this.interpLimit),
+            interpRadial(this.start, other.start, alpha, this.radialInterpLimit),
+            interpRadial(this.stop, other.stop, alpha, this.radialInterpLimit),
+            interpRadial(this.rotAngle, other.rotAngle, alpha, this.radialInterpLimit)
+        );
     }
 
     void draw() {
