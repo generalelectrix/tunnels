@@ -20,6 +20,21 @@ pub struct App {
     marquee: f64    // marquee rotation position
 }
 
+pub struct Arc {
+    level: u64,
+    thickness: f32,
+    hue: f32,
+    sat: f32,
+    val: u64,
+    x: f32,
+    y: f32,
+    rad_x: f32,
+    rad_y: f32,
+    start: f32,
+    stop: f32,
+    rot_angle: f32
+}
+
 const TWOPI: f64 = 2.0 * PI;
 
 impl App {
