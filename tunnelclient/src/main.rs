@@ -47,14 +47,14 @@ impl App {
         const BLUE:  [f32; 4] = [0.0, 0.0, 1.0, 1.0];
         const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
-
-        let
-
         let bound = rectangle::centered([0.0, 0.0, 550.0, 340.0]);
         let rotation = self.rotation;
         let marquee = self.marquee;
         let (x, y) = ((args.width / 2) as f64,
                       (args.height / 2) as f64);
+
+        let extrapolation = 0.3 * args.ext_dt;
+        println!("{}", args.ext_dt);
 
         self.gl.draw(args.viewport(), |c, gl| {
             // Clear the screen.
@@ -67,7 +67,7 @@ impl App {
             let seg_width = TWOPI / 128.0;
             for seg in 0..128 {
                 if seg % 2 == 0 {
-                    let start = ((seg as f64 * seg_width) + marquee);
+                    let start = ((seg as f64 * seg_width) + marquee + extrapolation);
                     let end = start + seg_width;
                     circle_arc(WHITE, 20.0, start, end, bound, transform, gl);
                 }
@@ -109,12 +109,13 @@ fn main() {
 
     let mut events = window.events();
     while let Some(e) = events.next(&mut window) {
-        if let Some(r) = e.render_args() {
-            app.render(&r);
-        }
 
         if let Some(u) = e.update_args() {
             app.update(&u);
+        }
+
+        if let Some(r) = e.render_args() {
+            app.render(&r);
         }
     }
 }
