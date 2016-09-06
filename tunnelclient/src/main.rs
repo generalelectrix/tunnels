@@ -89,8 +89,8 @@ impl App {
 }
 
 struct ClientConfig {
-    x_resolution: u64,
-    y_resolution: u64,
+    x_resolution: u32,
+    y_resolution: u32,
     anti_alias: bool,
     fullscreen: bool
 }
@@ -106,8 +106,8 @@ fn config_from_command_line() -> ClientConfig {
     let docs = YamlLoader::load_from_str(&config_file_string).unwrap();
     let cfg = &docs[0];
     ClientConfig {
-        x_resolution: cfg["x_resolution"].as_i64().unwrap() as u64,
-        y_resolution: cfg["y_resolution"].as_i64().unwrap() as u64,
+        x_resolution: cfg["x_resolution"].as_i64().unwrap() as u32,
+        y_resolution: cfg["y_resolution"].as_i64().unwrap() as u32,
         anti_alias: cfg["anti_alias"].as_bool().unwrap(),
         fullscreen: cfg["fullscreen"].as_bool().unwrap(),
     }
@@ -122,13 +122,13 @@ fn main() {
     // Create an Glutin window.
     let mut window: Window = WindowSettings::new(
             "spinning-square",
-            [1280, 720]
+            [config.x_resolution, config.y_resolution]
         )
         .opengl(opengl)
         .exit_on_esc(true)
         .vsync(true)
-        .samples(4)
-        //.fullscreen(true)
+        .samples(if config.anti_alias {4} else {0})
+        .fullscreen(config.fullscreen)
         .build()
         .unwrap();
 
