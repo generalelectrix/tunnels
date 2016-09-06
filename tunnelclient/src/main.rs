@@ -3,6 +3,9 @@ extern crate graphics;
 extern crate glutin_window;
 extern crate sdl2_window;
 extern crate opengl_graphics;
+extern crate yaml_rust;
+
+use yaml_rust::YamlLoader;
 
 use piston::window::WindowSettings;
 use piston::event_loop::*;
@@ -11,6 +14,8 @@ use piston::input::*;
 use sdl2_window::Sdl2Window as Window;
 
 use std::f64::consts::PI;
+use std::fs::File;
+use std::io::Read;
 
 use opengl_graphics::{ GlGraphics, OpenGL };
 
@@ -67,7 +72,7 @@ impl App {
             let seg_width = TWOPI / 128.0;
             for seg in 0..128 {
                 if seg % 2 == 0 {
-                    let start = ((seg as f64 * seg_width) + marquee + extrapolation);
+                    let start = (seg as f64 * seg_width) + marquee + extrapolation;
                     let end = start + seg_width;
                     circle_arc(WHITE, 20.0, start, end, bound, transform, gl);
                 }
@@ -83,7 +88,34 @@ impl App {
     }
 }
 
+struct ClientConfig {
+    x_resolution: u64,
+    y_resolution: u64,
+    anti_alias: bool,
+    fullscreen: bool
+}
+
+/// Parses first command line arg as path to a yaml config file.
+/// Loads, parses, and returns the config.
+/// Panics if something goes wrong.
+fn config_from_command_line() -> ClientConfig {
+    let config_path = std::env::args().nth(1).expect("No config path arg provided.");
+    let mut config_file = File::open(config_path).unwrap();
+    let mut config_file_string = String::new();
+    config_file.read_to_string(&mut config_file_string).unwrap();
+    let docs = YamlLoader::load_from_str(&config_file_string).unwrap();
+    let cfg = &docs[0];
+    ClientConfig {
+        x_resolution: cfg["x_resolution"].as_i64().unwrap() as u64,
+        y_resolution: cfg["y_resolution"].as_i64().unwrap() as u64,
+        anti_alias: cfg["anti_alias"].as_bool().unwrap(),
+        fullscreen: cfg["fullscreen"].as_bool().unwrap(),
+    }
+}
+
 fn main() {
+
+    let config = config_from_command_line();
     // Change this to OpenGL::V2_1 if not working.
     let opengl = OpenGL::V3_2;
 
