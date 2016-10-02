@@ -4,6 +4,10 @@ extern crate glutin_window;
 extern crate sdl2_window;
 extern crate opengl_graphics;
 extern crate yaml_rust;
+extern crate rmp_serde;
+extern crate zmq;
+
+mod receive;
 
 use yaml_rust::YamlLoader;
 
@@ -16,31 +20,17 @@ use sdl2_window::Sdl2Window as Window;
 use std::f64::consts::PI;
 use std::fs::File;
 use std::io::Read;
+use std::time::Instant;
 
 use opengl_graphics::{ GlGraphics, OpenGL };
+
+const TWOPI: f64 = 2.0 * PI;
 
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     rotation: f64,   // Rotation for the square.
     marquee: f64    // marquee rotation position
 }
-
-pub struct Arc {
-    level: u64,
-    thickness: f32,
-    hue: f32,
-    sat: f32,
-    val: u64,
-    x: f32,
-    y: f32,
-    rad_x: f32,
-    rad_y: f32,
-    start: f32,
-    stop: f32,
-    rot_angle: f32
-}
-
-const TWOPI: f64 = 2.0 * PI;
 
 impl App {
     fn render(&mut self, args: &RenderArgs) {
@@ -113,9 +103,42 @@ fn config_from_command_line() -> ClientConfig {
     }
 }
 
+trait Draw {
+    fn draw(&self, gl: GlGraphics);
+}
+
+trait Interpolate {
+    fn interpolate_with(&self, other: &Self, time: &Instant) -> Self;
+}
+
+#[derive(Clone, Debug)]
+pub struct Arc {
+    level: u64,
+    thickness: f32,
+    hue: f32,
+    sat: f32,
+    val: u64,
+    x: f32,
+    y: f32,
+    rad_x: f32,
+    rad_y: f32,
+    start: f32,
+    stop: f32,
+    rot_angle: f32
+}
+
+impl Interpolate for Arc {
+    fn interpolate_with(&self, other: &Self, time: &Instant) -> Self {
+        other.clone()
+    }
+}
+
 fn main() {
 
     let config = config_from_command_line();
+
+
+
     // Change this to OpenGL::V2_1 if not working.
     let opengl = OpenGL::V3_2;
 
