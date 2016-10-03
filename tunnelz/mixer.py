@@ -93,10 +93,14 @@ class Mixer (object):
 
             if level > 0 or bump:
                 if bump:
-                    draw_commands.append(layer.beam.display(255, layer.mask))
+                    _, cmds = layer.beam.display(255, layer.mask)
+                    draw_commands.append(cmds)
                 else:
-                    draw_commands.append(layer.beam.display(level, layer.mask))
-        return (ShapeCollection, len(draw_commands), draw_commands)
+                    _, cmds = layer.beam.display(level, layer.mask)
+                    draw_commands.append(cmds)
+        # temporarily ignore individual shape identifiers and just pass arc calls
+        # return (ShapeCollection, len(draw_commands), draw_commands)
+        return draw_commands
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""
