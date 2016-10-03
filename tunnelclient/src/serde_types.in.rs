@@ -1,5 +1,6 @@
 // deserialization structs
 
+
 #[derive(Deserialize, Debug)]
 pub struct ParsedArc {
     level: i64,

@@ -13,9 +13,9 @@ extern crate serde;
 extern crate rmp_serde;
 extern crate zmq;
 
+mod config;
 mod receive;
-
-use yaml_rust::YamlLoader;
+mod draw;
 
 use piston::window::WindowSettings;
 use piston::event_loop::*;
@@ -24,13 +24,13 @@ use piston::input::*;
 use sdl2_window::Sdl2Window as Window;
 
 use std::f64::consts::PI;
-use std::fs::File;
-use std::io::Read;
 use std::time::Instant;
 
 use opengl_graphics::{ GlGraphics, OpenGL };
 
 use receive::{Receiver, Snapshot};
+
+use config::{ClientConfig, config_from_command_line};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -56,10 +56,11 @@ impl App {
                       (args.height / 2) as f64);
 
         self.gl.draw(args.viewport(), |c, gl| {
-            /*
+
             // Clear the screen.
             clear(BLACK, gl);
 
+            /*
             let transform = c.transform.trans(x, y)
                                        .rot_rad(rotation);
 
@@ -78,40 +79,7 @@ impl App {
     }
 }
 
-struct ClientConfig {
-    x_resolution: u32,
-    y_resolution: u32,
-    anti_alias: bool,
-    fullscreen: bool,
-    critical_size: u64,
-    thickness_scale: f64,
-    x_center: u64,
-    y_center: u64
-}
 
-/// Parses first command line arg as path to a yaml config file.
-/// Loads, parses, and returns the config.
-/// Panics if something goes wrong.
-fn config_from_command_line() -> ClientConfig {
-    let config_path = std::env::args().nth(1).expect("No config path arg provided.");
-    let mut config_file = File::open(config_path).unwrap();
-    let mut config_file_string = String::new();
-    config_file.read_to_string(&mut config_file_string).unwrap();
-    let docs = YamlLoader::load_from_str(&config_file_string).unwrap();
-    let cfg = &docs[0];
-    let x_resolution = cfg["x_resolution"].as_i64().unwrap() as u32;
-    let y_resolution = cfg["y_resolution"].as_i64().unwrap() as u32;
-    ClientConfig {
-        x_resolution: x_resolution,
-        y_resolution: y_resolution,
-        anti_alias: cfg["anti_alias"].as_bool().unwrap(),
-        fullscreen: cfg["fullscreen"].as_bool().unwrap(),
-        critical_size: std::cmp::min(x_resolution, y_resolution) as u64,
-        thickness_scale: 0.5,
-        x_center: (x_resolution / 2) as u64,
-        y_center: (y_resolution / 2) as u64
-    }
-}
 
 
 fn main() {
