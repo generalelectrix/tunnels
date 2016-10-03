@@ -8,7 +8,7 @@ dependencies = [
  "pistoncore-glutin_window 0.29.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pistoncore-sdl2_window 0.34.0 (git+https://github.com/PistonDevelopers/sdl2_window)",
  "rmp-serde 0.9.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde 0.7.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_codegen 0.8.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "yaml-rust 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "zmq 0.8.0 (git+https://github.com/erickt/rust-zmq.git)",

@@ -1,9 +1,15 @@
+// #![feature(rustc_macro)]
+
+// #[macro_use]
+// extern crate serde_derive;
+
 extern crate piston;
 extern crate graphics;
 extern crate glutin_window;
 extern crate sdl2_window;
 extern crate opengl_graphics;
 extern crate yaml_rust;
+extern crate serde;
 extern crate rmp_serde;
 extern crate zmq;
 

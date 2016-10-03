@@ -1,22 +1,66 @@
-use zmq::{Context, Socket};
-use rmp_serde;
+// #![feature(rustc_macro)]
 
+use zmq;
+use zmq::{Context, Socket};
+use rmp_serde::Deserializer;
+use serde::Deserialize;
+use std::io::Cursor;
+
+// only needed for serde on stable
 include!(concat!(env!("OUT_DIR"), "/serde_types.rs"));
 
+// #[derive(Serialize, Deserialize, Debug)]
+// struct ParsedArc {
+//     level: i32,
+//     thickness: f32,
+//     hue: f32,
+//     sat: f32,
+//     val: i32,
+//     x: f32,
+//     y: f32,
+//     rad_x: f32,
+//     rad_y: f32,
+//     start: f32,
+//     stop: f32,
+//     rot_angle: f32
+// }
+
 /// Receive a single arc from a blocking call to socket.
-fn receive_single_arc(socket: &Socket, ctx: &Context) -> ParsedArc {
-    rmp_serde::from_str(socket.recv_string().unwrap()).unwrap()
+fn receive_single_arc(socket: &mut Socket) -> ParsedArc {
+    let buf = socket.recv_bytes(0).unwrap();
+    let cur = Cursor::new(&buf[..]);
+    let mut de = Deserializer::new(cur);
+    let result: ParsedArc = Deserialize::deserialize(&mut de).unwrap();
+    result
 }
 
-/// Initialize a 0mq receiver and return a closure that will poll the receive
-/// queue in a non-blocking fashion, returning a collection of snapshots if any
-/// were received.  Panics if anything goes wrong.
-fn init_receiver(addr: &str) -> Box<Fn() -> ParsedArc> {
-    let mut ctx = zmq::Context::new();
+struct Receiver {
+    ctx: Context,
+    socket: Socket
+}
 
-    let mut socket = ctx.socket(zmq::SUB).unwrap();
-    socket.connect(addr).unwrap();
-    move || -> ParsedArc {
-        receive_single_arc(socket, ctx)
+impl Receiver {
+    fn new (addr: &str) -> Self {
+        let mut ctx = Context::new();
+
+        let mut socket = ctx.socket(zmq::SUB).unwrap();
+        socket.connect(addr).unwrap();
+
+        Receiver {ctx: ctx, socket: socket}
     }
+
+    fn receive(&mut self) -> ParsedArc {
+        receive_single_arc(&mut self.socket)
+    }
+}
+
+
+#[test]
+fn test_parse_arc() {
+    let buf = [156, 204, 255, 202, 62, 128, 0, 0, 202, 0, 0, 0, 0, 202, 0, 0, 0, 0, 204, 255, 202, 0, 0, 0, 0, 202, 0, 0, 0, 0, 202, 62, 224, 0, 0, 202, 62, 224, 0, 0, 202, 0, 0, 0, 0, 202, 60, 2, 8, 33, 202, 0, 0, 0, 0];
+    let cur = Cursor::new(&buf[..]);
+    let mut de = Deserializer::new(cur);
+    let result: ParsedArc = Deserialize::deserialize(&mut de).unwrap();
+    println!("{:?}", result);
+    assert!(true);
 }

@@ -1,6 +1,6 @@
 // deserialization structs
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 struct ParsedArc {
     level: i32,
     thickness: f32,

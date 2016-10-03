@@ -5,11 +5,13 @@ version = "0.1.0"
 authors = [
     "Chris Macklin <chris@imaginaryphotons.com>",
 ]
+# only needed for serde on stable
 build = "build.rs"
 
 [[bin]]
 name = "tunnelclient"
 
+# only needed for serde on stable
 [build-dependencies]
 serde_codegen = "0.8"
 
@@ -20,8 +22,8 @@ pistoncore-glutin_window = "0.29.0"
 piston2d-opengl_graphics = "0.32.0"
 yaml-rust = "*"
 rmp-serde = "*"
-serde = "0.8"
-#serde_derive = "0.8"
+serde = "*"
+# serde_derive = "*"
 
 [dependencies.pistoncore-sdl2_window]
 git = "https://github.com/PistonDevelopers/sdl2_window"

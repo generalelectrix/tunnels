@@ -209,6 +209,8 @@ def run_server(command, response, port, report):
                 (frame_number, frame_time, draw_collection),
                 use_single_float=True)
 
+            print msgpack.dumps(draw_collection[2][0], use_single_float=True)
+
             socket.send(serialized)
 
             if report:# and frame_number % 1 == 0:
