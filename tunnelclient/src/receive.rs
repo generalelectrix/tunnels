@@ -55,7 +55,7 @@ fn test_parse_arc() {
     let buf = [156, 204, 255, 202, 62, 128, 0, 0, 202, 0, 0, 0, 0, 202, 0, 0, 0, 0, 204, 255, 202, 0, 0, 0, 0, 202, 0, 0, 0, 0, 202, 62, 224, 0, 0, 202, 62, 224, 0, 0, 202, 0, 0, 0, 0, 202, 60, 2, 8, 33, 202, 0, 0, 0, 0];
     let cur = Cursor::new(&buf[..]);
     let mut de = Deserializer::new(cur);
-    let result: ParsedArc = Deserialize::deserialize(&mut de).unwrap();
+    let result: ArcSegment = Deserialize::deserialize(&mut de).unwrap();
     println!("{:?}", result);
     assert!(true);
 }

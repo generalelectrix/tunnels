@@ -1,7 +1,7 @@
 use opengl_graphics::GlGraphics;
 use graphics::{Context, circle_arc, rectangle, Transformed};
 
-use receive::{Snapshot, ParsedArc};
+use receive::{Snapshot, ArcSegment};
 use config::ClientConfig;
 
 use graphics::types::Color;
@@ -42,7 +42,7 @@ trait Draw {
     fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig);
 }
 
-impl Draw for ParsedArc {
+impl Draw for ArcSegment {
     fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig) {
         let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale;
 
