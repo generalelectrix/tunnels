@@ -61,7 +61,6 @@ class TunnelMI (ModelInterface):
         self.model.x_offset = 0.0
         self.model.y_offset = 0.0
 
-
 class Tunnel (Beam):
     """Ellipsoidal tunnels.
 
@@ -166,7 +165,7 @@ class Tunnel (Beam):
         """Return the current state of the beam.
 
         Args:
-            level_scale: int in [0, 255]
+            level_scale: unit float
             as_mask (bool): draw this beam as a masking layer
         """
         size = geometry.max_size * self.size
@@ -257,11 +256,11 @@ class Tunnel (Beam):
                 val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
                 for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
                     draw_calls.append((
-                        255,
+                        1.0,
                         strk,
                         0.0,
                         0.0,
-                        0,
+                        0.0,
                         x,
                         y,
                         r_x,
@@ -271,15 +270,15 @@ class Tunnel (Beam):
                         rot_angle))
             else:
                 hue = (
-                    255*(self.col_center + col_center_adjust) +
+                    (self.col_center + col_center_adjust) +
                     (
-                        127*(self.col_width+col_width_adjust) *
+                        0.5*(self.col_width+col_width_adjust) *
                         sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
                     ))
 
-                hue = hue % 256
+                hue = hue % 1.0
 
-                sat = 255*(self.col_sat + col_sat_adjust)
+                sat = clamp_to_unit(self.col_sat + col_sat_adjust)
 
                 val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
 
@@ -289,7 +288,7 @@ class Tunnel (Beam):
                         strk,
                         h,
                         s,
-                        255,
+                        1.0,
                         x,
                         y,
                         r_x,
@@ -305,11 +304,11 @@ class Tunnel (Beam):
                 val_iter = izip(stroke_weight, x_center, y_center, length, seg_angle, stop)
                 for strk, x, y, linelen, start_angle, stop_angle in val_iter:
                     draw_calls.append((
-                        255,
+                        1.0,
                         strk,
                         0.0,
                         0.0,
-                        0,
+                        0.0,
                         x,
                         y,
                         linelen,
@@ -318,15 +317,15 @@ class Tunnel (Beam):
                         rot_angle))
             else:
                 hue = (
-                    255*(self.col_center + col_center_adjust) +
+                    (self.col_center + col_center_adjust) +
                     (
-                        127*(self.col_width+col_width_adjust) *
+                        0.5*(self.col_width+col_width_adjust) *
                         sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
                     ))
 
-                hue = hue % 256
+                hue = hue % 1.0
 
-                sat = 255*(self.col_sat + col_sat_adjust)
+                sat = clamp_to_unit(self.col_sat + col_sat_adjust)
 
                 val_iter = izip(hue, sat, stroke_weight, x_center, y_center, length, seg_angle, stop)
 
@@ -336,7 +335,7 @@ class Tunnel (Beam):
                         strk,
                         h,
                         s,
-                        255,
+                        1.0,
                         x,
                         y,
                         linelen,
@@ -347,3 +346,8 @@ class Tunnel (Beam):
             raise NotImplementedError(self.display_as)
 
         return self.display_as, draw_calls
+
+
+def clamp_to_unit(f):
+    """Clip a floating point value to the range [0.0, 1.0]."""
+    return max(min(f, 1.0), 0.0)

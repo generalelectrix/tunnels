@@ -45,7 +45,7 @@ class MixerMI (ModelInterface):
 
 class MixerLayer (object):
     """Data bag for the contents of a mixer channel."""
-    def __init__(self, beam, level=0, bump=False, mask=False):
+    def __init__(self, beam, level=0.0, bump=False, mask=False):
         self.beam = beam
         self.level = level
         self.bump = bump
@@ -72,7 +72,7 @@ class Mixer (object):
         return self.layers[layer].beam
 
     def set_level(self, layer, level):
-        """level: int in [0, 255]"""
+        """level: unit float"""
         self.layers[layer].level = level
 
     def bump_on(self, layer):
@@ -93,7 +93,7 @@ class Mixer (object):
 
             if level > 0 or bump:
                 if bump:
-                    _, cmds = layer.beam.display(255, layer.mask)
+                    _, cmds = layer.beam.display(1.0, layer.mask)
                     draw_commands.append(cmds)
                 else:
                     _, cmds = layer.beam.display(level, layer.mask)

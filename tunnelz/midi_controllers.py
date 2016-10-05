@@ -236,9 +236,8 @@ class MixerMidiController (MidiController):
 
     def handle_channel_fader(self, mapping, value):
         chan = self.channel_faders.inv[mapping]
-        # map midi range to 255
-        value = 0 if value == 0 else 2*value + 1
-        self.mi.set_level(chan, value)
+        # map midi range to 1.0
+        self.mi.set_level(chan, self.unipolar_from_midi(value))
 
     def handle_bump_button_on(self, mapping, _):
         chan = self.bump_button_on.inv[mapping]
@@ -254,10 +253,8 @@ class MixerMidiController (MidiController):
 
     def set_level(self, layer, level):
         """Emit midi messages to update layer level."""
-        # map level on 255 back into midi range
-        level = level if level == 0 else int((level - 1)/2)
         mapping = self.channel_faders[layer]
-        self.midi_out.send_from_mapping(mapping, level)
+        self.midi_out.send_from_mapping(mapping, self.unipolar_to_midi(level))
 
     def set_bump_button(self, layer, state):
         """Emit the midi messages to change the bump button state.
