@@ -84,7 +84,7 @@ class Show (object):
         for i, layer in enumerate(self.mixer.layers):
 
             # maximally brutal test fixture
-            layer.level = 255
+            layer.level = 1.0
 
             tunnel = layer.beam
 
@@ -108,7 +108,7 @@ class Show (object):
     def setup_rotation_test(self):
         """Set up one tunnel to test line feature."""
         layer = self.mixer.layers[0]
-        layer.level = 255
+        layer.level = 1.0
         tunnel = layer.beam
         tunnel.display_as = Line
 
@@ -125,7 +125,7 @@ class Show (object):
     def setup_aliasing_test(self):
         """Set up one tunnel to test render smoothness."""
         layer = self.mixer.layers[0]
-        layer.level = 255
+        layer.level = 1.0
         tunnel = layer.beam
 
         tunnel.rot_speed = 0.0
