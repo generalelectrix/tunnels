@@ -3,23 +3,23 @@
 
 #[derive(Deserialize, Debug)]
 pub struct ParsedArc {
-    level: i64,
-    thickness: f64,
-    hue: f64,
-    sat: f64,
-    val: i64,
-    x: f64,
-    y: f64,
-    rad_x: f64,
-    rad_y: f64,
-    start: f64,
-    stop: f64,
-    rot_angle: f64
+    pub level: f64,
+    pub thickness: f64,
+    pub hue: f64,
+    pub sat: f64,
+    pub val: f64,
+    pub x: f64,
+    pub y: f64,
+    pub rad_x: f64,
+    pub rad_y: f64,
+    pub start: f64,
+    pub stop: f64,
+    pub rot_angle: f64
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Snapshot {
-    frame_number: i64,
-    frame_time: i64, // ms
-    draw_ops: Vec<Vec<ParsedArc>>
+    pub frame_number: i64,
+    pub frame_time: i64, // ms
+    pub draw_ops: Vec<Vec<ParsedArc>>
 }
