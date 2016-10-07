@@ -1,10 +1,13 @@
 use opengl_graphics::GlGraphics;
-use graphics::{Context, CircleArc, rectangle, Transformed};
+use graphics::{Context, CircleArc, rectangle, Transformed, Graphics, DrawState};
 
 use receive::{Snapshot, ArcSegment};
 use config::ClientConfig;
 
 use graphics::types::Color;
+use graphics::types::{Matrix2d, Scalar, Resolution, Radius, Rectangle};
+use graphics::radians::Radians;
+use graphics::triangulation::stream_quad_tri_list;
 
 use std::f64::consts::PI;
 const TWOPI: f64 = 2.0 * PI;
@@ -38,6 +41,77 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     }
 }
 
+/// Draws circle arc using triangulation.
+pub fn draw_circle_arc_improved<R: Into<Rectangle>, G>(
+    ca: &CircleArc,
+    rectangle: R,
+    draw_state: &DrawState,
+    transform: Matrix2d,
+    g: &mut G
+)
+    where G: Graphics
+{
+    let rectangle = rectangle.into();
+    g.tri_list(
+        &draw_state,
+        &ca.color,
+        |f|
+    improved_with_arc_tri_list(
+        ca.start,
+        ca.end,
+        ca.resolution,
+        transform,
+        rectangle,
+        ca.radius,
+        |vertices| f(vertices)
+    ));
+}
+
+/// Streams an arc between the two radian boundaries.
+#[inline(always)]
+fn improved_with_arc_tri_list<F>(
+    start_radians: Scalar,
+    end_radians: Scalar,
+    resolution: Resolution,
+    m: Matrix2d,
+    rect: Rectangle,
+    border_radius: Radius,
+    f: F
+)
+    where
+        F: FnMut(&[f32])
+{
+
+    let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
+    let (cw, ch) = (0.5 * w, 0.5 * h);
+    let (cw1, ch1) = (cw + border_radius, ch + border_radius);
+    let (cw2, ch2) = (cw - border_radius, ch - border_radius);
+    let (cx, cy) = (x + cw, y + ch);
+    let default_seg_size = <Scalar as Radians>::_360() / resolution as Scalar;
+    let mut i = 0;
+    let (start, end) = if start_radians < end_radians {
+        (start_radians, end_radians)
+    } else {
+        (end_radians, start_radians)
+    };
+    // Use a similar number of quads as default method, but ensure the angular
+    // delta allows for exactly spanning the included angle.
+    let delta = end - start;
+    let n_quads = (delta / default_seg_size).ceil() as u64;
+    let seg_size = delta / n_quads as f64;
+    stream_quad_tri_list(m, || {
+        if i > n_quads { return None; }
+
+        let angle = start + (i as f64 * seg_size);
+
+        let cos = angle.cos();
+        let sin = angle.sin();
+        i += 1;
+        Some(([cx + cos * cw1, cy + sin * ch1],
+            [cx + cos * cw2, cy + sin * ch2]))
+    }, f);
+}
+
 pub trait Draw {
     /// Given a context and gl instance, draw this entity to the screen.
     fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig);
@@ -65,8 +139,9 @@ impl Draw for ArcSegment {
         let start = self.start * TWOPI;
         let stop = self.stop * TWOPI;
 
-        let ca = CircleArc::new(color, thickness, start, stop).resolution(720);
-        ca.draw(bound, &Default::default(), transform, gl);
+        let ca = CircleArc::new(color, thickness, start, stop);
+        //ca.draw(bound, &Default::default(), transform, gl);
+        draw_circle_arc_improved(&ca, bound, &Default::default(), transform, gl);
     }
 }
 
