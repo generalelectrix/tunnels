@@ -6,7 +6,7 @@ from copy import deepcopy
 from math import pi
 import numpy as np
 from .model_interface import ModelInterface, MiModelProperty, only_if_active
-from .waveforms import sawtooth_vector
+from .waveforms import sawtooth_vector, clamp_to_unit
 import shapes
 
 # scale overall size, set > 1.0 to enable larger shapes than screen size
@@ -346,8 +346,3 @@ class Tunnel (Beam):
             raise NotImplementedError(self.display_as)
 
         return self.display_as, draw_calls
-
-
-def clamp_to_unit(f):
-    """Clip a floating point value to the range [0.0, 1.0]."""
-    return max(min(f, 1.0), 0.0)

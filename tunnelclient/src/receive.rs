@@ -3,6 +3,7 @@
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 use rmp_serde::Deserializer;
+use rmp_serde::decode::Error;
 use serde::Deserialize;
 use std::io::Cursor;
 
@@ -33,39 +34,37 @@ pub struct Receiver {
 
 impl Receiver {
     /// Create a new receiver connected to the provided socket addr.
-    pub fn new (addr: &str) -> Self {
+    pub fn new (addr: &str, topic: &[u8]) -> Self {
         let mut ctx = Context::new();
 
         let mut socket = ctx.socket(zmq::SUB).unwrap();
         socket.connect(addr).unwrap();
+        socket.set_subscribe(topic);
 
         Receiver {ctx: ctx, socket: socket}
     }
 
-    fn deserialize_msg(&self, msg: Vec<u8>) -> Snapshot {
+    fn deserialize_msg(&self, msg: Vec<u8>) -> Result<Snapshot, Error> {
         let cur = Cursor::new(&msg[..]);
         let mut de = Deserializer::new(cur);
         // FIXME error handling
-        Deserialize::deserialize(&mut de).unwrap()
+        Deserialize::deserialize(&mut de)
     }
 
-    /// Block until a message appears and deserialize it.
-    pub fn receive(&mut self) -> Snapshot {
+    pub fn receive_test(&mut self) {
+        println!("Waiting to receive.");
         let buf = self.socket.recv_bytes(0).unwrap();
-        self.deserialize_msg(buf)
+        println!("Got a buffer: {:?}", buf);
     }
 
     /// Drain the socket message queue and return the most recent snapshot, if available.
-    pub fn receive_newest(&mut self) -> Option<Snapshot> {
+    pub fn receive_newest(&mut self) -> Option<Result<Snapshot, Error>> {
         // Receive messages as long as we have them here and now.
         let mut buf = None;
         loop {
             if let Ok(new_buf) = self.socket.recv_bytes(DONTWAIT) {
                 buf = Some(new_buf);
-            }
-            else {
-                break
-            }
+            } else { break }
         }
         match buf {
             Some(b) => Some(self.deserialize_msg(b)),

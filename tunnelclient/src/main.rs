@@ -62,7 +62,14 @@ impl App {
         // block until a new frame is available
         // this is completely wrong but fine for testing
         if let Some(f) = self.receiver.receive_newest() {
-            self.most_recent_frame = Some(f);
+            match f {
+                Ok(frame) => {
+                    self.most_recent_frame = Some(frame);
+                },
+                Err(e) => {
+                    println!("Error during frame receive: {:?}", e);
+                }
+            }
         }
 
     }
@@ -80,7 +87,7 @@ fn main() {
 
     // Create an Glutin window.
     let mut window: Window = WindowSettings::new(
-            "spinning-square",
+            "tunnelclient",
             [config.x_resolution, config.y_resolution]
         )
         .opengl(opengl)
@@ -94,7 +101,7 @@ fn main() {
     // Create a new game and run it.
     let mut app = App {
         gl: GlGraphics::new(opengl),
-        receiver: Receiver::new("tcp://localhost:6000"),
+        receiver: Receiver::new("tcp://127.0.0.1:6000", &[]),
         most_recent_frame: None,
         config: config
     };

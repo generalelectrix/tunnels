@@ -143,3 +143,6 @@ def square_vector(np.ndarray[np.float_t, ndim=1] angles, np.float smoothing, np.
         output[i] = square(angles[i], smoothing, duty_cycle, pulse)
 
     return output
+
+def clamp_to_unit(np.ndarray[np.float_t, ndim=1] vals):
+    return np.clip(vals, 0.0, 1.0, vals)
