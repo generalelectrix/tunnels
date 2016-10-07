@@ -1,5 +1,5 @@
 use opengl_graphics::GlGraphics;
-use graphics::{Context, circle_arc, rectangle, Transformed};
+use graphics::{Context, CircleArc, rectangle, Transformed};
 
 use receive::{Snapshot, ArcSegment};
 use config::ClientConfig;
@@ -45,7 +45,7 @@ pub trait Draw {
 
 impl Draw for ArcSegment {
     fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig) {
-        let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale;
+        let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
 
         let (val, alpha) =
             if cfg.alpha_blend {(self.val, self.level)}
@@ -62,14 +62,11 @@ impl Draw for ArcSegment {
 
         let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
 
-        circle_arc(
-            color,
-            thickness,
-            self.start*TWOPI,
-            self.stop*TWOPI,
-            bound,
-            transform,
-            gl);
+        let start = self.start * TWOPI;
+        let stop = self.stop * TWOPI;
+
+        let ca = CircleArc::new(color, thickness, start, stop).resolution(720);
+        ca.draw(bound, &Default::default(), transform, gl);
     }
 }
 

@@ -8,6 +8,7 @@ import numpy as np
 from .model_interface import ModelInterface, MiModelProperty, only_if_active
 from .waveforms import sawtooth_vector, clamp_to_unit
 import shapes
+import logging as log
 
 # scale overall size, set > 1.0 to enable larger shapes than screen size
 MAX_SIZE_MULT = 2.0
@@ -171,7 +172,12 @@ class Tunnel (Beam):
         size = geometry.max_size * self.size
         thickness = self.thickness
 
-        seg_num = np.array(xrange(self.segs))
+        segs = self.segs
+        # for artistic reasons/convenience, eliminate odd numbers of segments
+        # above 40.
+        segs = segs + 1 if segs > 40 and segs % 2 else segs
+
+        seg_num = np.array(xrange(segs))
 
         blacking = self.blacking
         # remove the "all segments blacked" bug
@@ -201,7 +207,7 @@ class Tunnel (Beam):
         x_adjust = np.zeros(shape, float)
         y_adjust = np.zeros(shape, float)
 
-        marquee_interval = 1.0 / self.segs
+        marquee_interval = 1.0 / segs
         # the angle of this particular segment
         seg_angle = (marquee_interval*seg_num+self.curr_marquee_angle) % 1.0
         rel_angle = marquee_interval*seg_num

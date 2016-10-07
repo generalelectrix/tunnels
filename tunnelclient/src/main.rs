@@ -26,8 +26,8 @@ use piston::window::WindowSettings;
 use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receiver, Snapshot};
-//use glutin_window::GlutinWindow as Window;
-use sdl2_window::Sdl2Window as Window;
+use glutin_window::GlutinWindow as Window;
+// use sdl2_window::Sdl2Window as Window;
 use std::time::Instant;
 
 const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
@@ -59,8 +59,7 @@ impl App {
     }
 
     fn update(&mut self, args: &UpdateArgs) {
-        // block until a new frame is available
-        // this is completely wrong but fine for testing
+        // Update newest frame is one is waiting.
         if let Some(f) = self.receiver.receive_newest() {
             match f {
                 Ok(frame) => {

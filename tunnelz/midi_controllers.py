@@ -339,7 +339,7 @@ class TunnelMidiController (MidiController):
 
     def handle_segs(self, _, val):
         """Convert midi to number of segments."""
-        self.mi.segs = (val + 1)
+        self.mi.segs = val + 1
 
     def set_segs(self, segs):
         """Convert number of segs back to midi."""
