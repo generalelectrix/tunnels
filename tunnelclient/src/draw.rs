@@ -38,7 +38,8 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     }
 }
 
-trait Draw {
+pub trait Draw {
+    /// Given a context and gl instance, draw this entity to the screen.
     fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig);
 }
 
@@ -69,5 +70,15 @@ impl Draw for ArcSegment {
             bound,
             transform,
             gl);
+    }
+}
+
+impl Draw for Snapshot {
+    fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig) {
+        for layer in &(self.draw_ops) {
+            for op in layer {
+                op.draw(c, gl, cfg);
+            }
+        }
     }
 }

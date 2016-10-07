@@ -1,7 +1,7 @@
 // #![feature(rustc_macro)]
 
 use zmq;
-use zmq::{Context, Socket};
+use zmq::{Context, Socket, DONTWAIT};
 use rmp_serde::Deserializer;
 use serde::Deserialize;
 use std::io::Cursor;
@@ -25,13 +25,14 @@ include!(concat!(env!("OUT_DIR"), "/serde_types.rs"));
 //     rot_angle: f32
 // }
 
-
+/// Receive messages via a zmq socket.
 pub struct Receiver {
     ctx: Context,
     socket: Socket
 }
 
 impl Receiver {
+    /// Create a new receiver connected to the provided socket addr.
     pub fn new (addr: &str) -> Self {
         let mut ctx = Context::new();
 
@@ -41,11 +42,35 @@ impl Receiver {
         Receiver {ctx: ctx, socket: socket}
     }
 
+    fn deserialize_msg(&self, msg: Vec<u8>) -> Snapshot {
+        let cur = Cursor::new(&msg[..]);
+        let mut de = Deserializer::new(cur);
+        // FIXME error handling
+        Deserialize::deserialize(&mut de).unwrap()
+    }
+
+    /// Block until a message appears and deserialize it.
     pub fn receive(&mut self) -> Snapshot {
         let buf = self.socket.recv_bytes(0).unwrap();
-        let cur = Cursor::new(&buf[..]);
-        let mut de = Deserializer::new(cur);
-        Deserialize::deserialize(&mut de).unwrap()
+        self.deserialize_msg(buf)
+    }
+
+    /// Drain the socket message queue and return the most recent snapshot, if available.
+    pub fn receive_newest(&mut self) -> Option<Snapshot> {
+        // Receive messages as long as we have them here and now.
+        let mut buf = None;
+        loop {
+            if let Ok(new_buf) = self.socket.recv_bytes(DONTWAIT) {
+                buf = Some(new_buf);
+            }
+            else {
+                break
+            }
+        }
+        match buf {
+            Some(b) => Some(self.deserialize_msg(b)),
+            None => None
+        }
     }
 }
 

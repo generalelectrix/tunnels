@@ -17,22 +17,21 @@ mod config;
 mod receive;
 mod draw;
 
+use config::{ClientConfig, config_from_command_line};
+use draw::Draw;
+use graphics::clear;
+use graphics::types::Color;
+use opengl_graphics::{ GlGraphics, OpenGL };
 use piston::window::WindowSettings;
 use piston::event_loop::*;
 use piston::input::*;
+use receive::{Receiver, Snapshot};
 //use glutin_window::GlutinWindow as Window;
 use sdl2_window::Sdl2Window as Window;
-
-use std::f64::consts::PI;
 use std::time::Instant;
 
-use opengl_graphics::{ GlGraphics, OpenGL };
+const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
 
-use receive::{Receiver, Snapshot};
-
-use config::{ClientConfig, config_from_command_line};
-
-const TWOPI: f64 = 2.0 * PI;
 
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
@@ -43,39 +42,29 @@ pub struct App {
 
 impl App {
     fn render(&mut self, args: &RenderArgs) {
-        use graphics::*;
 
-        const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-        const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
-        const RED:   [f32; 4] = [1.0, 0.0, 0.0, 1.0];
-        const BLUE:  [f32; 4] = [0.0, 0.0, 1.0, 1.0];
-        const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-
-        let bound = rectangle::centered([0.0, 0.0, 550.0, 340.0]);
-        let (x, y) = ((args.width / 2) as f64,
-                      (args.height / 2) as f64);
+        let maybe_frame = &self.most_recent_frame;
+        let cfg = &self.config;
 
         self.gl.draw(args.viewport(), |c, gl| {
 
             // Clear the screen.
             clear(BLACK, gl);
 
-            /*
-            let transform = c.transform.trans(x, y)
-                                       .rot_rad(rotation);
-
-            for seg in 0..128 {
-                circle_arc(WHITE, 20.0, start, end, bound, transform, gl);
+            // Draw everything.
+            if let Some(ref f) = *maybe_frame {
+                f.draw(&c, gl, cfg);
             }
-            */
-
         });
     }
 
     fn update(&mut self, args: &UpdateArgs) {
         // block until a new frame is available
         // this is completely wrong but fine for testing
-        self.most_recent_frame = Some(self.receiver.receive());
+        if let Some(f) = self.receiver.receive_newest() {
+            self.most_recent_frame = Some(f);
+        }
+
     }
 }
 

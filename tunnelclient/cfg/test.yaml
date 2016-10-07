@@ -1,4 +1,5 @@
 x_resolution: 1280
 y_resolution: 720
 anti_alias: true
-fullscreen: true
+fullscreen: false
+alpha_blend: false
