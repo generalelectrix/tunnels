@@ -1,7 +1,7 @@
 //! 0mq communication and deserialization.
 
 use zmq;
-use zmq::{Context, Socket, DONTWAIT, Error as ZmqError};
+use zmq::{Context, Socket, DONTWAIT};
 use rmp_serde::Deserializer;
 use rmp_serde::decode::Error;
 use serde::Deserialize;

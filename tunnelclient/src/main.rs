@@ -35,9 +35,10 @@ use piston::window::WindowSettings;
 use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receive, SubReceiver, Snapshot};
+use sntp_service::synchronize;
 use glutin_window::GlutinWindow as Window;
 // use sdl2_window::Sdl2Window as Window;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use draw::Draw;
 use zmq::Context;
 
@@ -111,10 +112,22 @@ fn main() {
     // Create zmq context.
     let mut ctx = Context::new();
 
+    // Synchronize timing with master host.
+    // Send 10 sync packets, half a second apart.
+    let time_poll_period = Duration::from_millis(500);
+    let n_time_calls: usize = 10;
+    println!(
+        "Synchronizing timing.  This will take about {} seconds.",
+        (time_poll_period * n_time_calls as u32).as_secs());
+
+    let (ref_time, host_ref_time) = synchronize(
+        &config.server_hostname, time_poll_period, n_time_calls);
+    println!("ref time: {:?}, host time estimate: {:?}", ref_time, host_ref_time);
+
     // Create a new game and run it.
     let mut app = App {
         gl: GlGraphics::new(opengl),
-        receiver: SubReceiver::new("127.0.0.1", 6000, &[], &mut ctx),
+        receiver: SubReceiver::new(&config.server_hostname, 6000, &[], &mut ctx),
         most_recent_frame: None,
         config: config
     };

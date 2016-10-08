@@ -1,3 +1,4 @@
+server_hostname: "127.0.0.1"
 x_resolution: 1280
 y_resolution: 720
 anti_alias: true

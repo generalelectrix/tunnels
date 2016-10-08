@@ -12,6 +12,7 @@ from .midi_controllers import (
 from .mixer import Mixer, MixerMI
 from Queue import Empty
 from .render_server import RenderServer
+from . import sntp_service
 from monotonic import monotonic
 from .tunnel import Tunnel, TunnelMI
 from .shapes import Line
@@ -170,6 +171,12 @@ class Show (object):
         report_framerate = self.config["report_framerate"]
 
         update_number = 0
+
+        # start sntp time synchronization service
+        # FIXME no clean quit mechanism!
+        log.info("Starting SNTP time service.")
+        sntp_service.run_service()
+        log.info("SNTP time service started.")
 
         # start up the render server
         render_server = RenderServer(report=report_framerate)

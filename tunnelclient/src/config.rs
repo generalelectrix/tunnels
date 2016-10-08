@@ -4,6 +4,7 @@ use std::io::Read;
 use std::{env, cmp};
 
 pub struct ClientConfig {
+    pub server_hostname: String,
     pub x_resolution: u32,
     pub y_resolution: u32,
     pub anti_alias: bool,
@@ -27,7 +28,9 @@ pub fn config_from_command_line() -> ClientConfig {
     let cfg = &docs[0];
     let x_resolution = cfg["x_resolution"].as_i64().unwrap() as u32;
     let y_resolution = cfg["y_resolution"].as_i64().unwrap() as u32;
+    let host = cfg["server_hostname"].as_str().unwrap().trim().to_string();
     ClientConfig {
+        server_hostname: host,
         x_resolution: x_resolution,
         y_resolution: y_resolution,
         anti_alias: cfg["anti_alias"].as_bool().unwrap(),
