@@ -19,7 +19,6 @@ mod constants {
 
     pub const TWOPI: f64 = 2.0 * PI;
 }
-mod traits;
 mod config;
 mod receive;
 mod interpolate;
@@ -37,7 +36,7 @@ use receive::{Receiver, Snapshot};
 use glutin_window::GlutinWindow as Window;
 // use sdl2_window::Sdl2Window as Window;
 use std::time::Instant;
-use traits::Draw;
+use draw::Draw;
 
 const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
 

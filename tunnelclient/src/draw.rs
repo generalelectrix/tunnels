@@ -9,7 +9,21 @@ use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
 
 use constants::TWOPI;
-use traits::Draw;
+
+pub trait Draw<G: Graphics> {
+    /// Given a context and gl instance, draw this entity to the screen.
+    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig);
+}
+
+impl<T, G> Draw<G> for Vec<T> where
+        G: Graphics,
+        T: Draw<G> {
+    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
+        for e in self {
+            e.draw(c, gl, cfg);
+        }
+    }
+}
 
 #[inline]
 fn color_from_rgb(r: f64, g: f64, b: f64, a: f64) -> Color {
@@ -141,10 +155,6 @@ impl<G: Graphics> Draw<G> for ArcSegment {
 
 impl<G: Graphics> Draw<G> for Snapshot {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        for layer in &(self.draw_ops) {
-            for op in &layer.arcs {
-                op.draw(c, gl, cfg);
-            }
-        }
+        self.layers.draw(c, gl, cfg);
     }
 }

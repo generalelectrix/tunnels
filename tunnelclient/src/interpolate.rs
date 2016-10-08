@@ -1,6 +1,22 @@
 use interpolation::lerp;
 use receive::{ArcSegment};
-use traits::Interpolate;
+
+pub trait Interpolate {
+    fn interpolate_with(&self, other: &Self, alpha: f64) -> Self;
+}
+
+impl<T: Interpolate + Clone> Interpolate for Vec<T> {
+    fn interpolate_with(&self, other: &Self, alpha: f64) -> Self {
+        if self.len() != other.len() {
+            if alpha < 0.5 {return self.clone()}
+            else {return other.clone()}
+        }
+        self.iter()
+            .zip(other.iter())
+            .map(|(a, b)| a.interpolate_with(b, alpha))
+            .collect::<Vec<_>>()
+    }
+}
 
 /// Interpolate a pytunnel-style unit angle.
 #[inline(always)]
