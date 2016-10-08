@@ -1,4 +1,3 @@
-use opengl_graphics::GlGraphics;
 use graphics::{Context, CircleArc, rectangle, Transformed, Graphics, DrawState};
 
 use receive::{Snapshot, ArcSegment};
@@ -9,8 +8,8 @@ use graphics::types::{Matrix2d, Scalar, Resolution, Radius, Rectangle};
 use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
 
-use std::f64::consts::PI;
-const TWOPI: f64 = 2.0 * PI;
+use constants::TWOPI;
+use traits::Draw;
 
 #[inline]
 fn color_from_rgb(r: f64, g: f64, b: f64, a: f64) -> Color {
@@ -112,13 +111,8 @@ fn improved_with_arc_tri_list<F>(
     }, f);
 }
 
-pub trait Draw {
-    /// Given a context and gl instance, draw this entity to the screen.
-    fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig);
-}
-
-impl Draw for ArcSegment {
-    fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig) {
+impl<G: Graphics> Draw<G> for ArcSegment {
+    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
 
         let (val, alpha) =
@@ -145,10 +139,10 @@ impl Draw for ArcSegment {
     }
 }
 
-impl Draw for Snapshot {
-    fn draw(&self, c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig) {
+impl<G: Graphics> Draw<G> for Snapshot {
+    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         for layer in &(self.draw_ops) {
-            for op in layer {
+            for op in &layer.arcs {
                 op.draw(c, gl, cfg);
             }
         }

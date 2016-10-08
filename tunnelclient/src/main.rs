@@ -4,6 +4,7 @@
 // extern crate serde_derive;
 
 extern crate piston;
+extern crate interpolation;
 extern crate graphics;
 extern crate glutin_window;
 extern crate sdl2_window;
@@ -13,12 +14,19 @@ extern crate serde;
 extern crate rmp_serde;
 extern crate zmq;
 
+mod constants {
+    use std::f64::consts::PI;
+
+    pub const TWOPI: f64 = 2.0 * PI;
+}
+mod traits;
 mod config;
 mod receive;
+mod interpolate;
 mod draw;
 
+
 use config::{ClientConfig, config_from_command_line};
-use draw::Draw;
 use graphics::clear;
 use graphics::types::Color;
 use opengl_graphics::{ GlGraphics, OpenGL };
@@ -29,6 +37,7 @@ use receive::{Receiver, Snapshot};
 use glutin_window::GlutinWindow as Window;
 // use sdl2_window::Sdl2Window as Window;
 use std::time::Instant;
+use traits::Draw;
 
 const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
 

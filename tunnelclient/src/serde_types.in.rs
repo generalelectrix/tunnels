@@ -1,7 +1,7 @@
 // deserialization structs
 
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ArcSegment {
     pub level: f64,
     pub thickness: f64,
@@ -21,5 +21,5 @@ pub struct ArcSegment {
 pub struct Snapshot {
     pub frame_number: i64,
     pub frame_time: i64, // ms
-    pub draw_ops: Vec<Vec<ArcSegment>>
+    pub layers: Vec<Vec<ArcSegment>>
 }
