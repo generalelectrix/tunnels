@@ -13,6 +13,7 @@ extern crate yaml_rust;
 extern crate serde;
 extern crate rmp_serde;
 extern crate zmq;
+extern crate stats;
 
 mod constants {
     use std::f64::consts::PI;
@@ -38,6 +39,7 @@ use glutin_window::GlutinWindow as Window;
 // use sdl2_window::Sdl2Window as Window;
 use std::time::Instant;
 use draw::Draw;
+use zmq::Context;
 
 const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
 
@@ -106,10 +108,13 @@ fn main() {
         .build()
         .unwrap();
 
+    // Create zmq context.
+    let mut ctx = Context::new();
+
     // Create a new game and run it.
     let mut app = App {
         gl: GlGraphics::new(opengl),
-        receiver: SubReceiver::new("127.0.0.1", 6000, &[]),
+        receiver: SubReceiver::new("127.0.0.1", 6000, &[], &mut ctx),
         most_recent_frame: None,
         config: config
     };

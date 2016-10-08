@@ -7,6 +7,8 @@ use rmp_serde::decode::Error;
 use serde::Deserialize;
 use std::io::Cursor;
 
+pub type ReceiveResult<T> = Result<T, Error>;
+
 // only needed for serde on stable
 include!(concat!(env!("OUT_DIR"), "/serde_types.rs"));
 
@@ -15,14 +17,14 @@ pub trait Receive {
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>>;
 
     /// Deserialize a received message.
-    fn deserialize_msg<T: Deserialize>(&self, msg: Vec<u8>) -> Result<T, Error> {
+    fn deserialize_msg<T: Deserialize>(&self, msg: Vec<u8>) -> ReceiveResult<T> {
         let cur = Cursor::new(&msg[..]);
         let mut de = Deserializer::new(cur);
         Deserialize::deserialize(&mut de)
     }
 
     /// Drain the socket message queue and return the most recent message, if available.
-    fn receive_newest<T: Deserialize>(&mut self) -> Option<Result<T, Error>> {
+    fn receive_newest<T: Deserialize>(&mut self) -> Option<ReceiveResult<T>> {
         // Receive messages as long as we have them here and now.
         let mut buf = None;
         loop {
@@ -37,7 +39,7 @@ pub trait Receive {
     }
 
     /// Receive a single message.
-    fn receive<T: Deserialize>(&mut self, block: bool) -> Option<Result<T, Error>> {
+    fn receive<T: Deserialize>(&mut self, block: bool) -> Option<ReceiveResult<T>> {
         if let Some(buf) = self.receive_buffer(block) {
             Some(self.deserialize_msg(buf))
         }
@@ -48,21 +50,18 @@ pub trait Receive {
 
 /// Receive messages via a zmq socket.
 pub struct SubReceiver {
-    ctx: Context,
     socket: Socket
 }
 
 impl SubReceiver {
     /// Create a new 0mq SUB connected to the provided socket addr.
-    pub fn new (host: &str, port: u64, topic: &[u8]) -> Self {
-        let mut ctx = Context::new();
-
+    pub fn new (host: &str, port: u64, topic: &[u8], ctx: &mut Context) -> Self {
         let mut socket = ctx.socket(zmq::SUB).unwrap();
         let addr = format!("tcp://{}:{}", host, port);
         socket.connect(&addr).unwrap();
         socket.set_subscribe(topic);
 
-        SubReceiver {ctx: ctx, socket: socket}
+        SubReceiver {socket: socket}
     }
 }
 

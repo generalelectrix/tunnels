@@ -11,6 +11,7 @@ dependencies = [
  "rmp-serde 0.9.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 0.7.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_codegen 0.8.10 (registry+https://github.com/rust-lang/crates.io-index)",
+ "streaming-stats 0.1.28 (registry+https://github.com/rust-lang/crates.io-index)",
  "yaml-rust 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "zmq 0.8.0 (git+https://github.com/erickt/rust-zmq.git)",
 ]
@@ -779,6 +780,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "streaming-stats"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "num 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "syn"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1092,6 +1101,7 @@ dependencies = [
 "checksum shader_version 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "3ed9110f79d0715af17dfc689a94e466410e68d5ffbb16b210efc653a9b59c21"
 "checksum shared_library 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "fb04126b6fcfd2710fb5b6d18f4207b6c535f2850a7e1a43bcd526d44f30a79a"
 "checksum shell32-sys 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "72f20b8f3c060374edb8046591ba28f62448c369ccbdc7b02075103fb3a9e38d"
+"checksum streaming-stats 0.1.28 (registry+https://github.com/rust-lang/crates.io-index)" = "f13d0cd680e11a62c5e125d9799debfb39fcfff9a2ef416336ce748f65018b89"
 "checksum syn 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)" = "d12ba3829991f6855256034621f9e1f25f4e1a51675e6f3be2d5e748b3215fdf"
 "checksum syntex 0.44.0 (registry+https://github.com/rust-lang/crates.io-index)" = "84f37b94d7ee762bcac58741f73a95465cf87188c3b93f10df9245aff821b2b4"
 "checksum syntex_errors 0.44.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d0d95d2141ae79f312a01c6934d9984f9d7f5cfaf0c74aae5fbbc234a6dcb77a"
