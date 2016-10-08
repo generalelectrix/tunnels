@@ -21,6 +21,7 @@ mod constants {
 }
 mod config;
 mod receive;
+mod sntp_service;
 mod interpolate;
 mod draw;
 
@@ -32,7 +33,7 @@ use opengl_graphics::{ GlGraphics, OpenGL };
 use piston::window::WindowSettings;
 use piston::event_loop::*;
 use piston::input::*;
-use receive::{Receiver, Snapshot};
+use receive::{Receive, SubReceiver, Snapshot};
 use glutin_window::GlutinWindow as Window;
 // use sdl2_window::Sdl2Window as Window;
 use std::time::Instant;
@@ -43,7 +44,7 @@ const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
 
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
-    receiver: Receiver,
+    receiver: SubReceiver,
     most_recent_frame: Option<Snapshot>,
     config: ClientConfig
 }
@@ -108,7 +109,7 @@ fn main() {
     // Create a new game and run it.
     let mut app = App {
         gl: GlGraphics::new(opengl),
-        receiver: Receiver::new("tcp://127.0.0.1:6000", &[]),
+        receiver: SubReceiver::new("127.0.0.1", 6000, &[]),
         most_recent_frame: None,
         config: config
     };

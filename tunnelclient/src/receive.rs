@@ -1,7 +1,7 @@
-// #![feature(rustc_macro)]
+//! 0mq communication and deserialization.
 
 use zmq;
-use zmq::{Context, Socket, DONTWAIT};
+use zmq::{Context, Socket, DONTWAIT, Error as ZmqError};
 use rmp_serde::Deserializer;
 use rmp_serde::decode::Error;
 use serde::Deserialize;
@@ -10,59 +10,23 @@ use std::io::Cursor;
 // only needed for serde on stable
 include!(concat!(env!("OUT_DIR"), "/serde_types.rs"));
 
-// #[derive(Serialize, Deserialize, Debug)]
-// struct ParsedArc {
-//     level: i32,
-//     thickness: f32,
-//     hue: f32,
-//     sat: f32,
-//     val: i32,
-//     x: f32,
-//     y: f32,
-//     rad_x: f32,
-//     rad_y: f32,
-//     start: f32,
-//     stop: f32,
-//     rot_angle: f32
-// }
+pub trait Receive {
+    /// Return the raw message buffer if one was available.
+    fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>>;
 
-/// Receive messages via a zmq socket.
-pub struct Receiver {
-    ctx: Context,
-    socket: Socket
-}
-
-impl Receiver {
-    /// Create a new receiver connected to the provided socket addr.
-    pub fn new (addr: &str, topic: &[u8]) -> Self {
-        let mut ctx = Context::new();
-
-        let mut socket = ctx.socket(zmq::SUB).unwrap();
-        socket.connect(addr).unwrap();
-        socket.set_subscribe(topic);
-
-        Receiver {ctx: ctx, socket: socket}
-    }
-
-    fn deserialize_msg(&self, msg: Vec<u8>) -> Result<Snapshot, Error> {
+    /// Deserialize a received message.
+    fn deserialize_msg<T: Deserialize>(&self, msg: Vec<u8>) -> Result<T, Error> {
         let cur = Cursor::new(&msg[..]);
         let mut de = Deserializer::new(cur);
-        // FIXME error handling
         Deserialize::deserialize(&mut de)
     }
 
-    pub fn receive_test(&mut self) {
-        println!("Waiting to receive.");
-        let buf = self.socket.recv_bytes(0).unwrap();
-        println!("Got a buffer: {:?}", buf);
-    }
-
-    /// Drain the socket message queue and return the most recent snapshot, if available.
-    pub fn receive_newest(&mut self) -> Option<Result<Snapshot, Error>> {
+    /// Drain the socket message queue and return the most recent message, if available.
+    fn receive_newest<T: Deserialize>(&mut self) -> Option<Result<T, Error>> {
         // Receive messages as long as we have them here and now.
         let mut buf = None;
         loop {
-            if let Ok(new_buf) = self.socket.recv_bytes(DONTWAIT) {
+            if let Some(new_buf) = self.receive_buffer(false) {
                 buf = Some(new_buf);
             } else { break }
         }
@@ -70,6 +34,43 @@ impl Receiver {
             Some(b) => Some(self.deserialize_msg(b)),
             None => None
         }
+    }
+
+    /// Receive a single message.
+    fn receive<T: Deserialize>(&mut self, block: bool) -> Option<Result<T, Error>> {
+        if let Some(buf) = self.receive_buffer(block) {
+            Some(self.deserialize_msg(buf))
+        }
+        else { None }
+    }
+
+}
+
+/// Receive messages via a zmq socket.
+pub struct SubReceiver {
+    ctx: Context,
+    socket: Socket
+}
+
+impl SubReceiver {
+    /// Create a new 0mq SUB connected to the provided socket addr.
+    pub fn new (host: &str, port: u64, topic: &[u8]) -> Self {
+        let mut ctx = Context::new();
+
+        let mut socket = ctx.socket(zmq::SUB).unwrap();
+        let addr = format!("tcp://{}:{}", host, port);
+        socket.connect(&addr).unwrap();
+        socket.set_subscribe(topic);
+
+        SubReceiver {ctx: ctx, socket: socket}
+    }
+}
+
+impl Receive for SubReceiver {
+    fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
+        let flag = if block {0} else {DONTWAIT};
+        if let Ok(b) = self.socket.recv_bytes(flag) {Some(b)}
+        else {None}
     }
 }
 

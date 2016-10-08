@@ -7,7 +7,14 @@ except ImportError:
     from distutils.core import setup, Extension
 import numpy
 
-requires = ['numpy', 'bidict', 'cython', 'msgpack-python', 'pyzmq', 'python-rtmidi']
+requires = [
+    'numpy',
+    'bidict',
+    'cython',
+    'msgpack-python',
+    'pyzmq',
+    'python-rtmidi',
+    'monotonic']
 
 extensions = [
     Extension(
@@ -20,6 +27,6 @@ setup(
     name='tunnelz',
     packages=['tunnelz'],
     install_requires=requires,
-    license='GPL2',
+    license='MIT',
     ext_modules=cythonize(extensions),
 )

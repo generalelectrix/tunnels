@@ -1,7 +1,6 @@
 import logging as log
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
-from itertools import count
 from .meta_mi import MetaMI
 from .midi import MidiInput, MidiOutput
 from .midi_controllers import (
@@ -13,7 +12,7 @@ from .midi_controllers import (
 from .mixer import Mixer, MixerMI
 from Queue import Empty
 from .render_server import RenderServer
-import time
+from monotonic import monotonic
 from .tunnel import Tunnel, TunnelMI
 from .shapes import Line
 
@@ -179,7 +178,7 @@ class Show (object):
         render_server.start()
         log.info("Render server started.")
 
-        time_millis = lambda: int(time.time()*1000)
+        time_millis = lambda: int(monotonic()*1000)
 
         last_update = time_millis()
 

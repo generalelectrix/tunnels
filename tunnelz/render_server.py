@@ -1,6 +1,5 @@
-from collections import deque
 import logging as log
-from time import time, sleep
+from monotonic import monotonic
 from multiprocessing import Process, Queue
 from Queue import Empty
 import msgpack
@@ -183,7 +182,7 @@ def run_server(command, response, port, report):
         # we're ready to render
         response.put((RUNNING, None))
 
-        log_time = time()
+        log_time = monotonic()
 
         while 1:
             # ready to draw a frame
@@ -212,7 +211,7 @@ def run_server(command, response, port, report):
             socket.send(serialized)
 
             if report:# and frame_number % 1 == 0:
-                now = time()
+                now = monotonic()
                 log.debug("Framerate: {}".format(1 / (now - log_time)))
                 log_time = now
 
