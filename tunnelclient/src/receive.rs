@@ -6,6 +6,8 @@ use rmp_serde::Deserializer;
 use rmp_serde::decode::Error;
 use serde::Deserialize;
 use std::io::Cursor;
+use std::sync::mpsc::{Sender, Receiver, channel};
+use std::thread;
 
 pub type ReceiveResult<T> = Result<T, Error>;
 
@@ -55,13 +57,38 @@ pub struct SubReceiver {
 
 impl SubReceiver {
     /// Create a new 0mq SUB connected to the provided socket addr.
-    pub fn new (host: &str, port: u64, topic: &[u8], ctx: &mut Context) -> Self {
+    pub fn new(host: &str, port: u64, topic: &[u8], ctx: &mut Context) -> Self {
         let mut socket = ctx.socket(zmq::SUB).unwrap();
         let addr = format!("tcp://{}:{}", host, port);
         socket.connect(&addr).unwrap();
         socket.set_subscribe(topic);
 
         SubReceiver {socket: socket}
+    }
+
+    /// Run this receiver in a thread, posting deserialized messages to a channel.
+    /// Takes ownership of the receiver and moves to the worker thread.
+    /// Quits when the output queue is dropped.
+    /// FIXME should pass errors back to main thread instead of ignoring.
+    pub fn run_async<T: Deserialize + Send + 'static>(mut self) -> Receiver<T> {
+        let (tx, rx) = channel::<T>();
+        thread::spawn(move || {
+            loop {
+                // blocking receive
+                match self.receive(true) {
+                    Some(Ok(msg)) => {
+                        // post message to queue
+                        // if a send fails, the other side has hung up and we should quit
+                        match tx.send(msg) {
+                            Ok(_) => continue,
+                            Err(_) => break
+                        }
+                    },
+                    _ => continue
+                }
+            }
+        });
+        rx
     }
 }
 

@@ -10,6 +10,8 @@ use stats::{mean, stddev};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
+pub type Timestamp = f64;
+
 const SNTP_PORT: u64 = 8989;
 
 fn f64_to_duration(v: f64) -> Duration {
@@ -62,11 +64,24 @@ impl Receive for SntpClient {
 struct SntpMeasurement {
     sent: Instant,
     round_trip: Duration,
-    timestamp: f64
+    timestamp: Timestamp
+}
+
+#[derive(Debug)]
+pub struct SntpSync {
+    ref_time: Instant,
+    host_ref_time: Timestamp
+}
+
+impl SntpSync {
+    /// Return our estimate of what time it is now on the host.
+    pub fn now_as_timestamp(&self) -> Timestamp {
+        self.host_ref_time + duration_to_f64(self.ref_time.elapsed())
+    }
 }
 
 /// Get the offset between this machine's system clock and the host's.
-pub fn synchronize(host: &str, poll_period: Duration, n_meas: usize) -> (Instant, f64) {
+pub fn synchronize(host: &str, poll_period: Duration, n_meas: usize) -> SntpSync {
     let mut ctx = Context::new();
     let reference_time = Instant::now();
     let mut req = SntpClient::new(host, SNTP_PORT, &mut ctx);
@@ -100,7 +115,7 @@ pub fn synchronize(host: &str, poll_period: Duration, n_meas: usize) -> (Instant
         });
     // Take the average of these estaimtes, and we're done
     let best_remote_time_estimate = mean(remote_time_estimates);
-    (reference_time, best_remote_time_estimate)
+    SntpSync{ref_time: reference_time, host_ref_time: best_remote_time_estimate}
 }
 
 #[test]
@@ -113,8 +128,9 @@ fn test_duration_f64_round_trip() {
     assert!(delta == rt);
 }
 
-#[test]
+// This test requires the remote SNTP service to be running.
+//#[test]
 fn test_synchronize() {
-    let (ref_time, remote_time_estimate) = synchronize("localhost", Duration::from_millis(500), 10);
-    println!("Ref time: {:?}, remote estimate: {}", ref_time, remote_time_estimate);
+    let sync = synchronize("localhost", Duration::from_millis(500), 10);
+    println!("Ref time: {:?}, remote estimate: {}", sync.ref_time, sync.host_ref_time);
 }

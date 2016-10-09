@@ -17,9 +17,11 @@ pub struct ArcSegment {
     pub rot_angle: f64
 }
 
-#[derive(Deserialize, Debug)]
+pub type LayerCollection = Vec<Vec<ArcSegment>>;
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Snapshot {
-    pub frame_number: i64,
-    pub frame_time: i64, // ms
-    pub layers: Vec<Vec<ArcSegment>>
+    pub frame_number: u64,
+    pub time: u64, // ms
+    pub layers: LayerCollection
 }

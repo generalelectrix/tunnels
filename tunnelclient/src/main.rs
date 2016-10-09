@@ -25,6 +25,7 @@ mod receive;
 mod sntp_service;
 mod interpolate;
 mod draw;
+mod snapshot_manager;
 
 
 use config::{ClientConfig, config_from_command_line};
@@ -39,8 +40,10 @@ use sntp_service::synchronize;
 use glutin_window::GlutinWindow as Window;
 // use sdl2_window::Sdl2Window as Window;
 use std::time::{Duration, Instant};
+use std::sync::mpsc::Receiver;
 use draw::Draw;
 use zmq::Context;
+use snapshot_manager::SnapshotManager;
 
 const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
 
@@ -120,9 +123,12 @@ fn main() {
         "Synchronizing timing.  This will take about {} seconds.",
         (time_poll_period * n_time_calls as u32).as_secs());
 
-    let (ref_time, host_ref_time) = synchronize(
+    let sync = synchronize(
         &config.server_hostname, time_poll_period, n_time_calls);
-    println!("ref time: {:?}, host time estimate: {:?}", ref_time, host_ref_time);
+
+    let snapshot_queue: Receiver<Snapshot> =
+        SubReceiver::new(&config.server_hostname, 6000, &[], &mut ctx)
+        .run_async();
 
     // Create a new game and run it.
     let mut app = App {
