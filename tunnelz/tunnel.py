@@ -146,21 +146,30 @@ class Tunnel (Beam):
             # what is this animation targeting?
             # at least for non-chicklet-level targets...
             if target == AnimationTarget.Rotation: # rotation speed
-                rot_angle_adjust += anim.get_value(0)
+                rot_angle_adjust += anim.get_value(0) * 0.5
             elif target == AnimationTarget.MarqueeRotation: # marquee rotation speed
-                marquee_angle_adjust += anim.get_value(0)
+                marquee_angle_adjust += anim.get_value(0) * 0.5
+
+        def scale_speed(speed):
+            """Scale speeds with a quadratic curve."""
+            if speed > 0:
+                return speed**2
+            else:
+                return -1*(speed**2)
 
         # calulcate the rotation, wrap to 0 to 1
         self.curr_rot_angle = (
             (self.curr_rot_angle +
             # delta_t*0.03 implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.rot_speed*delta_t*0.03 + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
+            # square rot speed control parameter for more slow resolution
+            (scale_speed(self.rot_speed)*delta_t*0.03 + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
 
         # calulcate the marquee angle, wrap to 0 to 1
         self.curr_marquee_angle = (
             (self.curr_marquee_angle +
             # delta_t*0.03 implies the same speed scale as we had at 30fps with evolution tied to frame
-            (self.marquee_speed*delta_t*0.03 + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
+            # square marquee speed control parameter for more slow resolution
+            (scale_speed(self.marquee_speed)*delta_t*0.03 + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
 
     def display(self, level_scale, as_mask):
         """Return the current state of the beam.
@@ -279,7 +288,7 @@ class Tunnel (Beam):
                     (self.col_center + col_center_adjust) +
                     (
                         0.5*(self.col_width+col_width_adjust) *
-                        sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
+                        sawtooth_vector(rel_angle*(int(16*self.col_spread)+col_period_adjust), 0.0, 1.0, False)
                     ))
 
                 hue = hue % 1.0

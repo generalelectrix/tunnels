@@ -107,33 +107,32 @@ impl SnapshotManager {
     /// Update the oldest relevant snapshot.
     pub fn get_interpolated(&mut self, time: Timestamp) -> InterpResult {
         let snaps = &self.snapshots;
-        let time_rounded = time.round() as u64; // round to nearest millisecond
 
         match snaps.len() {
             0 => InterpResult::NoData,
             1 => {
-                let snap = &snaps[0];
-                if snap.time < time_rounded {
-                    self.oldest_relevant_snapshot_time = snap.time;
-                    InterpResult::MissingNewer(snap.layers.clone())}
+                let s = &snaps[0];
+                if (s.time as f64) < time {
+                    self.oldest_relevant_snapshot_time = s.time;
+                    InterpResult::MissingNewer(s.layers.clone())}
                 else {
                     // don't update oldest relevant time as we're missing it!
-                    InterpResult::MissingOlder(snap.layers.clone())}
+                    InterpResult::MissingOlder(s.layers.clone())}
             }
             _ => {
                 // If we're lagging on snapshots, just draw the most recent one.
                 if let Some(s) = snaps.front() {
-                    if s.time < time_rounded {return InterpResult::MissingNewer(s.layers.clone());}
+                    if (s.time as f64) < time {return InterpResult::MissingNewer(s.layers.clone());}
                 }
                 // Find the two snapshots that bracket the requested timestamp.
                 for (newer, older) in snaps.iter().zip(snaps.iter().skip(1)) {
-                    let (newer_time, older_time) = (newer.time, older.time);
+                    let (newer_time, older_time) = (newer.time as f64, older.time as f64);
 
-                    if time_rounded <= newer_time && time_rounded >= older_time {
-                        let alpha = (time - older_time as f64) / (newer_time - older_time) as f64;
+                    if time <= newer_time && time >= older_time {
+                        let alpha = (time - older_time) / (newer_time - older_time);
                         println!("alpha: {}, newer time: {}", alpha, newer_time);
                         let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
-                        self.oldest_relevant_snapshot_time = older_time;
+                        self.oldest_relevant_snapshot_time = older.time;
                         return InterpResult::Good(interpolation_result);
                     }
                 }

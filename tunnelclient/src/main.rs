@@ -52,9 +52,7 @@ pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
     sntp_sync: SntpSync,
-    config: ClientConfig,
-    last_start: f64,
-    last_time: f64
+    config: ClientConfig
 }
 
 impl App {
@@ -84,13 +82,6 @@ impl App {
 
         if let Some(frame) = maybe_frame {
             let cfg = &self.config;
-
-            let start0 = frame[0][0].rot_angle;
-            let velocity = (start0 - self.last_start) / (host_time - self.last_time);
-
-            println!("dt: {}, start: {}, velocity: {}", host_time - self.last_time, start0, velocity);
-            self.last_start = start0;
-            self.last_time = host_time;
 
             self.gl.draw(args.viewport(), |c, gl| {
                 // Clear the screen.
@@ -160,9 +151,7 @@ fn main() {
         gl: GlGraphics::new(opengl),
         snapshot_manager: snapshot_manager,
         sntp_sync: sync,
-        config: config,
-        last_start: 0.0,
-        last_time: 0.0
+        config: config
     };
 
     let mut events = window.events();
