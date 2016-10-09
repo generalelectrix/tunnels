@@ -156,7 +156,7 @@ fn main() {
         cfg: cfg
     };
 
-    let mut events = window.events();
+    let mut events = window.events().max_fps(120);
     while let Some(e) = events.next(&mut window) {
 
         if let Some(u) = e.update_args() {
