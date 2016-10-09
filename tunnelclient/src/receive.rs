@@ -95,7 +95,14 @@ impl SubReceiver {
 impl Receive for SubReceiver {
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
         let flag = if block {0} else {DONTWAIT};
-        if let Ok(b) = self.socket.recv_bytes(flag) {Some(b)}
+        if let Ok(mut parts) = self.socket.recv_multipart(flag) {
+            let n_parts = parts.len();
+            if n_parts != 2 {
+                println!("Buffer receive error, got {} parts: {:?}", n_parts, parts);
+                None
+            }
+            else { parts.pop() }
+        }
         else {None}
     }
 }

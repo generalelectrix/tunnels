@@ -143,7 +143,7 @@ fn main() {
 
     // Set up snapshot reception and management.
     let snapshot_queue: Receiver<Snapshot> =
-        SubReceiver::new(&config.server_hostname, 6000, &[], &mut ctx)
+        SubReceiver::new(&config.server_hostname, 6000, "0".as_bytes(), &mut ctx)
         .run_async();
 
     let snapshot_manager = SnapshotManager::new(snapshot_queue);

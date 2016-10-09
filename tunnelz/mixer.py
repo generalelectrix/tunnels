@@ -91,13 +91,15 @@ class Mixer (object):
             level = layer.level
             bump = layer.bump
 
+            draw_cmd = []
+
             if level > 0 or bump:
                 if bump:
-                    _, cmds = layer.beam.display(1.0, layer.mask)
-                    draw_commands.append(cmds)
+                    _, draw_cmd = layer.beam.display(1.0, layer.mask)
                 else:
-                    _, cmds = layer.beam.display(level, layer.mask)
-                    draw_commands.append(cmds)
+                    _, draw_cmd = layer.beam.display(level, layer.mask)
+            draw_commands.append(draw_cmd)
+
         # temporarily ignore individual shape identifiers and just pass arc calls
         # return (ShapeCollection, len(draw_commands), draw_commands)
         return draw_commands

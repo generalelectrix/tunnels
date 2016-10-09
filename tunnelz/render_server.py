@@ -204,11 +204,29 @@ def run_server(command, response, port, report):
             # render the payload we received
             draw_collection = mixer.draw_layers()
 
-            serialized = msgpack.dumps(
-                (frame_number, frame_time, draw_collection),
-                )#use_single_float=True)
+            # serialized = msgpack.dumps(
+            #     (frame_number, frame_time, draw_collection),
+            #     use_single_float=True)
 
-            socket.send(serialized)
+            # socket.send(serialized)
+
+            dc0 = [draw_collection[0]]
+            dc1 = [draw_collection[1]]
+
+            def clean_dc(dc):
+                """Remove empty frames to thin out packets slightly."""
+                return [d for d in dc if d]
+
+            serialized_0 = msgpack.dumps(
+                (frame_number, frame_time, clean_dc(dc0)),
+                use_single_float=True)
+
+            serialized_1 = msgpack.dumps(
+                (frame_number, frame_time, clean_dc(dc1)),
+                use_single_float=True)
+
+            socket.send_multipart(("0", serialized_0))
+            socket.send_multipart(("1", serialized_1))
 
             if report:# and frame_number % 1 == 0:
                 now = monotonic()
