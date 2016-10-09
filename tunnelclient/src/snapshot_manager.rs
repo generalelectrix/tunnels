@@ -12,7 +12,7 @@ use interpolate::Interpolate;
 pub struct SnapshotManager {
     snapshot_queue: Receiver<Snapshot>,
     snapshots: VecDeque<Snapshot>, // Ordered queue of snapshots; latest is snapshots.front()
-    oldest_relevant_snapshot_time: u64
+    oldest_relevant_snapshot_time: u64,
 }
 
 pub enum SnapshotUpdateError {Disconnected}
@@ -35,12 +35,13 @@ impl SnapshotManager {
         SnapshotManager{
             snapshot_queue: queue,
             snapshots: VecDeque::new(),
-            oldest_relevant_snapshot_time: 0
+            oldest_relevant_snapshot_time: 0,
         }
     }
 
     /// Add a new snapshot, ensuring the collection remains ordered.
     fn insert_snapshot(&mut self, snapshot: Snapshot) {
+
         let insert_strategy = match self.snapshots.front() {
             None => InsertStrategy::PushFront,
             Some(s) => if snapshot.time > s.time {InsertStrategy::PushFront} else {InsertStrategy::Insert}
@@ -99,9 +100,6 @@ impl SnapshotManager {
     pub fn update(&mut self) -> Result<(), SnapshotUpdateError> {
         let recv_result = self.drain_queue();
         self.drop_stale_snapshots();
-        if self.snapshots.len() > 1 {
-            println!("n snaps: {}", self.snapshots.len());
-        }
         recv_result
     }
 
@@ -131,18 +129,9 @@ impl SnapshotManager {
                 for (newer, older) in snaps.iter().zip(snaps.iter().skip(1)) {
                     let (newer_time, older_time) = (newer.time, older.time);
 
-                    if time_rounded == newer_time {
-                        // Exact match!  Just use this snapshot.
-                        self.oldest_relevant_snapshot_time = newer_time;
-                        return InterpResult::Good(newer.layers.clone());
-
-                    } else if time_rounded == older_time {
-                        // Exact match!  Just use this snapshot.
-                        self.oldest_relevant_snapshot_time = older_time;
-                        return InterpResult::Good(older.layers.clone());
-
-                    } else if time_rounded < newer_time && time_rounded > older_time {
-                        let alpha = (time - newer_time as f64) / (newer_time - older_time) as f64;
+                    if time_rounded <= newer_time && time_rounded >= older_time {
+                        let alpha = (time - older_time as f64) / (newer_time - older_time) as f64;
+                        println!("alpha: {}, newer time: {}", alpha, newer_time);
                         let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
                         self.oldest_relevant_snapshot_time = older_time;
                         return InterpResult::Good(interpolation_result);

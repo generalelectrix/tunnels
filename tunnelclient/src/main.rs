@@ -38,8 +38,8 @@ use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receive, SubReceiver, Snapshot};
 use sntp_service::{synchronize, SntpSync};
-use glutin_window::GlutinWindow as Window;
-// use sdl2_window::Sdl2Window as Window;
+// use glutin_window::GlutinWindow as Window;
+use sdl2_window::Sdl2Window as Window;
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Receiver;
 use draw::Draw;
@@ -52,7 +52,9 @@ pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
     sntp_sync: SntpSync,
-    config: ClientConfig
+    config: ClientConfig,
+    last_start: f64,
+    last_time: f64
 }
 
 impl App {
@@ -82,6 +84,13 @@ impl App {
 
         if let Some(frame) = maybe_frame {
             let cfg = &self.config;
+
+            let start0 = frame[0][0].rot_angle;
+            let velocity = (start0 - self.last_start) / (host_time - self.last_time);
+
+            println!("dt: {}, start: {}, velocity: {}", host_time - self.last_time, start0, velocity);
+            self.last_start = start0;
+            self.last_time = host_time;
 
             self.gl.draw(args.viewport(), |c, gl| {
                 // Clear the screen.
@@ -151,7 +160,9 @@ fn main() {
         gl: GlGraphics::new(opengl),
         snapshot_manager: snapshot_manager,
         sntp_sync: sync,
-        config: config
+        config: config,
+        last_start: 0.0,
+        last_time: 0.0
     };
 
     let mut events = window.events();

@@ -57,6 +57,7 @@ mod tests {
         assert_almost_eq(0.0, interpolate_angle(0.0, 1.0, 0.5));
         assert_almost_eq(0.95, interpolate_angle(0.0, 0.9, 0.5));
         assert_almost_eq(0.0, interpolate_angle(0.2, 0.8, 0.5));
+        assert_almost_eq(0.0, interpolate_angle(0.2, 0.8, 0.5));
     }
 
     #[test]

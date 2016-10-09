@@ -8,6 +8,8 @@ use graphics::types::{Matrix2d, Scalar, Resolution, Radius, Rectangle};
 use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
 
+use utils::modulo;
+
 use constants::TWOPI;
 
 pub trait Draw<G: Graphics> {
@@ -100,22 +102,24 @@ fn improved_with_arc_tri_list<F>(
     let (cw1, ch1) = (cw + border_radius, ch + border_radius);
     let (cw2, ch2) = (cw - border_radius, ch - border_radius);
     let (cx, cy) = (x + cw, y + ch);
-    let default_seg_size = <Scalar as Radians>::_360() / resolution as Scalar;
     let mut i = 0;
-    let (start, end) = if start_radians < end_radians {
-        (start_radians, end_radians)
-    } else {
-        (end_radians, start_radians)
-    };
-    // Use a similar number of quads as default method, but ensure the angular
-    // delta allows for exactly spanning the included angle.
-    let delta = end - start;
-    let n_quads = (delta / default_seg_size).ceil() as u64;
-    let seg_size = delta / n_quads as f64;
+
+    let twopi = <Scalar as Radians>::_360();
+    let max_seg_size = twopi / resolution as Scalar;
+
+    // Take true modulus by 2pi.
+    let delta = (((end_radians - start_radians) % twopi) + twopi) % twopi;
+
+    // Taking ceiling here implies that the resolution parameter provides a
+    // lower bound on the drawn resolution.
+    let n_quads = (delta / max_seg_size).ceil() as u64;
+
+    // n_quads * seg_size exactly spans the included angle.
+    let seg_size = delta / n_quads as Scalar;
     stream_quad_tri_list(m, || {
         if i > n_quads { return None; }
 
-        let angle = start + (i as f64 * seg_size);
+        let angle = start_radians + (i as Scalar * seg_size);
 
         let cos = angle.cos();
         let sin = angle.sin();
@@ -144,6 +148,7 @@ impl<G: Graphics> Draw<G> for ArcSegment {
 
         let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
 
+        // one last modulo to be damn well sure we don't generate visual artifacts
         let start = self.start * TWOPI;
         let stop = self.stop * TWOPI;
 
