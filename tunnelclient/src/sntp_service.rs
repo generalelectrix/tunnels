@@ -75,8 +75,10 @@ pub struct SntpSync {
 
 impl SntpSync {
     /// Return our estimate of what time it is now on the host.
+    /// This is in milliseconds.
     pub fn now_as_timestamp(&self) -> Timestamp {
-        self.host_ref_time + duration_to_f64(self.ref_time.elapsed())
+        let time_secs = self.host_ref_time + duration_to_f64(self.ref_time.elapsed());
+        time_secs * 1000.0
     }
 }
 

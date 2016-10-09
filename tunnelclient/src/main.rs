@@ -47,8 +47,6 @@ use zmq::Context;
 use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use snapshot_manager::InterpResult::*;
 
-const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
-
 
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
@@ -62,11 +60,18 @@ impl App {
 
         // Get frame interpolation from the snapshot service.
         let host_time = self.sntp_sync.now_as_timestamp();
-        let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(host_time) {
+
+        // subtract a render delay to put us back in time.
+        let delayed_time = host_time - self.config.render_delay as f64;
+
+        let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
             NoData => (Some("No data available from snapshot service.".to_string()), None),
             Error(snaps) => {
                 let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
-                let msg = format!("Something went wrong with snapshot interpolation.");//\n{:?}\n", snap_times);
+                let msg = format!(
+                    "Something went wrong with snapshot interpolation for time {}.\n{:?}\n",
+                    host_time,
+                    snap_times);
                 (Some(msg), None)
             },
             Good(layers) => (None, Some(layers)),
@@ -80,7 +85,7 @@ impl App {
 
             self.gl.draw(args.viewport(), |c, gl| {
                 // Clear the screen.
-                clear(BLACK, gl);
+                clear([0.0, 0.0, 0.0, 1.0], gl);
 
                 // Draw everything.
                 frame.draw(&c, gl, cfg);

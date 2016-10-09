@@ -100,13 +100,14 @@ impl SnapshotManager {
         let recv_result = self.drain_queue();
         self.drop_stale_snapshots();
         if self.snapshots.len() > 1 {
-            println!("Latest pair of snapshots: {}, {}", self.snapshots[0].time, self.snapshots[1].time);
+            println!("n snaps: {}", self.snapshots.len());
         }
         recv_result
     }
 
     /// Given a timestamp, interpolate between the two most relevant snapshots.
-    pub fn get_interpolated(&self, time: Timestamp) -> InterpResult {
+    /// Update the oldest relevant snapshot.
+    pub fn get_interpolated(&mut self, time: Timestamp) -> InterpResult {
         let snaps = &self.snapshots;
         let time_rounded = time.round() as u64; // round to nearest millisecond
 
@@ -114,22 +115,36 @@ impl SnapshotManager {
             0 => InterpResult::NoData,
             1 => {
                 let snap = &snaps[0];
-                if snap.time < time_rounded {InterpResult::MissingNewer(snap.layers.clone())}
-                else {InterpResult::MissingOlder(snap.layers.clone())}
+                if snap.time < time_rounded {
+                    self.oldest_relevant_snapshot_time = snap.time;
+                    InterpResult::MissingNewer(snap.layers.clone())}
+                else {
+                    // don't update oldest relevant time as we're missing it!
+                    InterpResult::MissingOlder(snap.layers.clone())}
             }
             _ => {
+                // If we're lagging on snapshots, just draw the most recent one.
+                if let Some(s) = snaps.front() {
+                    if s.time < time_rounded {return InterpResult::MissingNewer(s.layers.clone());}
+                }
                 // Find the two snapshots that bracket the requested timestamp.
                 for (newer, older) in snaps.iter().zip(snaps.iter().skip(1)) {
                     let (newer_time, older_time) = (newer.time, older.time);
+
                     if time_rounded == newer_time {
                         // Exact match!  Just use this snapshot.
+                        self.oldest_relevant_snapshot_time = newer_time;
                         return InterpResult::Good(newer.layers.clone());
+
                     } else if time_rounded == older_time {
                         // Exact match!  Just use this snapshot.
+                        self.oldest_relevant_snapshot_time = older_time;
                         return InterpResult::Good(older.layers.clone());
+
                     } else if time_rounded < newer_time && time_rounded > older_time {
                         let alpha = (time - newer_time as f64) / (newer_time - older_time) as f64;
                         let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
+                        self.oldest_relevant_snapshot_time = older_time;
                         return InterpResult::Good(interpolation_result);
                     }
                 }
@@ -249,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_interp_two_frames_exact_newer() {
-        let (sm, snap0, snap1) = setup_two_frame_test();
+        let (mut sm, snap0, snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(10.0) {
             assert_eq!(snap1.layers, f);
         }
@@ -258,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_interp_two_frames_exact_older() {
-        let (sm, snap0, snap1) = setup_two_frame_test();
+        let (mut sm, snap0, snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(0.0) {
             assert_eq!(snap0.layers, f);
         }
@@ -267,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_interp_two_frames_middle() {
-        let (sm, snap0, snap1) = setup_two_frame_test();
+        let (mut sm, snap0, snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(5.0) {
             assert_eq!(snap0.layers.interpolate_with(&snap1.layers, 0.0), f);
         }

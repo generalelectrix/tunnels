@@ -5,6 +5,7 @@ use std::{env, cmp};
 
 pub struct ClientConfig {
     pub server_hostname: String,
+    pub render_delay: u64, // milliseconds
     pub x_resolution: u32,
     pub y_resolution: u32,
     pub anti_alias: bool,
@@ -31,6 +32,7 @@ pub fn config_from_command_line() -> ClientConfig {
     let host = cfg["server_hostname"].as_str().unwrap().trim().to_string();
     ClientConfig {
         server_hostname: host,
+        render_delay: cfg["render_delay"].as_i64().unwrap() as u64,
         x_resolution: x_resolution,
         y_resolution: y_resolution,
         anti_alias: cfg["anti_alias"].as_bool().unwrap(),
