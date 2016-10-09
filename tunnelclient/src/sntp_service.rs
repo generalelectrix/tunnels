@@ -129,7 +129,8 @@ fn test_duration_f64_round_trip() {
 }
 
 // This test requires the remote SNTP service to be running.
-//#[test]
+#[test]
+#[ignore]
 fn test_synchronize() {
     let sync = synchronize("localhost", Duration::from_millis(500), 10);
     println!("Ref time: {:?}, remote estimate: {}", sync.ref_time, sync.host_ref_time);

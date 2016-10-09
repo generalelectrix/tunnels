@@ -20,6 +20,7 @@ mod constants {
 
     pub const TWOPI: f64 = 2.0 * PI;
 }
+mod utils;
 mod config;
 mod receive;
 mod sntp_service;
@@ -36,61 +37,68 @@ use piston::window::WindowSettings;
 use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receive, SubReceiver, Snapshot};
-use sntp_service::synchronize;
+use sntp_service::{synchronize, SntpSync};
 use glutin_window::GlutinWindow as Window;
 // use sdl2_window::Sdl2Window as Window;
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Receiver;
 use draw::Draw;
 use zmq::Context;
-use snapshot_manager::SnapshotManager;
+use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
+use snapshot_manager::InterpResult::*;
 
 const BLACK: Color = [0.0, 0.0, 0.0, 1.0];
 
 
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
-    receiver: SubReceiver,
-    most_recent_frame: Option<Snapshot>,
+    snapshot_manager: SnapshotManager,
+    sntp_sync: SntpSync,
     config: ClientConfig
 }
 
 impl App {
     fn render(&mut self, args: &RenderArgs) {
 
-        let maybe_frame = &self.most_recent_frame;
-        let cfg = &self.config;
+        // Get frame interpolation from the snapshot service.
+        let host_time = self.sntp_sync.now_as_timestamp();
+        let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(host_time) {
+            NoData => (Some("No data available from snapshot service.".to_string()), None),
+            Error(snaps) => {
+                let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
+                let msg = format!("Something went wrong with snapshot interpolation.");//\n{:?}\n", snap_times);
+                (Some(msg), None)
+            },
+            Good(layers) => (None, Some(layers)),
+            MissingNewer(layers) => (Some("Interpolation had no newer layer.".to_string()), Some(layers)),
+            MissingOlder(layers) => (Some("Interpolation had no older layer".to_string()), Some(layers))
+        };
+        if let Some(m) = msg { println!("{}", m); };
 
-        self.gl.draw(args.viewport(), |c, gl| {
+        if let Some(frame) = maybe_frame {
+            let cfg = &self.config;
 
-            // Clear the screen.
-            clear(BLACK, gl);
+            self.gl.draw(args.viewport(), |c, gl| {
+                // Clear the screen.
+                clear(BLACK, gl);
 
-            // Draw everything.
-            if let Some(ref f) = *maybe_frame {
-                f.draw(&c, gl, cfg);
-            }
-        });
+                // Draw everything.
+                frame.draw(&c, gl, cfg);
+            });
+        }
     }
 
     fn update(&mut self, args: &UpdateArgs) {
-        // Update newest frame is one is waiting.
-        if let Some(f) = self.receiver.receive_newest() {
-            match f {
-                Ok(frame) => {
-                    self.most_recent_frame = Some(frame);
-                },
-                Err(e) => {
-                    println!("Error during frame receive: {:?}", e);
-                }
-            }
+        // Update the state of the snapshot manager.
+        let update_result = self.snapshot_manager.update();
+        if let Err(e) = update_result {
+            let msg = match e {
+                SnapshotUpdateError::Disconnected => "disconnected"
+            };
+            println!("An error occurred during snapshot update: {:?}", msg);
         }
-
     }
 }
-
-
-
 
 fn main() {
 
@@ -126,15 +134,18 @@ fn main() {
     let sync = synchronize(
         &config.server_hostname, time_poll_period, n_time_calls);
 
+    // Set up snapshot reception and management.
     let snapshot_queue: Receiver<Snapshot> =
         SubReceiver::new(&config.server_hostname, 6000, &[], &mut ctx)
         .run_async();
 
+    let snapshot_manager = SnapshotManager::new(snapshot_queue);
+
     // Create a new game and run it.
     let mut app = App {
         gl: GlGraphics::new(opengl),
-        receiver: SubReceiver::new(&config.server_hostname, 6000, &[], &mut ctx),
-        most_recent_frame: None,
+        snapshot_manager: snapshot_manager,
+        sntp_sync: sync,
         config: config
     };
 
