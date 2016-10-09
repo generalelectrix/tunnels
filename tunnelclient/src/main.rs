@@ -33,7 +33,7 @@ use config::{ClientConfig, config_from_command_line};
 use graphics::clear;
 use graphics::types::Color;
 use opengl_graphics::{ GlGraphics, OpenGL };
-use piston::window::WindowSettings;
+use piston::window::{WindowSettings, AdvancedWindow};
 use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receive, SubReceiver, Snapshot};
@@ -124,6 +124,8 @@ fn main() {
         .fullscreen(config.fullscreen)
         .build()
         .unwrap();
+
+    window.set_capture_cursor(true);
 
     // Create zmq context.
     let mut ctx = Context::new();

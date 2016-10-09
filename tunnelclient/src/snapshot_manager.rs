@@ -130,7 +130,7 @@ impl SnapshotManager {
 
                     if time <= newer_time && time >= older_time {
                         let alpha = (time - older_time) / (newer_time - older_time);
-                        println!("alpha: {}, newer time: {}", alpha, newer_time);
+
                         let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
                         self.oldest_relevant_snapshot_time = older.time;
                         return InterpResult::Good(interpolation_result);
