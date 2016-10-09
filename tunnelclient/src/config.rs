@@ -5,6 +5,7 @@ use std::{env, cmp};
 
 pub struct ClientConfig {
     pub server_hostname: String,
+    pub video_channel: String,
     pub render_delay: u64, // milliseconds
     pub x_resolution: u32,
     pub y_resolution: u32,
@@ -30,8 +31,13 @@ pub fn config_from_command_line() -> ClientConfig {
     let x_resolution = cfg["x_resolution"].as_i64().unwrap() as u32;
     let y_resolution = cfg["y_resolution"].as_i64().unwrap() as u32;
     let host = cfg["server_hostname"].as_str().unwrap().trim().to_string();
+
+    let channel = cfg["video_channel"].as_i64().unwrap();
+    let channel_filter_str = channel.to_string();
+    println!("Running on video channel {}.", channel_filter_str);
     ClientConfig {
         server_hostname: host,
+        video_channel: channel_filter_str,
         render_delay: cfg["render_delay"].as_i64().unwrap() as u64,
         x_resolution: x_resolution,
         y_resolution: y_resolution,

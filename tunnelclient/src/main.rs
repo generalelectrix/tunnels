@@ -52,7 +52,7 @@ pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
     sntp_sync: SntpSync,
-    config: ClientConfig
+    cfg: ClientConfig
 }
 
 impl App {
@@ -62,7 +62,7 @@ impl App {
         let host_time = self.sntp_sync.now_as_timestamp();
 
         // subtract a render delay to put us back in time.
-        let delayed_time = host_time - self.config.render_delay as f64;
+        let delayed_time = host_time - self.cfg.render_delay as f64;
 
         let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
             NoData => (Some("No data available from snapshot service.".to_string()), None),
@@ -81,7 +81,7 @@ impl App {
         if let Some(m) = msg { println!("{}", m); };
 
         if let Some(frame) = maybe_frame {
-            let cfg = &self.config;
+            let cfg = &self.cfg;
 
             self.gl.draw(args.viewport(), |c, gl| {
                 // Clear the screen.
@@ -107,7 +107,7 @@ impl App {
 
 fn main() {
 
-    let config = config_from_command_line();
+    let cfg = config_from_command_line();
 
     // Change this to OpenGL::V2_1 if not working.
     let opengl = OpenGL::V3_2;
@@ -115,13 +115,13 @@ fn main() {
     // Create an Glutin window.
     let mut window: Window = WindowSettings::new(
             "tunnelclient",
-            [config.x_resolution, config.y_resolution]
+            [cfg.x_resolution, cfg.y_resolution]
         )
         .opengl(opengl)
         .exit_on_esc(true)
         .vsync(true)
-        .samples(if config.anti_alias {4} else {0})
-        .fullscreen(config.fullscreen)
+        .samples(if cfg.anti_alias {4} else {0})
+        .fullscreen(cfg.fullscreen)
         .build()
         .unwrap();
 
@@ -139,11 +139,11 @@ fn main() {
         (time_poll_period * n_time_calls as u32).as_secs());
 
     let sync = synchronize(
-        &config.server_hostname, time_poll_period, n_time_calls);
+        &cfg.server_hostname, time_poll_period, n_time_calls);
 
     // Set up snapshot reception and management.
     let snapshot_queue: Receiver<Snapshot> =
-        SubReceiver::new(&config.server_hostname, 6000, "0".as_bytes(), &mut ctx)
+        SubReceiver::new(&cfg.server_hostname, 6000, cfg.video_channel.as_bytes(), &mut ctx)
         .run_async();
 
     let snapshot_manager = SnapshotManager::new(snapshot_queue);
@@ -153,7 +153,7 @@ fn main() {
         gl: GlGraphics::new(opengl),
         snapshot_manager: snapshot_manager,
         sntp_sync: sync,
-        config: config
+        cfg: cfg
     };
 
     let mut events = window.events();
