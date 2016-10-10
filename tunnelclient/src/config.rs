@@ -18,11 +18,20 @@ pub struct ClientConfig {
     pub y_center: f64
 }
 
-/// Parses first command line arg as path to a yaml config file.
+/// Parses first command line arg as an integer video channel.
+/// Parses second command line arg as path to a yaml config file.
 /// Loads, parses, and returns the config.
 /// Panics if something goes wrong.
 pub fn config_from_command_line() -> ClientConfig {
-    let config_path = env::args().nth(1).expect("No config path arg provided.");
+
+    let video_channel_str = env::args().nth(1).expect("No video channel provided.");
+
+    // Parse video channel as an int and blow up if it isn't one.
+    let video_channel: u64 = video_channel_str.parse().unwrap();
+    // Back into string to construct the channel filter arg.
+    let channel_filter_str = video_channel.to_string();
+
+    let config_path = env::args().nth(2).expect("No config path arg provided.");
     let mut config_file = File::open(config_path).unwrap();
     let mut config_file_string = String::new();
     config_file.read_to_string(&mut config_file_string).unwrap();
@@ -32,8 +41,6 @@ pub fn config_from_command_line() -> ClientConfig {
     let y_resolution = cfg["y_resolution"].as_i64().unwrap() as u32;
     let host = cfg["server_hostname"].as_str().unwrap().trim().to_string();
 
-    let channel = cfg["video_channel"].as_i64().unwrap();
-    let channel_filter_str = channel.to_string();
     println!("Running on video channel {}.", channel_filter_str);
     ClientConfig {
         server_hostname: host,

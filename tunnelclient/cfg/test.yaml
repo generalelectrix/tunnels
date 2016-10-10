@@ -1,6 +1,5 @@
 server_hostname: "127.0.0.1"
-video_channel: 1
-render_delay: 50
+render_delay: 100
 x_resolution: 1280
 y_resolution: 720
 anti_alias: true

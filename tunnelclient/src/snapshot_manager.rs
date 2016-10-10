@@ -122,7 +122,9 @@ impl SnapshotManager {
             _ => {
                 // If we're lagging on snapshots, just draw the most recent one.
                 if let Some(s) = snaps.front() {
-                    if (s.time as f64) < time {return InterpResult::MissingNewer(s.layers.clone());}
+                    if (s.time as f64) < time {
+                        self.oldest_relevant_snapshot_time = s.time;
+                        return InterpResult::MissingNewer(s.layers.clone());}
                 }
                 // Find the two snapshots that bracket the requested timestamp.
                 for (newer, older) in snaps.iter().zip(snaps.iter().skip(1)) {
