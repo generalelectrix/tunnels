@@ -14,7 +14,8 @@ requires = [
     'msgpack-python',
     'pyzmq',
     'python-rtmidi',
-    'monotonic']
+    'monotonic',
+]
 
 extensions = [
     Extension(

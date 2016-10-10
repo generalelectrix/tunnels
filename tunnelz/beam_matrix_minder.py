@@ -1,5 +1,8 @@
 import numpy as np
 from .model_interface import ModelInterface, MiProperty
+import cPickle as pickle
+import logging as log
+from uuid import uuid1
 
 # states for beam matrix UI
 Idle = 'idle'
@@ -92,11 +95,43 @@ class BeamMatrixMinder (object):
     n_rows = 5 # using only clip launch
     n_columns = 8 # ignoring master track
 
-    def __init__(self):
-        self._is_look = np.zeros((self.n_rows, self.n_columns), bool)
+    def __init__(self, load_path=None, save_path=None):
+        """Create a new minder, backed by a file path.
 
-        self._beams = [[None for _ in xrange(self.n_columns)] for _ in xrange(self.n_rows)]
+        The minder will keep the cached version on disk in sync.
+        If load_path is provided, the state of this minder will be filled by loading from
+        the saved file on disk.  If no load path is provided, nothing will be loaded,
+        but a save file will be created using a uuid.  This file can be overridden
+        by passing save_path.
+        """
+        self._cache_path = (
+                save_path if save_path is not None
+                else "tunnelz_save_{}.tunnel".format(uuid1()))
 
+        if load_path is None:
+            self._is_look = np.zeros((self.n_rows, self.n_columns), bool)
+            self._beams = [[None for _ in xrange(self.n_columns)] for _ in xrange(self.n_rows)]
+        else:
+            self._beams, self._is_look = self._load_from_disk(load_path)
+
+        self._save_to_disk()
+
+    def _save_to_disk(self):
+        """Pickle the contents of this minder to a file on disk."""
+        # since we periodically save to disk, don't want to crash the show if this fails
+        try:
+            with open(self._cache_path, 'w+') as f:
+                pickle.dump((self._beams, self._is_look), f, pickle.HIGHEST_PROTOCOL)
+        except Exception as err:
+            log.error("An error occurred while saving beam matrix to disk: {}", err)
+
+    def _load_from_disk(self, path):
+        """Unpickle a saved file and return its contents."""
+        # no exception handling here because this should only happen on startup
+        # and we should bail completely if it fails.
+        with open(path, 'r') as f:
+            beams, is_look = pickle.load(f)
+            return beams, is_look
 
     def put_beam(self, row, column, beam):
         """Put a copy of a beam into the minder."""
@@ -104,14 +139,20 @@ class BeamMatrixMinder (object):
 
         self._is_look[row][column] = False
 
+        self._save_to_disk()
+
     def put_look(self, row, column, look):
         """Copy a look into the beam matrix."""
         self._beams[row][column] = look.copy()
         self._is_look[row][column] = True
 
+        self._save_to_disk()
+
     def clear_element(self, row, column):
         self._beams[row][column] = None
         self._is_look[row][column] = False
+
+        self._save_to_disk()
 
     def get_element(self, row, column):
         return self._beams[row][column].copy()

@@ -24,7 +24,7 @@ N_BEAMS = 8
 
 class Show (object):
     """Encapsulate the show runtime environment."""
-    def __init__(self, config_file="show.cfg"):
+    def __init__(self, config_file="show.cfg", load_path=None, save_path=None):
         with open(config_file, 'r') as cfg:
             self.config = config = json.load(cfg)
 
@@ -38,7 +38,7 @@ class Show (object):
 
         self.use_midi = config['use_midi']
 
-        self.setup_models()
+        self.setup_models(load_path, save_path)
 
         starting_beam = self.mixer.layers[0].beam
 
@@ -61,7 +61,7 @@ class Show (object):
 
         # done!
 
-    def setup_models(self):
+    def setup_models(self, load_path, save_path):
         """Instantiate all of the model objects."""
         self.mixer = Mixer(N_BEAMS)
 
@@ -74,7 +74,8 @@ class Show (object):
             self.setup_aliasing_test()
 
         # beam matrix minder
-        self.beam_matrix = beam_matrix = BeamMatrixMinder()
+        self.beam_matrix = beam_matrix = BeamMatrixMinder(
+            load_path=load_path, save_path=save_path)
 
         # save a copy of the default tunnel for sanity. Don't erase it!
         beam_matrix.put_beam(4, 7, Tunnel())

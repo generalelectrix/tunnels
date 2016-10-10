@@ -210,8 +210,10 @@ def run_server(command, response, port, report):
 
             # socket.send(serialized)
 
-            dc0 = [draw_collection[0]]
-            dc1 = [draw_collection[1]]
+            # FIXME autumn lights hack: split mixer across two video channels
+
+            dc0 = draw_collection[0:4]
+            dc1 = draw_collection[4:8]
 
             def clean_dc(dc):
                 """Remove empty frames to thin out packets slightly."""
