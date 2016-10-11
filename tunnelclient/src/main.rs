@@ -42,6 +42,7 @@ use sntp_service::{synchronize, SntpSync};
 use sdl2_window::Sdl2Window as Window;
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Receiver;
+use std::thread::sleep;
 use draw::Draw;
 use zmq::Context;
 use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
@@ -148,7 +149,7 @@ fn main() {
     let snapshot_manager = SnapshotManager::new(snapshot_queue);
 
     // sleep for a render delay to make sure we have snapshots before we start rendering
-    thread.sleep(Duration::from_millis(cfg.render_delay));
+    sleep(Duration::from_millis(cfg.render_delay));
 
     // Create a new game and run it.
     let mut app = App {
