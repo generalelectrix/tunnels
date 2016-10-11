@@ -59,10 +59,9 @@ impl App {
     fn render(&mut self, args: &RenderArgs) {
 
         // Get frame interpolation from the snapshot service.
-        let host_time = self.sntp_sync.now_as_timestamp();
-
-        // subtract a render delay to put us back in time.
-        let delayed_time = host_time - self.cfg.render_delay as f64;
+        let delayed_time =
+            self.sntp_sync.now_as_timestamp()
+            - self.cfg.render_delay as f64;
 
         let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
             NoData => (Some("No data available from snapshot service.".to_string()), None),
@@ -70,7 +69,7 @@ impl App {
                 let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
                 let msg = format!(
                     "Something went wrong with snapshot interpolation for time {}.\n{:?}\n",
-                    host_time,
+                    delayed_time,
                     snap_times);
                 (Some(msg), None)
             },
@@ -147,6 +146,9 @@ fn main() {
         .run_async();
 
     let snapshot_manager = SnapshotManager::new(snapshot_queue);
+
+    // sleep for a render delay to make sure we have snapshots before we start rendering
+    thread.sleep(Duration::from_millis(cfg.render_delay));
 
     // Create a new game and run it.
     let mut app = App {

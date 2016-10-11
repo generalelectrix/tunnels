@@ -120,6 +120,7 @@ impl SnapshotManager {
                     InterpResult::MissingOlder(s.layers.clone())}
             }
             _ => {
+
                 // If we're lagging on snapshots, just draw the most recent one.
                 if let Some(s) = snaps.front() {
                     if (s.time as f64) < time {
