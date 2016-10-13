@@ -40,3 +40,9 @@ class Look (Beam):
                 drawn_layers.append(layer.beam.display(
                     scaled_level, as_mask or layer.mask))
         return (ShapeCollection, len(drawn_layers), drawn_layers)
+
+    def get_animation(self, _):
+        raise TypeError("Cannot ask a look for animation.")
+
+    def replace_animation(self, anim_num, anim):
+        pass

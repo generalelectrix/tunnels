@@ -3,9 +3,30 @@
 Ideally, MIs shouldn't need to know about each other, and this orchestrator
 deals with the few actions that need to be coordinated across each of them.
 """
+from weakref import WeakKeyDictionary
 from .animation import AnimationClipboard
 from .beam_matrix_minder import BeamMatrixMI
 from .model_interface import ModelInterface, MiProperty
+import logging as log
+
+class DefaultWeakKeyDictionary (object):
+    """Combine the behavior of defaultdict and WeakKeyDictionary."""
+    def __init__(self, defaultfunc):
+        self.d = WeakKeyDictionary()
+        self.defaultfunc = defaultfunc
+
+    def __getitem__(self, key):
+        try:
+            return self.d[key]
+        except KeyError:
+            val = self.defaultfunc()
+            self.d[key] = val
+            return val
+
+    def __setitem__(self, key, val):
+        self.d[key] = val
+
+
 
 class MetaMI (ModelInterface):
 
@@ -18,6 +39,18 @@ class MetaMI (ModelInterface):
         self.animator_mi = animator_mi
         self.beam_matrix_mi = BeamMatrixMI(beam_matrix, self)
         self.animation_clipboard = AnimationClipboard()
+
+        # keep track of a mapping between beam object and which animator is
+        # currently selected in that beam for this control interface.
+        # Key is a beam object, value is an integer into the list of animators.
+        # Defaults to zero.  This enables stable animator selection when jumping
+        # between beams.
+        self.active_animator_mapping = DefaultWeakKeyDictionary(int)
+
+    @property
+    def active_animator_number(self):
+        """Return whichever animator number is currently selected."""
+        return self.active_animator_mapping[self.get_current_beam()]
 
     def initialize(self):
         super(MetaMI, self).initialize()
@@ -57,7 +90,6 @@ class MetaMI (ModelInterface):
 
     def _update_current_layer(self):
         """If we're done something that requires a full UI redraw, call this."""
-        # TODO: alter mixer MI to add this interface?  Do I care?
         active_beam = self.get_current_beam()
 
         # if we're putting a look, we need to temporarily deactive the tunnel
@@ -69,13 +101,8 @@ class MetaMI (ModelInterface):
 
         self.tunnel_mi.swap_model(active_beam)
 
-        # TODO: do we want to store this in the beam?  It implies that our
-        # stateful meta-UI abstraction is a bit leaky, but it may provide a
-        # nicer user experience.
-        active_animator = active_beam.get_current_animation()
-        if not islook:
-            self.animator_mi.swap_model(active_animator)
-        self.set_current_animator(active_beam.curr_anim)
+        active_animator_num = self.active_animator_number
+        self.set_current_animator(active_animator_num)
 
     def set_current_animator(self, anim_num):
         """Set which animator is being edited.
@@ -87,23 +114,21 @@ class MetaMI (ModelInterface):
         """
         beam = self.get_current_beam()
         if not beam.is_look:
-            beam.curr_anim = anim_num
-            animator = beam.get_current_animation()
+            self.active_animator_mapping[beam] = anim_num
+            animator = beam.get_animation(anim_num)
             self.animator_mi.swap_model(animator)
             self.update_controllers('set_current_animator', anim_num)
 
     def animation_copy(self):
         """Copy the current animator to the clipboard."""
-        # TODO: which animator is authoritatively the current one - the current
-        # beam's current animator, or the one loaded into the animator ui?
         if not self.get_current_beam().is_look:
             self.animation_clipboard.copy(self.animator_mi.model)
 
     def animation_paste(self):
         """Paste the clipboard into the current beam's current animator slot."""
-        if not self.get_current_beam().is_look:
+        beam = self.get_current_beam()
+        if not beam.is_look:
             animator = self.animation_clipboard.paste()
             if animator is not None:
-                beam = self.get_current_beam()
-                beam.replace_current_animation(animator)
+                beam.replace_animation(self.active_animator_number, animator)
                 self.animator_mi.swap_model(animator)

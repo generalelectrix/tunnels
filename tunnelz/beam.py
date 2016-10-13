@@ -1,20 +1,20 @@
-
+from abc import ABCMeta, abstractmethod
 
 #TODO: formalize as an ABC
 class Beam (object):
     """Generic Beam base class."""
+    __metaclass__ = ABCMeta
 
     # avoid a lot of isinstance checking.
     # TODO: refactor how looks work to avoid needing this!
     is_look = False
 
-    def __init__(self):
-        self.curr_anim = 0
-
+    @abstractmethod
     def copy(self):
         """Return a deep copy of this beam."""
-        raise NotImplementedError("Beam subclasses must implement deep copy.")
+        pass
 
+    @abstractmethod
     def update_state(self, timestep):
         """Update beam parameters based on current state.
 
@@ -22,15 +22,18 @@ class Beam (object):
         """
         pass
 
+    @abstractmethod
     def display(self, level_scale, as_mask):
         """Render this beam, using scaled level and masking parameter.
 
         Subclasses should override this method.
         """
-        raise NotImplementedError("Beam subclasses must implement display")
+        pass
 
-    def get_current_animation(self):
+    @abstractmethod
+    def get_animation(self, num):
         return None
 
-    def replace_current_animation(self, new_anim):
+    @abstractmethod
+    def replace_animation(self, anim_num, new_anim):
         pass

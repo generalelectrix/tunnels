@@ -103,8 +103,6 @@ class Tunnel (Beam):
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
 
-        self.curr_anim = 0
-
         # dispatch
         self.display_as = shapes.Tunnel
 
@@ -117,12 +115,9 @@ class Tunnel (Beam):
         """Get an animation by index."""
         return self.anims[anim]
 
-    def get_current_animation(self):
-        return self.get_animation(self.curr_anim)
-
-    def replace_current_animation(self, new_anim):
-        """Replace the current animation with another."""
-        self.anims[self.curr_anim] = new_anim
+    def replace_animation(self, anim_num, new_anim):
+        """Replace an animation with another."""
+        self.anims[anim_num] = new_anim
 
     def update_state(self, delta_t):
         """Update the state of this tunnel in preparation for drawing a frame.
