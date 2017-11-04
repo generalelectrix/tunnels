@@ -1,4 +1,5 @@
-use graphics::{Context, CircleArc, rectangle, Transformed, Graphics, DrawState};
+use graphics::{CircleArc, rectangle, Transformed, Graphics, DrawState};
+use piston_window::Context;
 
 use receive::{Snapshot, ArcSegment};
 use config::ClientConfig;
@@ -94,7 +95,7 @@ fn improved_with_arc_tri_list<F>(
     f: F
 )
     where
-        F: FnMut(&[f32])
+        F: FnMut(&[[f32; 2]])
 {
 
     let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
