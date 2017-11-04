@@ -45,7 +45,7 @@ class Show (object):
         # instantiate MIs
         self.mixer_mi = mixer_mi = MixerMI(self.mixer)
         self.tunnel_mi = tunnel_mi = TunnelMI(starting_beam)
-        self.animator_mi = animator_mi = AnimationMI(starting_beam.get_current_animation())
+        self.animator_mi = animator_mi = AnimationMI(starting_beam.get_animation(0))
 
         # top-level mi
         self.meta_mi = MetaMI(mixer_mi, tunnel_mi, animator_mi, self.beam_matrix)
