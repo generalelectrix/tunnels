@@ -32,7 +32,7 @@ struct SntpClient {
 }
 
 impl SntpClient {
-    /// Create a new 0mq SUB connected to the provided socket addr.
+    /// Create a new 0mq REQ connected to the provided socket addr.
     fn new(host: &str, port: u64, ctx: &mut Context) -> Self {
         let mut socket = ctx.socket(zmq::REQ).unwrap();
         let addr = format!("tcp://{}:{}", host, port);
@@ -44,7 +44,7 @@ impl SntpClient {
     /// Take a time delay measurement.
     fn take_measurement(&mut self) -> SntpMeasurement {
         let now = Instant::now();
-        self.socket.send(&[], 0).unwrap();
+        self.socket.send(&[][..], 0).unwrap();
         let buf = self.receive_buffer(true).unwrap();
         let elapsed = now.elapsed();
         let timestamp: f64 = self.deserialize_msg(buf).unwrap();
