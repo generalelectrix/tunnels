@@ -40,7 +40,7 @@ use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receive, SubReceiver, Snapshot};
 use sntp_service::{synchronize, SntpSync};
-// use glutin_window::GlutinWindow as Window;
+use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Receiver;
