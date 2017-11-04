@@ -4,29 +4,26 @@ use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 use rmp_serde::Deserializer;
 use rmp_serde::decode::Error;
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::io::Cursor;
 use std::sync::mpsc::{Sender, Receiver, channel};
 use std::thread;
 
 pub type ReceiveResult<T> = Result<T, Error>;
 
-// only needed for serde on stable
-include!(concat!(env!("OUT_DIR"), "/serde_types.rs"));
-
 pub trait Receive {
     /// Return the raw message buffer if one was available.
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>>;
 
     /// Deserialize a received message.
-    fn deserialize_msg<T: Deserialize>(&self, msg: Vec<u8>) -> ReceiveResult<T> {
+    fn deserialize_msg<T: DeserializeOwned>(&self, msg: Vec<u8>) -> ReceiveResult<T> {
         let cur = Cursor::new(&msg[..]);
         let mut de = Deserializer::new(cur);
         Deserialize::deserialize(&mut de)
     }
 
     /// Drain the socket message queue and return the most recent message, if available.
-    fn receive_newest<T: Deserialize>(&mut self) -> Option<ReceiveResult<T>> {
+    fn receive_newest<T: DeserializeOwned>(&mut self) -> Option<ReceiveResult<T>> {
         // Receive messages as long as we have them here and now.
         let mut buf = None;
         loop {
@@ -41,7 +38,7 @@ pub trait Receive {
     }
 
     /// Receive a single message.
-    fn receive<T: Deserialize>(&mut self, block: bool) -> Option<ReceiveResult<T>> {
+    fn receive<T: DeserializeOwned>(&mut self, block: bool) -> Option<ReceiveResult<T>> {
         if let Some(buf) = self.receive_buffer(block) {
             Some(self.deserialize_msg(buf))
         }
@@ -70,7 +67,7 @@ impl SubReceiver {
     /// Takes ownership of the receiver and moves to the worker thread.
     /// Quits when the output queue is dropped.
     /// FIXME should pass errors back to main thread instead of ignoring.
-    pub fn run_async<T: Deserialize + Send + 'static>(mut self) -> Receiver<T> {
+    pub fn run_async<T: DeserializeOwned + Send + 'static>(mut self) -> Receiver<T> {
         let (tx, rx) = channel::<T>();
         thread::spawn(move || {
             loop {

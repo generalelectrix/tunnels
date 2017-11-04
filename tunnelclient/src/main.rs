@@ -38,8 +38,8 @@ use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receive, SubReceiver, Snapshot};
 use sntp_service::{synchronize, SntpSync};
-// use glutin_window::GlutinWindow as Window;
-use sdl2_window::Sdl2Window as Window;
+use glutin_window::GlutinWindow as Window;
+// use sdl2_window::Sdl2Window as Window;
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Receiver;
 use std::thread::sleep;
@@ -123,7 +123,8 @@ fn main() {
         .samples(if cfg.anti_alias {4} else {0})
         .fullscreen(cfg.fullscreen)
         .build()
-        .unwrap();
+        .unwrap()
+        .max_fps(120);
 
     window.set_capture_cursor(true);
 
@@ -159,8 +160,7 @@ fn main() {
         cfg: cfg
     };
 
-    let mut events = window.events().max_fps(120);
-    while let Some(e) = events.next(&mut window) {
+    while let Some(e) = window.next() {
 
         if let Some(u) = e.update_args() {
             app.update(&u);
