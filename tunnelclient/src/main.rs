@@ -1,9 +1,10 @@
 // #![feature(rustc_macro)]
 
-// #[macro_use]
-// extern crate serde_derive;
+#[macro_use]
+extern crate serde_derive;
 
 extern crate piston;
+extern crate piston_window;
 extern crate interpolation;
 extern crate graphics;
 extern crate glutin_window;
@@ -33,13 +34,14 @@ use config::{ClientConfig, config_from_command_line};
 use graphics::clear;
 use graphics::types::Color;
 use opengl_graphics::{ GlGraphics, OpenGL };
+use piston_window::*;
 use piston::window::{WindowSettings, AdvancedWindow};
 use piston::event_loop::*;
 use piston::input::*;
 use receive::{Receive, SubReceiver, Snapshot};
 use sntp_service::{synchronize, SntpSync};
-use glutin_window::GlutinWindow as Window;
-// use sdl2_window::Sdl2Window as Window;
+// use glutin_window::GlutinWindow as Window;
+use sdl2_window::Sdl2Window;
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Receiver;
 use std::thread::sleep;
@@ -113,7 +115,7 @@ fn main() {
     let opengl = OpenGL::V3_2;
 
     // Create an Glutin window.
-    let mut window: Window = WindowSettings::new(
+    let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
             "tunnelclient",
             [cfg.x_resolution, cfg.y_resolution]
         )
@@ -123,10 +125,10 @@ fn main() {
         .samples(if cfg.anti_alias {4} else {0})
         .fullscreen(cfg.fullscreen)
         .build()
-        .unwrap()
-        .max_fps(120);
+        .unwrap();
 
     window.set_capture_cursor(true);
+    window.set_max_fps(120);
 
     // Create zmq context.
     let mut ctx = Context::new();
