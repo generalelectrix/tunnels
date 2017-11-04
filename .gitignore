@@ -65,7 +65,7 @@ target/
 .ipynb_checkpoints
 
 # tunnel dumps
-.csv
+*.tunnel
 
 # IDEs
 .idea
