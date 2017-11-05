@@ -2,8 +2,7 @@
 //! and interpolating between them on demand.
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, TryRecvError};
-use sntp_service::{SntpSync, Timestamp};
-use std::time::{Instant, Duration};
+use sntp_service::{Timestamp};
 use receive::{Snapshot, LayerCollection};
 use interpolate::Interpolate;
 

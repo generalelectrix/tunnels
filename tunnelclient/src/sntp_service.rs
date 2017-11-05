@@ -3,8 +3,7 @@
 //! http://www.mine-control.com/zack/timesync/timesync.html
 
 use receive::{Receive};
-use serde::Deserialize;
-use std::time::{Instant, Duration, SystemTime};
+use std::time::{Instant, Duration};
 use std::thread::sleep;
 use stats::{mean, stddev};
 use zmq;
@@ -34,7 +33,7 @@ struct SntpClient {
 impl SntpClient {
     /// Create a new 0mq REQ connected to the provided socket addr.
     fn new(host: &str, port: u64, ctx: &mut Context) -> Self {
-        let mut socket = ctx.socket(zmq::REQ).unwrap();
+        let socket = ctx.socket(zmq::REQ).unwrap();
         let addr = format!("tcp://{}:{}", host, port);
         socket.connect(&addr).unwrap();
 

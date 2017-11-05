@@ -3,7 +3,6 @@
 #[macro_use]
 extern crate serde_derive;
 
-extern crate piston;
 extern crate piston_window;
 extern crate interpolation;
 extern crate graphics;
@@ -32,17 +31,13 @@ mod snapshot_manager;
 
 use config::{ClientConfig, config_from_command_line};
 use graphics::clear;
-use graphics::types::Color;
 use opengl_graphics::{ GlGraphics, OpenGL };
 use piston_window::*;
-use piston::window::{WindowSettings, AdvancedWindow};
-use piston::event_loop::*;
-use piston::input::*;
-use receive::{Receive, SubReceiver, Snapshot};
+use receive::{SubReceiver, Snapshot};
 use sntp_service::{synchronize, SntpSync};
 use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::sync::mpsc::Receiver;
 use std::thread::sleep;
 use draw::Draw;
@@ -95,7 +90,7 @@ impl App {
         }
     }
 
-    fn update(&mut self, args: &UpdateArgs) {
+    fn update(&mut self) {
         // Update the state of the snapshot manager.
         let update_result = self.snapshot_manager.update();
         if let Err(e) = update_result {
@@ -164,8 +159,8 @@ fn main() {
 
     while let Some(e) = window.next() {
 
-        if let Some(u) = e.update_args() {
-            app.update(&u);
+        if let Some(_) = e.update_args() {
+            app.update();
         }
 
         if let Some(r) = e.render_args() {

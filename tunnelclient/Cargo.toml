@@ -10,7 +10,6 @@ authors = [
 name = "tunnelclient"
 
 [dependencies]
-piston = "*"
 piston_window = "*"
 piston2d-graphics = "*"
 pistoncore-glutin_window = "*"

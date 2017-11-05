@@ -9,8 +9,6 @@ use graphics::types::{Matrix2d, Scalar, Resolution, Radius, Rectangle};
 use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
 
-use utils::modulo;
-
 use constants::TWOPI;
 
 pub trait Draw<G: Graphics> {
