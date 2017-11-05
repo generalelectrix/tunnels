@@ -312,8 +312,8 @@ class TunnelMidiController (MidiController):
         self.nudge_y_pos_mapping = NoteOnMapping(0, 0x5F)
         self.nudge_y_neg_mapping = NoteOnMapping(0, 0x5E)
         self.position_reset_mapping = NoteOnMapping(0, 0x62)
-        self.rotation_reset_mapping = NoteOnMapping(0, 87)
-        self.marquee_reset_mapping = NoteOnMapping(0, 58)
+        self.rotation_reset_mapping = NoteOnMapping(0, 120)
+        self.marquee_reset_mapping = NoteOnMapping(0, 121)
 
         self.set_callback(self.nudge_x_pos_mapping, self.handle_nudge_x_pos)
         self.set_callback(self.nudge_x_neg_mapping, self.handle_nudge_x_neg)
