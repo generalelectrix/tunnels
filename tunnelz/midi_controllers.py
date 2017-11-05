@@ -296,8 +296,8 @@ class TunnelMidiController (MidiController):
             self.handle_unipolar_knob)
 
         self.bipolar_knobs = self.add_controls({
-            'rot_speed': ControlChangeMapping(0, 20),
-            'marquee_speed': ControlChangeMapping(0, 52),
+            'rot_speed': ControlChangeMapping(0, 52),
+            'marquee_speed': ControlChangeMapping(0, 20),
             },
             self.handle_bipolar_knob)
 
@@ -312,12 +312,16 @@ class TunnelMidiController (MidiController):
         self.nudge_y_pos_mapping = NoteOnMapping(0, 0x5F)
         self.nudge_y_neg_mapping = NoteOnMapping(0, 0x5E)
         self.position_reset_mapping = NoteOnMapping(0, 0x62)
+        self.rotation_reset_mapping = NoteOnMapping(0, 120)
+        self.marquee_reset_mapping = NoteOnMapping(0, 121)
 
         self.set_callback(self.nudge_x_pos_mapping, self.handle_nudge_x_pos)
         self.set_callback(self.nudge_x_neg_mapping, self.handle_nudge_x_neg)
         self.set_callback(self.nudge_y_pos_mapping, self.handle_nudge_y_pos)
         self.set_callback(self.nudge_y_neg_mapping, self.handle_nudge_y_neg)
         self.set_callback(self.position_reset_mapping, self.handle_reset_beam_position)
+        self.set_callback(self.rotation_reset_mapping, self.handle_reset_beam_rotation)
+        self.set_callback(self.marquee_reset_mapping, self.handle_reset_beam_marquee)
 
         self.register_callbacks()
 
@@ -374,6 +378,12 @@ class TunnelMidiController (MidiController):
 
     def handle_reset_beam_position(self, _, val):
         self.mi.reset_beam_position()
+
+    def handle_reset_beam_rotation(self, _, val):
+        self.mi.reset_beam_rotation()
+
+    def handle_reset_beam_marquee(self, _, val):
+        self.mi.reset_beam_marquee()
 
 class AnimationMidiController (MidiController):
 

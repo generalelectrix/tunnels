@@ -196,14 +196,3 @@ class Animation (object):
             else:
                 return result
 
-
-class AnimationClipboard (object):
-    """Class for storing a deep copy of an animation to support copy/paste."""
-    def __init__(self):
-        self.anim = None
-
-    def copy(self, to_copy):
-        self.anim = to_copy.copy()
-
-    def paste(self):
-        return self.anim.copy()
