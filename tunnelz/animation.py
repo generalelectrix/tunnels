@@ -86,6 +86,20 @@ class AnimationMI (ModelInterface):
         val = self.model.invert = not self.model.invert
         self.update_controllers('set_invert', val)
 
+scalar_waveforms = {
+    WaveformType.Sine: sine,
+    WaveformType.Triangle: triangle,
+    WaveformType.Square: square,
+    WaveformType.Sawtooth: sawtooth,
+}
+
+vector_waveforms = {
+    WaveformType.Sine: sine_vector,
+    WaveformType.Triangle: triangle_vector,
+    WaveformType.Square: square_vector,
+    WaveformType.Sawtooth: sawtooth_vector,
+}
+
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""
 
@@ -130,34 +144,12 @@ class Animation (object):
             return 0.
 
         angle = angle_offset*self.n_periods + self.curr_angle
-        if self.type == WaveformType.Sine:
-            # sine wave
-            result = self.weight * sine(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
-        elif self.type == WaveformType.Triangle:
-            # triangle wave
-            result = self.weight * triangle(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
-        elif self.type == WaveformType.Square:
-            # square wave
-            result = self.weight * square(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
-        elif self.type == WaveformType.Sawtooth:
-            # sawtooth wave
-            result = self.weight * sawtooth(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
+        func = scalar_waveforms[self.type]
+        result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+        if self.invert:
+            return -1.0 * result
+        else:
+            return result
 
     def get_value_vector(self, angle_offsets):
         """Return the current value of the animation for an ndarray of offsets."""
@@ -167,32 +159,11 @@ class Animation (object):
             return np.zeros(shape, float)
 
         angle = angle_offsets*self.n_periods + self.curr_angle
-        if self.type == WaveformType.Sine:
-            # sine wave
-            result = self.weight * sine_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
-        elif self.type == WaveformType.Triangle:
-            # triangle wave
-            result = self.weight * triangle_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
-        elif self.type == WaveformType.Square:
-            # square wave
-            result = self.weight * square_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
-        elif self.type == WaveformType.Sawtooth:
-            # sawtooth wave
-            result = self.weight * sawtooth_vector(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
-            if self.invert:
-                return -1.0 * result
-            else:
-                return result
+        func = vector_waveforms[self.type]
+
+        result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+        if self.invert:
+            return -1.0 * result
+        else:
+            return result
 
