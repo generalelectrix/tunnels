@@ -308,6 +308,7 @@ class Tunnel (Beam):
                         rot_angle))
 
         elif self.display_as == shapes.Line:
+            raise NotImplementedError("No client support for line shape yet.")
             length = abs(size + size_adjust)
 
             if as_mask:
@@ -355,4 +356,4 @@ class Tunnel (Beam):
         else:
             raise NotImplementedError(self.display_as)
 
-        return self.display_as, draw_calls
+        return draw_calls

@@ -95,9 +95,10 @@ class Mixer (object):
 
             if level > 0 or bump:
                 if bump:
-                    _, draw_cmd = layer.beam.display(1.0, layer.mask)
+                    draw_cmd = layer.beam.display(1.0, layer.mask)
                 else:
-                    _, draw_cmd = layer.beam.display(level, layer.mask)
+                    draw_cmd = layer.beam.display(level, layer.mask)
+
             draw_commands.append(draw_cmd)
 
         # temporarily ignore individual shape identifiers and just pass arc calls
@@ -114,6 +115,5 @@ class Mixer (object):
         # incoming look's mask and level state does not clobber the mixer.
         # Seems like mask at least should clobber, or your ugly mask layer
         # becomes a positive.  Hell, here, I'll fix it right now.
-        # TODO: should we clobber level as well?
 
         self.layers = look.copy().layers

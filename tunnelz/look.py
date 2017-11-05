@@ -10,8 +10,6 @@ class Look (Beam):
         """Construct a new look from the contents of a mixer.
 
         This constructor copies everything handed to it.
-
-        layers, levels, and masks are all lists of the mixer channel values.
         """
         super(Look, self).__init__()
         self.layers = [layer.copy() for layer in layers]
@@ -28,18 +26,21 @@ class Look (Beam):
     def display(self, level_scale, as_mask):
         """Draw all the Beams in this Look.
 
-        level: int in [0, 255]
+        level_scale: unit float
         as_mask: boolean
+
+        The individual sublayers are unpacked and returned as a single layer of
+        many arc segment commands.
         """
-        drawn_layers = []
+        draw_cmds = []
         for layer in self.layers:
             # only draw a layer if it isn't off
             level = layer.level
             if level != 0:
-                scaled_level = level_scale * level / 255
-                drawn_layers.append(layer.beam.display(
+                scaled_level = level_scale * level
+                draw_cmds.extend(layer.beam.display(
                     scaled_level, as_mask or layer.mask))
-        return (ShapeCollection, len(drawn_layers), drawn_layers)
+        return draw_cmds
 
     def get_animation(self, _):
         raise TypeError("Cannot ask a look for animation.")

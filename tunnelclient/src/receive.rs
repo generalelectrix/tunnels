@@ -77,7 +77,7 @@ pub type LayerCollection = Vec<Vec<ArcSegment>>;
 pub struct Snapshot {
     pub frame_number: u64,
     pub time: u64, // ms
-    pub layers: LayerCollection
+    pub layers: LayerCollection,
 }
 
 impl Eq for Snapshot {}
