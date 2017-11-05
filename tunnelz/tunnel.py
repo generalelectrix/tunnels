@@ -62,6 +62,18 @@ class TunnelMI (ModelInterface):
         self.model.x_offset = 0.0
         self.model.y_offset = 0.0
 
+    @only_if_active
+    def reset_beam_rotation(self):
+        """Reset beam rotation offset angle to 0 and rotation speed to 0."""
+        self.rot_speed = 0.0
+        self.model.curr_rot_angle = 0.0
+
+    @only_if_active
+    def reset_beam_marquee(self):
+        """Reset beam marquee offset angle to 0 and marquee speed to 0."""
+        self.marquee_speed = 0.0
+        self.model.curr_marquee_angle = 0.0
+
 class Tunnel (Beam):
     """Ellipsoidal tunnels.
 

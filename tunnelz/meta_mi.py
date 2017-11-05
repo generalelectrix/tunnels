@@ -4,7 +4,7 @@ Ideally, MIs shouldn't need to know about each other, and this orchestrator
 deals with the few actions that need to be coordinated across each of them.
 """
 from weakref import WeakKeyDictionary
-from .animation import AnimationClipboard
+from .animation import Animation
 from .beam_matrix_minder import BeamMatrixMI
 from .model_interface import ModelInterface, MiProperty
 import logging as log
@@ -38,7 +38,7 @@ class MetaMI (ModelInterface):
         self.tunnel_mi = tunnel_mi
         self.animator_mi = animator_mi
         self.beam_matrix_mi = BeamMatrixMI(beam_matrix, self)
-        self.animation_clipboard = AnimationClipboard()
+        self.animation_clipboard = Animation()
 
         # keep track of a mapping between beam object and which animator is
         # currently selected in that beam for this control interface.
@@ -122,13 +122,13 @@ class MetaMI (ModelInterface):
     def animation_copy(self):
         """Copy the current animator to the clipboard."""
         if not self.get_current_beam().is_look:
-            self.animation_clipboard.copy(self.animator_mi.model)
+            self.animation_clipboard = self.animator_mi.model.copy()
 
     def animation_paste(self):
         """Paste the clipboard into the current beam's current animator slot."""
         beam = self.get_current_beam()
         if not beam.is_look:
-            animator = self.animation_clipboard.paste()
+            animator = self.animation_clipboard.copy()
             if animator is not None:
                 beam.replace_animation(self.active_animator_number, animator)
                 self.animator_mi.swap_model(animator)
