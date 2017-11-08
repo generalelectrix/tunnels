@@ -1,4 +1,5 @@
 import logging as log
+import traceback
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
 from .meta_mi import MetaMI
@@ -21,6 +22,8 @@ import json
 
 # how many beams you like?
 N_BEAMS = 8
+# how many virtual video channels should we send?
+N_VIDEO_CHANNELS = 8
 
 class Show (object):
     """Encapsulate the show runtime environment."""
@@ -63,7 +66,7 @@ class Show (object):
 
     def setup_models(self, load_path, save_path):
         """Instantiate all of the model objects."""
-        self.mixer = Mixer(N_BEAMS)
+        self.mixer = Mixer(n_layers=N_BEAMS, n_video_channels=N_VIDEO_CHANNELS)
 
         # if we're not using midi, set up test tunnels
         if self.config.get('stress_test', False):
@@ -200,6 +203,12 @@ class Show (object):
                 except Empty:
                     # fine if we didn't get a control event
                     pass
+                except Exception as e:
+                    # trap any exception here and log an error to avoid crashing
+                    # the whole controller
+                    log.error(
+                        "An error occurred while processing a midi control "
+                        "event:\n{}\n{}".format(e, traceback.format_exc()))
 
                 # compute updates until we're current
                 now = time_millis()
@@ -216,8 +225,8 @@ class Show (object):
                     update_number += 1
 
 
-                # pass the mixer the render process is ready to draw another frame
-                # and it hasn't drawn this frame yet
+                # pass the mixer to the render process if it is ready to draw
+                # another frame and it hasn't drawn this frame yet
                 if update_number > last_rendered_frame:
                     rendered = render_server.pass_frame_if_ready(
                         update_number, last_update, self.mixer)

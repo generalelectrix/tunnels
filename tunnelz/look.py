@@ -30,7 +30,8 @@ class Look (Beam):
         as_mask: boolean
 
         The individual sublayers are unpacked and returned as a single layer of
-        many arc segment commands.
+        many arc segment commands.  The layer punch-ins are ignored and every
+        active layer is drawn.
         """
         draw_cmds = []
         for layer in self.layers:

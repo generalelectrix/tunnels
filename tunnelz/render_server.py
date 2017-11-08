@@ -201,34 +201,15 @@ def run_server(command, response, port, report):
                 raise RenderServerError("Unrecognized command: {}".format(action))
 
             frame_number, frame_time, mixer = payload
+
             # render the payload we received
-            draw_collection = mixer.draw_layers()
+            video_outs = mixer.draw_layers()
 
-            # serialized = msgpack.dumps(
-            #     (frame_number, frame_time, draw_collection),
-            #     use_single_float=True)
-
-            # socket.send(serialized)
-
-            # FIXME autumn lights hack: split mixer across two video channels
-
-            dc0 = draw_collection[0:4]
-            dc1 = draw_collection[4:8]
-
-            def clean_dc(dc):
-                """Remove empty frames to thin out packets slightly."""
-                return [d for d in dc if d]
-
-            serialized_0 = msgpack.dumps(
-                (frame_number, frame_time, clean_dc(dc0)),
-                use_single_float=True)
-
-            serialized_1 = msgpack.dumps(
-                (frame_number, frame_time, clean_dc(dc1)),
-                use_single_float=True)
-
-            socket.send_multipart(("0", serialized_0))
-            socket.send_multipart(("1", serialized_1))
+            for video_chan, draw_commands in enumerate(video_outs):
+                serialized = msgpack.dumps(
+                    (frame_number, frame_time, draw_commands),
+                    use_single_float=True)
+                socket.send_multipart(str(video_chan), serialized)
 
             if report:# and frame_number % 1 == 0:
                 now = monotonic()

@@ -213,6 +213,7 @@ class MixerMidiController (MidiController):
         self.bump_button_off = bidict()
         self.mask_buttons = bidict()
         self.look_indicators = bidict()
+        self.video_channel_selects = bidict()
         # add controls for all mixer channels
         for chan in xrange(mi.mixer.n_layers):
             self.channel_faders[chan] = ControlChangeMapping(chan, 0x7)
@@ -220,6 +221,10 @@ class MixerMidiController (MidiController):
             self.bump_button_off[chan] = NoteOffMapping(chan, 0x32)
             self.mask_buttons[chan] = NoteOnMapping(chan, 0x31)
             self.look_indicators[chan] = NoteOnMapping(chan, 0x30)
+            for video_chan in xrange(mi.mixer.n_video_channels):
+                chan_0_midi_note = 66
+                mapping = NoteOnMapping(chan, chan_0_midi_note + video_chan)
+                self.video_channel_selects[(chan, video_chan)] = mapping
 
         # update the controls
         self.set_callback_for_mappings(
@@ -230,6 +235,9 @@ class MixerMidiController (MidiController):
             self.bump_button_off.itervalues(), self.handle_bump_button_off)
         self.set_callback_for_mappings(
             self.mask_buttons.itervalues(), self.handle_mask_button)
+        self.set_callback_for_mappings(
+            self.video_channel_selects.itervalues(),
+            self.handle_video_channel_select)
 
         # register input mappings
         self.register_callbacks()
@@ -250,6 +258,10 @@ class MixerMidiController (MidiController):
     def handle_mask_button(self, mapping, _):
         chan = self.mask_buttons.inv[mapping]
         self.mi.toggle_mask_state(chan)
+
+    def handle_video_channel_select(self, mapping, _):
+        layer, video_chan = self.video_channel_selects.inv[mapping]
+        self.mi.toggle_video_channel(layer, video_chan)
 
     def set_level(self, layer, level):
         """Emit midi messages to update layer level."""
@@ -274,6 +286,11 @@ class MixerMidiController (MidiController):
     def set_look_indicator(self, layer, state):
         """Emit the midi messages to change the look indicator state."""
         mapping = self.look_indicators[layer]
+        self.midi_out.send_from_mapping(mapping, int(state))
+
+    def set_video_channel(self, layer, video_chan, state):
+        """Emit midi message to set layer select state."""
+        mapping = self.video_channel_selects[(layer, video_chan)]
         self.midi_out.send_from_mapping(mapping, int(state))
 
 

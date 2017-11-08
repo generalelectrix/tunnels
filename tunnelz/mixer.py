@@ -1,7 +1,6 @@
 from .tunnel import Tunnel
 from .look import Look
 from .model_interface import ModelInterface
-from .shapes import ShapeCollection
 
 class MixerMI (ModelInterface):
     """Handle model interactions for the mixer."""
@@ -42,27 +41,37 @@ class MixerMI (ModelInterface):
         state = self.mixer.toggle_mask_state(layer)
         self.update_controllers('set_mask_button', layer, state)
 
+    def toggle_video_channel(self, layer, channel):
+        state = self.mixer.toggle_video_channel(layer, channel)
+        self.update_controllers('set_video_channel', layer, channel, state)
+
 
 class MixerLayer (object):
-    """Data bag for the contents of a mixer channel."""
-    def __init__(self, beam, level=0.0, bump=False, mask=False):
+    """Data bag for the contents of a mixer channel.
+
+    By default, a mixer channel outputs to video feed 0.
+    """
+    def __init__(self, beam, level=0.0, bump=False, mask=False, video_outs=None):
         self.beam = beam
         self.level = level
         self.bump = bump
         self.mask = mask
+        self.video_outs = set(0) if video_outs is None else video_outs
 
     def copy(self):
         return MixerLayer(
             beam=self.beam.copy(),
             level=self.level,
             bump=self.bump,
-            mask=self.mask)
+            mask=self.mask,
+            video_outs=self.video_outs.copy())
 
 
 class Mixer (object):
     """Holds a collection of beams in layers, and understands how they are mixed."""
-    def __init__(self, n_layers):
+    def __init__(self, n_layers, n_video_channels):
         self.n_layers = n_layers
+        self.n_video_channels = n_video_channels
         self.layers = [MixerLayer(Tunnel()) for _ in xrange(n_layers)]
 
     def put_beam_in_layer(self, layer, beam):
@@ -85,25 +94,53 @@ class Mixer (object):
         self.layers[layer].mask = mask_state = not self.layers[layer].mask
         return mask_state
 
+    def toggle_video_channel(self, layer, channel):
+        """Toggle the whether layer is drawn to video channel.
+
+        Return the new state of display of this channel.
+        """
+        assert channel < self.n_video_channels
+        layer_video_outs = self.layers[layer].video_outs
+        if channel in layer_video_outs:
+            layer_video_outs.remove(channel)
+            return False
+        else:
+            layer_video_outs.add(channel)
+            return True
+
+    def video_channel_in(self, layer, channel):
+        """Draw this layer on the specified channel."""
+
+        self.layers[layer].video_outs.add(channel)
+
+    def video_channel_out(self, layer, channel):
+        """Do not draw this layer on the specified channel."""
+        assert channel < self.n_video_channels
+        self.layers[layer].video_outs.discard(channel)
+
     def draw_layers(self):
-        draw_commands = []
+        """Return a list of lists of draw commands.
+
+        Each inner list represents one virtual video channel.
+        """
+        video_outs = [[] for _ in xrange(self.n_video_channels)]
+
         for layer in self.layers:
             level = layer.level
             bump = layer.bump
-
-            draw_cmd = []
 
             if level > 0 or bump:
                 if bump:
                     draw_cmd = layer.beam.display(1.0, layer.mask)
                 else:
                     draw_cmd = layer.beam.display(level, layer.mask)
+            else:
+                draw_cmd = []
 
-            draw_commands.append(draw_cmd)
+            for video_chan in layer.video_outs:
+                video_outs[video_chan].append(draw_cmd)
 
-        # temporarily ignore individual shape identifiers and just pass arc calls
-        # return (ShapeCollection, len(draw_commands), draw_commands)
-        return draw_commands
+        return video_outs
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""
