@@ -142,7 +142,7 @@ class Show (object):
         for i, layer in enumerate(self.mixer.layers):
 
             layer.level = 1.0
-            layer.video_outs = set(i % N_VIDEO_CHANNELS)
+            layer.video_outs = {i % N_VIDEO_CHANNELS}
 
             tunnel = layer.beam
             tunnel.col_sat = 1.0

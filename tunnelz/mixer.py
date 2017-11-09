@@ -56,7 +56,7 @@ class MixerLayer (object):
         self.level = level
         self.bump = bump
         self.mask = mask
-        self.video_outs = set(0) if video_outs is None else video_outs
+        self.video_outs = {0} if video_outs is None else video_outs
 
     def copy(self):
         return MixerLayer(
