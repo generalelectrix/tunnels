@@ -135,6 +135,21 @@ class Show (object):
         tunnel.rot_speed = 0.0
         tunnel.marquee_speed = 0.05
 
+    def setup_multi_channel_test(self):
+        """Set up eight unique tunnels, one per video output."""
+        for i, layer in enumerate(self.mixer.layers):
+
+            layer.level = 1.0
+            layer.video_outs = set(i % N_VIDEO_CHANNELS)
+
+            tunnel = layer.beam
+            tunnel.col_sat = 1.0
+
+            tunnel.marquee_speed = 0.1
+
+            tunnel.col_center = (float(i) / N_VIDEO_CHANNELS) % 1.0
+
+
     def setup_controllers(self):
         self.setup_midi()
 
