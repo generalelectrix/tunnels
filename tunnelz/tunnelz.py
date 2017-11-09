@@ -75,6 +75,8 @@ class Show (object):
             self.setup_rotation_test()
         elif self.config.get('aliasing_test', False):
             self.setup_aliasing_test()
+        elif self.config.get('multi_channel_test', False):
+            self.setup_multi_channel_test()
 
         # beam matrix minder
         self.beam_matrix = beam_matrix = BeamMatrixMinder(
