@@ -22,8 +22,7 @@ cpdef inline sine(float angle, float smoothing, float duty_cycle, bool pulse):
     else:
         angle = angle / duty_cycle
         if pulse:
-            angle = (angle - HALF_PI)
-            return (np.sin(TWOPI * angle) + 1.0) / 2.0
+            return (np.sin(TWOPI * angle - HALF_PI) + 1.0) / 2.0
         else:
             return np.sin(TWOPI * angle)
 
