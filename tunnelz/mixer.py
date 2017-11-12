@@ -15,6 +15,9 @@ class MixerMI (ModelInterface):
             self.update_controllers('set_level', i, layer.level)
             self.update_controllers('set_bump_button', i, layer.bump)
             self.update_controllers('set_mask_button', i, layer.mask)
+            for chan in xrange(self.mixer.n_video_channels):
+                self.update_controllers(
+                    'set_video_channel', i, chan, chan in layer.video_outs)
 
     def put_beam_in_layer(self, layer, beam):
         """Replace the beam in numbered layer with this beam."""
