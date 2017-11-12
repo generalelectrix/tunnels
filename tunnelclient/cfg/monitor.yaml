@@ -1,5 +1,5 @@
 server_hostname: "127.0.0.1"
-render_delay: 100
+render_delay: 40
 x_resolution: 640
 y_resolution: 360
 anti_alias: true
