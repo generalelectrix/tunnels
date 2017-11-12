@@ -1,5 +1,4 @@
 import copy
-from math import sin, pi
 from .waveforms import (
     sine,
     triangle,
@@ -12,9 +11,6 @@ from .waveforms import (
 )
 import numpy as np
 from .model_interface import ModelInterface, MiModelProperty, only_if_active
-
-TWOPI = 2*pi
-HALFPI = pi/2
 
 # FIXME-NUMERIC TARGETS
 class AnimationTarget (object):
