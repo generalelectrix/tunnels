@@ -1,10 +1,12 @@
-from collections import namedtuple, defaultdict
+from collections import namedtuple
 from functools import partial
 import logging as log
+from Queue import Queue
+
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
-from Queue import Queue
-import akai_apc40
+
+from . import akai_apc40
 
 NoteOn = namedtuple('NoteOn', ('channel', 'pitch', 'velocity'))
 NoteOff = namedtuple('NoteOff', ('channel', 'pitch', 'velocity'))
