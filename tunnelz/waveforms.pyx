@@ -9,6 +9,8 @@ from math import pi
 import numpy as np
 cimport numpy as np
 from cpython cimport bool
+from noise import pnoise1
+
 
 cdef float PI = np.pi
 cdef float HALF_PI = np.pi / 2.0
@@ -101,6 +103,19 @@ cpdef inline float sawtooth(float angle, float smoothing, float duty_cycle, bool
             return (angle - 1.0) / (0.5 - smoothing)
         else:
             return -(angle - 0.5)/smoothing
+
+cpdef inline float noise(float angle, float smoothing, float duty_cycle, bool pulse):
+    """Generate a point on 1D perlin noise."""
+    angle = angle % 1.0
+
+    if angle > duty_cycle or duty_cycle == 0.0:
+        return 0.0
+    else:
+        angle = angle / duty_cycle
+        if pulse:
+            return (np.sin(TWOPI * angle - HALF_PI) + 1.0) / 2.0
+        else:
+            return np.sin(TWOPI * angle)
 
 def sine_vector(np.ndarray[np.float_t, ndim=1] angles, np.float smoothing, np.float duty_cycle, bool pulse):
     cdef int size = angles.shape[0]

@@ -52,8 +52,9 @@ class WaveformType (object):
     Triangle = 'triangle'
     Square = 'square'
     Sawtooth = 'sawtooth'
+    Noise = 'noise'
 
-    VALUES = (Sine, Triangle, Square, Sawtooth)
+    VALUES = (Sine, Triangle, Square, Sawtooth, Noise)
 
 
 class AnimationMI (ModelInterface):
