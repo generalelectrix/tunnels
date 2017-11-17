@@ -39,7 +39,7 @@ class Show (object):
         self.control_requests = deque()
 
         self.use_midi = config['use_midi']
-        self.channel_count = config['channel_count']
+        self.channel_count = config.get('channel_count', 16)
 
         self.setup_models(load_path, save_path)
 
