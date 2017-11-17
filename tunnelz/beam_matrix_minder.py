@@ -23,12 +23,12 @@ class BeamMatrixMI (ModelInterface):
     The BeamMatrixMI depends on a MetaMI to retrieve and set the currently
     selected beam.  It is normally owned by the MetaMI.
     """
-    state = MiProperty(Idle, 'set_beam_matrix_state')
 
     def __init__(self, beam_matrix, meta_mi):
         super(BeamMatrixMI, self).__init__(model=beam_matrix)
         self.beam_matrix = beam_matrix
         self.meta_mi = meta_mi
+        self.state = Idle
 
     def initialize(self):
         super(BeamMatrixMI, self).initialize()
@@ -49,6 +49,7 @@ class BeamMatrixMI (ModelInterface):
             self.state = Idle
         else:
             self.state = state
+        self.update_controllers('set_beam_matrix_state', self.state)
 
     def update_button(self, row, column, state):
         self.update_controllers('set_button_state', row, column, state)

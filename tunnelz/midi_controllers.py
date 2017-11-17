@@ -149,7 +149,7 @@ class BeamMatrixMidiController (MidiController):
         self.mi.grid_button_press(row, col)
 
     def handle_state_button(self, mapping, payload):
-        self.mi.state = self.control_map.inv[mapping]
+        self.mi.state_toggle(self.control_map.inv[mapping])
 
     def set_beam_matrix_state(self, state):
         """Send UI update commands based on the beam matrix state."""
