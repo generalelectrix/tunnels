@@ -1,3 +1,4 @@
+from collections import deque
 import logging as log
 import traceback
 from .animation import WaveformType, AnimationTarget, AnimationMI
@@ -11,7 +12,6 @@ from .midi_controllers import (
     TunnelMidiController,
     AnimationMidiController,)
 from .mixer import Mixer, MixerMI
-from Queue import Empty
 from .render_server import RenderServer
 from . import sntp_service
 from monotonic import monotonic
@@ -36,8 +36,8 @@ class Show (object):
         else:
             log.basicConfig(level=log.INFO)
 
-        self.midi_in = midi_in = MidiInput()
-        self.midi_out = midi_out = MidiOutput()
+        # keep a queue of requests from control input handlers to be serviced.
+        self.control_requests = deque()
 
         self.use_midi = config['use_midi']
 
@@ -157,28 +157,44 @@ class Show (object):
 
     def setup_midi(self):
         if self.use_midi:
-            midi_in = self.midi_in
-            midi_out = self.midi_out
+
+            self.midi_inputs, self.midi_outputs = [], []
 
             midi_ports = self.config['midi_ports']
             for port in midi_ports:
-                midi_in.open_port(port)
-                midi_out.open_port(port)
+                midi_in = MidiInput(port, self.control_requests)
+                midi_out = MidiOutput(port)
+                self.midi_inputs.append(midi_in)
+                self.midi_outputs.append(midi_out)
 
-            self.metacontrol_midi_controller = MetaControlMidiController(
-                self.meta_mi, midi_in, midi_out)
+                # now attach all of the relevant controllers
+                def create_controller(cls, mi):
+                    controller = cls(mi, midi_out)
+                    midi_in.register_controller(controller)
 
-            self.bm_midi_controller = BeamMatrixMidiController(
-                self.meta_mi.beam_matrix_mi, midi_in, midi_out)
+                create_controller(MetaControlMidiController, self.meta_mi)
+                create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi)
+                create_controller(MixerMidiController, self.mixer_mi)
+                create_controller(TunnelMidiController, self.tunnel_mi)
+                create_controller(AnimationMidiController, self.animator_mi)
 
-            self.mixer_midi_controller = MixerMidiController(
-                self.mixer_mi, midi_in, midi_out)
+    def service_control_event(self):
+        """Service a single control event if one is pending."""
+        try:
+            control_request_ref = self.control_requests.pop()
+        except IndexError:
+            # no request pending
+            return
 
-            self.tunnel_midi_controller = TunnelMidiController(
-                self.tunnel_mi, midi_in, midi_out)
+        # control sources come in as weak references, only continue if the
+        # reference is still live
+        control_request = control_request_ref()
+        if control_request is None:
+            return
 
-            self.animation_midi_controller = AnimationMidiController(
-                self.animator_mi, midi_in, midi_out)
+        # service the request by calling it
+        control_request()
+
 
     def run(self, update_interval=20, n_frames=None, control_timeout=0.001):
         """Run the show loop.
@@ -216,16 +232,14 @@ class Show (object):
             while n_frames is None or update_number < n_frames:
                 # process a control event if one is pending
                 try:
-                    self.midi_in.receive(timeout=control_timeout)
-                except Empty:
-                    # fine if we didn't get a control event
-                    pass
-                except Exception as e:
+                    self.service_control_event()
+                except Exception as err:
                     # trap any exception here and log an error to avoid crashing
                     # the whole controller
                     log.error(
-                        "An error occurred while processing a midi control "
-                        "event:\n{}\n{}".format(e, traceback.format_exc()))
+                        "An error occurred while processing a control event:\n%s\n%s",
+                        err,
+                        traceback.format_exc())
 
                 # compute updates until we're current
                 now = time_millis()

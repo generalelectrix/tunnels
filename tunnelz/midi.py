@@ -96,9 +96,11 @@ class MidiInput (object):
         self.name = name
         self._port = port
 
-        weak_self_ref = weakref.ref(self)
+        # pass weak references to message handler to avoid accidentally keeping
+        # this input alive
+        handler_ref = weakref.ref(self._handle_message)
 
-        def parse(event, data):
+        def parse(event, _):
             """Callback called by the thread handling midi receipt.
 
             Parse the message into a more useful type, and queue up the message
@@ -110,7 +112,7 @@ class MidiInput (object):
             # put the message into the buffer to be handled by this input
             message_buffer.appendleft(message)
             # queue this input up for servicing
-            service_queue.appendleft(weak_self_ref)
+            service_queue.appendleft(handler_ref)
 
         port.set_callback(parse)
 
@@ -118,7 +120,7 @@ class MidiInput (object):
         """Register a midi controller with the input service."""
         self._controllers.add(controller)
 
-    def handle_message(self):
+    def _handle_message(self):
         """Dispatch a message from our message buffer if it isn't empty."""
         try:
             message = self._message_buffer.pop()

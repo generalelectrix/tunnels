@@ -19,10 +19,18 @@ def _build_grid_button_map():
 class MidiController (object):
     """Base class for midi controllers."""
 
-    def __init__(self, midi_in, midi_out):
+    def __init__(self, mi, midi_out):
         self.controls = {}
-        self.midi_in = midi_in
+        self.mi = mi
+        mi.controllers.add(self)
+
         self.midi_out = midi_out
+
+        self.setup_controls()
+
+    def setup_controls(self):
+        """Subclasses should override this method to wire up controls."""
+        pass
 
     def add_controls(self, control_map, callback):
         """Attach a control map to a specified callback.
@@ -46,10 +54,6 @@ class MidiController (object):
         """Set only one out of a set of controls on."""
         for value, mapping in control_map.iteritems():
             self.midi_out.send_from_mapping(mapping, int(value == set_value))
-
-    def register_callbacks(self):
-        """Register the control mapping callbacks with the midi input service."""
-        self.midi_in.register_controller(self)
 
     # --- helper functions for useful knobs ---
 
@@ -115,19 +119,12 @@ class BeamMatrixMidiController (MidiController):
         ButtonBeam: (1, 2) # on, orange
     }
 
-    def __init__(self, mi, midi_in, midi_out):
-        """Fire up a fresh controller and register it with the MI."""
-        super(BeamMatrixMidiController, self).__init__(midi_in, midi_out)
-        self.mi = mi
-        mi.controllers.add(self)
-
+    def setup_controls(self):
         # the controls which will be registered with the midi service
         self.set_callback_for_mappings(
             self.grid_button_map.itervalues(), self.handle_grid_button)
         self.set_callback_for_mappings(
             self.control_map.itervalues(), self.handle_state_button)
-
-        self.register_callbacks()
 
     def handle_grid_button(self, mapping, payload):
         row, col = self.grid_button_map.inv[mapping]
@@ -160,13 +157,9 @@ class BeamMatrixMidiController (MidiController):
 
 class MetaControlMidiController (MidiController):
 
-    def __init__(self, mi, midi_in, midi_out):
-        super(MetaControlMidiController, self).__init__(midi_in, midi_out)
-        self.mi = mi
-        mi.controllers.add(self)
-
+    def setup_controls(self):
         self.track_select = self.add_controls(
-            {chan: NoteOnMapping(chan, 0x33) for chan in xrange(mi.mixer_mi.mixer.n_layers)},
+            {chan: NoteOnMapping(chan, 0x33) for chan in xrange(self.mi.mixer_mi.mixer.n_layers)},
             self.handle_current_layer)
 
         # TODO: DRY out number of animators
@@ -176,8 +169,6 @@ class MetaControlMidiController (MidiController):
 
         self.set_callback(NoteOnMapping(0, 0x65), self.handle_animation_copy)
         self.set_callback(NoteOnMapping(0, 0x64), self.handle_animation_paste)
-
-        self.register_callbacks()
 
     def handle_current_layer(self, mapping, _):
         chan = mapping[0]
@@ -202,11 +193,7 @@ class MetaControlMidiController (MidiController):
 
 class MixerMidiController (MidiController):
 
-    def __init__(self, mi, midi_in, midi_out):
-        """Fire up a fresh controller and register it with the UI."""
-        super(MixerMidiController, self).__init__(midi_in, midi_out)
-        self.mi = mi
-        mi.controllers.add(self)
+    def setup_controls(self):
 
         self.channel_faders = bidict()
         self.bump_button_on = bidict()
@@ -215,13 +202,13 @@ class MixerMidiController (MidiController):
         self.look_indicators = bidict()
         self.video_channel_selects = bidict()
         # add controls for all mixer channels
-        for chan in xrange(mi.mixer.n_layers):
+        for chan in xrange(self.mi.mixer.n_layers):
             self.channel_faders[chan] = ControlChangeMapping(chan, 0x7)
             self.bump_button_on[chan] = NoteOnMapping(chan, 0x32)
             self.bump_button_off[chan] = NoteOffMapping(chan, 0x32)
             self.mask_buttons[chan] = NoteOnMapping(chan, 0x31)
             self.look_indicators[chan] = NoteOnMapping(chan, 0x30)
-            for video_chan in xrange(mi.mixer.n_video_channels):
+            for video_chan in xrange(self.mi.mixer.n_video_channels):
                 chan_0_midi_note = 66
                 mapping = NoteOnMapping(chan, chan_0_midi_note + video_chan)
                 self.video_channel_selects[(chan, video_chan)] = mapping
@@ -238,9 +225,6 @@ class MixerMidiController (MidiController):
         self.set_callback_for_mappings(
             self.video_channel_selects.itervalues(),
             self.handle_video_channel_select)
-
-        # register input mappings
-        self.register_callbacks()
 
     def handle_channel_fader(self, mapping, value):
         chan = self.channel_faders.inv[mapping]
@@ -296,10 +280,7 @@ class MixerMidiController (MidiController):
 
 class TunnelMidiController (MidiController):
 
-    def __init__(self, mi, midi_in, midi_out):
-        super(TunnelMidiController, self).__init__(midi_in, midi_out)
-        self.mi = mi
-        mi.controllers.add(self)
+    def setup_controls(self):
 
         self.unipolar_knobs = self.add_controls({
             'thickness': ControlChangeMapping(0, 21),
@@ -339,8 +320,6 @@ class TunnelMidiController (MidiController):
         self.set_callback(self.position_reset_mapping, self.handle_reset_beam_position)
         self.set_callback(self.rotation_reset_mapping, self.handle_reset_beam_rotation)
         self.set_callback(self.marquee_reset_mapping, self.handle_reset_beam_marquee)
-
-        self.register_callbacks()
 
     def handle_unipolar_knob(self, mapping, val):
         knob = self.unipolar_knobs.inv[mapping]
@@ -404,11 +383,7 @@ class TunnelMidiController (MidiController):
 
 class AnimationMidiController (MidiController):
 
-    def __init__(self, mi, midi_in, midi_out):
-        """Fire up a fresh controller and register it with the UI."""
-        super(AnimationMidiController, self).__init__(midi_in, midi_out)
-        self.mi = mi
-        mi.controllers.add(self)
+    def setup_controls(self):
 
         self.knobs = self.add_controls({
             'speed': ControlChangeMapping(0, 48),
@@ -455,9 +430,6 @@ class AnimationMidiController (MidiController):
 
         self.pulse_button = self.set_callback(NoteOnMapping(1, 0), self.handle_pulse_button)
         self.invert_button = self.set_callback(NoteOnMapping(1, 1), self.handle_invert_button)
-
-        # register input mappings
-        self.register_callbacks()
 
     def handle_knob(self, mapping, value):
         knob = self.knobs.inv[mapping]
