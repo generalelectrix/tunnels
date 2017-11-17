@@ -44,7 +44,6 @@ class MidiOutput (object):
         # TODO: this type of situation should not be special-cased here
         # individual controller initialization should be handled in a general-
         # purpose fashion.
-        # FIXME: should only send to APC40, not everything
         if name == akai_apc40.DEVICE_NAME:
             for note, val in akai_apc40.KNOB_SETTINGS:
                 mapping = ControlChangeMapping(0, note)
