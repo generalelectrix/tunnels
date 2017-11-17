@@ -101,7 +101,7 @@ class BeamMatrixMidiController (MidiController):
     })
 
     BeamMatrixLEDState = namedtuple(
-    "BeamMatrixLEDState", (BeamSave, LookSave, LookEdit, Delete))
+        "BeamMatrixLEDState", (BeamSave, LookSave, LookEdit, Delete))
 
     state_to_led_state_map = {
         Idle: BeamMatrixLEDState(0, 0, 0, 0),
