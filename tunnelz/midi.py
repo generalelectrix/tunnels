@@ -100,7 +100,7 @@ class MidiInput (object):
             # put the message into the buffer to be handled by this input
             message_buffer.appendleft(message)
             # queue this input up for servicing
-            service_queue.appendleft(handler_ref)
+            service_queue.put(handler_ref)
 
         port.set_callback(parse)
 

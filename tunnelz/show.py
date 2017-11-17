@@ -1,6 +1,6 @@
-from collections import deque
 import logging as log
 import traceback
+from Queue import Queue, Empty
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
 from .devices import initialize_device
@@ -36,7 +36,7 @@ class Show (object):
             log.basicConfig(level=log.INFO)
 
         # keep a queue of requests from control input handlers to be serviced.
-        self.control_requests = deque()
+        self.control_requests = Queue()
 
         self.use_midi = config['use_midi']
         self.channel_count = config.get('channel_count', 16)
@@ -191,11 +191,11 @@ class Show (object):
                 create_controller(TunnelMidiController, self.tunnel_mi)
                 create_controller(AnimationMidiController, self.animator_mi)
 
-    def service_control_event(self):
+    def service_control_event(self, timeout):
         """Service a single control event if one is pending."""
         try:
-            control_request_ref = self.control_requests.pop()
-        except IndexError:
+            control_request_ref = self.control_requests.get(True, timeout)
+        except Empty:
             # no request pending
             return
 
@@ -210,7 +210,7 @@ class Show (object):
         control_request.handle_message()
 
 
-    def run(self, update_interval=20, n_frames=None, control_timeout=0.001):
+    def run(self, update_interval=20, n_frames=None):
         """Run the show loop.
 
         Args:
@@ -218,7 +218,6 @@ class Show (object):
             n_frames (None or int): if None, run forever.  if finite number, only
                 run for this many state updates.
         """
-
         report_framerate = self.config["report_framerate"]
 
         update_number = 0
@@ -244,15 +243,6 @@ class Show (object):
 
         try:
             while n_frames is None or update_number < n_frames:
-                # process a control event if one is pending
-                try:
-                    self.service_control_event()
-                except Exception as e:
-                    # trap any exception here and log an error to avoid crashing
-                    # the whole controller
-                    log.error(
-                        "An error occurred while processing a midi control "
-                        "event:\n{}\n{}".format(e, traceback.format_exc()))
 
                 # compute updates until we're current
                 now = time_millis()
@@ -276,6 +266,24 @@ class Show (object):
                         update_number, last_update, self.mixer)
                     if rendered:
                         last_rendered_frame = update_number
+
+                # process a control event for a fraction of the time between now
+                # and when we will need to update state again
+                now = time_millis()
+                time_to_next_update = last_update + update_interval - now
+                if time_to_next_update > 0:
+                    try:
+                        # timeout arg is a float in seconds
+                        # only use, say, 80% of the time we have to prioritize
+                        # timely state updates
+                        timeout = 0.8 * time_to_next_update / 1000.
+                        self.service_control_event(timeout)
+                    except Exception as e:
+                        # trap any exception here and log an error to avoid crashing
+                        # the whole controller
+                        log.error(
+                            "An error occurred while processing a midi control "
+                            "event:\n{}\n{}".format(e, traceback.format_exc()))
 
         finally:
             render_server.stop()
