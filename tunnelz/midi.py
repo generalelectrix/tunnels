@@ -6,8 +6,6 @@ import weakref
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
 
-from . import akai_apc40
-
 NoteOn = namedtuple('NoteOn', ('channel', 'pitch', 'velocity'))
 NoteOff = namedtuple('NoteOff', ('channel', 'pitch', 'velocity'))
 ControlChange = namedtuple('ControlChange', ('channel', 'control', 'value'))
@@ -96,9 +94,9 @@ class MidiInput (object):
             as well as the input to be serviced.
             """
             (b0, b1, b2), _ = event
-            event_type, channel = b0 >> 4, b0 & 7
+            event_type, channel = b0 >> 4, b0 & 15
             message = (event_type_to_mapping[event_type](channel, b1), b2)
-            log.debug("Input {} received {}".format(name, message))
+
             # put the message into the buffer to be handled by this input
             message_buffer.appendleft(message)
             # queue this input up for servicing
