@@ -73,9 +73,12 @@ class MixerLayer (object):
 class Mixer (object):
     """Holds a collection of beams in layers, and understands how they are mixed."""
     def __init__(self, n_layers, n_video_channels):
-        self.n_layers = n_layers
         self.n_video_channels = n_video_channels
         self.layers = [MixerLayer(Tunnel()) for _ in xrange(n_layers)]
+
+    @property
+    def layer_count(self):
+        return len(self.layers)
 
     def put_beam_in_layer(self, layer, beam):
         self.layers[layer].beam = beam
@@ -113,7 +116,6 @@ class Mixer (object):
 
     def video_channel_in(self, layer, channel):
         """Draw this layer on the specified channel."""
-
         self.layers[layer].video_outs.add(channel)
 
     def video_channel_out(self, layer, channel):

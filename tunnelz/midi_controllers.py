@@ -157,9 +157,28 @@ class BeamMatrixMidiController (MidiController):
 
 class MetaControlMidiController (MidiController):
 
+    def __init__(self, mi, midi_out, page=0, page_size=8):
+        """Set up metacontrol for a particular page of channels.
+
+        This is all hardcoded for the APC20/40 and associated controls on the
+        touchOSC interface.
+        """
+        self.page = page
+        self.page_size = page_size
+        self.channel_offset = page * page_size
+
+        super(MetaControlMidiController, self).__init__(mi, midi_out)
+
     def setup_controls(self):
+        # offset the internal channels, but not the midi channels, based on
+        # what page we're controlling
+
+        ts_mappings = {
+            chan+self.channel_offset: NoteOnMapping(chan, 0x33)
+            for chan in xrange(self.page_size)}
+
         self.track_select = self.add_controls(
-            {chan: NoteOnMapping(chan, 0x33) for chan in xrange(self.mi.mixer_mi.mixer.n_layers)},
+            ts_mappings,
             self.handle_current_layer)
 
         # TODO: DRY out number of animators
@@ -171,7 +190,7 @@ class MetaControlMidiController (MidiController):
         self.set_callback(NoteOnMapping(0, 0x64), self.handle_animation_paste)
 
     def handle_current_layer(self, mapping, _):
-        chan = mapping[0]
+        chan = mapping[0] + self.channel_offset
         self.mi.set_current_layer(chan)
 
     def set_current_layer(self, layer):
@@ -191,7 +210,33 @@ class MetaControlMidiController (MidiController):
     def handle_animation_paste(self, _, val):
         self.mi.animation_paste()
 
+
+def ignore_out_of_range(method):
+    """Ignore a layer control action if it is out of range for this mixer."""
+    def check_range(self, layer, *args, **kwargs):
+        if self.layer_in_range(layer):
+            return method(self, layer, *args, **kwargs)
+    return check_range
+
 class MixerMidiController (MidiController):
+
+    def __init__(self, mi, midi_out, page=0, page_size=8):
+        """Set up a mixer to control a particular page of channels.
+
+        This is all hardcoded for the APC20/40 and associated controls on the
+        touchOSC interface.
+        """
+        assert (page+1) * page_size <= mi.mixer.layer_count
+        self.page = page
+        self.page_size = page_size
+
+        super(MixerMidiController, self).__init__(mi, midi_out)
+
+    def layer_in_range(self, layer):
+        """Return True if this layer is on the page assigned to this controller."""
+        start_chan = self.page * self.page_size
+        end_chan = start_chan + self.page_size - 1
+        return layer >= start_chan and layer <= end_chan
 
     def setup_controls(self):
 
@@ -201,17 +246,22 @@ class MixerMidiController (MidiController):
         self.mask_buttons = bidict()
         self.look_indicators = bidict()
         self.video_channel_selects = bidict()
-        # add controls for all mixer channels
-        for chan in xrange(self.mi.mixer.n_layers):
-            self.channel_faders[chan] = ControlChangeMapping(chan, 0x7)
-            self.bump_button_on[chan] = NoteOnMapping(chan, 0x32)
-            self.bump_button_off[chan] = NoteOffMapping(chan, 0x32)
-            self.mask_buttons[chan] = NoteOnMapping(chan, 0x31)
-            self.look_indicators[chan] = NoteOnMapping(chan, 0x30)
+        # add controls for all mixer channels for this page
+        offset = self.page * self.page_size
+
+        for chan in xrange(self.page_size):
+            # tricky; need to offset the internal channel while keeping the midi
+            # channel in the range 0-7 to match the APC layout.
+
+            self.channel_faders[chan+offset] = ControlChangeMapping(chan, 0x7)
+            self.bump_button_on[chan+offset] = NoteOnMapping(chan, 0x32)
+            self.bump_button_off[chan+offset] = NoteOffMapping(chan, 0x32)
+            self.mask_buttons[chan+offset] = NoteOnMapping(chan, 0x31)
+            self.look_indicators[chan+offset] = NoteOnMapping(chan, 0x30)
             for video_chan in xrange(self.mi.mixer.n_video_channels):
                 chan_0_midi_note = 66
                 mapping = NoteOnMapping(chan, chan_0_midi_note + video_chan)
-                self.video_channel_selects[(chan, video_chan)] = mapping
+                self.video_channel_selects[(chan+offset, video_chan)] = mapping
 
         # update the controls
         self.set_callback_for_mappings(
@@ -225,6 +275,8 @@ class MixerMidiController (MidiController):
         self.set_callback_for_mappings(
             self.video_channel_selects.itervalues(),
             self.handle_video_channel_select)
+
+
 
     def handle_channel_fader(self, mapping, value):
         chan = self.channel_faders.inv[mapping]
@@ -247,11 +299,13 @@ class MixerMidiController (MidiController):
         layer, video_chan = self.video_channel_selects.inv[mapping]
         self.mi.toggle_video_channel(layer, video_chan)
 
+    @ignore_out_of_range
     def set_level(self, layer, level):
         """Emit midi messages to update layer level."""
         mapping = self.channel_faders[layer]
         self.midi_out.send_from_mapping(mapping, self.unipolar_to_midi(level))
 
+    @ignore_out_of_range
     def set_bump_button(self, layer, state):
         """Emit the midi messages to change the bump button state.
 
@@ -262,16 +316,19 @@ class MixerMidiController (MidiController):
         mapping = self.bump_button_on[layer]
         self.midi_out.send_from_mapping(mapping, int(state))
 
+    @ignore_out_of_range
     def set_mask_button(self, layer, state):
         """Emit the midi messages to change the mask button state."""
         mapping = self.mask_buttons[layer]
         self.midi_out.send_from_mapping(mapping, int(state))
 
+    @ignore_out_of_range
     def set_look_indicator(self, layer, state):
         """Emit the midi messages to change the look indicator state."""
         mapping = self.look_indicators[layer]
         self.midi_out.send_from_mapping(mapping, int(state))
 
+    @ignore_out_of_range
     def set_video_channel(self, layer, video_chan, state):
         """Emit midi message to set layer select state."""
         mapping = self.video_channel_selects[(layer, video_chan)]

@@ -21,8 +21,6 @@ from .shapes import Line
 
 import json
 
-# how many beams you like?
-N_BEAMS = 8
 # how many virtual video channels should we send?
 N_VIDEO_CHANNELS = 8
 
@@ -41,6 +39,7 @@ class Show (object):
         self.control_requests = deque()
 
         self.use_midi = config['use_midi']
+        self.channel_count = config['channel_count']
 
         self.setup_models(load_path, save_path)
 
@@ -67,7 +66,8 @@ class Show (object):
 
     def setup_models(self, load_path, save_path):
         """Instantiate all of the model objects."""
-        self.mixer = Mixer(n_layers=N_BEAMS, n_video_channels=N_VIDEO_CHANNELS)
+        self.mixer = Mixer(
+            n_layers=self.channel_count, n_video_channels=N_VIDEO_CHANNELS)
 
         # if we're not using midi, set up test tunnels
         if self.config.get('stress_test', False):
@@ -99,7 +99,7 @@ class Show (object):
             tunnel.col_spread = 1.0
             tunnel.col_sat = 0.25
 
-            tunnel.marquee_speed = -1.0 + (2.0 * float(i) / float(N_BEAMS))
+            tunnel.marquee_speed = -1.0 + (2.0 * float(i) / float(self.channel_count))
 
             tunnel.blacking = 0
 
@@ -172,13 +172,19 @@ class Show (object):
                 initialize_device(midi_out)
 
                 # now attach all of the relevant controllers
-                def create_controller(cls, mi):
-                    controller = cls(mi, midi_out)
+                def create_controller(cls, mi, **kwargs):
+                    controller = cls(mi, midi_out, **kwargs)
                     midi_in.register_controller(controller)
 
-                create_controller(MetaControlMidiController, self.meta_mi)
+                # TEMP: multi-page test
+                if midi_in.name == "Akai APC20":
+                    kwargs = dict(page=1)
+                else:
+                    kwargs = {}
+
+                create_controller(MetaControlMidiController, self.meta_mi, **kwargs)
                 create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi)
-                create_controller(MixerMidiController, self.mixer_mi)
+                create_controller(MixerMidiController, self.mixer_mi, **kwargs)
                 create_controller(TunnelMidiController, self.tunnel_mi)
                 create_controller(AnimationMidiController, self.animator_mi)
 
