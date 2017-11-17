@@ -92,10 +92,11 @@ class BeamMatrixMinder (object):
     automatically perform deep copying to ensure that beams can only be swapped
     out.
     """
-    n_rows = 5 # using only clip launch
-    n_columns = 8 # ignoring master track
 
-    def __init__(self, load_path=None, save_path=None):
+    n_rows = 5
+    col_per_page = 8
+
+    def __init__(self, n_pages, load_path=None, save_path=None):
         """Create a new minder, backed by a file path.
 
         The minder will keep the cached version on disk in sync.
@@ -104,6 +105,7 @@ class BeamMatrixMinder (object):
         but a save file will be created using a uuid.  This file can be overridden
         by passing save_path.
         """
+        self.n_columns = n_pages * self.col_per_page
         self._cache_path = (
                 save_path if save_path is not None
                 else "tunnelz_save_{}.tunnel".format(uuid1()))

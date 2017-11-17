@@ -80,8 +80,11 @@ class Show (object):
             self.setup_multi_channel_test()
 
         # beam matrix minder
+        # FIXME: hardcoded page count
         self.beam_matrix = beam_matrix = BeamMatrixMinder(
-            load_path=load_path, save_path=save_path)
+            n_pages=2,
+            load_path=load_path,
+            save_path=save_path)
 
         # save a copy of the default tunnel for sanity. Don't erase it!
         beam_matrix.put_beam(4, 7, Tunnel())
@@ -176,15 +179,15 @@ class Show (object):
                     controller = cls(mi, midi_out, **kwargs)
                     midi_in.register_controller(controller)
 
-                # TEMP: multi-page test
+                # FIXME: shitty hack to use the APC20 as a wing
                 if midi_in.name == "Akai APC20":
-                    kwargs = dict(page=1)
+                    page = 1
                 else:
-                    kwargs = {}
+                    page = 0
 
-                create_controller(MetaControlMidiController, self.meta_mi, **kwargs)
-                create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi)
-                create_controller(MixerMidiController, self.mixer_mi, **kwargs)
+                create_controller(MetaControlMidiController, self.meta_mi, page=page)
+                create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
+                create_controller(MixerMidiController, self.mixer_mi, page=page)
                 create_controller(TunnelMidiController, self.tunnel_mi)
                 create_controller(AnimationMidiController, self.animator_mi)
 
