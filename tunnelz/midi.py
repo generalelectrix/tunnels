@@ -40,17 +40,6 @@ class MidiOutput (object):
         self.name = name
         self.port = port
 
-        # TODO: this type of situation should not be special-cased here
-        # individual controller initialization should be handled in a general-
-        # purpose fashion.
-        if name == akai_apc40.DEVICE_NAME:
-            for note, val in akai_apc40.KNOB_SETTINGS:
-                mapping = ControlChangeMapping(0, note)
-                b0 = message_type_to_event_type[mapping.kind] + mapping[0]
-                event = (b0, mapping[1], val)
-                log.debug("sending {}, {} to {}".format(mapping, val, name))
-                port.send_message(event)
-
     def send_from_mappings(self, messages):
         """Send an arbitrary number of midi messages.
 
@@ -98,7 +87,7 @@ class MidiInput (object):
 
         # pass weak references to message handler to avoid accidentally keeping
         # this input alive
-        handler_ref = weakref.ref(self._handle_message)
+        handler_ref = weakref.ref(self)
 
         def parse(event, _):
             """Callback called by the thread handling midi receipt.
@@ -109,6 +98,7 @@ class MidiInput (object):
             (b0, b1, b2), _ = event
             event_type, channel = b0 >> 4, b0 & 7
             message = (event_type_to_mapping[event_type](channel, b1), b2)
+            log.debug("Input {} received {}".format(name, message))
             # put the message into the buffer to be handled by this input
             message_buffer.appendleft(message)
             # queue this input up for servicing
@@ -120,17 +110,17 @@ class MidiInput (object):
         """Register a midi controller with the input service."""
         self._controllers.add(controller)
 
-    def _handle_message(self):
+    def handle_message(self):
         """Dispatch a message from our message buffer if it isn't empty."""
         try:
             message = self._message_buffer.pop()
         except IndexError:
             log.debug(
-                "Midi input %s had no message yet was called to handle one.",
-                self.name)
+                "Midi input {} had no message yet was called to handle one."
+                .format(self.name))
             return
 
-        log.debug("Input %s received %s", self.name, message)
+        log.debug("Input {} received {}".format(self.name, message))
         self._dispatch(*message)
 
     def _dispatch(self, mapping, payload):

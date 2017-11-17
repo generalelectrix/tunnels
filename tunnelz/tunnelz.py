@@ -3,6 +3,7 @@ import logging as log
 import traceback
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
+from .devices import initialize_device
 from .meta_mi import MetaMI
 from .midi import MidiInput, MidiOutput
 from .midi_controllers import (
@@ -167,6 +168,9 @@ class Show (object):
                 self.midi_inputs.append(midi_in)
                 self.midi_outputs.append(midi_out)
 
+                # perform device-specific init
+                initialize_device(midi_out)
+
                 # now attach all of the relevant controllers
                 def create_controller(cls, mi):
                     controller = cls(mi, midi_out)
@@ -190,10 +194,11 @@ class Show (object):
         # reference is still live
         control_request = control_request_ref()
         if control_request is None:
+            log.debug("Got a dead control request reference.")
             return
 
-        # service the request by calling it
-        control_request()
+        # service the request by calling its handle method
+        control_request.handle_message()
 
 
     def run(self, update_interval=20, n_frames=None, control_timeout=0.001):
@@ -233,13 +238,12 @@ class Show (object):
                 # process a control event if one is pending
                 try:
                     self.service_control_event()
-                except Exception as err:
+                except Exception as e:
                     # trap any exception here and log an error to avoid crashing
                     # the whole controller
                     log.error(
-                        "An error occurred while processing a control event:\n%s\n%s",
-                        err,
-                        traceback.format_exc())
+                        "An error occurred while processing a midi control "
+                        "event:\n{}\n{}".format(e, traceback.format_exc()))
 
                 # compute updates until we're current
                 now = time_millis()
