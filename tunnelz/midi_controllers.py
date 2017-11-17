@@ -240,6 +240,7 @@ def ignore_out_of_range(method):
             return method(self, layer, *args, **kwargs)
     return check_range
 
+
 class MixerMidiController (MidiController):
 
     def __init__(self, mi, midi_out, page=0, page_size=8):
@@ -267,23 +268,18 @@ class MixerMidiController (MidiController):
         self.bump_button_off = bidict()
         self.mask_buttons = bidict()
         self.look_indicators = bidict()
-        self.video_channel_selects = bidict()
+
         # add controls for all mixer channels for this page
         offset = self.page * self.page_size
 
         for chan in xrange(self.page_size):
             # tricky; need to offset the internal channel while keeping the midi
             # channel in the range 0-7 to match the APC layout.
-
             self.channel_faders[chan+offset] = ControlChangeMapping(chan, 0x7)
             self.bump_button_on[chan+offset] = NoteOnMapping(chan, 0x32)
             self.bump_button_off[chan+offset] = NoteOffMapping(chan, 0x32)
             self.mask_buttons[chan+offset] = NoteOnMapping(chan, 0x31)
             self.look_indicators[chan+offset] = NoteOnMapping(chan, 0x30)
-            for video_chan in xrange(self.mi.mixer.n_video_channels):
-                chan_0_midi_note = 66
-                mapping = NoteOnMapping(chan, chan_0_midi_note + video_chan)
-                self.video_channel_selects[(chan+offset, video_chan)] = mapping
 
         # update the controls
         self.set_callback_for_mappings(
@@ -294,10 +290,10 @@ class MixerMidiController (MidiController):
             self.bump_button_off.itervalues(), self.handle_bump_button_off)
         self.set_callback_for_mappings(
             self.mask_buttons.itervalues(), self.handle_mask_button)
-        self.set_callback_for_mappings(
-            self.video_channel_selects.itervalues(),
-            self.handle_video_channel_select)
 
+        # configure video channel select
+        # broken out as a method as we will probably want to move this eventually
+        self.setup_video_channel_select()
 
 
     def handle_channel_fader(self, mapping, value):
@@ -316,10 +312,6 @@ class MixerMidiController (MidiController):
     def handle_mask_button(self, mapping, _):
         chan = self.mask_buttons.inv[mapping]
         self.mi.toggle_mask_state(chan)
-
-    def handle_video_channel_select(self, mapping, _):
-        layer, video_chan = self.video_channel_selects.inv[mapping]
-        self.mi.toggle_video_channel(layer, video_chan)
 
     @ignore_out_of_range
     def set_level(self, layer, level):
@@ -350,7 +342,28 @@ class MixerMidiController (MidiController):
         mapping = self.look_indicators[layer]
         self.midi_out.send_from_mapping(mapping, int(state))
 
-    @ignore_out_of_range
+    # FIXME: this is a temporary hack until we improve the iPad interface to
+    # be able to perform a generic page select action.
+    def setup_video_channel_select(self):
+        self.video_channel_selects = bidict()
+
+        for chan in xrange(self.mi.mixer.layer_count):
+            for video_chan in xrange(self.mi.mixer.n_video_channels):
+                chan_0_midi_note = 66
+                mapping = NoteOnMapping(chan, chan_0_midi_note + video_chan)
+                self.video_channel_selects[(chan, video_chan)] = mapping
+
+        self.set_callback_for_mappings(
+            self.video_channel_selects.itervalues(),
+            self.handle_video_channel_select)
+
+
+    def handle_video_channel_select(self, mapping, _):
+        layer, video_chan = self.video_channel_selects.inv[mapping]
+        self.mi.toggle_video_channel(layer, video_chan)
+
+    # note that we don't need to check layer range here as the video selection
+    # interface spans all 16 channels natively
     def set_video_channel(self, layer, video_chan, state):
         """Emit midi message to set layer select state."""
         mapping = self.video_channel_selects[(layer, video_chan)]
