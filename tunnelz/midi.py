@@ -1,7 +1,7 @@
-from collections import namedtuple
+from collections import namedtuple, deque
 from functools import partial
 import logging as log
-from Queue import Queue
+import weakref
 
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
@@ -32,14 +32,13 @@ def list_ports():
 
 
 class MidiOutput (object):
-    """Aggregate multiple midi outputs into one front end."""
-    def __init__(self):
-        self.ports = {}
+    """Wrap a midi port into a more useful interface."""
 
-    def open_port(self, port_number):
+    def __init__(self, port_number):
         """Add a new port to send messages to."""
         port, name = open_midiport(port_number, type_="output")
-        self.ports[name] = port
+        self.name = name
+        self.port = port
 
         # TODO: this type of situation should not be special-cased here
         # individual controller initialization should be handled in a general-
@@ -51,11 +50,6 @@ class MidiOutput (object):
                 event = (b0, mapping[1], val)
                 log.debug("sending {}, {} to {}".format(mapping, val, name))
                 port.send_message(event)
-
-    def close_port(self, port_name):
-        """Remove and close a port."""
-        port = self.ports.pop(port_name)
-        port.close_port()
 
     def send_from_mappings(self, messages):
         """Send an arbitrary number of midi messages.
@@ -69,9 +63,8 @@ class MidiOutput (object):
         """Send a midi message from a mapping and a payload."""
         b0 = message_type_to_event_type[mapping.kind] + mapping[0]
         event = (b0, mapping[1], value)
-        for name, p in self.ports.iteritems():
-            log.debug("sending {}, {} to {}".format(mapping, value, name))
-            p.send_message(event)
+        log.debug("sending {}, {} to {}".format(mapping, value, self.name))
+        self.port.send_message(event)
 
 # mapping between event type and constructor
 event_type_to_mapping = {
@@ -81,71 +74,66 @@ event_type_to_mapping = {
 }
 
 class MidiInput (object):
-    """A queue-based system for dealing with receiving midi messages."""
+    """A queue-based system for dealing with receiving midi messages.
 
-    def __init__(self):
-        """Initialize the message queue."""
-        self.queue = Queue()
-        self.ports = {}
-        #self.mappings = defaultdict(set)
-        self.controllers = set()
+    Each input parses and buffers its own midi messages.  Whenever a message is
+    received, we put this input into a queue of inputs to be serviced in order
+    of message arrival by the main thread.  This allows each input to be bound
+    to its own controller while still providing a serialization checkpoint.
+    """
 
-    def register_controller(self, controller):
-        """Register a midi controller with the input service."""
-        self.controllers.add(controller)
+    def __init__(self, port_number, service_queue):
+        """Initialize a midi output from a port number.
 
-    def unregister_controller(self, controller):
-        """Unregister a midi controller from the input service."""
-        self.controllers.discard(controller)
+        Hold onto a reference to the queue that will service this input during
+        main thread control processing.
+        """
+        self._message_buffer = message_buffer = deque()
 
-    # def register_mappings(self, mappings):
-    #     """Register handlers for midi mappings.
+        self._controllers = set()
 
-    #     mappings is an iterable of tuples of (MidiMapping, handler_method).
-    #     handler_method should be a callable that can handle a midi message.
-    #     """
-    #     for mapping, handler in mappings.iteritems():
-    #         self.mappings[mapping].add(handler)
-
-    # def unregister_mappings(self, mappings):
-    #     """Unregister a handler for an iterable of midi mappings.
-
-    #     mappings is an iterable of tuples of (MidiMapping, handler_method).
-    #     """
-    #     for mapping, handler in mappings.iteritems():
-    #         self.mappings[mapping].discard(handler)
-
-    def open_port(self, port_number):
-        """Open a new midi port to feed the message queue."""
         port, name = open_midiport(port_number)
-        self.ports[name] = port
+        self.name = name
+        self._port = port
 
-        queue = self.queue
+        weak_self_ref = weakref.ref(self)
+
         def parse(event, data):
+            """Callback called by the thread handling midi receipt.
+
+            Parse the message into a more useful type, and queue up the message
+            as well as the input to be serviced.
+            """
             (b0, b1, b2), _ = event
             event_type, channel = b0 >> 4, b0 & 7
             message = (event_type_to_mapping[event_type](channel, b1), b2)
-            queue.put(message)
+            # put the message into the buffer to be handled by this input
+            message_buffer.appendleft(message)
+            # queue this input up for servicing
+            service_queue.appendleft(weak_self_ref)
+
         port.set_callback(parse)
 
-    def close_port(self, port_name):
-        port = self.ports.pop(port_name)
-        port.cancel_callback()
-        port.close_port()
+    def register_controller(self, controller):
+        """Register a midi controller with the input service."""
+        self._controllers.add(controller)
 
-    def receive(self, timeout=None):
-        """Block until a message appears on the queue, then dispatch it.
+    def handle_message(self):
+        """Dispatch a message from our message buffer if it isn't empty."""
+        try:
+            message = self._message_buffer.pop()
+        except IndexError:
+            log.debug(
+                "Midi input %s had no message yet was called to handle one.",
+                self.name)
+            return
 
-        Optionally specify a timeout in seconds.
-        """
-        message = self.queue.get(timeout=timeout)
-        log.debug("received {}".format(message))
+        log.debug("Input %s received %s", self.name, message)
         self._dispatch(*message)
-        return message
 
     def _dispatch(self, mapping, payload):
         """Dispatch a midi message to the registered handlers."""
-        for controller in self.controllers:
+        for controller in self._controllers:
             handler = controller.controls.get(mapping, None)
             if handler is not None:
                 handler(mapping, payload)
