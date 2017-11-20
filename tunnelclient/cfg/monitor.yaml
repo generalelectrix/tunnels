@@ -1,7 +1,7 @@
 server_hostname: "127.0.0.1"
 render_delay: 40
-x_resolution: 640
-y_resolution: 360
+x_resolution: 960
+y_resolution: 540
 anti_alias: true
 fullscreen: false
 alpha_blend: true
