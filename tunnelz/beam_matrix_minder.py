@@ -45,10 +45,10 @@ class BeamMatrixMI (ModelInterface):
 
     def state_toggle(self, state):
         """Toggle state based on an input state command."""
-        if self.state == state:
-            self.state = Idle
-        else:
-            self.state = state
+        self.set_state(Idle if self.state == state else state)
+
+    def set_state(self, state):
+        self.state = state
         self.update_controllers('set_beam_matrix_state', self.state)
 
     def update_button(self, row, column, state):
@@ -65,25 +65,25 @@ class BeamMatrixMI (ModelInterface):
             beam = self.meta_mi.get_current_beam()
             self.beam_matrix.put_beam(row, column, beam)
             self.update_button(row, column, ButtonBeam)
-            self.state = Idle
+            self.set_state(Idle)
         elif self.state == LookSave:
             # dump mixer state into a saved look
             look = self.meta_mi.get_copy_of_current_look()
             self.beam_matrix.put_look(row, column, look)
             self.update_button(row, column, ButtonLook)
-            self.state = Idle
+            self.set_state(Idle)
         elif self.state == Delete:
             # empty a button
             self.beam_matrix.clear_element(row, column)
             self.update_button(row, column, ButtonEmpty)
-            self.state = Idle
+            self.set_state(Idle)
         elif (self.state == LookEdit and
             self.beam_matrix.element_has_data(row, column) and
             self.beam_matrix.element_is_look(row, column)):
             # only do anything if there is actually a look in the slot
             look = self.beam_matrix.get_element(row, column)
             self.meta_mi.set_look(look)
-            self.state = Idle
+            self.set_state(Idle)
 
 
 class BeamMatrixMinder (object):
