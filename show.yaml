@@ -1,4 +1,4 @@
-use_midi: true
+use_midi: false
 midi_ports: [0, 1, 2]
 report_framerate: false
 log_level: "info"

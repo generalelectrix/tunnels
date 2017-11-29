@@ -42,7 +42,8 @@ use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
 use std::time::Duration;
 use std::sync::mpsc::Receiver;
-use std::thread::sleep;
+use std::thread;
+use std::sync::{Arc, Mutex};
 use draw::Draw;
 use zmq::Context;
 use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
@@ -52,7 +53,7 @@ use snapshot_manager::InterpResult::*;
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
-    timesync: Timesync,
+    timesync: Arc<Mutex<Timesync>>,
     cfg: ClientConfig
 }
 
@@ -61,11 +62,8 @@ impl App {
 
         // Get frame interpolation from the snapshot service.
         let delayed_time =
-            self.timesync.now_as_timestamp()
+            self.timesync.lock().unwrap().now_as_timestamp()
             - self.cfg.render_delay as f64;
-
-        println!("Delayed time: {}", delayed_time);
-        println!("Latest snapshot: {}", self.snapshot_manager.latest_time());
 
         let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
             NoData => (Some("No data available from snapshot service.".to_string()), None),
@@ -112,25 +110,6 @@ fn main() {
 
     let cfg = config_from_command_line();
 
-    // Change this to OpenGL::V2_1 if not working.
-    let opengl = OpenGL::V3_2;
-
-    // Create an Glutin window.
-    let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
-            "tunnelclient",
-            [cfg.x_resolution, cfg.y_resolution]
-        )
-        .opengl(opengl)
-        .exit_on_esc(true)
-        .vsync(true)
-        .samples(if cfg.anti_alias {4} else {0})
-        .fullscreen(cfg.fullscreen)
-        .build()
-        .unwrap();
-
-    window.set_capture_cursor(true);
-    window.set_max_fps(120);
-
     // Create zmq context.
     let mut ctx = Context::new();
 
@@ -142,7 +121,7 @@ fn main() {
         "Synchronizing timing.  This will take about {} seconds.",
         (timesync_client.poll_period * timesync_client.n_meas as u32).as_secs());
 
-    let sync = timesync_client.synchronize().unwrap();
+    let initial_sync = timesync_client.synchronize().unwrap();
 
     // Set up snapshot reception and management.
     let snapshot_queue: Receiver<Snapshot> =
@@ -152,13 +131,57 @@ fn main() {
     let snapshot_manager = SnapshotManager::new(snapshot_queue);
 
     // sleep for a render delay to make sure we have snapshots before we start rendering
-    sleep(Duration::from_millis(cfg.render_delay));
+    thread::sleep(Duration::from_millis(cfg.render_delay as u64));
 
-    // Create a new game and run it.
+    let opengl = OpenGL::V3_2;
+
+    // Create the window.
+    let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
+        format!("tunnelclient: channel {}", cfg.video_channel),
+        [cfg.x_resolution, cfg.y_resolution]
+    )
+        .opengl(opengl)
+        .exit_on_esc(true)
+        .vsync(true)
+        .samples(if cfg.anti_alias {4} else {0})
+        .fullscreen(cfg.fullscreen)
+        .build()
+        .unwrap();
+
+    window.set_capture_cursor(true);
+    window.set_max_fps(120);
+
+    let timesync_period = cfg.timesync_interval.clone();
+    let timesync = Arc::new(Mutex::new(initial_sync));
+    let timesync_remote = timesync.clone();
+
+    // Spin off another thread to periodically update our host time synchronization.
+    thread::spawn(move || {
+
+        loop {
+            thread::sleep(timesync_period);
+            match timesync_client.synchronize() {
+                Ok(sync) => {
+                    let mut timesync = timesync_remote.lock().unwrap();
+                    let old_estimate = timesync.now_as_timestamp();
+                    let new_estimate = sync.now_as_timestamp();
+                    println!(
+                        "Updating time sync.  Change from previous estimate: {}",
+                        new_estimate - old_estimate);
+                    *timesync = sync;
+                },
+                Err(e) => {
+                    println!("{}", e);
+                }
+            }
+        }
+    });
+
+    // Create the application object and start the event loop.
     let mut app = App {
         gl: GlGraphics::new(opengl),
         snapshot_manager,
-        timesync: sync,
+        timesync,
         cfg
     };
 

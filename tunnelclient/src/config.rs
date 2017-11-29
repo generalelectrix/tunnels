@@ -2,11 +2,13 @@ use yaml_rust::YamlLoader;
 use std::fs::File;
 use std::io::Read;
 use std::{env, cmp};
+use std::time::Duration;
 
 pub struct ClientConfig {
     pub server_hostname: String,
     pub video_channel: String,
-    pub render_delay: u64, // milliseconds
+    pub render_delay: f64, // milliseconds
+    pub timesync_interval: Duration,
     pub x_resolution: u32,
     pub y_resolution: u32,
     pub anti_alias: bool,
@@ -40,14 +42,16 @@ pub fn config_from_command_line() -> ClientConfig {
     let x_resolution = cfg["x_resolution"].as_i64().unwrap() as u32;
     let y_resolution = cfg["y_resolution"].as_i64().unwrap() as u32;
     let host = cfg["server_hostname"].as_str().unwrap().trim().to_string();
+    let timesync_interval = Duration::from_millis(cfg["timesync_interval"].as_i64().unwrap() as u64);
 
     println!("Running on video channel {}.", channel_filter_str);
     ClientConfig {
         server_hostname: host,
         video_channel: channel_filter_str,
-        render_delay: cfg["render_delay"].as_i64().unwrap() as u64,
-        x_resolution: x_resolution,
-        y_resolution: y_resolution,
+        render_delay: cfg["render_delay"].as_f64().unwrap(),
+        timesync_interval,
+        x_resolution,
+        y_resolution,
         anti_alias: cfg["anti_alias"].as_bool().unwrap(),
         fullscreen: cfg["fullscreen"].as_bool().unwrap(),
         critical_size: cmp::min(x_resolution, y_resolution) as f64,

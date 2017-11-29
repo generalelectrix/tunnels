@@ -143,12 +143,12 @@ impl SnapshotManager {
         }
     }
 
-    pub fn latest_time(&self) -> Timestamp {
-        if let Some(s) = self.snapshots.front() {
-            s.time as f64
-        }
-        else {
-            0.0
+    /// Return the timestamp of the most recent snapshot.
+    /// Return 0 if the manager is empty.
+    pub fn latest_snapshot_time(&self) -> Timestamp {
+        match self.snapshots.front() {
+            Some(s) => s.time as Timestamp,
+            None => 0.0
         }
     }
 }
