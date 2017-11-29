@@ -14,7 +14,7 @@ from .midi_controllers import (
     AnimationMidiController,)
 from .mixer import Mixer, MixerMI
 from .render_server import RenderServer
-from . import sntp_service
+from . import timesync
 from monotonic import monotonic
 from .tunnel import Tunnel, TunnelMI
 from .shapes import Line
@@ -222,10 +222,10 @@ class Show (object):
 
         update_number = 0
 
-        # start sntp time synchronization service
+        # start time synchronization service
         # FIXME no clean quit mechanism!
-        log.info("Starting SNTP time service.")
-        sntp_service.run_service()
+        log.info("Starting time synchronization service.")
+        timesync.run_service()
         log.info("SNTP time service started.")
 
         # start up the render server

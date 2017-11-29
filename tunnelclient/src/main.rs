@@ -49,7 +49,7 @@ use snapshot_manager::InterpResult::*;
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
-    sntp_sync: Timesync,
+    timesync: Timesync,
     cfg: ClientConfig
 }
 
@@ -58,7 +58,7 @@ impl App {
 
         // Get frame interpolation from the snapshot service.
         let delayed_time =
-            self.sntp_sync.now_as_timestamp()
+            self.timesync.now_as_timestamp()
             - self.cfg.render_delay as f64;
 
         let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
@@ -153,7 +153,7 @@ fn main() {
     let mut app = App {
         gl: GlGraphics::new(opengl),
         snapshot_manager: snapshot_manager,
-        sntp_sync: sync,
+        timesync: sync,
         cfg: cfg
     };
 
