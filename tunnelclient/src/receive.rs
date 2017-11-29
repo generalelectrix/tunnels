@@ -110,21 +110,6 @@ pub trait Receive {
         Deserialize::deserialize(&mut de)
     }
 
-    /// Drain the socket message queue and return the most recent message, if available.
-    fn receive_newest<T: DeserializeOwned>(&mut self) -> Option<ReceiveResult<T>> {
-        // Receive messages as long as we have them here and now.
-        let mut buf = None;
-        loop {
-            if let Some(new_buf) = self.receive_buffer(false) {
-                buf = Some(new_buf);
-            } else { break }
-        }
-        match buf {
-            Some(b) => Some(self.deserialize_msg(b)),
-            None => None
-        }
-    }
-
     /// Receive a single message.
     fn receive<T: DeserializeOwned>(&mut self, block: bool) -> Option<ReceiveResult<T>> {
         if let Some(buf) = self.receive_buffer(block) {
