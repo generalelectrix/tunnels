@@ -19,7 +19,7 @@ from monotonic import monotonic
 from .tunnel import Tunnel, TunnelMI
 from .shapes import Line
 
-import json
+import yaml
 
 # how many virtual video channels should we send?
 N_VIDEO_CHANNELS = 8
@@ -28,7 +28,7 @@ class Show (object):
     """Encapsulate the show runtime environment."""
     def __init__(self, config_file="show.cfg", load_path=None, save_path=None):
         with open(config_file, 'r') as cfg:
-            self.config = config = json.load(cfg)
+            self.config = config = yaml.load(cfg)
 
         if config["log_level"] == "debug":
             log.basicConfig(level=log.DEBUG)

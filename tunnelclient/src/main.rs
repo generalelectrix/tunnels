@@ -3,6 +3,9 @@
 #[macro_use]
 extern crate serde_derive;
 
+#[macro_use]
+extern crate simple_error;
+
 extern crate piston_window;
 extern crate interpolation;
 extern crate graphics;
@@ -34,7 +37,7 @@ use graphics::clear;
 use opengl_graphics::{ GlGraphics, OpenGL };
 use piston_window::*;
 use receive::{SubReceiver, Snapshot};
-use timesync::{synchronize, Timesync};
+use timesync::{TimesyncClient, Timesync};
 use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
 use std::time::Duration;
@@ -128,16 +131,15 @@ fn main() {
     // Create zmq context.
     let mut ctx = Context::new();
 
+    // Start up the timesync service.
+    let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, &mut ctx);
+
     // Synchronize timing with master host.
-    // Send 10 sync packets, half a second apart.
-    let time_poll_period = Duration::from_millis(500);
-    let n_time_calls: usize = 10;
     println!(
         "Synchronizing timing.  This will take about {} seconds.",
-        (time_poll_period * n_time_calls as u32).as_secs());
+        (timesync_client.poll_period * timesync_client.n_meas as u32).as_secs());
 
-    let sync = synchronize(
-        &cfg.server_hostname, time_poll_period, n_time_calls);
+    let sync = timesync_client.synchronize().unwrap();
 
     // Set up snapshot reception and management.
     let snapshot_queue: Receiver<Snapshot> =
@@ -152,9 +154,9 @@ fn main() {
     // Create a new game and run it.
     let mut app = App {
         gl: GlGraphics::new(opengl),
-        snapshot_manager: snapshot_manager,
+        snapshot_manager,
         timesync: sync,
-        cfg: cfg
+        cfg
     };
 
     while let Some(e) = window.next() {
