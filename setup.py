@@ -15,7 +15,7 @@ requires = [
     'pyzmq',
     'python-rtmidi',
     'monotonic',
-    'yaml',
+    'pyYAML',
 ]
 
 extensions = [

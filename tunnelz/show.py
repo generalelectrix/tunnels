@@ -26,7 +26,7 @@ N_VIDEO_CHANNELS = 8
 
 class Show (object):
     """Encapsulate the show runtime environment."""
-    def __init__(self, config_file="show.cfg", load_path=None, save_path=None):
+    def __init__(self, config_file="show.yaml", load_path=None, save_path=None):
         with open(config_file, 'r') as cfg:
             self.config = config = yaml.load(cfg)
 
@@ -116,21 +116,16 @@ class Show (object):
                 anim.n_periods = 3 # more than zero periods for vector math
 
     def setup_rotation_test(self):
-        """Set up one tunnel to test line feature."""
+        """Set up one tunnel to test basic rotation."""
         layer = self.mixer.layers[0]
         layer.level = 1.0
         tunnel = layer.beam
-        tunnel.display_as = Line
 
         tunnel.segs = 40
+        tunnel.aspect_ratio = 0.5
 
-        tunnel.rot_speed = 0.0
-        tunnel.marquee_speed = 0.2
-
-        # xMove = tunnel.anims[0]
-        # xMove.speed = 0.2
-        # xMove.weight = 0.5
-        # xMove.target = AnimationTarget.Size
+        tunnel.rot_speed = 0.2
+        tunnel.marquee_speed = 0.0
 
     def setup_aliasing_test(self):
         """Set up one tunnel to test render smoothness."""
@@ -224,9 +219,9 @@ class Show (object):
 
         # start time synchronization service
         # FIXME no clean quit mechanism!
-        log.info("Starting time synchronization service.")
+        log.info("Starting time synchronization service...")
         timesync.run_service()
-        log.info("SNTP time service started.")
+        log.info("Time synchronization service started.")
 
         # start up the render server
         render_server = RenderServer(report=report_framerate)

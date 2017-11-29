@@ -142,6 +142,15 @@ impl SnapshotManager {
             }
         }
     }
+
+    pub fn latest_time(&self) -> Timestamp {
+        if let Some(s) = self.snapshots.front() {
+            s.time as f64
+        }
+        else {
+            0.0
+        }
+    }
 }
 
 mod tests {

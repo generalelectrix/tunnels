@@ -25,13 +25,13 @@ fn duration_to_f64(dur: Duration) -> f64 {
 }
 
 /// Provide estimates of the offset between this host's monotonic clock and the server's.
-pub struct TimesyncClient {
+pub struct Client {
     socket: Socket,
     pub poll_period: Duration,
     pub n_meas: usize,
 }
 
-impl TimesyncClient {
+impl Client {
     /// Create a new 0mq REQ connected to the provided socket addr.
     /// Not a lot of error handling in here; we instantiate this entity at startup and if we can't
     /// create it we can't continue anyway.
@@ -40,7 +40,7 @@ impl TimesyncClient {
         let addr = format!("tcp://{}:{}", host, PORT);
         socket.connect(&addr).unwrap();
 
-        TimesyncClient {socket, poll_period: Duration::from_millis(500), n_meas: 10}
+        Client {socket, poll_period: Duration::from_millis(500), n_meas: 10}
     }
 
     /// Take a time delay measurement.
@@ -92,7 +92,7 @@ impl TimesyncClient {
     }
 }
 
-impl Receive for TimesyncClient {
+impl Receive for Client {
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
         let flag = if block {0} else {DONTWAIT};
         if let Ok(b) = self.socket.recv_bytes(flag) {Some(b)}
@@ -132,11 +132,11 @@ fn test_duration_f64_round_trip() {
     assert_eq!(delta, rt);
 }
 
-// This test requires the remote SNTP service to be running.
+// This test requires the remote timesync service to be running.
 #[test]
-#[ignore]
+//[ignore]
 fn test_synchronize() {
-    let mut client = TimesyncClient::new("localhost", &mut Context::new());
+    let mut client = Client::new("localhost", &mut Context::new());
     let sync = client.synchronize().unwrap();
     println!("Ref time: {:?}, remote estimate: {}", sync.ref_time, sync.host_ref_time);
 }

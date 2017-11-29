@@ -37,7 +37,7 @@ use graphics::clear;
 use opengl_graphics::{ GlGraphics, OpenGL };
 use piston_window::*;
 use receive::{SubReceiver, Snapshot};
-use timesync::{TimesyncClient, Timesync};
+use timesync::{Client as TimesyncClient, Timesync};
 use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
 use std::time::Duration;
@@ -63,6 +63,9 @@ impl App {
         let delayed_time =
             self.timesync.now_as_timestamp()
             - self.cfg.render_delay as f64;
+
+        println!("Delayed time: {}", delayed_time);
+        println!("Latest snapshot: {}", self.snapshot_manager.latest_time());
 
         let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
             NoData => (Some("No data available from snapshot service.".to_string()), None),
