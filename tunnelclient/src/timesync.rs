@@ -23,35 +23,35 @@ fn duration_to_f64(dur: Duration) -> f64 {
     dur.as_secs() as f64 + dur.subsec_nanos() as f64 / 1_000_000_000.0
 }
 
-/// Interact with our homebrew quasi-SNTP service.
+/// Interact with our homebrew timesync service.
 /// Not a lot of error handling in here.  This service runs at startup and
 /// if it isn't successful we have to bail regardless.
-struct SntpClient {
+struct TimesyncClient {
     socket: Socket
 }
 
-impl SntpClient {
+impl TimesyncClient {
     /// Create a new 0mq REQ connected to the provided socket addr.
     fn new(host: &str, port: u64, ctx: &mut Context) -> Self {
         let socket = ctx.socket(zmq::REQ).unwrap();
         let addr = format!("tcp://{}:{}", host, port);
         socket.connect(&addr).unwrap();
 
-        SntpClient{socket: socket}
+        TimesyncClient {socket: socket}
     }
 
     /// Take a time delay measurement.
-    fn take_measurement(&mut self) -> SntpMeasurement {
+    fn take_measurement(&mut self) -> TimesyncMeasurement {
         let now = Instant::now();
         self.socket.send(&[][..], 0).unwrap();
         let buf = self.receive_buffer(true).unwrap();
         let elapsed = now.elapsed();
         let timestamp: f64 = self.deserialize_msg(buf).unwrap();
-        SntpMeasurement{sent: now, round_trip: elapsed, timestamp: timestamp}
+        TimesyncMeasurement {sent: now, round_trip: elapsed, timestamp: timestamp}
     }
 }
 
-impl Receive for SntpClient {
+impl Receive for TimesyncClient {
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
         let flag = if block {0} else {DONTWAIT};
         if let Ok(b) = self.socket.recv_bytes(flag) {Some(b)}
@@ -60,19 +60,19 @@ impl Receive for SntpClient {
 }
 
 #[derive(Debug)]
-struct SntpMeasurement {
+struct TimesyncMeasurement {
     sent: Instant,
     round_trip: Duration,
     timestamp: Timestamp
 }
 
 #[derive(Debug)]
-pub struct SntpSync {
+pub struct Timesync {
     ref_time: Instant,
     host_ref_time: Timestamp
 }
 
-impl SntpSync {
+impl Timesync {
     /// Return our estimate of what time it is now on the host.
     /// This is in milliseconds.
     pub fn now_as_timestamp(&self) -> Timestamp {
@@ -82,10 +82,10 @@ impl SntpSync {
 }
 
 /// Get the offset between this machine's system clock and the host's.
-pub fn synchronize(host: &str, poll_period: Duration, n_meas: usize) -> SntpSync {
+pub fn synchronize(host: &str, poll_period: Duration, n_meas: usize) -> Timesync {
     let mut ctx = Context::new();
     let reference_time = Instant::now();
-    let mut req = SntpClient::new(host, SNTP_PORT, &mut ctx);
+    let mut req = TimesyncClient::new(host, SNTP_PORT, &mut ctx);
     // Take a bunch of measurements, sleeping in between.
     let mut measurements =
         (0..n_meas)
@@ -114,9 +114,9 @@ pub fn synchronize(host: &str, poll_period: Duration, n_meas: usize) -> SntpSync
             let delta = (m.sent + m.round_trip / 2).duration_since(reference_time);
             m.timestamp - duration_to_f64(delta)
         });
-    // Take the average of these estaimtes, and we're done
+    // Take the average of these estimates, and we're done
     let best_remote_time_estimate = mean(remote_time_estimates);
-    SntpSync{ref_time: reference_time, host_ref_time: best_remote_time_estimate}
+    Timesync {ref_time: reference_time, host_ref_time: best_remote_time_estimate}
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn test_duration_f64_round_trip() {
     let delta = now.elapsed();
     let rt = f64_to_duration(duration_to_f64(delta));
     println!("delta: {:?}, rt: {:?}", delta, rt);
-    assert!(delta == rt);
+    assert_eq!(delta, rt);
 }
 
 // This test requires the remote SNTP service to be running.

@@ -23,7 +23,7 @@ mod constants {
 mod utils;
 mod config;
 mod receive;
-mod sntp_service;
+mod timesync;
 mod interpolate;
 mod draw;
 mod snapshot_manager;
@@ -34,7 +34,7 @@ use graphics::clear;
 use opengl_graphics::{ GlGraphics, OpenGL };
 use piston_window::*;
 use receive::{SubReceiver, Snapshot};
-use sntp_service::{synchronize, SntpSync};
+use timesync::{synchronize, Timesync};
 use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
 use std::time::Duration;
@@ -49,7 +49,7 @@ use snapshot_manager::InterpResult::*;
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
-    sntp_sync: SntpSync,
+    sntp_sync: Timesync,
     cfg: ClientConfig
 }
 
