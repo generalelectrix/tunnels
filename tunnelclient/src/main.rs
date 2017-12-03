@@ -37,7 +37,7 @@ use graphics::clear;
 use opengl_graphics::{ GlGraphics, OpenGL };
 use piston_window::*;
 use receive::{SubReceiver, Snapshot};
-use timesync::{Client as TimesyncClient, Timesync};
+use timesync::{Client as TimesyncClient, Synchronizer};
 use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
 use std::time::Duration;
@@ -53,7 +53,7 @@ use snapshot_manager::InterpResult::*;
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
-    timesync: Arc<Mutex<Timesync>>,
+    timesync: Arc<Mutex<Synchronizer>>,
     cfg: ClientConfig
 }
 
@@ -94,7 +94,7 @@ impl App {
         }
     }
 
-    fn update(&mut self) {
+    fn update(&mut self, dt: f64) {
         // Update the state of the snapshot manager.
         let update_result = self.snapshot_manager.update();
         if let Err(e) = update_result {
@@ -103,6 +103,7 @@ impl App {
             };
             println!("An error occurred during snapshot update: {:?}", msg);
         }
+        self.timesync.lock().unwrap().update(dt);
     }
 }
 
@@ -121,7 +122,7 @@ fn main() {
         "Synchronizing timing.  This will take about {} seconds.",
         (timesync_client.poll_period * timesync_client.n_meas as u32).as_secs());
 
-    let initial_sync = timesync_client.synchronize().unwrap();
+    let synchronizer = Synchronizer::new(timesync_client.synchronize().unwrap());
 
     // Set up snapshot reception and management.
     let snapshot_queue: Receiver<Snapshot> =
@@ -152,7 +153,7 @@ fn main() {
     window.set_max_fps(120);
 
     let timesync_period = cfg.timesync_interval.clone();
-    let timesync = Arc::new(Mutex::new(initial_sync));
+    let timesync = Arc::new(Mutex::new(synchronizer));
     let timesync_remote = timesync.clone();
 
     // Spin off another thread to periodically update our host time synchronization.
@@ -162,13 +163,13 @@ fn main() {
             thread::sleep(timesync_period);
             match timesync_client.synchronize() {
                 Ok(sync) => {
-                    let mut timesync = timesync_remote.lock().unwrap();
-                    let old_estimate = timesync.now_as_timestamp();
                     let new_estimate = sync.now_as_timestamp();
+                    let mut synchronizer = timesync_remote.lock().unwrap();
+                    let old_estimate = synchronizer.now_as_timestamp();
                     println!(
                         "Updating time sync.  Change from previous estimate: {}",
                         new_estimate - old_estimate);
-                    *timesync = sync;
+                    synchronizer.update_current(sync);
                 },
                 Err(e) => {
                     println!("{}", e);
@@ -187,8 +188,8 @@ fn main() {
 
     while let Some(e) = window.next() {
 
-        if let Some(_) = e.update_args() {
-            app.update();
+        if let Some(update_args) = e.update_args() {
+            app.update(update_args.dt);
         }
 
         if let Some(r) = e.render_args() {

@@ -6,9 +6,11 @@ use receive::{Receive};
 use std::time::{Instant, Duration};
 use std::thread::sleep;
 use std::error::Error;
+use std::mem;
 use stats::{mean, stddev};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
+use interpolation::lerp;
 
 pub type Timestamp = f64;
 
@@ -57,7 +59,6 @@ impl Client {
     }
 
     /// Get the offset between this machine's system clock and the host's.
-    /// Dumb error type as all we'll do it log it and move on with life or panic at startup.
     pub fn synchronize(&mut self) -> Result<Timesync, Box<Error>> {
         let reference_time = Instant::now();
         // Take a bunch of measurements, sleeping in between.
@@ -107,18 +108,70 @@ struct Measurement {
     timestamp: Timestamp
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Timesync {
     ref_time: Instant,
     host_ref_time: Timestamp
 }
 
 impl Timesync {
-    /// Return our estimate of what time it is now on the host.
+    /// Return an estimate of what time it is now on the host.
     /// This is in milliseconds.
     pub fn now_as_timestamp(&self) -> Timestamp {
         let time_secs = self.host_ref_time + duration_to_f64(self.ref_time.elapsed());
         time_secs * 1000.0
+    }
+}
+
+/// Provide smoothed estimates of the current time on the host.
+/// Ensures that we don't suddenly draw a jerk when we update our estimate of the host time offset.
+#[derive(Debug, Clone)]
+pub struct Synchronizer {
+    /// Previous estimate of time on the host.
+    last: Timesync,
+    /// Most up-to-date estimate of time on the host.
+    current: Timesync,
+    /// Linear interpolation parameter on [0.0, 1.0].
+    alpha: f64,
+}
+
+impl Synchronizer {
+    /// Instantiate a new synchronizer from an initial time estimate on the host.
+    pub fn new(sync: Timesync) -> Self {
+        Synchronizer {
+            last: sync.clone(),
+            current: sync,
+            alpha: 1.0,
+        }
+    }
+
+    /// Update the current estimate and reset the interpolation parameter to 0.
+    pub fn update_current(&mut self, sync: Timesync) {
+        mem::swap(&mut self.last, &mut self.current);
+        self.current = sync;
+        self.alpha = 0.0;
+    }
+
+    /// Update the interpolation parameter during state update.
+    /// Sole argument is the update interval in seconds.
+    /// Smooth the host time update over one second by advancing alpha by dt and clamping to 1.0.
+    pub fn update(&mut self, dt: f64) {
+        self.alpha += dt;
+        if self.alpha >= 1.0 {
+            self.alpha = 1.0;
+        }
+    }
+
+    /// Get a (possibly interpolated) estimate of the time on the host.
+    pub fn now_as_timestamp(&mut self) -> Timestamp {
+        let current = self.current.now_as_timestamp();
+        if self.alpha == 1.0 {
+            current
+        }
+        else {
+            let old = self.last.now_as_timestamp();
+            lerp(&old, &current, &self.alpha)
+        }
     }
 }
 
@@ -134,7 +187,7 @@ fn test_duration_f64_round_trip() {
 
 // This test requires the remote timesync service to be running.
 #[test]
-//[ignore]
+#[ignore]
 fn test_synchronize() {
     let mut client = Client::new("localhost", &mut Context::new());
     let sync = client.synchronize().unwrap();
