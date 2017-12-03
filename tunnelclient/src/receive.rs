@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 use utils::{almost_eq, angle_almost_eq};
 
-// types used for communication with host server
+// --- types used for communication with host server ---
 
 /// A command to draw a single arc segment.
 #[derive(Deserialize, Debug, Clone)]
@@ -84,7 +84,8 @@ pub struct Snapshot {
 
 impl Eq for Snapshot {}
 
-// Receive and handle messages
+
+// --- receive and handle messages ---
 
 
 pub type ReceiveResult<T> = Result<T, Error>;
@@ -110,7 +111,7 @@ pub trait Receive {
 
 }
 
-/// Receive messages via a zmq socket.
+/// Receive messages via a zmq SUB socket, draining a PUB/SUB network.
 pub struct SubReceiver {
     socket: Socket
 }
@@ -123,13 +124,13 @@ impl SubReceiver {
         socket.connect(&addr).unwrap();
         socket.set_subscribe(topic);
 
-        SubReceiver {socket: socket}
+        SubReceiver {socket}
     }
 
+    // FIXME should pass errors back to main thread instead of ignoring.
     /// Run this receiver in a thread, posting deserialized messages to a channel.
     /// Takes ownership of the receiver and moves to the worker thread.
     /// Quits when the output queue is dropped.
-    /// FIXME should pass errors back to main thread instead of ignoring.
     pub fn run_async<T: DeserializeOwned + Send + 'static>(mut self) -> Receiver<T> {
         let (tx, rx) = channel::<T>();
         thread::spawn(move || {

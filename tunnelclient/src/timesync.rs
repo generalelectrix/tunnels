@@ -16,12 +16,14 @@ pub type Timestamp = f64;
 
 const PORT: u64 = 8989;
 
+/// Convert floating-point seconds into a Duration.
 fn f64_to_duration(v: f64) -> Duration {
     let secs = v.floor();
     let nanos = (v - secs) * 1_000_000_000.0;
     Duration::new(secs as u64, nanos as u32)
 }
 
+/// Convert a Duration into floating-point seconds.
 fn duration_to_f64(dur: Duration) -> f64 {
     dur.as_secs() as f64 + dur.subsec_nanos() as f64 / 1_000_000_000.0
 }
@@ -29,7 +31,9 @@ fn duration_to_f64(dur: Duration) -> f64 {
 /// Provide estimates of the offset between this host's monotonic clock and the server's.
 pub struct Client {
     socket: Socket,
+    /// Wait this long between individual time offset measurements.
     pub poll_period: Duration,
+    /// Make this many measurements in each determination of the time offset.
     pub n_meas: usize,
 }
 

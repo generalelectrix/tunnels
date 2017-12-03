@@ -47,7 +47,7 @@ use zmq::Context;
 use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use snapshot_manager::InterpResult::*;
 
-
+/// Top-level structure that owns the application.
 pub struct App {
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
