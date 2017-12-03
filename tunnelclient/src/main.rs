@@ -1,5 +1,3 @@
-// #![feature(rustc_macro)]
-
 #[macro_use]
 extern crate serde_derive;
 
@@ -20,9 +18,9 @@ extern crate stats;
 
 mod constants {
     use std::f64::consts::PI;
-
     pub const TWOPI: f64 = 2.0 * PI;
 }
+
 mod utils;
 mod config;
 mod receive;
@@ -103,6 +101,7 @@ impl App {
             };
             println!("An error occurred during snapshot update: {:?}", msg);
         }
+        // Update the interpolation parameter on our time synchronization.
         self.timesync.lock().unwrap().update(dt);
     }
 }
@@ -111,7 +110,6 @@ fn main() {
 
     let cfg = config_from_command_line();
 
-    // Create zmq context.
     let mut ctx = Context::new();
 
     // Start up the timesync service.
@@ -131,12 +129,13 @@ fn main() {
 
     let snapshot_manager = SnapshotManager::new(snapshot_queue);
 
-    // sleep for a render delay to make sure we have snapshots before we start rendering
+    // Sleep for a render delay to make sure we have snapshots before we start rendering.
     thread::sleep(Duration::from_millis(cfg.render_delay as u64));
+
+    // Create the window.
 
     let opengl = OpenGL::V3_2;
 
-    // Create the window.
     let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
         format!("tunnelclient: channel {}", cfg.video_channel),
         [cfg.x_resolution, cfg.y_resolution]
@@ -152,11 +151,12 @@ fn main() {
     window.set_capture_cursor(true);
     window.set_max_fps(120);
 
+    // Spin off another thread to periodically update our host time synchronization.
+
     let timesync_period = cfg.timesync_interval.clone();
     let timesync = Arc::new(Mutex::new(synchronizer));
     let timesync_remote = timesync.clone();
 
-    // Spin off another thread to periodically update our host time synchronization.
     thread::spawn(move || {
 
         loop {

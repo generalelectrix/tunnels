@@ -13,7 +13,7 @@ use utils::{almost_eq, angle_almost_eq};
 
 // types used for communication with host server
 
-
+/// A command to draw a single arc segment.
 #[derive(Deserialize, Debug, Clone)]
 pub struct ArcSegment {
     pub level: f64,
@@ -73,6 +73,8 @@ impl Eq for ArcSegment {}
 
 pub type LayerCollection = Vec<Vec<ArcSegment>>;
 
+/// A complete single-frame video snapshot.
+/// This is the top-level structure sent in each serialized frame.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Snapshot {
     pub frame_number: u64,
@@ -81,18 +83,6 @@ pub struct Snapshot {
 }
 
 impl Eq for Snapshot {}
-
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_arc_eq() {
-        let a = ArcSegment::for_test(1.0, 0.5);
-        let b = ArcSegment::for_test(0.4, 0.5);
-        assert_eq!(a, a);
-        assert_ne!(a, b);
-    }
-}
 
 // Receive and handle messages
 
@@ -177,6 +167,14 @@ impl Receive for SubReceiver {
     }
 }
 
+
+#[test]
+fn test_arc_eq() {
+    let a = ArcSegment::for_test(1.0, 0.5);
+    let b = ArcSegment::for_test(0.4, 0.5);
+    assert_eq!(a, a);
+    assert_ne!(a, b);
+}
 
 #[test]
 fn test_parse_arc() {
