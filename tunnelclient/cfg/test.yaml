@@ -1,6 +1,6 @@
 server_hostname: "127.0.0.1"
 render_delay: 100
-timesync_interval: 1000
+timesync_interval: 60000
 x_resolution: 1280
 y_resolution: 720
 anti_alias: true
