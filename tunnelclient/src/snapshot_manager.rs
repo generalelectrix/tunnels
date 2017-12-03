@@ -2,7 +2,7 @@
 //! and interpolating between them on demand.
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, TryRecvError};
-use sntp_service::{Timestamp};
+use timesync::{Timestamp};
 use receive::{Snapshot, LayerCollection};
 use interpolate::Interpolate;
 
@@ -140,6 +140,15 @@ impl SnapshotManager {
                 }
                 InterpResult::Error(Vec::from(snaps.clone()))
             }
+        }
+    }
+
+    /// Return the timestamp of the most recent snapshot.
+    /// Return 0 if the manager is empty.
+    pub fn latest_snapshot_time(&self) -> Timestamp {
+        match self.snapshots.front() {
+            Some(s) => s.time as Timestamp,
+            None => 0.0
         }
     }
 }

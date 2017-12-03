@@ -1,0 +1,8 @@
+use_midi: false
+midi_ports: [0, 1, 2]
+report_framerate: false
+log_level: "info"
+stress_test: false
+rotation_test: false
+aliasing_test: false
+multi_channel_test: false

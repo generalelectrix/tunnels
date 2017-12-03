@@ -1,8 +1,12 @@
+//! Perform linear interpolation between entities.
+
 use interpolation::lerp;
 use receive::{ArcSegment};
 use utils::{min_included_angle, modulo};
 
+/// Allow an entity to be interpolated with another instance of Self.
 pub trait Interpolate {
+    /// Perform interpolation between self and other given easing parameter alpha on [0.0, 1.0].
     fn interpolate_with(&self, other: &Self, alpha: f64) -> Self;
 }
 
@@ -20,6 +24,8 @@ impl<T: Interpolate + Clone> Interpolate for Vec<T> {
 }
 
 /// Interpolate a pytunnel-style unit angle.
+/// Ensure that we always interpolate along the shortest path between the two angular coordinates
+/// that we are easing between.
 #[inline(always)]
 fn interpolate_angle(a: f64, b: f64, alpha: f64) -> f64 {
     let shortest_angle = min_included_angle(a, b);

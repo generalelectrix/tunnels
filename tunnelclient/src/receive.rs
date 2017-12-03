@@ -11,9 +11,9 @@ use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 use utils::{almost_eq, angle_almost_eq};
 
-// types used for communication with host server
+// --- types used for communication with host server ---
 
-
+/// A command to draw a single arc segment.
 #[derive(Deserialize, Debug, Clone)]
 pub struct ArcSegment {
     pub level: f64,
@@ -73,6 +73,8 @@ impl Eq for ArcSegment {}
 
 pub type LayerCollection = Vec<Vec<ArcSegment>>;
 
+/// A complete single-frame video snapshot.
+/// This is the top-level structure sent in each serialized frame.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Snapshot {
     pub frame_number: u64,
@@ -82,19 +84,8 @@ pub struct Snapshot {
 
 impl Eq for Snapshot {}
 
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_arc_eq() {
-        let a = ArcSegment::for_test(1.0, 0.5);
-        let b = ArcSegment::for_test(0.4, 0.5);
-        assert_eq!(a, a);
-        assert_ne!(a, b);
-    }
-}
-
-// Receive and handle messages
+// --- receive and handle messages ---
 
 
 pub type ReceiveResult<T> = Result<T, Error>;
@@ -110,21 +101,6 @@ pub trait Receive {
         Deserialize::deserialize(&mut de)
     }
 
-    /// Drain the socket message queue and return the most recent message, if available.
-    fn receive_newest<T: DeserializeOwned>(&mut self) -> Option<ReceiveResult<T>> {
-        // Receive messages as long as we have them here and now.
-        let mut buf = None;
-        loop {
-            if let Some(new_buf) = self.receive_buffer(false) {
-                buf = Some(new_buf);
-            } else { break }
-        }
-        match buf {
-            Some(b) => Some(self.deserialize_msg(b)),
-            None => None
-        }
-    }
-
     /// Receive a single message.
     fn receive<T: DeserializeOwned>(&mut self, block: bool) -> Option<ReceiveResult<T>> {
         if let Some(buf) = self.receive_buffer(block) {
@@ -135,7 +111,7 @@ pub trait Receive {
 
 }
 
-/// Receive messages via a zmq socket.
+/// Receive messages via a zmq SUB socket, draining a PUB/SUB network.
 pub struct SubReceiver {
     socket: Socket
 }
@@ -148,13 +124,13 @@ impl SubReceiver {
         socket.connect(&addr).unwrap();
         socket.set_subscribe(topic);
 
-        SubReceiver {socket: socket}
+        SubReceiver {socket}
     }
 
+    // FIXME should pass errors back to main thread instead of ignoring.
     /// Run this receiver in a thread, posting deserialized messages to a channel.
     /// Takes ownership of the receiver and moves to the worker thread.
     /// Quits when the output queue is dropped.
-    /// FIXME should pass errors back to main thread instead of ignoring.
     pub fn run_async<T: DeserializeOwned + Send + 'static>(mut self) -> Receiver<T> {
         let (tx, rx) = channel::<T>();
         thread::spawn(move || {
@@ -192,6 +168,14 @@ impl Receive for SubReceiver {
     }
 }
 
+
+#[test]
+fn test_arc_eq() {
+    let a = ArcSegment::for_test(1.0, 0.5);
+    let b = ArcSegment::for_test(0.4, 0.5);
+    assert_eq!(a, a);
+    assert_ne!(a, b);
+}
 
 #[test]
 fn test_parse_arc() {
