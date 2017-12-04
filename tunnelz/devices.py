@@ -17,9 +17,9 @@ def init_apc40(midi_out):
         (0x3A, knob_single),
         (0x3B, knob_single),
 
-        (0x3C, knob_volume),
-        (0x3D, knob_pan),
-        (0x3E, knob_off),
+        (0x3C, knob_pan),
+        (0x3D, knob_volume),
+        (0x3E, knob_single),
         (0x3F, knob_off),
     ]
 
