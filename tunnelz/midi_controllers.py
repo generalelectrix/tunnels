@@ -13,7 +13,7 @@ from .beam_matrix_minder import (
 from bidict import bidict
 from collections import namedtuple
 from .midi import NoteOnMapping, NoteOffMapping, ControlChangeMapping
-
+import logging as log
 
 def _build_grid_button_map(page):
     mapping = {}
@@ -442,14 +442,17 @@ class TunnelMidiController (MidiController):
 
         Blacking is a bipolar knob on the range [-16, 16].
         """
-        self.mi.blacking = int((2*(val / 127.0) - 1) * 16)
+        blacking = int((2*(val / 127.0) - 1) * 16)
+        log.debug("Blacking in: {}".format(blacking))
+        self.mi.blacking = blacking
 
     def set_blacking(self, blacking):
         """Convert blacking back to midi.
 
         Blacking is a bipolar knob on the range [-16, 16].
         """
-        midi_blacking = int(127*((blacking / 16.0) + 1) / 2)
+        midi_blacking = int(127.0*((blacking / 16.0) + 1.0) / 2.0)
+        log.debug("Blacking out: {}".format(midi_blacking))
         self.midi_out.send_from_mapping(self.blacking_mapping, midi_blacking)
 
     def handle_nudge_x_pos(self, _, val):
