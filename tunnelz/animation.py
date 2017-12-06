@@ -1,5 +1,6 @@
 import copy
 from math import sin, pi
+from .clock import Clock
 from .waveforms import (
     sine,
     triangle,
@@ -61,6 +62,8 @@ class WaveformType (object):
 
 
 class AnimationMI (ModelInterface):
+    max_clock_rate = 0.0015 # radial units/ms; this is 3pi/sec
+
     type = MiModelProperty('type', 'set_type')
     pulse = MiModelProperty('pulse', 'set_pulse')
     invert = MiModelProperty('invert', 'set_invert')
@@ -75,6 +78,23 @@ class AnimationMI (ModelInterface):
         super(AnimationMI, self).initialize()
         self.update_controllers('set_pulse', self.model.pulse)
         self.update_controllers('set_invert', self.model.invert)
+        self.update_controllers('set_knob', self._unit_speed, knob='speed')
+
+    @property
+    def _unit_speed(self):
+        """Return the animator's internal clock's speed as a unit float."""
+        return self.model.internal_clock.rate / self.max_clock_rate
+
+    @property
+    @only_if_active
+    def speed(self):
+        return self._unit_speed
+
+    @speed.setter
+    @only_if_active
+    def speed(self, speed):
+        self.model.internal_clock.rate = speed * self.max_clock_rate
+        self.update_controllers('set_knob', speed, knob='speed')
 
     @only_if_active
     def toggle_pulse(self):
@@ -103,7 +123,6 @@ vector_waveforms = {
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""
 
-    max_speed = 0.0015 # radial units/ms; this is 3pi/sec
     wave_smoothing_scale = 0.25
 
     def __init__(self):
@@ -113,37 +132,40 @@ class Animation (object):
         self.invert = False
         self.n_periods = 0
         self.target = AnimationTarget.Size
-        self.speed = 0.0
         self.weight = 0.0 # unipolar float
         self.duty_cycle = 1.0
         self.smoothing = 0.25
 
-        self.curr_angle = 0.0
+        self.internal_clock = Clock()
+
+    @property
+    def clock(self):
+        """Return the clock instance this animation is listening to.
+
+        For now, always return the internal clock.
+        """
+        return self.internal_clock
 
     @property
     def active(self):
         return self.weight > 0.0
 
     def copy(self):
-        """At present, Animation only contains references to immutable types.
-
-        We can thus just use shallow copy and everything is cool.
-
-        In the future, when animations aren't a dumb pile of ints and floats,
-        this method will need to be revisited.
-        """
-        return copy.copy(self)
+        """Return a deep copy of this animation."""
+        copy_of_self = copy.copy(self)
+        copy_of_self.internal_clock = self.internal_clock.copy()
+        return copy_of_self
 
     def update_state(self, delta_t):
         if self.active:
-            self.curr_angle = (self.curr_angle - self.speed*self.max_speed*delta_t) % 1.0
+            self.internal_clock.update_state(delta_t)
 
     def get_value(self, angle_offset):
         """Return the current value of the animation, with an offset."""
         if not self.active:
             return 0.
 
-        angle = angle_offset*self.n_periods + self.curr_angle
+        angle = angle_offset*self.n_periods + self.clock.curr_angle
         func = scalar_waveforms[self.type]
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
         if self.invert:
@@ -158,7 +180,7 @@ class Animation (object):
         if not self.active:
             return np.zeros(shape, float)
 
-        angle = angle_offsets*self.n_periods + self.curr_angle
+        angle = angle_offsets*self.n_periods + self.clock.curr_angle
         func = vector_waveforms[self.type]
 
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
