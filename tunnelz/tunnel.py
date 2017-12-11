@@ -228,28 +228,31 @@ class Tunnel (Beam):
         seg_angle = (marquee_interval*seg_num+self.curr_marquee_angle) % 1.0
         rel_angle = marquee_interval*seg_num
 
+        # accumulate animation adjustments based on targets
         for anim in self.anims:
             target = anim.target
 
-            # what is this animation targeting?
+            anim_values = anim.get_value_vector(rel_angle)
+
+            # TODO: refactor away this massive chain
             if target == AnimationTarget.Thickness:
-                thickness_adjust += anim.get_value_vector(rel_angle)
+                thickness_adjust += anim_values
             elif target == AnimationTarget.Size:
-                size_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
-            if target == AnimationTarget.AspectRatio: # ellipsing
-                aspect_ratio_adjust += anim.get_value_vector(rel_angle)
+                size_adjust += anim_values * 0.5 # limit adjustment
+            elif target == AnimationTarget.AspectRatio:
+                aspect_ratio_adjust += anim_values
             elif target == AnimationTarget.Color:
-                col_center_adjust += anim.get_value_vector(rel_angle) * 0.5
+                col_center_adjust += anim_values * 0.5
             elif target == AnimationTarget.ColorSpread:
-                col_width_adjust += anim.get_value_vector(rel_angle)
+                col_width_adjust += anim_values
             elif target == AnimationTarget.ColorPeriodicity:
-                col_period_adjust += anim.get_value_vector(rel_angle) * 8
+                col_period_adjust += anim_values * 8
             elif target == AnimationTarget.ColorSaturation:
-                col_sat_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
+                col_sat_adjust += anim_values * 0.5 # limit adjustment
             elif target == AnimationTarget.PositionX:
-                x_adjust += anim.get_value_vector(rel_angle)
+                x_adjust += anim_values
             elif target == AnimationTarget.PositionY:
-                y_adjust += anim.get_value_vector(rel_angle)
+                y_adjust += anim_values
 
         # the abs() is there to prevent negative width setting when using multiple animations.
         stroke_weight = abs(thickness*(1 + thickness_adjust))
