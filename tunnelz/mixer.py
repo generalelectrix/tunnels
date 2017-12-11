@@ -123,10 +123,14 @@ class Mixer (object):
         assert channel < self.n_video_channels
         self.layers[layer].video_outs.discard(channel)
 
-    def draw_layers(self):
+    def draw_layers(self, external_clocks):
         """Return a list of lists of draw commands.
 
         Each inner list represents one virtual video channel.
+
+        Args:
+            external_clocks: collection of external clocks that animators may be
+                bound to.
         """
         video_outs = [[] for _ in xrange(self.n_video_channels)]
 
@@ -136,9 +140,9 @@ class Mixer (object):
 
             if level > 0 or bump:
                 if bump:
-                    draw_cmd = layer.beam.display(1.0, layer.mask)
+                    draw_cmd = layer.beam.display(1.0, layer.mask, external_clocks)
                 else:
-                    draw_cmd = layer.beam.display(level, layer.mask)
+                    draw_cmd = layer.beam.display(level, layer.mask, external_clocks)
             else:
                 draw_cmd = []
 

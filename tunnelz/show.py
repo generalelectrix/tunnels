@@ -3,6 +3,7 @@ import traceback
 from Queue import Queue, Empty
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
+from .clock import Clock
 from .devices import initialize_device
 from .meta_mi import MetaMI
 from .midi import MidiInput, MidiOutput
@@ -23,6 +24,9 @@ import yaml
 
 # how many virtual video channels should we send?
 N_VIDEO_CHANNELS = 8
+
+# how many globally-available clocks?
+N_CLOCKS = 4
 
 class Show (object):
     """Encapsulate the show runtime environment."""
@@ -68,6 +72,8 @@ class Show (object):
         """Instantiate all of the model objects."""
         self.mixer = Mixer(
             n_layers=self.channel_count, n_video_channels=N_VIDEO_CHANNELS)
+
+        self.clocks = [Clock() for _ in xrange(N_CLOCKS)]
 
         # if we're not using midi, set up test tunnels
         if self.config.get('stress_test', False):
@@ -244,9 +250,13 @@ class Show (object):
                 time_since_last_update = now - last_update
 
                 while time_since_last_update > update_interval:
+                    # update the state of the global clocks
+                    for clock in self.clocks:
+                        clock.update_state(update_interval)
+
                     # update the state of the beams
                     for layer in self.mixer.layers:
-                        layer.beam.update_state(update_interval)
+                        layer.beam.update_state(update_interval, self.clocks)
 
                     last_update += update_interval
                     now = time_millis()
@@ -258,7 +268,7 @@ class Show (object):
                 # another frame and it hasn't drawn this frame yet
                 if update_number > last_rendered_frame:
                     rendered = render_server.pass_frame_if_ready(
-                        update_number, last_update, self.mixer)
+                        update_number, last_update, self.mixer, self.clocks)
                     if rendered:
                         last_rendered_frame = update_number
 

@@ -15,18 +15,22 @@ class Beam (object):
         pass
 
     @abstractmethod
-    def update_state(self, timestep):
+    def update_state(self, timestep, external_clocks):
         """Update beam parameters based on current state.
 
-        Subclasses should override this method.
+        Args:
+            timestep: duration of time over which to evolve the state of this
+                beam.
+            external_clocks: collection of clocks that may be referenced by
+                this beam.
         """
         pass
 
     @abstractmethod
-    def display(self, level_scale, as_mask):
+    def display(self, level_scale, as_mask, external_clocks):
         """Render this beam, using scaled level and masking parameter.
 
-        Subclasses should override this method.
+        External clock collection is passed in to be used by animations.
         """
         pass
 

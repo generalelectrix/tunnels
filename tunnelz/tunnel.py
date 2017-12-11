@@ -131,11 +131,13 @@ class Tunnel (Beam):
         """Replace an animation with another."""
         self.anims[anim_num] = new_anim
 
-    def update_state(self, delta_t):
+    def update_state(self, delta_t, external_clocks):
         """Update the state of this tunnel in preparation for drawing a frame.
 
         Args:
             delta_t (int): evolution time in milliseconds
+            external_clocks: collection of external clocks that may be used by
+                this beam's animators.
         """
         # ensure we don't exceed the set bounds of the screen
         self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
@@ -153,9 +155,9 @@ class Tunnel (Beam):
             # what is this animation targeting?
             # at least for non-chicklet-level targets...
             if target == AnimationTarget.Rotation: # rotation speed
-                rot_angle_adjust += anim.get_value(0) * 0.5
+                rot_angle_adjust += anim.get_value(0, external_clocks) * 0.5
             elif target == AnimationTarget.MarqueeRotation: # marquee rotation speed
-                marquee_angle_adjust += anim.get_value(0) * 0.5
+                marquee_angle_adjust += anim.get_value(0, external_clocks) * 0.5
 
         def scale_speed(speed):
             """Scale speeds with a quadratic curve."""
@@ -178,12 +180,14 @@ class Tunnel (Beam):
             # square marquee speed control parameter for more slow resolution
             (scale_speed(self.marquee_speed)*delta_t*0.03 + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
 
-    def display(self, level_scale, as_mask):
+    def display(self, level_scale, as_mask, external_clocks):
         """Return the current state of the beam.
 
         Args:
             level_scale: unit float
             as_mask (bool): draw this beam as a masking layer
+            external_clocks: collection of clocks that animations may be bound
+                to.
         """
         size = geometry.max_size * self.size
         thickness = self.thickness
@@ -232,7 +236,7 @@ class Tunnel (Beam):
         for anim in self.anims:
             target = anim.target
 
-            anim_values = anim.get_value_vector(rel_angle)
+            anim_values = anim.get_value_vector(rel_angle, external_clocks)
 
             # TODO: refactor away this massive chain
             if target == AnimationTarget.Thickness:
