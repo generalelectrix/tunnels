@@ -137,14 +137,19 @@ class Animation (object):
         self.smoothing = 0.25
 
         self.internal_clock = Clock()
+        # numeric index of global clock this animation is slaved to
+        # if None, it is using the internal clock
+        self.clock_source = None
 
-    @property
-    def clock(self):
+    def clock(self, external_clocks):
         """Return the clock instance this animation is listening to.
 
         For now, always return the internal clock.
         """
-        return self.internal_clock
+        if self.clock_source is None:
+            return self.internal_clock
+        else:
+            return external_clocks[self.internal_clock]
 
     @property
     def active(self):
@@ -160,12 +165,12 @@ class Animation (object):
         if self.active:
             self.internal_clock.update_state(delta_t)
 
-    def get_value(self, angle_offset):
+    def get_value(self, angle_offset, external_clocks):
         """Return the current value of the animation, with an offset."""
         if not self.active:
             return 0.
 
-        angle = angle_offset*self.n_periods + self.clock.curr_angle
+        angle = angle_offset*self.n_periods + self.clock(external_clocks).curr_angle
         func = scalar_waveforms[self.type]
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
         if self.invert:
@@ -173,14 +178,14 @@ class Animation (object):
         else:
             return result
 
-    def get_value_vector(self, angle_offsets):
+    def get_value_vector(self, angle_offsets, external_clocks):
         """Return the current value of the animation for an ndarray of offsets."""
         shape = angle_offsets.shape
 
         if not self.active:
             return np.zeros(shape, float)
 
-        angle = angle_offsets*self.n_periods + self.clock.curr_angle
+        angle = angle_offsets*self.n_periods + self.clock(external_clocks).curr_angle
         func = vector_waveforms[self.type]
 
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
