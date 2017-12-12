@@ -19,7 +19,7 @@ class TestShow (object):
         s._update_state(20)
 
         # test rendering
-        video_feeds = s.mixer.draw_layers()
+        video_feeds = s.mixer.draw_layers(s.clocks)
 
         # should have the right number of video channels
         assert_equal(N_VIDEO_CHANNELS, len(video_feeds))
