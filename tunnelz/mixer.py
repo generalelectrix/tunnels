@@ -76,6 +76,11 @@ class Mixer (object):
         self.n_video_channels = n_video_channels
         self.layers = [MixerLayer(Tunnel()) for _ in xrange(n_layers)]
 
+    def update_state(self, delta_t):
+        """Update the state of all of the beams contained in this mixer."""
+        for layer in self.layers:
+            layer.beam.update_state(delta_t)
+
     @property
     def layer_count(self):
         return len(self.layers)

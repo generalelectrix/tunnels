@@ -7,8 +7,6 @@ from math import pi
 import numpy as np
 from .model_interface import ModelInterface, MiModelProperty, only_if_active
 from .waveforms import sawtooth_vector, clamp_to_unit
-import shapes
-import logging as log
 
 # scale overall size, set > 1.0 to enable larger shapes than screen size
 MAX_SIZE_MULT = 2.0
@@ -114,9 +112,6 @@ class Tunnel (Beam):
         self.x_offset, self.y_offset = 0.0, 0.0
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
-
-        # dispatch
-        self.display_as = shapes.Tunnel
 
 
     def copy(self):
@@ -228,28 +223,31 @@ class Tunnel (Beam):
         seg_angle = (marquee_interval*seg_num+self.curr_marquee_angle) % 1.0
         rel_angle = marquee_interval*seg_num
 
+        # accumulate animation adjustments based on targets
         for anim in self.anims:
             target = anim.target
 
-            # what is this animation targeting?
+            anim_values = anim.get_value_vector(rel_angle)
+
+            # TODO: refactor away this massive chain
             if target == AnimationTarget.Thickness:
-                thickness_adjust += anim.get_value_vector(rel_angle)
+                thickness_adjust += anim_values
             elif target == AnimationTarget.Size:
-                size_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
-            if target == AnimationTarget.AspectRatio: # ellipsing
-                aspect_ratio_adjust += anim.get_value_vector(rel_angle)
+                size_adjust += anim_values * 0.5 # limit adjustment
+            elif target == AnimationTarget.AspectRatio:
+                aspect_ratio_adjust += anim_values
             elif target == AnimationTarget.Color:
-                col_center_adjust += anim.get_value_vector(rel_angle) * 0.5
+                col_center_adjust += anim_values * 0.5
             elif target == AnimationTarget.ColorSpread:
-                col_width_adjust += anim.get_value_vector(rel_angle)
+                col_width_adjust += anim_values
             elif target == AnimationTarget.ColorPeriodicity:
-                col_period_adjust += anim.get_value_vector(rel_angle) * 8
+                col_period_adjust += anim_values * 8
             elif target == AnimationTarget.ColorSaturation:
-                col_sat_adjust += anim.get_value_vector(rel_angle) * 0.5 # limit adjustment
+                col_sat_adjust += anim_values * 0.5 # limit adjustment
             elif target == AnimationTarget.PositionX:
-                x_adjust += anim.get_value_vector(rel_angle)
+                x_adjust += anim_values
             elif target == AnimationTarget.PositionY:
-                y_adjust += anim.get_value_vector(rel_angle)
+                y_adjust += anim_values
 
         # the abs() is there to prevent negative width setting when using multiple animations.
         stroke_weight = abs(thickness*(1 + thickness_adjust))
@@ -268,104 +266,54 @@ class Tunnel (Beam):
 
         draw_calls = []
 
-        if self.display_as == shapes.Tunnel:
-            rad_x = abs((
-                size*(MAX_ASPECT * (self.aspect_ratio + aspect_ratio_adjust))
-                - thickness_allowance) + size_adjust)
-            rad_y = abs(size - thickness_allowance + size_adjust)
+        rad_x = abs((
+            size*(MAX_ASPECT * (self.aspect_ratio + aspect_ratio_adjust))
+            - thickness_allowance) + size_adjust)
+        rad_y = abs(size - thickness_allowance + size_adjust)
 
-            if as_mask:
-                val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
-                for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
-                    draw_calls.append((
-                        1.0,
-                        strk,
-                        0.0,
-                        0.0,
-                        0.0,
-                        x,
-                        y,
-                        r_x,
-                        r_y,
-                        start_angle,
-                        stop_angle,
-                        rot_angle))
-            else:
-                hue = (
-                    (self.col_center + col_center_adjust) +
-                    (
-                        0.5*(self.col_width+col_width_adjust) *
-                        sawtooth_vector(rel_angle*(int(16*self.col_spread)+col_period_adjust), 0.0, 1.0, False)
-                    ))
-
-                hue = hue % 1.0
-
-                sat = clamp_to_unit(self.col_sat + col_sat_adjust)
-
-                val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
-
-                for h, s, strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
-                    draw_calls.append((
-                        level_scale,
-                        strk,
-                        h,
-                        s,
-                        1.0,
-                        x,
-                        y,
-                        r_x,
-                        r_y,
-                        start_angle,
-                        stop_angle,
-                        rot_angle))
-
-        elif self.display_as == shapes.Line:
-            raise NotImplementedError("No client support for line shape yet.")
-            length = abs(size + size_adjust)
-
-            if as_mask:
-                val_iter = izip(stroke_weight, x_center, y_center, length, seg_angle, stop)
-                for strk, x, y, linelen, start_angle, stop_angle in val_iter:
-                    draw_calls.append((
-                        1.0,
-                        strk,
-                        0.0,
-                        0.0,
-                        0.0,
-                        x,
-                        y,
-                        linelen,
-                        start_angle,
-                        stop_angle,
-                        rot_angle))
-            else:
-                hue = (
-                    (self.col_center + col_center_adjust) +
-                    (
-                        0.5*(self.col_width+col_width_adjust) *
-                        sawtooth_vector(rel_angle*(16*self.col_spread+col_period_adjust), 0.0, 1.0, False)
-                    ))
-
-                hue = hue % 1.0
-
-                sat = clamp_to_unit(self.col_sat + col_sat_adjust)
-
-                val_iter = izip(hue, sat, stroke_weight, x_center, y_center, length, seg_angle, stop)
-
-                for h, s, strk, x, y, linelen, start_angle, stop_angle in val_iter:
-                    draw_calls.append((
-                        level_scale,
-                        strk,
-                        h,
-                        s,
-                        1.0,
-                        x,
-                        y,
-                        linelen,
-                        start_angle,
-                        stop_angle,
-                        rot_angle))
+        if as_mask:
+            val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
+            for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
+                draw_calls.append((
+                    1.0,
+                    strk,
+                    0.0,
+                    0.0,
+                    0.0,
+                    x,
+                    y,
+                    r_x,
+                    r_y,
+                    start_angle,
+                    stop_angle,
+                    rot_angle))
         else:
-            raise NotImplementedError(self.display_as)
+            hue = (
+                (self.col_center + col_center_adjust) +
+                (
+                    0.5*(self.col_width+col_width_adjust) *
+                    sawtooth_vector(rel_angle*(int(16*self.col_spread)+col_period_adjust), 0.0, 1.0, False)
+                ))
+
+            hue = hue % 1.0
+
+            sat = clamp_to_unit(self.col_sat + col_sat_adjust)
+
+            val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
+
+            for h, s, strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
+                draw_calls.append((
+                    level_scale,
+                    strk,
+                    h,
+                    s,
+                    1.0,
+                    x,
+                    y,
+                    r_x,
+                    r_y,
+                    start_angle,
+                    stop_angle,
+                    rot_angle))
 
         return draw_calls
