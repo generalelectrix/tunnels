@@ -1,5 +1,5 @@
 import copy
-from math import sin, pi
+from math import pi
 from .clock import Clock
 from .waveforms import (
     sine,
