@@ -386,16 +386,15 @@ class TunnelMidiController (MidiController):
             self.handle_unipolar_knob)
 
         self.bipolar_knobs = self.add_controls({
-            'rot_speed': ControlChangeMapping(0, 52),
-            'marquee_speed': ControlChangeMapping(0, 20),
+                'rot_speed': ControlChangeMapping(0, 52),
+                'marquee_speed': ControlChangeMapping(0, 20),
+                'blacking': ControlChangeMapping(0, 54),
             },
             self.handle_bipolar_knob)
 
         self.segs_mapping = ControlChangeMapping(0, 53)
-        self.blacking_mapping = ControlChangeMapping(0, 54)
 
         self.set_callback(self.segs_mapping, self.handle_segs)
-        self.set_callback(self.blacking_mapping, self.handle_blacking)
 
         self.nudge_x_pos_mapping = NoteOnMapping(0, 0x60)
         self.nudge_x_neg_mapping = NoteOnMapping(0, 0x61)
@@ -436,24 +435,6 @@ class TunnelMidiController (MidiController):
     def set_segs(self, segs):
         """Convert number of segs back to midi."""
         self.midi_out.send_from_mapping(self.segs_mapping, segs - 1)
-
-    def handle_blacking(self, _, val):
-        """Convert midi to blacking.
-
-        Blacking is a bipolar knob on the range [-16, 16].
-        """
-        blacking = int((2*(val / 127.0) - 1) * 16)
-        log.debug("Blacking in: {}".format(blacking))
-        self.mi.blacking = blacking
-
-    def set_blacking(self, blacking):
-        """Convert blacking back to midi.
-
-        Blacking is a bipolar knob on the range [-16, 16].
-        """
-        midi_blacking = int(127.0*((blacking / 16.0) + 1.0) / 2.0)
-        log.debug("Blacking out: {}".format(midi_blacking))
-        self.midi_out.send_from_mapping(self.blacking_mapping, midi_blacking)
 
     def handle_nudge_x_pos(self, _, val):
         self.mi.nudge_x_pos()

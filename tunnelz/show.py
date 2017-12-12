@@ -129,7 +129,7 @@ class Show (object):
 
             tunnel.marquee_speed = -1.0 + (2.0 * float(i) / float(self.channel_count))
 
-            tunnel.blacking = 0
+            tunnel.blacking = 0.0
 
             tunnel.radius = (0.1*i) % 1.0
 
