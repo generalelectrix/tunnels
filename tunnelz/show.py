@@ -141,7 +141,8 @@ class Show (object):
 
             for i, anim in enumerate(tunnel.anims):
                 anim.type = WaveformType.VALUES[i]
-                anim.speed = float(i)/len(tunnel.anims) # various speeds
+                # various animation speeds
+                anim.internal_clock.rate = AnimationMI.max_clock_rate * float(i) / len(tunnel.anims)
                 anim.weight = 0.5 # finite weight
                 anim.target = AnimationTarget.Thickness # hit thickness to do vector math
                 anim.n_periods = 3 # more than zero periods for vector math
