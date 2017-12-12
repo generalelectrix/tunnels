@@ -17,18 +17,43 @@ from .render_server import RenderServer
 from . import timesync
 from monotonic import monotonic
 from .tunnel import Tunnel, TunnelMI
-from .shapes import Line
 
 import yaml
 
 # how many virtual video channels should we send?
 N_VIDEO_CHANNELS = 8
 
+# default configuration parameters
+DEFAULT_CONFIG = dict(
+    use_midi=False,
+    midi_ports=[],
+    report_framerate=False,
+    log_level="debug",
+    stress_test=False,
+    rotation_test=False,
+    aliasing_test=False,
+    multi_channel_test=False,
+)
+
 class Show (object):
     """Encapsulate the show runtime environment."""
-    def __init__(self, config_file="show.yaml", load_path=None, save_path=None):
-        with open(config_file, 'r') as cfg:
-            self.config = config = yaml.load(cfg)
+    @classmethod
+    def new(cls, config_file_path="show.yaml"):
+        """Create a fresh show using the provided config file path."""
+        with open(config_file_path, 'r') as cfg:
+            config = yaml.load(cfg)
+
+        return cls(config)
+
+    def __init__(self, config, load_path=None, save_path=None):
+        """Create a Tunnel show.
+
+        Args:
+            config: dict containing configuration data
+            load_path (optional): path to saved show file to load
+            save_path (optional): path to use to save show file state
+        """
+        self.config = config
 
         if config["log_level"] == "debug":
             log.basicConfig(level=log.DEBUG)
@@ -186,7 +211,7 @@ class Show (object):
                 create_controller(TunnelMidiController, self.tunnel_mi)
                 create_controller(AnimationMidiController, self.animator_mi)
 
-    def service_control_event(self, timeout):
+    def _service_control_event(self, timeout):
         """Service a single control event if one is pending."""
         try:
             control_request_ref = self.control_requests.get(True, timeout)
@@ -204,6 +229,10 @@ class Show (object):
         # service the request by calling its handle method
         control_request.handle_message()
 
+    def _update_state(self, update_interval):
+        """Perform discrete state update on every part of the show."""
+        # update the state of the beams
+        self.mixer.update_state(update_interval)
 
     def run(self, update_interval=20, n_frames=None):
         """Run the show loop.
@@ -244,9 +273,7 @@ class Show (object):
                 time_since_last_update = now - last_update
 
                 while time_since_last_update > update_interval:
-                    # update the state of the beams
-                    for layer in self.mixer.layers:
-                        layer.beam.update_state(update_interval)
+                    self._update_state(update_interval)
 
                     last_update += update_interval
                     now = time_millis()
@@ -272,7 +299,7 @@ class Show (object):
                         # only use, say, 80% of the time we have to prioritize
                         # timely state updates
                         timeout = 0.8 * time_to_next_update / 1000.
-                        self.service_control_event(timeout)
+                        self._service_control_event(timeout)
                     except Exception as e:
                         # trap any exception here and log an error to avoid crashing
                         # the whole controller

@@ -1,5 +1,4 @@
 from .beam import Beam
-from .shapes import ShapeCollection
 
 class Look (Beam):
     """A look is a beam that is actually a composite of several beams."""
