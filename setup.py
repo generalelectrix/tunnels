@@ -16,6 +16,7 @@ requires = [
     'python-rtmidi',
     'monotonic',
     'pyYAML',
+    'nose',
 ]
 
 extensions = [

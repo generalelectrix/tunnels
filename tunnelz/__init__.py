@@ -1,1 +1,1 @@
-from .show import Show
+from .show import Show, DEFAULT_CONFIG

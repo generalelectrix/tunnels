@@ -7,8 +7,7 @@ from math import pi
 import numpy as np
 from .model_interface import ModelInterface, MiModelProperty, only_if_active
 from .waveforms import sawtooth_vector, clamp_to_unit
-import shapes
-import logging as log
+from . import shapes
 
 # scale overall size, set > 1.0 to enable larger shapes than screen size
 MAX_SIZE_MULT = 2.0
