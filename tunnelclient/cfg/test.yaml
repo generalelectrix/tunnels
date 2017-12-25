@@ -1,8 +1,8 @@
 server_hostname: "127.0.0.1"
-render_delay: 100
+render_delay: 40
 timesync_interval: 60000
-x_resolution: 1280
-y_resolution: 720
+x_resolution: 1920
+y_resolution: 1080
 anti_alias: true
-fullscreen: true
+fullscreen: false
 alpha_blend: true
