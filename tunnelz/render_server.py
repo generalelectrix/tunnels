@@ -7,56 +7,23 @@ import zmq
 import sys
 import traceback
 
-"""Guide to serialized render format
-
-We define a simple, recursive data structure, with two types of entities:
-ShapeCollection and Shape
-ShapeCollection serves as a (possibly heterogeneous) collection of Shapes and
-other ShapeCollections.
-Shape serves as a collection of draw calls of a uniform type (ie all arcs, all
-lines, etc.)
-The format is quite simple:
-ShapeCollection:
-(SHAPE_COLLECTION_FLAG, NUMBER_OF_ENTITIES, (list of entities))
-Shape:
-(SHAPE_TYPE_FLAG, (list of draw call arguments))
-
-The overall packet has a header as well, such that the full structure looks like
-(FRAME_NUMBER, UPDATED_TIME, TOP_LEVEL_SHAPE_COLLECTION)
-(int, int, ShapeCollection)
-where UPDATED_TIME is milliseconds since the epoch
-"""
-
 # this is unused but serves as documentation
+# TODO: use a schematized zero-copy serialization format, maybe cap'n proto
 arc_args = (
-    'level', # int 0-255
+    'level', # unipolar float
     'stroke_weight', # float
-    'hue',
-    'sat',
-    'val',
-    'x', # int
-    'y', # int
-    'rad_x', #int
-    'rad_y', #int
-    'start', #float
-    'stop' #float
-    'rot_angle' #float
-    )
+    'hue', # unipolar float
+    'sat', # unipolar float
+    'val', # unipolar float
+    'x', # float
+    'y', # float
+    'rad_x', # float
+    'rad_y', # float
+    'start', # float
+    'stop', # float
+    'rot_angle', # float
+)
 
-# this is unused but serves as documentation
-line_args = (
-    'level', # int 0-255
-    'stroke_weight', # float
-    'hue',
-    'sat',
-    'val',
-    'x', # int
-    'y', # int
-    'length', #int
-    'start', #float
-    'stop' #float
-    'rot_angle' #float
-    )
 
 def create_pub_socket(port):
     """Create a zmq PUB socket on a given port."""

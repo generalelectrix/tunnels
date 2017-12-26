@@ -112,6 +112,7 @@ class MidiInput (object):
         """Dispatch a message from our message buffer if it isn't empty."""
         try:
             message = self._message_buffer.pop()
+            log.debug("Input {} handling {}".format(self.name, message))
         except IndexError:
             log.debug(
                 "Midi input {} had no message yet was called to handle one."

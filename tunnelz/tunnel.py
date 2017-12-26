@@ -27,7 +27,7 @@ class TunnelMI (ModelInterface):
     col_spread = MiModelProperty('col_spread', 'set_unipolar', knob='col_spread')
     col_sat = MiModelProperty('col_sat', 'set_unipolar', knob='col_sat')
     segs = MiModelProperty('segs', 'set_segs')
-    blacking = MiModelProperty('blacking', 'set_blacking')
+    blacking = MiModelProperty('blacking', 'set_bipolar', knob='blacking')
 
     def __init__(self, tunnel):
         super(TunnelMI, self).__init__(model=tunnel)
@@ -101,10 +101,13 @@ class Tunnel (Beam):
         self.col_spread = 0.0 # unipolar float
         self.col_sat = 0.0 # unipolar float
 
+        # TODO: regularize segs interface into regular float knobs
         self.segs = 126 # positive int; could be any number, but previously [0,127]
 
-        # TODO: regularize segs and blacking interface into regular float knobs
-        self.blacking = 2 # number of segments to black; int on range [-16, 16]
+        # remove segments at this interval
+        # bipolar float, internally interpreted as an int on [-16, 16]
+        # defaults to every other chicklet removed
+        self.blacking = 0.15 # bipolar float
 
         self.curr_rot_angle = 0.0
         self.curr_marquee_angle = 0.0
@@ -113,10 +116,26 @@ class Tunnel (Beam):
 
         self.anims = [Animation() for _ in xrange(self.n_anim)]
 
-
     def copy(self):
         """Use deep_copy to recursively copy this Tunnel."""
         return deepcopy(self)
+
+    @property
+    def blacking_integer(self):
+        """Return the blacking parameter, scaled to be an int on [-16, 16].
+
+        If -1, return 1 (-1 implies all segments are black)
+        If 0, return 1
+        """
+        scaled = int(17. * self.blacking)
+        clamped = max(min(scaled, 16), -16)
+
+        # remove the "all segments blacked" bug
+        if clamped >= -1:
+            # constrain min to 1 to avoid divide by zero error
+            return max(clamped, 1)
+        else:
+            return clamped
 
     def get_animation(self, anim):
         """Get an animation by index."""
@@ -194,15 +213,9 @@ class Tunnel (Beam):
 
         seg_num = np.array(xrange(segs))
 
-        blacking = self.blacking
-        # remove the "all segments blacked" bug
-        if blacking == -1:
-            blacking = 0
+        blacking = self.blacking_integer
 
-        if blacking >= 0:
-            # constrain min to 1 to avoid divide by zero error
-            blacking = max(self.blacking, 1)
-
+        if blacking > 0:
             draw_segment = seg_num % abs(blacking) == 0
         else:
             draw_segment = seg_num % abs(blacking) != 0
