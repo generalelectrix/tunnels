@@ -13,7 +13,6 @@ from .beam_matrix_minder import (
 from bidict import bidict
 from collections import namedtuple
 from .midi import NoteOnMapping, NoteOffMapping, ControlChangeMapping
-import logging as log
 
 def _build_grid_button_map(page):
     mapping = {}
