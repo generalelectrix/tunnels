@@ -41,6 +41,8 @@ DEFAULT_CONFIG = dict(
 
 class Show (object):
     """Encapsulate the show runtime environment."""
+    test_mode = False
+
     @classmethod
     def new(cls, config_file_path="show.yaml"):
         """Create a fresh show using the provided config file path."""
@@ -96,7 +98,9 @@ class Show (object):
     def setup_models(self, load_path, save_path):
         """Instantiate all of the model objects."""
         self.mixer = Mixer(
-            n_layers=self.channel_count, n_video_channels=N_VIDEO_CHANNELS)
+            n_layers=self.channel_count,
+            n_video_channels=N_VIDEO_CHANNELS,
+            test_mode=self.test_mode)
 
         self.clocks = [Clock() for _ in xrange(N_CLOCKS)]
 
@@ -278,48 +282,47 @@ class Show (object):
 
         try:
             while n_frames is None or update_number < n_frames:
-
-                # compute updates until we're current
-                now = time_millis()
-                time_since_last_update = now - last_update
-
-                while time_since_last_update > update_interval:
-                    self._update_state(update_interval)
-
-                    last_update += update_interval
+                try:
+                    # compute updates until we're current
                     now = time_millis()
                     time_since_last_update = now - last_update
-                    update_number += 1
 
+                    while time_since_last_update > update_interval:
+                        self._update_state(update_interval)
 
-                # pass the mixer to the render process if it is ready to draw
-                # another frame and it hasn't drawn this frame yet
-                if update_number > last_rendered_frame:
-                    rendered = render_server.pass_frame_if_ready(
-                        update_number, last_update, self.mixer, self.clocks)
-                    if rendered:
-                        last_rendered_frame = update_number
+                        last_update += update_interval
+                        now = time_millis()
+                        time_since_last_update = now - last_update
+                        update_number += 1
 
-                # process a control event for a fraction of the time between now
-                # and when we will need to update state again
-                now = time_millis()
-                time_to_next_update = last_update + update_interval - now
-                if time_to_next_update > 0:
-                    try:
+                    # pass the mixer to the render process if it is ready to draw
+                    # another frame and it hasn't drawn this frame yet
+                    if update_number > last_rendered_frame:
+                        rendered = render_server.pass_frame_if_ready(
+                            update_number, last_update, self.mixer, self.clocks)
+                        if rendered:
+                            last_rendered_frame = update_number
+
+                    # process a control event for a fraction of the time between now
+                    # and when we will need to update state again
+                    now = time_millis()
+
+                    time_to_next_update = last_update + update_interval - now
+
+                    if time_to_next_update > 0:
                         # timeout arg is a float in seconds
                         # only use, say, 80% of the time we have to prioritize
                         # timely state updates
                         timeout = 0.8 * time_to_next_update / 1000.
                         self._service_control_event(timeout)
-                    except Exception as e:
-                        # trap any exception here and log an error to avoid crashing
-                        # the whole controller
-                        log.error(
-                            "An error occurred while processing a midi control "
-                            "event:\n{}\n{}".format(e, traceback.format_exc()))
+                except Exception:
+                    if self.test_mode:
+                        raise
+                    # trap any exception here and log an error to avoid crashing
+                    # the whole controller
+                    log.exception("Exception in main show loop.")
 
         finally:
             render_server.stop()
             log.info("Shut down render server.")
-
 

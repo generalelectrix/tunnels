@@ -1,6 +1,7 @@
 from .tunnel import Tunnel
 from .look import Look
 from .model_interface import ModelInterface
+import logging
 
 class MixerMI (ModelInterface):
     """Handle model interactions for the mixer."""
@@ -71,15 +72,33 @@ class MixerLayer (object):
 
 
 class Mixer (object):
-    """Holds a collection of beams in layers, and understands how they are mixed."""
-    def __init__(self, n_layers, n_video_channels):
+    """Holds a collection of beams in layers, and understands how they are mixed.
+
+    Args:
+        n_layers: Create this many mixer channges.
+        n_video_channels: Make this number of virtual video channels available.
+        test_mode: If True, disable high-level exception handling to allow
+            exceptioons to bubble up rather than catching and logging.
+    """
+    def __init__(self, n_layers, n_video_channels, test_mode):
+        self.test_mode = test_mode
         self.n_video_channels = n_video_channels
         self.layers = [MixerLayer(Tunnel()) for _ in xrange(n_layers)]
 
     def update_state(self, delta_t, external_clocks):
         """Update the state of all of the beams contained in this mixer."""
-        for layer in self.layers:
-            layer.beam.update_state(delta_t, external_clocks)
+        for i, layer in enumerate(self.layers):
+            # catch update errors from individual beams to avoid crashing the
+            # entire console if one beam has an error.
+            try:
+                layer.beam.update_state(delta_t, external_clocks)
+            except Exception:
+                if self.test_mode:
+                    raise
+                else:
+                    logging.exception(
+                        "Exception while updating beam in layer %d.",
+                        i)
 
     @property
     def layer_count(self):
@@ -139,17 +158,26 @@ class Mixer (object):
         """
         video_outs = [[] for _ in xrange(self.n_video_channels)]
 
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             level = layer.level
             bump = layer.bump
 
-            if level > 0 or bump:
-                if bump:
-                    draw_cmd = layer.beam.display(1.0, layer.mask, external_clocks)
+            try:
+                if level > 0 or bump:
+                    if bump:
+                        draw_cmd = layer.beam.display(1.0, layer.mask, external_clocks)
+                    else:
+                        draw_cmd = layer.beam.display(level, layer.mask, external_clocks)
                 else:
-                    draw_cmd = layer.beam.display(level, layer.mask, external_clocks)
-            else:
-                draw_cmd = []
+                    draw_cmd = []
+            except Exception:
+                if self.test_mode:
+                    raise
+                else:
+                    logging.exception(
+                        "Exception while displaying beam in layer %d.",
+                        i)
+                    draw_cmd = []
 
             for video_chan in layer.video_outs:
                 video_outs[video_chan].append(draw_cmd)

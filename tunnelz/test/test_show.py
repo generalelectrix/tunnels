@@ -11,6 +11,10 @@ class TestShow (object):
 
     test_save_file_path = "tunnel_test_save.test"
 
+    def setUp(self):
+        """Set the Show class to run in test mode."""
+        Show.test_mode = True
+
     def test_stress_test(self):
 
         config = DEFAULT_CONFIG.copy()
