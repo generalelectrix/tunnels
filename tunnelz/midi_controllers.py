@@ -556,7 +556,7 @@ class ClockMidiController (MidiController):
 
 
     def setup_controls(self):
-        self.set_callback(NoteOnMapping(self.channel, 0), self.handle_tap)
+        self.set_callback(NoteOnMapping(self.channel, 110), self.handle_tap)
         self.set_callback(ControlChangeMapping(self.channel, 0), self.handle_nudge)
         self.set_callback(ControlChangeMapping(self.channel, 1), self.handle_retrigger)
 
