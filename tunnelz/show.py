@@ -3,7 +3,7 @@ import traceback
 from Queue import Queue, Empty
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
-from .clock import Clock
+from .clock import ControllableClock
 from .devices import initialize_device
 from .meta_mi import MetaMI
 from .midi import MidiInput, MidiOutput
@@ -12,7 +12,9 @@ from .midi_controllers import (
     MetaControlMidiController,
     MixerMidiController,
     TunnelMidiController,
-    AnimationMidiController,)
+    AnimationMidiController,
+    ClockMidiController,
+)
 from .mixer import Mixer, MixerMI
 from .render_server import RenderServer
 from . import timesync
@@ -102,7 +104,7 @@ class Show (object):
             n_video_channels=N_VIDEO_CHANNELS,
             test_mode=self.test_mode)
 
-        self.clocks = [Clock() for _ in xrange(N_CLOCKS)]
+        self.clocks = [ControllableClock() for _ in xrange(N_CLOCKS)]
 
         # if we're not using midi, set up test tunnels
         if self.config.get('stress_test', False):
@@ -216,11 +218,16 @@ class Show (object):
                 else:
                     page = 0
 
-                create_controller(MetaControlMidiController, self.meta_mi, page=page)
-                create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
-                create_controller(MixerMidiController, self.mixer_mi, page=page)
-                create_controller(TunnelMidiController, self.tunnel_mi)
-                create_controller(AnimationMidiController, self.animator_mi)
+                # FIXME: hack to wire up clock control on Novation
+                if midi_in.name == "ReMOTE SL Port 1":
+                    for i, clock in enumerate(self.clocks):
+                        create_controller(ClockMidiController, clock, channel=i)
+                else:
+                    create_controller(MetaControlMidiController, self.meta_mi, page=page)
+                    create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
+                    create_controller(MixerMidiController, self.mixer_mi, page=page)
+                    create_controller(TunnelMidiController, self.tunnel_mi)
+                    create_controller(AnimationMidiController, self.animator_mi)
 
     def _service_control_event(self, timeout):
         """Service a single control event if one is pending."""

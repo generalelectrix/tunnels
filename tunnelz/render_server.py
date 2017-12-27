@@ -118,9 +118,12 @@ class RenderServer (object):
                 return False
             else:
                 if req == FRAME_REQ:
+                    # just pass the underlying clock objects, not the whole
+                    # clock command wrapper
+                    bare_clocks = [clock.model for clock in clocks]
                     self.command.put((
                         FRAME,
-                        (update_number, update_time, mixer, clocks),
+                        (update_number, update_time, mixer, bare_clocks),
                     ))
                     return True
                 elif req == FATAL_ERROR:

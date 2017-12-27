@@ -62,7 +62,11 @@ class WaveformType (object):
 
 
 class AnimationMI (ModelInterface):
-    max_clock_rate = 0.0015 # radial units/ms; this is 3pi/sec
+    # radial units/s; this is 3pi/sec
+    # the negative sign is here so that turning the animation speed knob
+    # clockwise makes the animation appear to run around the beam in the same
+    # direction
+    max_clock_rate = -0.0000015
 
     type = MiModelProperty('type', 'set_type')
     pulse = MiModelProperty('pulse', 'set_pulse')
@@ -149,7 +153,7 @@ class Animation (object):
         if self.clock_source is None:
             return self.internal_clock
         else:
-            return external_clocks[self.internal_clock]
+            return external_clocks[self.clock_source]
 
     @property
     def active(self):

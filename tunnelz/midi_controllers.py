@@ -550,10 +550,25 @@ class ClockMidiController (MidiController):
 
     def __init__(self, mi, midi_out, channel):
         """Initialize this clock controller to use a particular midi channel."""
-        super(ClockMidiController, self).__init__(mi, midi_out)
         self.channel = channel
+        super(ClockMidiController, self).__init__(mi, midi_out)
+
 
     def setup_controls(self):
         # TODO
-        pass
+        self.set_callback(NoteOnMapping(self.channel, 0), self.handle_tap)
+        self.set_callback(ControlChangeMapping(self.channel, 0), self.handle_nudge)
+
+    def handle_tap(self, mapping, _):
+        self.mi.tap()
+
+    def handle_nudge(self, mapping, value):
+        """Nudge knob is an infinite encoder.
+
+        Values > 64 indicate positive nudge, <64 negative nudge.
+        """
+        self.mi.nudge(value - 64)
+
+    def ticked(self, state):
+        print "set ticked state to ", state
 

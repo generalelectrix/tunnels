@@ -13,6 +13,11 @@ class ControllableClock (ModelInterface):
         super(ControllableClock, self).__init__(Clock())
         self.sync = TapSync()
 
+    @property
+    def curr_angle(self):
+        """Proxy the regular clock interface."""
+        return self.model.curr_angle
+
     def tap(self):
         if self.retrigger:
             self.model.curr_angle = 0.0
@@ -50,7 +55,8 @@ class Clock (object):
         self.ticked = True
 
     def update_state(self, delta_t):
-        new_angle = self.curr_angle - self.rate*delta_t
+        # delta_t has units of ms, need to divide by 1000
+        new_angle = self.curr_angle + (self.rate*delta_t/1000.)
 
         # if the phase just escaped our range, we ticked this frame
         self.ticked = new_angle >= 1.0 or new_angle < 0.0
