@@ -543,3 +543,17 @@ class AnimationMidiController (MidiController):
 
     def set_target(self, target):
         self._set_radio_button(target, self.target_buttons)
+
+
+class ClockMidiController (MidiController):
+    """Wire up controls for a single clock."""
+
+    def __init__(self, mi, midi_out, channel):
+        """Initialize this clock controller to use a particular midi channel."""
+        super(ClockMidiController, self).__init__(mi, midi_out)
+        self.channel = channel
+
+    def setup_controls(self):
+        # TODO
+        pass
+

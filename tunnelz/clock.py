@@ -1,6 +1,43 @@
 import copy
 from itertools import izip, tee
 from monotonic import monotonic
+from .model_interface import ModelInterface, MiProperty
+
+
+class ControllableClock (ModelInterface):
+    """A clock with a complete set of controls."""
+    # if True, reset the clock's phase to zero on every tap
+    retrigger = MiProperty(False, 'retrigger')
+
+    def __init__(self):
+        super(ControllableClock, self).__init__(Clock())
+        self.sync = TapSync()
+
+    def tap(self):
+        if self.retrigger:
+            self.model.curr_angle = 0.0
+        self.sync.tap()
+
+        # for now, crudely and immediately change the clock rate if we have
+        # a new estimate of what it ought to be
+        new_rate = self.sync.rate
+        if new_rate is not None:
+            self.model.rate = new_rate
+
+    def update_state(self, delta_t):
+        """Update clock state, and update UI state as well."""
+        prev_ticked_state = self.model.ticked
+        self.model.update_state(delta_t)
+        # if ticked state has changed, update the controllers:
+        if prev_ticked_state != self.model.ticked:
+            self.update_controllers('ticked', self.model.ticked)
+
+    def nudge(self, count):
+        """Nudge the phase forward or backward by count/100 of a beat."""
+        adjustment = count * (self.model.rate / 100.)
+        new_value = self.model.curr_angle + adjustment
+        self.model.curr_angle = new_value % 1.0
+
 
 class Clock (object):
 
@@ -9,8 +46,16 @@ class Clock (object):
         # in unit angle per second
         self.rate = 0.0
 
+        # did the clock tick on its most recent update?
+        self.ticked = True
+
     def update_state(self, delta_t):
-        self.curr_angle = (self.curr_angle - self.rate*delta_t) % 1.0
+        new_angle = self.curr_angle - self.rate*delta_t
+
+        # if the phase just escaped our range, we ticked this frame
+        self.ticked = new_angle >= 1.0 or new_angle < 0.0
+
+        self.curr_angle = new_angle % 1.0
 
     def copy(self):
         return copy.copy(self)
