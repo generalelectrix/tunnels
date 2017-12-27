@@ -12,6 +12,7 @@ from .beam_matrix_minder import (
 )
 from bidict import bidict
 from collections import namedtuple
+import logging
 from .midi import NoteOnMapping, NoteOffMapping, ControlChangeMapping
 
 def _build_grid_button_map(page):
@@ -555,9 +556,9 @@ class ClockMidiController (MidiController):
 
 
     def setup_controls(self):
-        # TODO
         self.set_callback(NoteOnMapping(self.channel, 0), self.handle_tap)
         self.set_callback(ControlChangeMapping(self.channel, 0), self.handle_nudge)
+        self.set_callback(ControlChangeMapping(self.channel, 1), self.handle_retrigger)
 
     def handle_tap(self, mapping, _):
         self.mi.tap()
@@ -570,5 +571,13 @@ class ClockMidiController (MidiController):
         self.mi.nudge(value - 64)
 
     def ticked(self, state):
-        print "set ticked state to ", state
+        # TODO: hook up tick indicator
+        logging.debug("set ticked state on clock %d to %s", self.channel, state)
+
+    def handle_retrigger(self, mapping, value):
+        self.mi.retrigger = bool(value)
+
+    def retrigger(self, value):
+        # TODO: show retigger state on ipad
+        logging.debug("set retrigger state on clock %d to %s", self.channel, value)
 

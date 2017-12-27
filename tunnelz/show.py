@@ -27,7 +27,7 @@ import yaml
 N_VIDEO_CHANNELS = 8
 
 # how many globally-available clocks?
-N_CLOCKS = 4
+N_CLOCKS = 8
 
 # default configuration parameters
 DEFAULT_CONFIG = dict(

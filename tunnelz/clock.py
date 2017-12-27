@@ -21,13 +21,14 @@ class ControllableClock (ModelInterface):
     def tap(self):
         if self.retrigger:
             self.model.curr_angle = 0.0
-        self.sync.tap()
+        else:
+            self.sync.tap()
 
-        # for now, crudely and immediately change the clock rate if we have
-        # a new estimate of what it ought to be
-        new_rate = self.sync.rate
-        if new_rate is not None:
-            self.model.rate = new_rate
+            # for now, crudely and immediately change the clock rate if we have
+            # a new estimate of what it ought to be
+            new_rate = self.sync.rate
+            if new_rate is not None:
+                self.model.rate = new_rate
 
     def update_state(self, delta_t):
         """Update clock state, and update UI state as well."""
