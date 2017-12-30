@@ -77,6 +77,7 @@ class AnimationMI (ModelInterface):
     weight = MiModelProperty('weight', 'set_knob', knob='weight')
     duty_cycle = MiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
     smoothing = MiModelProperty('smoothing', 'set_knob', knob='smoothing')
+    clock = MiModelProperty('clock_source', 'set_clock_source')
 
     def initialize(self):
         super(AnimationMI, self).initialize()
@@ -146,10 +147,7 @@ class Animation (object):
         self.clock_source = None
 
     def clock(self, external_clocks):
-        """Return the clock instance this animation is listening to.
-
-        For now, always return the internal clock.
-        """
+        """Return the clock instance this animation is listening to."""
         if self.clock_source is None:
             return self.internal_clock
         else:

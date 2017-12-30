@@ -507,6 +507,12 @@ class AnimationMidiController (MidiController):
         self.pulse_button = self.set_callback(NoteOnMapping(1, 0), self.handle_pulse_button)
         self.invert_button = self.set_callback(NoteOnMapping(1, 1), self.handle_invert_button)
 
+        # map external clock select
+        clock_buttons = {i: NoteOnMapping(0, 112+i) for i in xrange(8)}
+        clock_buttons[None] = 111
+
+        self.clock_buttons = self.add_controls(clock_buttons, self.handle_clock_button)
+
     def handle_knob(self, mapping, value):
         knob = self.knobs.inv[mapping]
         setattr(self.mi, knob, self.knob_value_from_midi[knob](value))
@@ -544,6 +550,12 @@ class AnimationMidiController (MidiController):
 
     def set_target(self, target):
         self._set_radio_button(target, self.target_buttons)
+
+    def handle_clock_button(self, mapping, _):
+        self.mi.clock = self.clock_buttons.inv[mapping]
+
+    def set_clock(self, clock):
+        self._set_radio_button(clock, self.clock_buttons)
 
 
 class ClockMidiController (MidiController):
