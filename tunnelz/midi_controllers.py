@@ -574,6 +574,9 @@ class ClockMidiController (MidiController):
         self.retrigger_control = ControlChangeMapping(self.channel, 0)
         self.set_callback(self.retrigger_control, self.handle_retrigger)
 
+        self.one_shot_control = ControlChangeMapping(self.channel, 2)
+        self.set_callback(self.one_shot_control, self.handle_one_shot)
+
         self.tick_on = NoteOnMapping(self.channel, 109)
         self.tick_off = NoteOffMapping(self.channel, 109)
 
@@ -594,6 +597,14 @@ class ClockMidiController (MidiController):
     def handle_retrigger(self, mapping, value):
         self.mi.retrigger = bool(value)
 
-    def retrigger(self, value):
+    def set_retrigger(self, value):
         self.midi_out.send_from_mapping(self.retrigger_control, 127 if value else 0)
+
+    def handle_one_shot(self, mapping, value):
+        self.mi.one_shot = bool(value)
+
+    def set_one_shot(self, value):
+        self.midi_out.send_from_mapping(self.one_shot_control, 127 if value else 0)
+
+
 

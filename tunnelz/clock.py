@@ -7,7 +7,7 @@ from .model_interface import ModelInterface, MiProperty, MiModelProperty
 class ControllableClock (ModelInterface):
     """A clock with a complete set of controls."""
     # if True, reset the clock's phase to zero on every tap
-    retrigger = MiProperty(False, 'retrigger')
+    retrigger = MiProperty(False, 'set_retrigger')
     one_shot = MiModelProperty('one_shot', 'set_one_shot')
 
     # time between turning the tick indicator on and then off again, in ms
@@ -153,7 +153,6 @@ class TapSync (object):
         return self._rate
 
     def _reset_buffer(self, tap_time):
-        print "reset"
         self._tap_times = [tap_time]
         self._rate = None
         self._period = None
@@ -169,12 +168,10 @@ class TapSync (object):
 
             self._period = sum(deltas) / len(deltas)
             self._rate = 1.0 / self._period
-            print "new estimate: ", self._rate
 
     def tap(self):
         """Register a new tap event, and compute a new estimated bpm."""
         now = monotonic()
-        print "tap"
 
         # if the tap buffer isn't empty, determine elapsed time from the last
         # tap to this one
