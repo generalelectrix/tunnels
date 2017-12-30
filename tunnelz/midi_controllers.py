@@ -509,7 +509,7 @@ class AnimationMidiController (MidiController):
 
         # map external clock select
         clock_buttons = {i: NoteOnMapping(0, 112+i) for i in xrange(8)}
-        clock_buttons[None] = 111
+        clock_buttons[None] = NoteOnMapping(0, 111)
 
         self.clock_buttons = self.add_controls(clock_buttons, self.handle_clock_button)
 
@@ -554,7 +554,7 @@ class AnimationMidiController (MidiController):
     def handle_clock_button(self, mapping, _):
         self.mi.clock = self.clock_buttons.inv[mapping]
 
-    def set_clock(self, clock):
+    def set_clock_source(self, clock):
         self._set_radio_button(clock, self.clock_buttons)
 
 
@@ -569,9 +569,11 @@ class ClockMidiController (MidiController):
 
     def setup_controls(self):
         self.set_callback(NoteOnMapping(self.channel, 110), self.handle_tap)
-        self.set_callback(ControlChangeMapping(self.channel, 0), self.handle_nudge)
-        self.retrigger_control = ControlChangeMapping(self.channel, 1)
+        self.set_callback(ControlChangeMapping(self.channel, 1), self.handle_nudge)
+
+        self.retrigger_control = ControlChangeMapping(self.channel, 0)
         self.set_callback(self.retrigger_control, self.handle_retrigger)
+
         self.tick_on = NoteOnMapping(self.channel, 109)
         self.tick_off = NoteOffMapping(self.channel, 109)
 
@@ -587,11 +589,11 @@ class ClockMidiController (MidiController):
 
     def ticked(self, ticked):
         self.midi_out.send_from_mapping(
-            self.tick_on if ticked else self.tick_off, 0)
+            self.tick_on if ticked else self.tick_off, 127 if ticked else 0)
 
     def handle_retrigger(self, mapping, value):
         self.mi.retrigger = bool(value)
 
     def retrigger(self, value):
-        self.midi_out.send_from_mapping(self.retrigger_control, value)
+        self.midi_out.send_from_mapping(self.retrigger_control, 127 if value else 0)
 

@@ -1,5 +1,5 @@
 use_midi: true
-midi_ports: [100, 101]
+midi_ports: [0, 1]
 report_framerate: false
 log_level: "debug"
 stress_test: false

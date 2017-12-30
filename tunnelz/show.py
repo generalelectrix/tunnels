@@ -212,17 +212,19 @@ class Show (object):
                     controller = cls(mi, midi_out, **kwargs)
                     midi_in.register_controller(controller)
 
-                # FIXME: shitty hack to use the APC20 as a wing
+                # FIXME: shitty hack to use the APC20 as a wing.
                 if midi_in.name == "Akai APC20":
                     page = 1
                 else:
                     page = 0
 
-                # FIXME: hack to wire up clock control on Novation
-                if midi_in.name == "ReMOTE SL Port 1":
+                # FIXME: this is a terrible way to decide which controllers to
+                # hook up to which control surfaces.
+                if midi_in.name == "ReMOTE SL Port 1" or "Network Session" in midi_in.name:
                     for i, clock in enumerate(self.clocks):
                         create_controller(ClockMidiController, clock, channel=i)
-                else:
+
+                if "Akai APC" in midi_in.name or "Network Session" in midi_in.name:
                     create_controller(MetaControlMidiController, self.meta_mi, page=page)
                     create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
                     create_controller(MixerMidiController, self.mixer_mi, page=page)
