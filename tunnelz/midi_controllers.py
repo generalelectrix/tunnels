@@ -570,7 +570,10 @@ class ClockMidiController (MidiController):
     def setup_controls(self):
         self.set_callback(NoteOnMapping(self.channel, 110), self.handle_tap)
         self.set_callback(ControlChangeMapping(self.channel, 0), self.handle_nudge)
-        self.set_callback(ControlChangeMapping(self.channel, 1), self.handle_retrigger)
+        self.retrigger_control = ControlChangeMapping(self.channel, 1)
+        self.set_callback(self.retrigger_control, self.handle_retrigger)
+        self.tick_on = NoteOnMapping(self.channel, 109)
+        self.tick_off = NoteOffMapping(self.channel, 109)
 
     def handle_tap(self, mapping, _):
         self.mi.tap()
@@ -582,14 +585,13 @@ class ClockMidiController (MidiController):
         """
         self.mi.nudge(value - 64)
 
-    def ticked(self, state):
-        # TODO: hook up tick indicator
-        logging.debug("set ticked state on clock %d to %s", self.channel, state)
+    def ticked(self, ticked):
+        self.midi_out.send_from_mapping(
+            self.tick_on if ticked else self.tick_off, 0)
 
     def handle_retrigger(self, mapping, value):
         self.mi.retrigger = bool(value)
 
     def retrigger(self, value):
-        # TODO: show retigger state on ipad
-        logging.debug("set retrigger state on clock %d to %s", self.channel, value)
+        self.midi_out.send_from_mapping(self.retrigger_control, value)
 
