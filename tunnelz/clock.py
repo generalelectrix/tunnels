@@ -9,9 +9,21 @@ class ControllableClock (ModelInterface):
     # if True, reset the clock's phase to zero on every tap
     retrigger = MiProperty(False, 'retrigger')
 
+    # time between turning the tick indicator on and then off again, in ms
+    min_tick_display_duration = 250
+
     def __init__(self):
         super(ControllableClock, self).__init__(Clock())
         self.sync = TapSync()
+        # keep track of how long it has been since we turned a tick indicator on
+        self._tick_age = None
+
+    def initialize(self):
+        super(ControllableClock, self).initialize()
+        self._set_tick_indicator_off()
+
+    def _set_tick_indicator_off(self):
+        self.update_controllers('ticked', False)
 
     @property
     def curr_angle(self):
@@ -20,7 +32,7 @@ class ControllableClock (ModelInterface):
 
     def tap(self):
         if self.retrigger:
-            self.model.curr_angle = 0.0
+            self.model.reset_on_update = True
         else:
             self.sync.tap()
 
@@ -32,17 +44,55 @@ class ControllableClock (ModelInterface):
 
     def update_state(self, delta_t):
         """Update clock state, and update UI state as well."""
-        prev_ticked_state = self.model.ticked
         self.model.update_state(delta_t)
-        # if ticked state has changed, update the controllers:
-        if prev_ticked_state != self.model.ticked:
-            self.update_controllers('ticked', self.model.ticked)
+
+        # if the clock just ticked, reset the tick age counter
+        if self.model.ticked:
+            self.update_controllers('ticked', True)
+            self._tick_age = 0
+        # if we're waiting to reset the tick counter
+        elif self._tick_age is not None:
+            # age the tick time
+            self._tick_age += delta_t
+            if self._tick_age >= self.min_tick_display_duration:
+                self._tick_age = None
+                self._set_tick_indicator_off()
 
     def nudge(self, count):
         """Nudge the phase forward or backward by count/100 of a beat."""
         adjustment = count * (self.model.rate / 100.)
         new_value = self.model.curr_angle + adjustment
         self.model.curr_angle = new_value % 1.0
+
+
+class TickTimer (object):
+    """Determine when to turn on and off a tick indicator.
+
+    Has some time-specific latching behavior to make the ticks longer than a
+    single frame.
+    """
+    # minimum time between tick on and tick off, in ms
+    min_duration = 100
+
+    def __init__(self):
+        # if None, then we are idling.
+        # otherwise, we turned the tick on and we are waiting to turn it off
+        # again.
+        self.tick_age = None
+
+    def update_state(self, delta_t):
+        if self.tick_age is not None:
+            self.tick_age += delta_t
+
+    def emit_update(self):
+        if self.tick_age is None:
+            return None
+        elif self.tick_age >= self.min_duration:
+            self.tick_age = None
+            return False
+        else:
+            return
+
 
 
 class Clock (object):
@@ -55,14 +105,23 @@ class Clock (object):
         # did the clock tick on its most recent update?
         self.ticked = True
 
+        # should this clock reset and tick on its next update?
+        self.reset_on_update = False
+
     def update_state(self, delta_t):
-        # delta_t has units of ms, need to divide by 1000
-        new_angle = self.curr_angle + (self.rate*delta_t/1000.)
 
-        # if the phase just escaped our range, we ticked this frame
-        self.ticked = new_angle >= 1.0 or new_angle < 0.0
+        if self.reset_on_update:
+            self.ticked = True
+            self.curr_angle = 0.0
+            self.reset_on_update = False
+        else:
+            # delta_t has units of ms, need to divide by 1000
+            new_angle = self.curr_angle + (self.rate*delta_t/1000.)
 
-        self.curr_angle = new_angle % 1.0
+            # if the phase just escaped our range, we ticked this frame
+            self.ticked = new_angle >= 1.0 or new_angle < 0.0
+
+            self.curr_angle = new_angle % 1.0
 
     def copy(self):
         return copy.copy(self)

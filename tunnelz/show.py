@@ -94,6 +94,8 @@ class Show (object):
         self.tunnel_mi.initialize()
         self.animator_mi.initialize()
         self.meta_mi.initialize()
+        for clock in self.clocks:
+            clock.initialize()
 
         # done!
 
