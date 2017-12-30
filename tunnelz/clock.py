@@ -1,13 +1,14 @@
 import copy
 from itertools import izip, tee
 from monotonic import monotonic
-from .model_interface import ModelInterface, MiProperty
+from .model_interface import ModelInterface, MiProperty, MiModelProperty
 
 
 class ControllableClock (ModelInterface):
     """A clock with a complete set of controls."""
     # if True, reset the clock's phase to zero on every tap
     retrigger = MiProperty(False, 'retrigger')
+    one_shot = MiModelProperty('one_shot', 'set_one_shot')
 
     # time between turning the tick indicator on and then off again, in ms
     min_tick_display_duration = 250
@@ -105,6 +106,11 @@ class Clock (object):
         # did the clock tick on its most recent update?
         self.ticked = True
 
+        # is this clock running in "one-shot" mode?
+        # the clock runs for one cycle when triggered then waits for another
+        # trigger event
+        self.one_shot = False
+
         # should this clock reset and tick on its next update?
         self.reset_on_update = False
 
@@ -118,10 +124,14 @@ class Clock (object):
             # delta_t has units of ms, need to divide by 1000
             new_angle = self.curr_angle + (self.rate*delta_t/1000.)
 
-            # if the phase just escaped our range, we ticked this frame
-            self.ticked = new_angle >= 1.0 or new_angle < 0.0
-
-            self.curr_angle = new_angle % 1.0
+            # if we're running in one-shot mode, clamp the angle at 1.0
+            if self.one_shot and new_angle >= 1.0:
+                self.curr_angle = 1.0
+                self.ticked = False
+            else:
+                # if the phase just escaped our range, we ticked this frame
+                self.ticked = new_angle >= 1.0 or new_angle < 0.0
+                self.curr_angle = new_angle % 1.0
 
     def copy(self):
         return copy.copy(self)
