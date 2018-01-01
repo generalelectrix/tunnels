@@ -1,5 +1,5 @@
 import numpy as np
-from .model_interface import ModelInterface, MiProperty
+from .model_interface import ModelInterface
 import cPickle as pickle
 import logging as log
 from uuid import uuid1
