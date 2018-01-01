@@ -1,8 +1,8 @@
+import cPickle as pickle
+from datetime import datetime
+import logging as log
 import numpy as np
 from .model_interface import ModelInterface
-import cPickle as pickle
-import logging as log
-from uuid import uuid1
 
 # states for beam matrix UI
 Idle = 'idle'
@@ -103,13 +103,13 @@ class BeamMatrixMinder (object):
         The minder will keep the cached version on disk in sync.
         If load_path is provided, the state of this minder will be filled by loading from
         the saved file on disk.  If no load path is provided, nothing will be loaded,
-        but a save file will be created using a uuid.  This file can be overridden
-        by passing save_path.
+        but a save file will be created using the current time.
+        This file can be overridden by passing save_path.
         """
         self.n_columns = n_pages * self.col_per_page
         self._cache_path = (
                 save_path if save_path is not None
-                else "tunnelz_save_{}.tunnel".format(uuid1()))
+                else datetime.now().strftime("tunnelz_save_%Y-%m-%d_%H:%M:%S.%f.tunnel"))
 
         if load_path is None:
             self._is_look = np.zeros((self.n_rows, self.n_columns), bool)
