@@ -153,6 +153,7 @@ class Animation (object):
         else:
             return external_clocks[self.clock_source]
 
+
     @property
     def active(self):
         return self.weight > 0.0
@@ -175,6 +176,12 @@ class Animation (object):
         angle = angle_offset*self.n_periods + self.clock(external_clocks).curr_angle
         func = scalar_waveforms[self.type]
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+
+        # scale this animation by submaster level if using external clock
+        if self.clock_source is not None:
+            submaster_level = external_clocks[self.clock_source].submaster_level
+            result = result * submaster_level
+
         if self.invert:
             return -1.0 * result
         else:
@@ -191,6 +198,12 @@ class Animation (object):
         func = vector_waveforms[self.type]
 
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+
+        # scale this animation by submaster level if using external clock
+        if self.clock_source is not None:
+            submaster_level = external_clocks[self.clock_source].submaster_level
+            result = result * submaster_level
+
         if self.invert:
             return -1.0 * result
         else:

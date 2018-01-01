@@ -580,6 +580,9 @@ class ClockMidiController (MidiController):
         self.tick_on = NoteOnMapping(self.channel, 109)
         self.tick_off = NoteOffMapping(self.channel, 109)
 
+        self.submaster_level_control = ControlChangeMapping(self.channel, 3)
+        self.set_callback(self.submaster_level_control, self.handle_submaster_level)
+
     def handle_tap(self, mapping, _):
         self.mi.tap()
 
@@ -606,5 +609,11 @@ class ClockMidiController (MidiController):
     def set_one_shot(self, value):
         self.midi_out.send_from_mapping(self.one_shot_control, 127 if value else 0)
 
+    def handle_submaster_level(self, mapping, value):
+        scaled = self.unipolar_from_midi(value)
+        self.mi.submaster_level = scaled
 
+    def set_submaster_level(self, value):
+        unscaled = self.unipolar_to_midi(value)
+        self.midi_out.send_from_mapping(self.submaster_level_control, unscaled)
 

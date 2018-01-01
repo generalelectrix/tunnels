@@ -9,6 +9,7 @@ class ControllableClock (ModelInterface):
     # if True, reset the clock's phase to zero on every tap
     retrigger = MiProperty(False, 'set_retrigger')
     one_shot = MiModelProperty('one_shot', 'set_one_shot')
+    submaster_level = MiModelProperty('submaster_level', 'set_submaster_level')
 
     # time between turning the tick indicator on and then off again, in ms
     min_tick_display_duration = 250
@@ -113,6 +114,10 @@ class Clock (object):
 
         # should this clock reset and tick on its next update?
         self.reset_on_update = False
+
+        # submaster level for this clock
+        # start all the way up by default
+        self.submaster_level = 1.0
 
     def update_state(self, delta_t):
 
