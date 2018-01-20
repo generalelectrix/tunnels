@@ -6,6 +6,13 @@ use async_dnssd::{browse, BrowsedFlag, Interface};
 use futures::Stream;
 use tokio_core::reactor::Core;
 
+use std::net::ToSocketAddrs;
+use std::net::IpAddr;
+
+fn resolve(host: &str) -> std::io::Result<Vec<IpAddr>> {
+    (host, 0).to_socket_addrs().map(|iter| iter.map(|socket_address| socket_address.ip()).collect())
+}
+
 fn main() {
     let mut core = Core::new().unwrap();
 
@@ -30,6 +37,7 @@ fn main() {
         .flatten()
         .for_each(|item| {
             println!("{:?}", item);
+            println!("Host IP: {:?}", resolve(&item.host_target));
             Ok(())
         });
 
