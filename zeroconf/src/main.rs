@@ -10,15 +10,17 @@ fn main() {
     let core = Core::new().unwrap();
 
     let registration = register(
-        RegisterFlag::Unique.into(),
+        RegisterFlag::Shared.into(),
         Interface::Any,
-        Some("tunnel_server"),
-        "_http._tcp",
+        None,
+        "_tunnel._tcp",
         None,
         None,
         10000,
         "".as_bytes(),
         &core.handle()).unwrap().wait();
+
+    println!("Running.");
 
     loop {
         ::std::thread::sleep_ms(10000);
