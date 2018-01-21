@@ -19,10 +19,10 @@ fn main() {
     let handle = core.handle();
 
     let browse_result = browse(
-                                Interface::Any,
-                                "_tunnel._tcp",
-                                None,
-                                &handle)
+            Interface::Any,
+            "_tunnel._tcp",
+            None,
+            &handle)
         .unwrap()
         .filter_map(|item| {
             println!("{:?}", item);
