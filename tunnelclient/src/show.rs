@@ -11,12 +11,11 @@ use std::time::Duration;
 use std::sync::mpsc::Receiver;
 use std::thread;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
 use draw::Draw;
 use zmq::Context;
 use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use snapshot_manager::InterpResult::*;
-
+use utils::RunFlag;
 
 
 /// Top-level structure that owns all of the show data.
@@ -26,10 +25,11 @@ pub struct Show {
     snapshot_manager: SnapshotManager,
     timesync: Arc<Mutex<Synchronizer>>,
     cfg: ClientConfig,
+    run_flag: RunFlag,
 }
 
 impl Show {
-    pub fn new(cfg: ClientConfig, ctx: &mut Context) -> Self {
+    pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Self {
 
         // Start up the timesync service.
         let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx);
@@ -45,10 +45,12 @@ impl Show {
         let timesync_period = cfg.timesync_interval.clone();
         let timesync = Arc::new(Mutex::new(synchronizer));
         let timesync_remote = timesync.clone();
+        let timesync_run_flag = run_flag.clone();
 
         thread::spawn(move || {
 
-            loop {
+            while timesync_run_flag.should_run() {
+
                 thread::sleep(timesync_period);
                 match timesync_client.synchronize() {
                     Ok(sync) => {
@@ -81,7 +83,8 @@ impl Show {
             gl: GlGraphics::new(opengl),
             snapshot_manager,
             timesync,
-            cfg
+            cfg,
+            run_flag,
         }
     }
 
@@ -92,7 +95,6 @@ impl Show {
         thread::sleep(Duration::from_millis(self.cfg.render_delay as u64));
 
         // Create the window.
-
         let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
             format!("tunnelclient: channel {}", self.cfg.video_channel),
             [self.cfg.x_resolution, self.cfg.y_resolution]
@@ -108,7 +110,12 @@ impl Show {
         window.set_capture_cursor(true);
         window.set_max_fps(120);
 
+        // Run the event loop.
         while let Some(e) = window.next() {
+
+            if !self.run_flag.should_run() {
+                break
+            }
 
             if let Some(update_args) = e.update_args() {
                 self.update(update_args.dt);

@@ -131,7 +131,9 @@ impl SubReceiver {
     /// Run this receiver in a thread, posting deserialized messages to a channel.
     /// Takes ownership of the receiver and moves to the worker thread.
     /// Quits when the output queue is dropped.
-    pub fn run_async<T: DeserializeOwned + Send + 'static>(mut self) -> Receiver<T> {
+    pub fn run_async<T>(mut self) -> Receiver<T>
+        where T: DeserializeOwned + Send + 'static
+    {
         let (tx, rx) = channel::<T>();
         thread::spawn(move || {
             loop {
