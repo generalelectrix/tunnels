@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate simple_error;
 extern crate async_dnssd;
 extern crate tokio_core;
 extern crate futures;
@@ -11,12 +13,10 @@ use async_dnssd::{
     browse,
     BrowsedFlag};
 use futures::{Future, Stream};
-use tokio_core::reactor::{Core, Handle};
+use tokio_core::reactor::Core;
 
 use zmq::{Context, Socket};
 
-use std::net::ToSocketAddrs;
-use std::net::IpAddr;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -26,54 +26,37 @@ use std::collections::HashMap;
 fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
-pub struct Service {
-    registration: Registration,
-    socket: Socket,
-}
+pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> &[u8]) -> Result<(), Box<Error>> {
 
-impl Service {
-    /// Start advertising this service.
-    pub fn start(name: &str, port: u16) -> Result<Self, Box<Error>> {
+    let ctx = Context::new();
 
-        let ctx = Context::new();
+    // Open the 0mq socket we'll use to service requests.
+    let socket = ctx.socket(zmq::REP)?;
+    let addr = format!("tcp://*:{}", port);
+    socket.connect(&addr)?;
 
-        // Open the 0mq socket we'll use to service requests.
-        let socket = ctx.socket(zmq::REP)?;
-        let addr = format!("tcp://*:{}", port);
-        socket.connect(&addr)?;
+    // Create a tokio core just to run this one future.
+    let core = Core::new()?;
 
-        // Create a tokio core just to run this one future.
-        let core = Core::new()?;
+    // Start advertising this service over DNS-SD.
+    let registration = register(
+        RegisterFlag::Shared.into(),
+        Interface::Any,
+        None,
+        &reg_type(name),
+        None,
+        None,
+        port,
+        "".as_bytes(),
+        &core.handle())?
+        .wait()?;
 
-        // Start advertising this service over DNS-SD.
-        let (registration, _) = register(
-            RegisterFlag::Shared.into(),
-            Interface::Any,
-            None,
-            &reg_type(name),
-            None,
-            None,
-            port,
-            "".as_bytes(),
-            &core.handle())?
-            .wait()?;
-
-        Ok(Service {
-            registration,
-            socket,
-        })
-    }
-
-    /// Run the service synchronously, servicing requests using the provided callback.
-    pub fn run(&mut self, action: fn(&[u8]) -> &[u8]) {
-
-        loop {
-            if let Ok(msg) = self.socket.recv_bytes(0) {
-                let response = action(&msg);
-                match self.socket.send(response, 0) {
-                    Err(e) => println!("Failed to send response: {}", e),
-                    _ => (),
-                }
+    loop {
+        if let Ok(msg) = socket.recv_bytes(0) {
+            let response = action(&msg);
+            match socket.send(response, 0) {
+                Err(e) => println!("Failed to send response: {}", e),
+                _ => (),
             }
         }
     }
@@ -142,6 +125,23 @@ impl Controller {
         Controller {
             services,
         }
+    }
+
+    /// List the services available on this controller.
+    pub fn list(&self) -> Vec<String> {
+        self.services.lock().unwrap().keys().map(|name| name.clone()).collect()
+    }
+
+    /// Send a message to one of the services on this controller, returning the response.
+    pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>, Box<Error>> {
+        let services = self.services.lock().unwrap();
+        let socket = match services.get(name) {
+            None => bail!(format!("No service named '{}' available.", name)),
+            Some(socket) => socket,
+        };
+        socket.send(msg, 0)?;
+        let response = socket.recv_bytes(0)?;
+        Ok(response)
     }
 }
 
