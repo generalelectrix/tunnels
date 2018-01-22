@@ -49,7 +49,7 @@ impl Client {
         Client {socket, poll_period: Duration::from_millis(500), n_meas: 10}
     }
 
-    /// Return an estimate for how long a synchronization will take.
+    /// Return an estimate of how long a synchronization will take.
     pub fn synchronization_duration(&self) -> Duration {
         self.poll_period * self.n_meas as u32
     }
