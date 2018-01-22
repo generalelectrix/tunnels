@@ -1,0 +1,6 @@
+[package]
+name = "zero_configure"
+version = "0.1.0"
+authors = ["Chris Macklin <chris.macklin@gmail.com>"]
+
+[dependencies]
