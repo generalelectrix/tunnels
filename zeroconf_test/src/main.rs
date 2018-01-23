@@ -1,29 +1,10 @@
-extern crate async_dnssd;
-extern crate tokio_core;
-extern crate futures;
+extern crate zero_configure;
 
-use async_dnssd::{register, RegisterFlag, Interface};
-use futures::Future;
-use tokio_core::reactor::Core;
+use zero_configure::run_service;
+
 
 fn main() {
-    let core = Core::new().unwrap();
-
-    let registration = register(
-        RegisterFlag::Shared.into(),
-        Interface::Any,
-        None,
-        "_tunnel._tcp",
-        None,
-        None,
-        10000,
-        "".as_bytes(),
-        &core.handle()).unwrap().wait();
-
-    println!("Running.");
-
-    loop {
-        ::std::thread::sleep_ms(10000);
-    }
-
+    run_service("testservice", 11000, |_| {
+        vec!(1, 2, 3, 4, 5)
+    }).unwrap();
 }

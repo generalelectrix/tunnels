@@ -26,7 +26,7 @@ use std::collections::HashMap;
 fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
-pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> &[u8]) -> Result<(), Box<Error>> {
+pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> Vec<u8>) -> Result<(), Box<Error>> {
 
     let ctx = Context::new();
 
@@ -39,19 +39,22 @@ pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> &[u8]) -> Result<
     let core = Core::new()?;
 
     // Start advertising this service over DNS-SD.
-    let registration = register(
+    let _registration = register(
         RegisterFlag::Shared.into(),
         Interface::Any,
         None,
-        &reg_type(name),
+        "_tunnel._tcp",//&reg_type(name),
         None,
         None,
-        port,
+        10000,
         "".as_bytes(),
         &core.handle())?
         .wait()?;
 
+    println!("Should have registered.");
+
     loop {
+        println!("Loop.");
         if let Ok(msg) = socket.recv_bytes(0) {
             let response = action(&msg);
             match socket.send(response, 0) {
@@ -157,8 +160,39 @@ fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<Er
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// Return a byte vector containing DEADBEEF.
+    fn deadbeef() -> Vec<u8> { vec!(0xD, 0xE, 0xA, 0xD, 0xB, 0xE, 0xE, 0xF) }
+
+    /// Test that we can advertise a single service and successfully connect to it.
     #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    fn test_pair() {
+        let service_name = "tunnel";
+        let port = 10000;
+
+        // Start up the service; return DEADBEEF as a response.
+        thread::spawn(move || {
+            run_service(service_name.clone(), port, |buffer| {
+                deadbeef()
+            }).unwrap();
+        });
+
+        thread::sleep_ms(500);
+
+//
+//        let controller = Controller::new(service_name);
+//
+//        // Wait a moment, and assert that we can't see any services.
+//        thread::sleep_ms(500);
+//
+//        assert!(controller.list().is_empty());
+//
+//
+//
+//        // Give the service a moment to get situated.
+//        thread::sleep_ms(500);
+//
+//        assert_eq!(controller.list().len(), 1);
     }
 }
