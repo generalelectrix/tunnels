@@ -25,15 +25,34 @@ use std::collections::HashMap;
 /// Format a service name into a DNS-SD TCP registration type.
 fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
 
+pub struct ServiceDefinition {
+    name: String,
+    port: u16,
+    pub localhost_only: bool,
+}
+
+impl ServiceDefinition {
+    pub fn new<N: Into<String>>(name: N, port: u16) -> Self {
+        ServiceDefinition {
+            name: name.into(),
+            port,
+            localhost_only: false,
+        }
+    }
+}
+
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
-pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> Vec<u8>) -> Result<(), Box<Error>> {
+pub fn run_service(def: ServiceDefinition, action: fn(&[u8]) -> Vec<u8>) -> Result<(), Box<Error>> {
 
     let ctx = Context::new();
 
     // Open the 0mq socket we'll use to service requests.
     let socket = ctx.socket(zmq::REP)?;
-    let addr = format!("tcp://*:{}", port);
-    socket.connect(&addr)?;
+    let addr = format!(
+        "tcp://{}:{}",
+        if def.localhost_only { "127.0.0.1" } else { "*" },
+        def.port);
+    socket.bind(&addr)?;
 
     // Create a tokio core just to run this one future.
     let core = Core::new()?;
@@ -43,18 +62,14 @@ pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> Vec<u8>) -> Resul
         RegisterFlag::Shared.into(),
         Interface::Any,
         None,
-        "_tunnel._tcp",//&reg_type(name),
+        &reg_type(&def.name),
         None,
         None,
-        10000,
+        def.port,
         "".as_bytes(),
-        &core.handle())?
-        .wait()?;
-
-    println!("Should have registered.");
+        &core.handle())?;
 
     loop {
-        println!("Loop.");
         if let Ok(msg) = socket.recv_bytes(0) {
             let response = action(&msg);
             match socket.send(response, 0) {
@@ -108,8 +123,6 @@ impl Controller {
                 .and_then(|event| event.resolve(&handle))
                 .flatten()
                 .for_each(|service| {
-                    println!("Adding service: {:?}", service);
-
                     match req_socket(&service.host_target, service.port, &mut ctx) {
                         Ok(socket) => {
                             services_remote.lock().unwrap().insert(service.host_target, socket);
@@ -118,7 +131,6 @@ impl Controller {
                             println!("Could not connect to '{}':\n{}", service.host_target, e);
                         }
                     }
-
                     Ok(())
                 });
 
@@ -150,9 +162,10 @@ impl Controller {
 
 /// Try to connect a REQ socket at this host and port.
 fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<Error>> {
+
     let addr = format!("tcp://{}:{}", host, port);
 
-    // Bind a REQ socket.
+    // Connect a REQ socket.
     let socket = ctx.socket(zmq::REQ)?;
     socket.connect(&addr)?;
     Ok(socket)
@@ -165,34 +178,46 @@ mod tests {
     /// Return a byte vector containing DEADBEEF.
     fn deadbeef() -> Vec<u8> { vec!(0xD, 0xE, 0xA, 0xD, 0xB, 0xE, 0xE, 0xF) }
 
+    /// Return a byte vector containing 0123.
+    fn testbytes() -> Vec<u8> { vec!(0, 1, 2, 3) }
+
     /// Test that we can advertise a single service and successfully connect to it.
     #[test]
     fn test_pair() {
-        let service_name = "tunnel";
+
+        let service_name = "test";
         let port = 10000;
+
+        let def = ServiceDefinition {
+            name: service_name.to_string(),
+            port,
+            localhost_only: false,
+        };
+
+        let controller = Controller::new(service_name);
+
+        // Wait a moment, and assert that we can't see any services.
+        thread::sleep_ms(500);
+
+        assert!(controller.list().is_empty());
 
         // Start up the service; return DEADBEEF as a response.
         thread::spawn(move || {
-            run_service(service_name.clone(), port, |buffer| {
+            run_service(def, |buffer| {
+                assert_eq!(testbytes(), buffer);
                 deadbeef()
             }).unwrap();
         });
 
-        thread::sleep_ms(500);
+        // Give the service a moment to get situated.
+        thread::sleep_ms(2000);
 
-//
-//        let controller = Controller::new(service_name);
-//
-//        // Wait a moment, and assert that we can't see any services.
-//        thread::sleep_ms(500);
-//
-//        assert!(controller.list().is_empty());
-//
-//
-//
-//        // Give the service a moment to get situated.
-//        thread::sleep_ms(500);
-//
-//        assert_eq!(controller.list().len(), 1);
+        let names = controller.list();
+        assert_eq!(1, names.len());
+
+        // Test sending a message.
+        let response = controller.send(&names[0], &testbytes()).unwrap();
+
+        assert_eq!(deadbeef(), response);
     }
 }
