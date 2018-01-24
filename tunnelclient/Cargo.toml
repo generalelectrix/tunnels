@@ -10,20 +10,18 @@ authors = [
 name = "tunnelclient"
 
 [dependencies]
-piston_window = "*"
-piston2d-graphics = "*"
-pistoncore-glutin_window = "*"
-piston2d-opengl_graphics = "*"
-interpolation = "*"
-yaml-rust = "*"
-rmp-serde = "*"
-serde = "*"
-serde_derive = "*"
-streaming-stats = "*"
-simple-error = "*"
+piston_window = "^0.73.0"
+piston2d-graphics = "^0.23.0"
+pistoncore-glutin_window = "^0.42.0"
+piston2d-opengl_graphics = "^0.49.0"
+interpolation = "0.1.0"
+yaml-rust = "0.3.5"
+rmp-serde = "0.13.7"
+serde = "^1"
+serde_derive = "^1"
+streaming-stats = "0.1.28"
+simple-error = "0.1.10"
+zmq = "0.8.2"
 
 [dependencies.pistoncore-sdl2_window]
 git = "https://github.com/PistonDevelopers/sdl2_window"
-
-[dependencies.zmq]
-git = "https://github.com/erickt/rust-zmq.git"
