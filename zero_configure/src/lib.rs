@@ -29,7 +29,9 @@ fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
 /// by the action callback back to the requester.
-pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> Vec<u8>) -> Result<(), Box<Error>> {
+pub fn run_service<F>(name: &str, port: u16, mut action: F) -> Result<(), Box<Error>>
+    where F: FnMut(&[u8]) -> Vec<u8>
+{
 
     let ctx = Context::new();
 
