@@ -45,10 +45,12 @@ fn run_remote(ctx: &mut Context) {
                     };
 
                 // start up a new show
+                running_show = Some(ShowManager::new(config, ctx));
+
                 // everything is OK
                 "Ok.".to_string()
             },
-            Err(e) => e,
+            Err(e) => format!("Could not parse request as a show configuration:\n{}", e),
         }.into_bytes()
     });
 }
