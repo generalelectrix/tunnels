@@ -4,10 +4,8 @@ version = "0.1.0"
 authors = ["Chris Macklin <chris@imaginaryphotons.com>"]
 
 [dependencies]
-async-dnssd = "0.3.0"
-tokio-core = "*"
-futures = "*"
-simple-error = "*"
-
-[dependencies.zmq]
-git = "https://github.com/erickt/rust-zmq.git"
+async-dnssd = "^0.3"
+tokio-core = "^0.1"
+futures = "^0.1"
+simple-error = "^0.1"
+zmq = "^0.8.2"

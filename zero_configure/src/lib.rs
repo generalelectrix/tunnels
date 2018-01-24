@@ -52,7 +52,7 @@ pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> Vec<u8>) -> Resul
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {
             let response = action(&msg);
-            match socket.send(response, 0) {
+            match socket.send(&response, 0) {
                 Err(e) => println!("Failed to send response: {}", e),
                 _ => (),
             }
