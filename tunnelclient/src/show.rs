@@ -28,6 +28,7 @@ pub struct Show {
     run_flag: RunFlag,
 }
 
+// FIXME: remove unwraps here in favor of Result.
 impl Show {
     pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Self {
 
