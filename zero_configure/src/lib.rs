@@ -1,5 +1,5 @@
-/// Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
-/// Interact with one or more instances of this service, using 0mq REQ/REP sockets.
+//! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
+//! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
 #[macro_use]
 extern crate simple_error;
 extern crate async_dnssd;
