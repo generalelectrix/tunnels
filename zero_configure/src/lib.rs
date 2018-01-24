@@ -9,10 +9,9 @@ use async_dnssd::{
     register,
     RegisterFlag,
     Interface,
-    Registration,
     browse,
     BrowsedFlag};
-use futures::{Future, Stream};
+use futures::Stream;
 use tokio_core::reactor::Core;
 
 use zmq::{Context, Socket};
@@ -25,33 +24,14 @@ use std::collections::HashMap;
 /// Format a service name into a DNS-SD TCP registration type.
 fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
 
-pub struct ServiceDefinition {
-    name: String,
-    port: u16,
-    pub localhost_only: bool,
-}
-
-impl ServiceDefinition {
-    pub fn new<N: Into<String>>(name: N, port: u16) -> Self {
-        ServiceDefinition {
-            name: name.into(),
-            port,
-            localhost_only: false,
-        }
-    }
-}
-
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
-pub fn run_service(def: ServiceDefinition, action: fn(&[u8]) -> Vec<u8>) -> Result<(), Box<Error>> {
+pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> Vec<u8>) -> Result<(), Box<Error>> {
 
     let ctx = Context::new();
 
     // Open the 0mq socket we'll use to service requests.
     let socket = ctx.socket(zmq::REP)?;
-    let addr = format!(
-        "tcp://{}:{}",
-        if def.localhost_only { "127.0.0.1" } else { "*" },
-        def.port);
+    let addr = format!("tcp://*:{}", port);
     socket.bind(&addr)?;
 
     // Create a tokio core just to run this one future.
@@ -62,10 +42,10 @@ pub fn run_service(def: ServiceDefinition, action: fn(&[u8]) -> Vec<u8>) -> Resu
         RegisterFlag::Shared.into(),
         Interface::Any,
         None,
-        &reg_type(&def.name),
+        &reg_type(name),
         None,
         None,
-        def.port,
+        port,
         "".as_bytes(),
         &core.handle())?;
 
@@ -174,6 +154,7 @@ fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<Er
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     /// Return a byte vector containing DEADBEEF.
     fn deadbeef() -> Vec<u8> { vec!(0xD, 0xE, 0xA, 0xD, 0xB, 0xE, 0xE, 0xF) }
@@ -181,36 +162,32 @@ mod tests {
     /// Return a byte vector containing 0123.
     fn testbytes() -> Vec<u8> { vec!(0, 1, 2, 3) }
 
+    fn sleep(dt: u64) { thread::sleep(Duration::from_millis(dt)) }
+
     /// Test that we can advertise a single service and successfully connect to it.
     #[test]
     fn test_pair() {
 
-        let service_name = "test";
+        let name = "test";
         let port = 10000;
 
-        let def = ServiceDefinition {
-            name: service_name.to_string(),
-            port,
-            localhost_only: false,
-        };
-
-        let controller = Controller::new(service_name);
+        let controller = Controller::new(name);
 
         // Wait a moment, and assert that we can't see any services.
-        thread::sleep_ms(500);
+        sleep(500);
 
         assert!(controller.list().is_empty());
 
         // Start up the service; return DEADBEEF as a response.
         thread::spawn(move || {
-            run_service(def, |buffer| {
+            run_service(name, port, |buffer| {
                 assert_eq!(testbytes(), buffer);
                 deadbeef()
             }).unwrap();
         });
 
         // Give the service a moment to get situated.
-        thread::sleep_ms(2000);
+        sleep(2000);
 
         let names = controller.list();
         assert_eq!(1, names.len());
