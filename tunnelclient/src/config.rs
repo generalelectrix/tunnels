@@ -4,6 +4,7 @@ use std::io::Read;
 use std::{env, cmp};
 use std::time::Duration;
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_hostname: String,
     pub video_channel: String,
@@ -17,7 +18,7 @@ pub struct ClientConfig {
     pub critical_size: f64,
     pub thickness_scale: f64,
     pub x_center: f64,
-    pub y_center: f64
+    pub y_center: f64,
 }
 
 /// Parses first command line arg as an integer video channel.

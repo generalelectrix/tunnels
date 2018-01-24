@@ -15,6 +15,7 @@ extern crate serde;
 extern crate rmp_serde;
 extern crate zmq;
 extern crate stats;
+extern crate zero_configure;
 
 mod constants {
     use std::f64::consts::PI;

@@ -27,6 +27,8 @@ use std::collections::HashMap;
 fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
+/// Pass each message received on the socket to the action callback.  Send the byte buffer returned
+/// by the action callback back to the requester.
 pub fn run_service(name: &str, port: u16, action: fn(&[u8]) -> Vec<u8>) -> Result<(), Box<Error>> {
 
     let ctx = Context::new();
@@ -69,7 +71,7 @@ pub struct Controller {
 
 impl Controller {
     /// Start up a new service controller at the given service name.
-    /// Asynchronously browses for new services, and removes them if they deregister.
+    /// Asynchronously browse for new services, and remove them if they deregister.
     /// For the moment, panic if anything goes wrong during initialization.
     /// This is acceptable as this action will run once during startup and there's nothing to do
     /// except bail completely if this process fails.

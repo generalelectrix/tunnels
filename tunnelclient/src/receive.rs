@@ -158,6 +158,10 @@ impl SubReceiver {
 impl Receive for SubReceiver {
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
         let flag = if block {0} else {DONTWAIT};
+
+        // The frame messages are two parts; the first part is the video channel, used as a 0mq
+        // topic filter.  Discard the topic filter, leaving just the msgpacked frame data as the
+        // second part of the message.
         if let Ok(mut parts) = self.socket.recv_multipart(flag) {
             let n_parts = parts.len();
             if n_parts != 2 {
