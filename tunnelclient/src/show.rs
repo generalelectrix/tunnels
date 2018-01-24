@@ -32,6 +32,8 @@ pub struct Show {
 impl Show {
     pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Self {
 
+        println!("Running on video channel {}.", cfg.video_channel);
+
         // Start up the timesync service.
         let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx);
 

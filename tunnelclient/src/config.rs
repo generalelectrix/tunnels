@@ -1,7 +1,7 @@
 use yaml_rust::YamlLoader;
 use std::fs::File;
 use std::io::Read;
-use std::{env, cmp};
+use std::cmp;
 use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,19 +21,13 @@ pub struct ClientConfig {
     pub y_center: f64,
 }
 
-/// Parses first command line arg as an integer video channel.
-/// Parses second command line arg as path to a yaml config file.
 /// Loads, parses, and returns the config.
 /// Panics if something goes wrong.
-pub fn config_from_command_line() -> ClientConfig {
-    let video_channel_str = env::args().nth(1).expect("No video channel provided.");
+pub fn load_config(video_channel: u64, config_path: String) -> ClientConfig {
 
-    // Parse video channel as an int and blow up if it isn't one.
-    let video_channel: u64 = video_channel_str.parse().unwrap();
     // Back into string to construct the channel filter arg.
     let channel_filter_str = video_channel.to_string();
 
-    let config_path = env::args().nth(2).expect("No config path arg provided.");
     let mut config_file = File::open(config_path).unwrap();
     let mut config_file_string = String::new();
     config_file.read_to_string(&mut config_file_string).unwrap();
@@ -45,7 +39,6 @@ pub fn config_from_command_line() -> ClientConfig {
     let timesync_interval = Duration::from_millis(
         cfg["timesync_interval"].as_i64().expect("Bad timesync_interval.") as u64);
 
-    println!("Running on video channel {}.", channel_filter_str);
     ClientConfig {
         server_hostname: host,
         video_channel: channel_filter_str,

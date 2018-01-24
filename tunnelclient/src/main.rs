@@ -32,17 +32,32 @@ mod snapshot_manager;
 mod show;
 mod remote;
 
-use config::config_from_command_line;
-use std::thread;
-use std::sync::atomic::{ATOMIC_BOOL_INIT};
+use config::load_config;
+use std::env;
 use zmq::Context;
 use show::Show;
 use utils::RunFlag;
+use remote::run_remote;
 
 fn main() {
-    let cfg = config_from_command_line();
+
+    // Check if running in remote mode.
+    let first_arg = env::args().nth(1).expect(
+        "First argument must be 'remote' to run in remote mode, \
+         or the virtual video channel to listen to.");
 
     let mut ctx = Context::new();
+
+    if first_arg == "remote" {
+        run_remote(&mut ctx);
+        return
+    }
+
+    let video_channel: u64 = first_arg.parse().expect("Video channel must be a positive integer.");
+
+    let config_path = env::args().nth(2).expect("No config path arg provided.");
+
+    let cfg = load_config(video_channel, config_path);
 
     let mut show = Show::new(cfg, &mut ctx, RunFlag::new());
 
