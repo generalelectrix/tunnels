@@ -5,18 +5,20 @@
 //! parameters.
 //! Also provide the tools needed for simple remote administration.
 
-use zero_configure::run_service;
+use zero_configure::{run_service, Controller};
 use zmq::Context;
 use show::Show;
 use config::ClientConfig;
 use rmp_serde::decode::from_read;
+use rmp_serde::encode::write;
 use utils::RunFlag;
 use std::thread;
+use std::error::Error;
 
 const SERVICE_NAME: &'static str = "tunnelclient";
 const PORT: u16 = 15000;
 
-//
+// --- client remote control ---
 
 /// Run this client as a remotely configurable service.
 pub fn run_remote(ctx: &mut Context) {
@@ -91,3 +93,39 @@ impl ShowManager {
 }
 
 
+// --- remote administration ---
+
+/// Provide an API for administering a flock of tunnel clients.
+pub struct Administrator {
+    /// zero_configure service controller.
+    controller: Controller,
+}
+
+impl Administrator {
+    pub fn new() -> Self {
+        Administrator {
+            controller: Controller::new(SERVICE_NAME),
+        }
+    }
+
+    /// Return the list of clients that are currently available.
+    pub fn clients(&self) -> Vec<String> {
+        self.controller.list()
+    }
+
+    /// Command a particular client to run using the provided configuration.
+    /// If the client is available, returns the string response from sending the config.
+    /// Returns Err if the specified client doesn't exist.
+    fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String, Box<Error>> {
+        // Serialize the config.
+        let mut serialized = Vec::new();
+        write(&mut serialized, &config)?;
+
+        // Send the serialized command.
+        let response = self.controller.send(client, &serialized)?;
+        // Parse the string response.
+        Ok(String::from_utf8(response)?)
+    }
+
+    /// Command a particular client to run using a named configuration and other metadata.
+}
