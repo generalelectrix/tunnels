@@ -35,7 +35,7 @@ fn run_remote(ctx: &mut Context) {
                 ::std::mem::swap(&mut show_local, &mut running_show);
 
                 let show_stop_msg =
-                    if let Some(mut show) = show_local {
+                    if let Some(show) = show_local {
                         match show.stop() {
                             Ok(()) => "Running show stopped cleanly.",
                             Err(()) => "Running show panicked.",
@@ -52,9 +52,10 @@ fn run_remote(ctx: &mut Context) {
             },
             Err(e) => format!("Could not parse request as a show configuration:\n{}", e),
         }.into_bytes()
-    });
+    }).unwrap()
 }
 
+/// Handle to a show running on another thread.
 struct ShowManager {
     show_thread: thread::JoinHandle<()>,
     run_flag: RunFlag,
