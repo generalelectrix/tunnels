@@ -1,7 +1,0 @@
-[package]
-name = "zeroconf"
-version = "0.1.0"
-authors = ["Chris Macklin <chris.macklin@gmail.com>"]
-
-[dependencies]
-zero_configure = { path = "../zero_configure" }
