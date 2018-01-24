@@ -1,0 +1,6 @@
+[package]
+name = "tunnelclient_control"
+version = "0.1.0"
+authors = ["Chris Macklin <chris.macklin@gmail.com>"]
+
+[dependencies]
