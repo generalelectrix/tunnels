@@ -29,6 +29,7 @@ mod interpolate;
 mod draw;
 mod snapshot_manager;
 mod show;
+mod remote;
 
 use config::config_from_command_line;
 use std::thread;
