@@ -1,8 +1,8 @@
-use_midi: true
+use_midi: false
 midi_ports: [1]
 report_framerate: false
 log_level: "debug"
-stress_test: false
+stress_test: true
 rotation_test: false
 aliasing_test: false
 multi_channel_test: false

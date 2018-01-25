@@ -135,7 +135,7 @@ impl SubReceiver {
         where T: DeserializeOwned + Send + 'static
     {
         let (tx, rx) = channel::<T>();
-        thread::spawn(move || {
+        thread::Builder::new().name("subscribe_receiver".to_string()).spawn(move || {
             loop {
                 // blocking receive
                 match self.receive(true) {

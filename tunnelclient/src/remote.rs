@@ -46,7 +46,7 @@ pub fn run_remote(ctx: &mut Context) {
 
                 // start up a new show
                 // FIXME this should return a Result if something went wrong starting the show.
-                running_show = Some(ShowManager::new(config, ctx));
+                running_show = Some(ShowManager::new(config));
 
                 // everything is OK
                 format!("{}\nStarted a new show.", show_stop_msg)
@@ -70,12 +70,21 @@ impl ShowManager {
     /// Start up a new show using the provided configuration.
     /// Keep a handle to the thread the show is running in to allow us to gracefully wait for the
     /// show to terminate later.
-    fn new(config: ClientConfig, ctx: &mut Context) -> Self {
+    fn new(config: ClientConfig) -> Self {
         let run_flag = RunFlag::new();
-        let mut show = Show::new(config, ctx, run_flag.clone());
-        let show_thread = thread::spawn(move || {
-            show.run();
-        });
+        let run_flag_remote = run_flag.clone();
+
+        println!("Starting with config:{:?}", config);
+
+        let mut ctx = Context::new();
+
+        let show_thread = thread::Builder::new()
+            .name("running_show".to_string())
+            .spawn(move || {
+                let mut show = Show::new(config, &mut ctx, run_flag_remote);
+                show.run();
+            })
+            .unwrap();
 
         ShowManager {
             show_thread,
@@ -116,7 +125,7 @@ impl Administrator {
     /// Command a particular client to run using the provided configuration.
     /// If the client is available, returns the string response from sending the config.
     /// Returns Err if the specified client doesn't exist.
-    fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String, Box<Error>> {
+    pub fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String, Box<Error>> {
         // Serialize the config.
         let mut serialized = Vec::new();
         write(&mut serialized, &config)?;
@@ -127,5 +136,5 @@ impl Administrator {
         Ok(String::from_utf8(response)?)
     }
 
-    /// Command a particular client to run using a named configuration and other metadata.
+    // Command a particular client to run using a named configuration and other metadata.
 }

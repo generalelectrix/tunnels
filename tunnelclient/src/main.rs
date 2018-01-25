@@ -37,19 +37,34 @@ use std::env;
 use zmq::Context;
 use show::Show;
 use utils::RunFlag;
-use remote::run_remote;
+use remote::{run_remote, Administrator};
 
 fn main() {
 
     // Check if running in remote mode.
     let first_arg = env::args().nth(1).expect(
         "First argument must be 'remote' to run in remote mode, \
-         or the virtual video channel to listen to.");
+        'admin' to run the client administrator,
+         or the integer virtual video channel to listen to.");
 
     let mut ctx = Context::new();
 
     if first_arg == "remote" {
         run_remote(&mut ctx);
+        return
+    } else if first_arg == "admin" {
+        let admin = Administrator::new();
+
+        ::std::thread::sleep_ms(2000);
+
+        let clients = admin.clients();
+        println!("Clients: {:?}", clients);
+
+        let config = load_config(0, "cfg/monitor.yaml");
+        match admin.run_with_config(&clients[0], config) {
+            Ok(msg) => println!("Success:\n{}", msg),
+            Err(e) => println!("Error:\n{:?}", e),
+        }
         return
     }
 
@@ -57,7 +72,7 @@ fn main() {
 
     let config_path = env::args().nth(2).expect("No config path arg provided.");
 
-    let cfg = load_config(video_channel, config_path);
+    let cfg = load_config(video_channel, &config_path);
 
     let mut show = Show::new(cfg, &mut ctx, RunFlag::new());
 

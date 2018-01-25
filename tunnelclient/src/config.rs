@@ -23,7 +23,7 @@ pub struct ClientConfig {
 
 /// Loads, parses, and returns the config.
 /// Panics if something goes wrong.
-pub fn load_config(video_channel: u64, config_path: String) -> ClientConfig {
+pub fn load_config(video_channel: u64, config_path: &str) -> ClientConfig {
 
     // Back into string to construct the channel filter arg.
     let channel_filter_str = video_channel.to_string();

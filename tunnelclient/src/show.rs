@@ -26,12 +26,12 @@ pub struct Show {
     timesync: Arc<Mutex<Synchronizer>>,
     cfg: ClientConfig,
     run_flag: RunFlag,
+    window: PistonWindow<Sdl2Window>,
 }
 
 // FIXME: remove unwraps here in favor of Result.
 impl Show {
     pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Self {
-
         println!("Running on video channel {}.", cfg.video_channel);
 
         // Start up the timesync service.
@@ -44,16 +44,16 @@ impl Show {
 
         let synchronizer = Synchronizer::new(timesync_client.synchronize().unwrap());
 
+        println!("Synchronized.");
+
         // Spin off another thread to periodically update our host time synchronization.
         let timesync_period = cfg.timesync_interval.clone();
         let timesync = Arc::new(Mutex::new(synchronizer));
         let timesync_remote = timesync.clone();
         let timesync_run_flag = run_flag.clone();
 
-        thread::spawn(move || {
-
+        thread::Builder::new().name("timesync".to_string()).spawn(move || {
             while timesync_run_flag.should_run() {
-
                 thread::sleep(timesync_period);
                 match timesync_client.synchronize() {
                     Ok(sync) => {
@@ -81,6 +81,25 @@ impl Show {
 
         let opengl = OpenGL::V3_2;
 
+        // Sleep for a render delay to make sure we have snapshots before we start rendering.
+        thread::sleep(Duration::from_millis(cfg.render_delay as u64));
+
+        // Create the window.
+        let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
+            format!("tunnelclient: channel {}", cfg.video_channel),
+            [cfg.x_resolution, cfg.y_resolution]
+        )
+            .opengl(opengl)
+            .exit_on_esc(true)
+            .vsync(true)
+            .samples(if cfg.anti_alias { 4 } else { 0 })
+            .fullscreen(cfg.fullscreen)
+            .build()
+            .unwrap();
+
+        window.set_capture_cursor(true);
+        window.set_max_fps(120);
+
         Show {
             opengl,
             gl: GlGraphics::new(opengl),
@@ -88,33 +107,16 @@ impl Show {
             timesync,
             cfg,
             run_flag,
+            window,
         }
+
     }
 
-    /// Create this show's window, create time synchronization, and run the show's event loop.
+    /// Run the show's event loop.
     pub fn run(&mut self) {
 
-        // Sleep for a render delay to make sure we have snapshots before we start rendering.
-        thread::sleep(Duration::from_millis(self.cfg.render_delay as u64));
-
-        // Create the window.
-        let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
-            format!("tunnelclient: channel {}", self.cfg.video_channel),
-            [self.cfg.x_resolution, self.cfg.y_resolution]
-        )
-            .opengl(self.opengl)
-            .exit_on_esc(true)
-            .vsync(true)
-            .samples(if self.cfg.anti_alias {4} else {0})
-            .fullscreen(self.cfg.fullscreen)
-            .build()
-            .unwrap();
-
-        window.set_capture_cursor(true);
-        window.set_max_fps(120);
-
         // Run the event loop.
-        while let Some(e) = window.next() {
+        while let Some(e) = self.window.next() {
 
             if !self.run_flag.should_run() {
                 break
