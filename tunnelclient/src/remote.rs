@@ -125,5 +125,6 @@ impl Administrator {
         Ok(String::from_utf8(response)?)
     }
 
-    // Command a particular client to run using a named configuration and other metadata.
+    // /// Command a particular client to run using a named configuration and other metadata.
+    //pub fn run(&self, client: &str, video_channel: u64, config)
 }

@@ -74,7 +74,7 @@ impl Show {
 
         // Set up snapshot reception and management.
         let snapshot_queue: Receiver<Snapshot> =
-            SubReceiver::new(&cfg.server_hostname, 6000, cfg.video_channel.as_bytes(), ctx)
+            SubReceiver::new(&cfg.server_hostname, 6000, cfg.video_channel.to_string().as_bytes(), ctx)
                 .run_async();
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);

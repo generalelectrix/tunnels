@@ -32,7 +32,7 @@ mod snapshot_manager;
 mod show;
 mod remote;
 
-use config::load_config;
+use config::ClientConfig;
 use std::env;
 use zmq::Context;
 use show::Show;
@@ -60,7 +60,7 @@ fn main() {
         let clients = admin.clients();
         println!("Clients: {:?}", clients);
 
-        let config = load_config(0, "cfg/monitor.yaml");
+        let config = ClientConfig::load(0, "cfg/monitor.yaml");
         match admin.run_with_config(&clients[0], config) {
             Ok(msg) => println!("Success:\n{}", msg),
             Err(e) => println!("Error:\n{:?}", e),
@@ -72,7 +72,7 @@ fn main() {
 
     let config_path = env::args().nth(2).expect("No config path arg provided.");
 
-    let cfg = load_config(video_channel, &config_path);
+    let cfg = ClientConfig::load(video_channel, &config_path);
 
     let mut show = Show::new(cfg, &mut ctx, RunFlag::new());
 
