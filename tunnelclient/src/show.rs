@@ -11,6 +11,7 @@ use std::time::Duration;
 use std::sync::mpsc::Receiver;
 use std::thread;
 use std::sync::{Arc, Mutex};
+use std::error::Error;
 use draw::Draw;
 use zmq::Context;
 use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
@@ -29,20 +30,19 @@ pub struct Show {
     window: PistonWindow<Sdl2Window>,
 }
 
-// FIXME: remove unwraps here in favor of Result.
 impl Show {
-    pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Self {
+    pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Result<Self, Box<Error>> {
         println!("Running on video channel {}.", cfg.video_channel);
 
         // Start up the timesync service.
-        let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx);
+        let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx)?;
 
         // Synchronize timing with master host.
         println!(
             "Synchronizing timing.  This will take about {} seconds.",
             timesync_client.synchronization_duration().as_secs());
 
-        let synchronizer = Synchronizer::new(timesync_client.synchronize().unwrap());
+        let synchronizer = Synchronizer::new(timesync_client.synchronize()?);
 
         println!("Synchronized.");
 
@@ -58,7 +58,7 @@ impl Show {
                 match timesync_client.synchronize() {
                     Ok(sync) => {
                         let new_estimate = sync.now_as_timestamp();
-                        let mut synchronizer = timesync_remote.lock().unwrap();
+                        let mut synchronizer = timesync_remote.lock().expect("Timesync mutex poisoned.");
                         let old_estimate = synchronizer.now_as_timestamp();
                         println!(
                             "Updating time sync.  Change from previous estimate: {}",
@@ -70,11 +70,11 @@ impl Show {
                     }
                 }
             }
-        });
+        }).map_err(|e| format!("Timesync service thread failed to spawn: {}", e))?;
 
         // Set up snapshot reception and management.
         let snapshot_queue: Receiver<Snapshot> =
-            SubReceiver::new(&cfg.server_hostname, 6000, cfg.video_channel.to_string().as_bytes(), ctx)
+            SubReceiver::new(&cfg.server_hostname, 6000, cfg.video_channel.to_string().as_bytes(), ctx)?
                 .run_async();
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);
@@ -94,13 +94,12 @@ impl Show {
             .vsync(true)
             .samples(if cfg.anti_alias { 4 } else { 0 })
             .fullscreen(cfg.fullscreen)
-            .build()
-            .unwrap();
+            .build()?;
 
         window.set_capture_cursor(true);
         window.set_max_fps(120);
 
-        Show {
+        Ok(Show {
             opengl,
             gl: GlGraphics::new(opengl),
             snapshot_manager,
@@ -108,7 +107,7 @@ impl Show {
             cfg,
             run_flag,
             window,
-        }
+        })
 
     }
 
@@ -136,9 +135,16 @@ impl Show {
     fn render(&mut self, args: &RenderArgs) {
 
         // Get frame interpolation from the snapshot service.
-        let delayed_time =
-            self.timesync.lock().unwrap().now_as_timestamp()
-                - self.cfg.render_delay as f64;
+
+        let delayed_time = match self.timesync.lock() {
+            Err(e) => {
+                // The timesync update thread has panicked, abort the show.
+                self.run_flag.stop();
+                println!("Timesync service crashed; aborting show.");
+                return
+            },
+            Ok(ref mut ts) => ts.now_as_timestamp() - self.cfg.render_delay as f64,
+        };
 
         let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
             NoData => (Some("No data available from snapshot service.".to_string()), None),
@@ -180,6 +186,6 @@ impl Show {
             println!("An error occurred during snapshot update: {:?}", msg);
         }
         // Update the interpolation parameter on our time synchronization.
-        self.timesync.lock().unwrap().update(dt);
+        self.timesync.lock().expect("Timesync mutex poisoned").update(dt);
     }
 }

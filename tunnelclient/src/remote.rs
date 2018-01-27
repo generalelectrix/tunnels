@@ -26,6 +26,7 @@ const PORT: u16 = 15000;
 /// OpenGL resources between threads.
 /// Spawn a second thread to run the remote service, passing configurations to run back across a
 /// channel.
+/// Panics if the remote service thread fails to spawn.
 pub fn run_remote(ctx: &mut Context) {
     // Create a channel to wait on config requests.
     let (send, recv) = channel();
@@ -34,22 +35,28 @@ pub fn run_remote(ctx: &mut Context) {
     thread::Builder::new().name("remote_service".to_string()).spawn(|| {
         let mut ctx = Context::new();
         run_remote_service(&mut ctx, send);
-    }).unwrap();
+    }).expect("Failed to spawn remote service thread");
 
     loop {
         // Wait on a config from the remote service.
         let (config, run_flag) = recv.recv().expect("Remote service thread hung up.");
 
         // Start up a fresh show.
-        let mut show = Show::new(config, ctx, run_flag);
+        match Show::new(config, ctx, run_flag) {
+            Ok(mut show) => show.run(), // Run the show until the remote thread tells us to quit.
 
-        // Run the show until the remote thread tells us to quit.
-        show.run();
+            // TODO: enable some kind of remote logging so we can collect these messages at the
+            // controller.
+            Err(e) => println!("Failed to initialize show: {}", e),
+        }
+
+
     }
 }
 
 /// Run the remote discovery and configuration service, passing config states and cancellation
 /// flags back to the main thread.
+/// Panics if the service completes with an error.
 pub fn run_remote_service(ctx: &mut Context, sender: Sender<(ClientConfig, RunFlag)>) {
 
     // Run flag for currently-executing show, if there is one.
@@ -82,7 +89,7 @@ pub fn run_remote_service(ctx: &mut Context, sender: Sender<(ClientConfig, RunFl
             },
             Err(e) => format!("Could not parse request as a show configuration:\n{}", e),
         }.into_bytes()
-    }).unwrap()
+    }).expect("Remote configuration service crashed")
 }
 
 fn deserialize_config(buffer: &[u8]) -> Result<ClientConfig, String> {

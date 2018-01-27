@@ -61,7 +61,7 @@ fn main() {
         println!("Clients: {:?}", clients);
 
         let config = ClientConfig::load(0, "cfg/monitor.yaml");
-        match admin.run_with_config(&clients[0], config) {
+        match admin.run_with_config(&clients[0], config.unwrap()) {
             Ok(msg) => println!("Success:\n{}", msg),
             Err(e) => println!("Error:\n{:?}", e),
         }
@@ -72,9 +72,9 @@ fn main() {
 
     let config_path = env::args().nth(2).expect("No config path arg provided.");
 
-    let cfg = ClientConfig::load(video_channel, &config_path);
+    let cfg = ClientConfig::load(video_channel, &config_path).expect("Failed to load config");
 
-    let mut show = Show::new(cfg, &mut ctx, RunFlag::new());
+    let mut show = Show::new(cfg, &mut ctx, RunFlag::new()).expect("Failed to initialize show");
 
     show.run();
 }
