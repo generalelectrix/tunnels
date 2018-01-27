@@ -70,6 +70,7 @@ impl Show {
                     }
                 }
             }
+            println!("Timesync service shutting down.");
         }).map_err(|e| format!("Timesync service thread failed to spawn: {}", e))?;
 
         // Set up snapshot reception and management.
@@ -118,6 +119,7 @@ impl Show {
         while let Some(e) = self.window.next() {
 
             if !self.run_flag.should_run() {
+                println!("Quit flag tripped, ending show.");
                 break
             }
 
@@ -129,6 +131,11 @@ impl Show {
                 self.render(&r);
             }
         }
+
+        // If the window is closed, the event loop will exit normally.  Flip the run flag to stop
+        // to ensure all of the services close down and we don't leak a timesync thread.
+        // TODO: hold onto the join handle for the timesync service?
+        self.run_flag.stop();
     }
 
     /// Render a frame to the window.

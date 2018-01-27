@@ -38,12 +38,19 @@ pub fn run_remote(ctx: &mut Context) {
     }).expect("Failed to spawn remote service thread");
 
     loop {
+        println!("Waiting for show configuration.");
         // Wait on a config from the remote service.
         let (config, run_flag) = recv.recv().expect("Remote service thread hung up.");
 
+        println!("Starting a new show with configuration: {:?}", config);
         // Start up a fresh show.
         match Show::new(config, ctx, run_flag) {
-            Ok(mut show) => show.run(), // Run the show until the remote thread tells us to quit.
+            Ok(mut show) => {
+                println!("Show initialized, starting event loop.");
+                // Run the show until the remote thread tells us to quit.
+                show.run();
+                println!("Show exited.");
+            },
 
             // TODO: enable some kind of remote logging so we can collect these messages at the
             // controller.
