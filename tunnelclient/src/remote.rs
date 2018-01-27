@@ -14,6 +14,7 @@ use rmp_serde::encode::write;
 use utils::RunFlag;
 use std::thread;
 use std::error::Error;
+use std::sync::mpsc::{channel, Sender};
 
 const SERVICE_NAME: &'static str = "tunnelclient";
 const PORT: u16 = 15000;
@@ -21,35 +22,63 @@ const PORT: u16 = 15000;
 // --- client remote control ---
 
 /// Run this client as a remotely configurable service.
+/// The show starts up in the main thread to ensure we don't end up with issues trying to pass
+/// OpenGL resources between threads.
+/// Spawn a second thread to run the remote service, passing configurations to run back across a
+/// channel.
 pub fn run_remote(ctx: &mut Context) {
+    // Create a channel to wait on config requests.
+    let (send, recv) = channel();
 
-    // Start out doing nothing.
-    let mut running_show: Option<ShowManager> = None;
+    // Spawn a thread to receive config requests.
+    thread::Builder::new().name("remote_service".to_string()).spawn(|| {
+        let mut ctx = Context::new();
+        run_remote_service(&mut ctx, send);
+    }).unwrap();
+
+    loop {
+        // Wait on a config from the remote service.
+        let (config, run_flag) = recv.recv().expect("Remote service thread hung up.");
+
+        // Start up a fresh show.
+        let mut show = Show::new(config, ctx, run_flag);
+
+        // Run the show until the remote thread tells us to quit.
+        show.run();
+    }
+}
+
+/// Run the remote discovery and configuration service, passing config states and cancellation
+/// flags back to the main thread.
+pub fn run_remote_service(ctx: &mut Context, sender: Sender<(ClientConfig, RunFlag)>) {
+
+    // Run flag for currently-executing show, if there is one.
+    let mut running_flag: Option<RunFlag> = None;
 
     run_service(SERVICE_NAME, PORT, |request_buffer| {
+
         // Attempt to deserialize this request buffer as a client configuration.
         match deserialize_config(request_buffer) {
             Ok(config) => {
-                // Take ownership of the running show by swapping in None.
-                let mut show_local = None;
-                ::std::mem::swap(&mut show_local, &mut running_show);
 
-                let show_stop_msg =
-                    if let Some(show) = show_local {
-                        match show.stop() {
-                            Ok(()) => "Running show stopped cleanly.",
-                            Err(()) => "Running show panicked.",
-                        }
+                // If there's currently a show running, pull the run flag out and stop it.
+                let show_stop_message =
+                    if let Some(ref mut flag) = running_flag {
+                        flag.stop();
+                        "Stopped a running show."
                     } else {
                         "No show was running."
                     };
 
-                // start up a new show
-                // FIXME this should return a Result if something went wrong starting the show.
-                running_show = Some(ShowManager::new(config));
+                // Create a new run control for the show we're about to start.
+                let new_run_flag = RunFlag::new();
+                running_flag = Some(new_run_flag.clone());
+
+                // Send the config and flag back to the show thread.
+                sender.send((config, new_run_flag));
 
                 // everything is OK
-                format!("{}\nStarted a new show.", show_stop_msg)
+                format!("{}\nStarting a new show.", show_stop_message)
             },
             Err(e) => format!("Could not parse request as a show configuration:\n{}", e),
         }.into_bytes()
@@ -60,46 +89,6 @@ fn deserialize_config(buffer: &[u8]) -> Result<ClientConfig, String> {
     from_read(buffer).map_err(|e| e.to_string())
 }
 
-/// Handle to a show running on another thread.
-struct ShowManager {
-    show_thread: thread::JoinHandle<()>,
-    run_flag: RunFlag,
-}
-
-impl ShowManager {
-    /// Start up a new show using the provided configuration.
-    /// Keep a handle to the thread the show is running in to allow us to gracefully wait for the
-    /// show to terminate later.
-    fn new(config: ClientConfig) -> Self {
-        let run_flag = RunFlag::new();
-        let run_flag_remote = run_flag.clone();
-
-        println!("Starting with config:{:?}", config);
-
-        let mut ctx = Context::new();
-
-        let show_thread = thread::Builder::new()
-            .name("running_show".to_string())
-            .spawn(move || {
-                let mut show = Show::new(config, &mut ctx, run_flag_remote);
-                show.run();
-            })
-            .unwrap();
-
-        ShowManager {
-            show_thread,
-            run_flag,
-        }
-    }
-
-    /// Stop the running show.
-    fn stop(mut self) -> Result<(), ()> {
-        // Flip the run flag off.
-        self.run_flag.stop();
-        // Wait for the show thread to terminate.
-        self.show_thread.join().map_err(|_| ())
-    }
-}
 
 
 // --- remote administration ---
