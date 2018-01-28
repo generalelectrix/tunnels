@@ -196,7 +196,7 @@ fn test_duration_f64_round_trip() {
 #[test]
 #[ignore]
 fn test_synchronize() {
-    let mut client = Client::new("localhost", &mut Context::new());
+    let mut client = Client::new("localhost", &mut Context::new()).unwrap();
     let sync = client.synchronize().expect("Test: synchronization failed");
     println!("Ref time: {:?}, remote estimate: {}", sync.ref_time, sync.host_ref_time);
 }
