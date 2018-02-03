@@ -24,9 +24,14 @@ message_type_to_event_type = {
 }
 
 def list_ports():
-    """Print the available ports."""
-    log.info("Available input ports:\n{}".format(MidiIn().get_ports()))
-    log.info("Available output ports:\n{}".format(MidiOut().get_ports()))
+    """Return the available ports as descriptive strings."""
+
+    def format_ports(ports):
+        return "\n".join("{}: {}".format(i, port) for i, port in enumerate(ports))
+
+    inputs = "Available input ports:\n{}".format(format_ports(MidiIn().get_ports()))
+    outputs = "Available output ports:\n{}".format(format_ports(MidiOut().get_ports()))
+    return inputs, outputs
 
 
 class MidiOutput (object):

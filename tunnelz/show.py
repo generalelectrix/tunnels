@@ -346,7 +346,9 @@ def prompt_for_midi():
     """Prompt the user to select one or more midi ports."""
     ports = []
     while prompt_bool("Add a midi port?"):
-        list_ports()
+        inputs, outputs = list_ports()
+        print inputs
+        print outputs
         port = prompt_int("Select a port:")
         ports.append(port)
     return ports
