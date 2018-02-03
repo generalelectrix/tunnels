@@ -5,7 +5,7 @@ from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
 from .devices import initialize_device
 from .meta_mi import MetaMI
-from .midi import MidiInput, MidiOutput
+from .midi import MidiInput, MidiOutput, list_ports
 from .midi_controllers import (
     BeamMatrixMidiController,
     MetaControlMidiController,
@@ -35,16 +35,23 @@ DEFAULT_CONFIG = dict(
     multi_channel_test=False,
 )
 
+
 class Show (object):
     """Encapsulate the show runtime environment."""
     test_mode = False
 
     @classmethod
-    def new(cls, config_file_path="show.yaml"):
+    def from_config(cls, config_file_path="show.yaml"):
         """Create a fresh show using the provided config file path."""
         with open(config_file_path, 'r') as cfg:
             config = yaml.load(cfg)
 
+        return cls(config)
+
+    @classmethod
+    def from_prompt(cls):
+        """Create a new show by prompting for input at the command line."""
+        config = prompt_for_config()
         return cls(config)
 
     def __init__(self, config, load_path=None, save_path=None):
@@ -246,7 +253,7 @@ class Show (object):
             n_frames (None or int): if None, run forever.  if finite number, only
                 run for this many state updates.
         """
-        report_framerate = self.config["report_framerate"]
+        report_framerate = self.config.get("report_framerate", False)
 
         update_number = 0
 
@@ -313,5 +320,58 @@ class Show (object):
         finally:
             render_server.stop()
             log.info("Shut down render server.")
+
+
+# --- prompt the user for input to configure a show interactively ---
+
+def prompt_for_config():
+    """Prompt the user for input to assemble a show configuration.
+
+    Return the configuration as a dict.
+    """
+    config = {}
+    use_midi = prompt_bool("Use midi?")
+    if use_midi:
+        midi_ports = prompt_for_midi()
+    else:
+        midi_ports = []
+
+    config['midi_ports'] = midi_ports
+    config['use_midi'] = use_midi
+    config['log_level'] = "info"
+
+    return config
+
+def prompt_for_midi():
+    """Prompt the user to select one or more midi ports."""
+    ports = []
+    while prompt_bool("Add a midi port?"):
+        list_ports()
+        port = prompt_int("Select a port:")
+        ports.append(port)
+    return ports
+
+def prompt_int(msg):
+    """Prompt the user and parse input as an int."""
+    while True:
+        user_input = raw_input(msg)
+        try:
+            return int(user_input)
+        except ValueError:
+            print "Please enter an integer."
+
+def prompt_bool(msg):
+    """Prompt the user to answer a yes or no question."""
+    while True:
+        user_input = raw_input("{} y/n:".format(msg)).lower()
+        if len(user_input) == 0:
+            continue
+
+        c = user_input[0]
+        if c == 'y':
+            return True
+        elif c == 'n':
+            return False
+
 
 
