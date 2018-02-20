@@ -20,6 +20,7 @@ extern crate zmq;
 extern crate stats;
 extern crate zero_configure;
 extern crate regex;
+extern crate hostname;
 
 mod constants {
     use std::f64::consts::PI;
@@ -41,7 +42,7 @@ use std::env;
 use zmq::Context;
 use show::Show;
 use utils::RunFlag;
-use remote::{run_remote, Administrator};
+use remote::{run_remote, administrate};
 
 fn main() {
 
@@ -55,30 +56,30 @@ fn main() {
 
     if first_arg == "remote" {
         run_remote(&mut ctx);
-        return
     } else if first_arg == "admin" {
-        let admin = Administrator::new();
+//        let admin = Administrator::new();
+//
+//        ::std::thread::sleep_ms(2000);
+//
+//        let clients = admin.clients();
+//        println!("Clients: {:?}", clients);
+//
+//        let config = ClientConfig::load(0, "cfg/monitor.yaml");
+//        match admin.run_with_config(&clients[0], config.unwrap()) {
+//            Ok(msg) => println!("Success:\n{}", msg),
+//            Err(e) => println!("Error:\n{:?}", e),
+//        }
+//        return
+        administrate();
+    } else {
+        let video_channel: u64 = first_arg.parse().expect("Video channel must be a positive integer.");
 
-        ::std::thread::sleep_ms(2000);
+        let config_path = env::args().nth(2).expect("No config path arg provided.");
 
-        let clients = admin.clients();
-        println!("Clients: {:?}", clients);
+        let cfg = ClientConfig::load(video_channel, &config_path).expect("Failed to load config");
 
-        let config = ClientConfig::load(0, "cfg/monitor.yaml");
-        match admin.run_with_config(&clients[0], config.unwrap()) {
-            Ok(msg) => println!("Success:\n{}", msg),
-            Err(e) => println!("Error:\n{:?}", e),
-        }
-        return
+        let mut show = Show::new(cfg, &mut ctx, RunFlag::new()).expect("Failed to initialize show");
+
+        show.run();
     }
-
-    let video_channel: u64 = first_arg.parse().expect("Video channel must be a positive integer.");
-
-    let config_path = env::args().nth(2).expect("No config path arg provided.");
-
-    let cfg = ClientConfig::load(video_channel, &config_path).expect("Failed to load config");
-
-    let mut show = Show::new(cfg, &mut ctx, RunFlag::new()).expect("Failed to initialize show");
-
-    show.run();
 }

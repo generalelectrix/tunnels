@@ -18,6 +18,7 @@ use std::time::Duration;
 use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use regex::Regex;
+use hostname::get_hostname;
 
 const SERVICE_NAME: &'static str = "tunnelclient";
 const PORT: u16 = 15000;
@@ -141,9 +142,6 @@ impl Administrator {
         // Parse the string response.
         Ok(String::from_utf8(response)?)
     }
-
-    // /// Command a particular client to run using a named configuration and other metadata.
-    //pub fn run(&self, client: &str, video_channel: u64, config)
 }
 
 
@@ -152,7 +150,16 @@ impl Administrator {
 fn read_input() -> String {
     let mut val = String::new();
     stdin().read_line(&mut val).expect("Error trying to read user input");
+    val.pop();
     val
+}
+
+/// Prompt a user for input and return the string they entered.
+fn prompt_input(msg: &str) -> String {
+    print!("{}", msg);
+    print!(": ");
+    stdout().flush().expect("Error flushing stdout");
+    read_input()
 }
 
 /// Repeatedly prompt the user for input until they provide an acceptable value.
@@ -161,10 +168,7 @@ fn prompt<P, T>(msg: &str, parser: P) -> T
     where P: Fn(&str) -> Result<T, String>
 {
     loop {
-        print!("{}", msg);
-        print!(": ");
-        stdout().flush().expect("Error flushing stdout");
-        let input = read_input();
+        let input = prompt_input(msg);
         match parser(&input) {
             Ok(result) => {
                 return result;
@@ -180,8 +184,8 @@ fn prompt<P, T>(msg: &str, parser: P) -> T
 /// Understands some shorthand like 1080p but also parses widthxheight.
 fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
     lazy_static! {
-        static ref SHORTHAND_RE: Regex = Regex::new(r"^\d+p$").unwrap();
-        static ref WIDTH_HEIGHT_RE: Regex = Regex::new(r"^\d+x\d+$").unwrap();
+        static ref SHORTHAND_RE: Regex = Regex::new(r"^(\d+)p$").unwrap();
+        static ref WIDTH_HEIGHT_RE: Regex = Regex::new(r"^(\d+)x(\d+)$").unwrap();
     }
     // Try matching against shorthand.
     if let Some(caps) = SHORTHAND_RE.captures(res_str) {
@@ -257,7 +261,57 @@ fn configure_one<H>(hostname: H) -> ClientConfig
     )
 }
 
-/// Janky interactive command line utility for administering a fleet of tunnel clients.
+/// Slightly janky interactive command line utility for administering a fleet of tunnel clients.
 pub fn administrate() {
+    let host = get_hostname().expect("Couldn't get hostname for this machine");
+    println!("Starting administrator...");
+    let admin = Administrator::new();
 
+    // Wait a couple seconds for dns-sd to do its business.
+    thread::sleep(Duration::from_secs(2));
+
+    let usage = "list    List the available clients.
+conf    Configure a client.
+quit    Quit.";
+    println!("Administrator started.");
+
+    let parse_client_name = |name: &str| -> Result<String, String> {
+        let clients = admin.clients();
+        if clients.iter().any(|client| name == client) {
+            Ok(name.to_string())
+        } else {
+            Err(format!(
+                "'{}' is not a recognized client name; available clients: {}",
+                name,
+                clients.join("\n"),
+            ))
+        }
+    };
+
+    loop {
+        println!("Commands:\n{}", usage);
+        match prompt_input("Enter a command").as_ref() {
+            "list" | "l" => {
+                println!("Available clients:\n{}", admin.clients().join("\n"));
+            },
+            "conf" | "c" => {
+                let client_name = prompt("Enter client name", &parse_client_name);
+                let config = configure_one(host.as_ref());
+                match admin.run_with_config(&client_name, config) {
+                    Ok(msg) => {
+                        println!("{}", msg);
+                    },
+                    Err(e) => {
+                        println!("Could not configure due to an error: {}", e);
+                    }
+                }
+            },
+            "quit" | "q" => {
+                break;
+            }
+            bad => {
+                println!("Unknown command '{}'.", bad);
+            }
+        }
+    }
 }
