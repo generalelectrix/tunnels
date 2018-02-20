@@ -1,7 +1,7 @@
 //! Loading and parsing client configurations.
 use yaml_rust::YamlLoader;
 use std::fs::File;
-use std::io::Read;
+use std::io::{stdin, Read};
 use std::cmp;
 use std::time::Duration;
 use std::error::Error;

@@ -15,6 +15,7 @@ use utils::RunFlag;
 use std::thread;
 use std::error::Error;
 use std::sync::mpsc::{channel, Sender};
+use regex::Regex;
 
 const SERVICE_NAME: &'static str = "tunnelclient";
 const PORT: u16 = 15000;
@@ -141,4 +142,80 @@ impl Administrator {
 
     // /// Command a particular client to run using a named configuration and other metadata.
     //pub fn run(&self, client: &str, video_channel: u64, config)
+}
+
+
+/// Read a single line from stdin and return it as a string.
+/// Panic if there's some IO-related error.
+fn read_input() -> String {
+    let mut val = String::new();
+    stdin().read_line(&mut val).expect("Error trying to read user input");
+    val
+}
+
+/// Repeatedly prompt the user for input until they provide an acceptable value.
+/// Prints msg followed by a colon and a space.
+fn prompt<P, T>(msg: &str, parser: P) -> T
+    where P: Fn(&str) -> Result<T, String>
+{
+    loop {
+        print!(msg);
+        print!(": ");
+        let input = read_input();
+        match parser(&input) {
+            Ok(result) => {
+                return result;
+            },
+            Err(e) => {
+                println!(e);
+            }
+        }
+    }
+}
+
+/// Parse an expression as a resolution.
+/// Understands some shorthand like 1080p but also parses widthxheight.
+fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
+    lazy_static! {
+        static ref shorthand_re: Regex = Regex::new(r"^\d+p$").unwrap();
+        static ref width_height_re: Regex = Regex::new(r"^\d+x\d+$").unwrap();
+    }
+    // Try matching against shorthand.
+    if let Some(caps) = shorthand_re.captures(res_str) {
+        let height: u64 = caps[1].parse().expect("Regex should only have matched integers");
+        let width = height * 16 / 9;
+        return Ok((width, height));
+    }
+    // Try matching generic expression.
+    if let Some(caps) = width_height_re.captures(res_str) {
+        let width: u64 = caps[1].parse().expect("Regex should only have matched integers.");
+        let height: u64 = caps[2].parse().expect("Regex should only have matched integers.");
+        return Ok((width, height));
+    }
+    // Nothing matched.
+    Err(format!("Couldn't parse {} as resolution expression.", res_str))
+}
+
+/// Extremely basic parsing of yes/no.
+/// Accepts anything whose first letter is y or n, upper or lowercase.
+fn parse_y_n(s: &str) -> Result<bool, String> {
+    let lowered = s.to_lowercase();
+    if lowered.starts_with("y") {
+        Ok(true)
+    } else if lowered.starts_with("n") {
+        Ok(false)
+    } else {
+        Err(format!("Please enter y/n, not '{}'.", s))
+    }
+}
+
+/// Interactive series of user prompts, producing a configuration.
+fn configure_one() {//-> ClientConfig {
+    // get video channel
+    let video_channel: u64 = prompt("Select video channel", str::parse);
+}
+
+/// Janky interactive command line utility for administering a fleet of tunnel clients.
+pub fn administrate() {
+
 }

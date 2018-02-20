@@ -4,6 +4,9 @@ extern crate serde_derive;
 #[macro_use]
 extern crate simple_error;
 
+#[macro_use]
+extern crate lazy_static;
+
 extern crate piston_window;
 extern crate interpolation;
 extern crate graphics;
@@ -16,6 +19,7 @@ extern crate rmp_serde;
 extern crate zmq;
 extern crate stats;
 extern crate zero_configure;
+extern crate regex;
 
 mod constants {
     use std::f64::consts::PI;
