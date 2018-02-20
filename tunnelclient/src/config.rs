@@ -1,7 +1,7 @@
 //! Loading and parsing client configurations.
 use yaml_rust::YamlLoader;
 use std::fs::File;
-use std::io::{stdin, Read};
+use std::io::Read;
 use std::cmp;
 use std::time::Duration;
 use std::error::Error;
@@ -117,4 +117,4 @@ impl ClientConfig {
 
 }
 
-type Resolution = (u32, u32);
+pub type Resolution = (u32, u32);

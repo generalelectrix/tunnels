@@ -8,12 +8,14 @@
 use zero_configure::{run_service, Controller};
 use zmq::Context;
 use show::Show;
-use config::ClientConfig;
+use config::{Resolution, ClientConfig};
 use rmp_serde::decode::from_read;
 use rmp_serde::encode::write;
 use utils::RunFlag;
 use std::thread;
 use std::error::Error;
+use std::time::Duration;
+use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use regex::Regex;
 
@@ -159,15 +161,16 @@ fn prompt<P, T>(msg: &str, parser: P) -> T
     where P: Fn(&str) -> Result<T, String>
 {
     loop {
-        print!(msg);
+        print!("{}", msg);
         print!(": ");
+        stdout().flush().expect("Error flushing stdout");
         let input = read_input();
         match parser(&input) {
             Ok(result) => {
                 return result;
             },
             Err(e) => {
-                println!(e);
+                println!("{}", e);
             }
         }
     }
@@ -177,19 +180,19 @@ fn prompt<P, T>(msg: &str, parser: P) -> T
 /// Understands some shorthand like 1080p but also parses widthxheight.
 fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
     lazy_static! {
-        static ref shorthand_re: Regex = Regex::new(r"^\d+p$").unwrap();
-        static ref width_height_re: Regex = Regex::new(r"^\d+x\d+$").unwrap();
+        static ref SHORTHAND_RE: Regex = Regex::new(r"^\d+p$").unwrap();
+        static ref WIDTH_HEIGHT_RE: Regex = Regex::new(r"^\d+x\d+$").unwrap();
     }
     // Try matching against shorthand.
-    if let Some(caps) = shorthand_re.captures(res_str) {
-        let height: u64 = caps[1].parse().expect("Regex should only have matched integers");
+    if let Some(caps) = SHORTHAND_RE.captures(res_str) {
+        let height: u32 = caps[1].parse().expect("Regex should only have matched integers");
         let width = height * 16 / 9;
         return Ok((width, height));
     }
     // Try matching generic expression.
-    if let Some(caps) = width_height_re.captures(res_str) {
-        let width: u64 = caps[1].parse().expect("Regex should only have matched integers.");
-        let height: u64 = caps[2].parse().expect("Regex should only have matched integers.");
+    if let Some(caps) = WIDTH_HEIGHT_RE.captures(res_str) {
+        let width: u32 = caps[1].parse().expect("Regex should only have matched integers.");
+        let height: u32 = caps[2].parse().expect("Regex should only have matched integers.");
         return Ok((width, height));
     }
     // Nothing matched.
@@ -209,10 +212,49 @@ fn parse_y_n(s: &str) -> Result<bool, String> {
     }
 }
 
+fn prompt_y_n(msg: &str) -> bool {
+    prompt(&format!("{}? Y/n", msg), parse_y_n)
+}
+
+fn parse_uint(s: &str) -> Result<u64, String> {
+    s.parse().map_err(|e| format!("Could not parse '{}' as positive integer: {}", s, e))
+}
+
 /// Interactive series of user prompts, producing a configuration.
-fn configure_one() {//-> ClientConfig {
-    // get video channel
-    let video_channel: u64 = prompt("Select video channel", str::parse);
+fn configure_one<H>(hostname: H) -> ClientConfig
+    where H: Into<String>
+{
+    let video_channel = prompt("Select video channel", parse_uint);
+    let resolution = prompt(
+        "Specify display resolution (widthxheight or heightp for 16:9)", parse_resolution);
+    let fullscreen = prompt_y_n("Fullscreen");
+
+    // Some defaults we might configure in advanced mode.
+    let mut anti_alias = true;
+    let mut timesync_interval = Duration::from_secs(60);
+    let mut render_delay = 40.;
+    let mut alpha_blend = true;
+
+    if prompt_y_n("Configure advanced settings") {
+        anti_alias = prompt_y_n("Use anti-aliasing");
+        alpha_blend = prompt_y_n("Use alpha channel blending");
+        let timesync_interval_secs = prompt(
+            "Host/client time resynchronization interval in seconds (default 60)",
+            parse_uint);
+        timesync_interval = Duration::from_secs(timesync_interval_secs);
+        render_delay = prompt("Client render delay in milliseconds (default 40)", parse_uint) as f64;
+    }
+
+    ClientConfig::new(
+        video_channel,
+        hostname.into(),
+        resolution,
+        timesync_interval,
+        render_delay,
+        anti_alias,
+        fullscreen,
+        alpha_blend,
+    )
 }
 
 /// Janky interactive command line utility for administering a fleet of tunnel clients.
