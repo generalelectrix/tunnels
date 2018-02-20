@@ -34,21 +34,6 @@ pub struct ClientConfig {
     pub y_center: f64,
 }
 
-impl Default for ClientConfig {
-    fn default() -> Self {
-        ClientConfig::new(
-            0,
-            "127.0.0.1".to_string(),
-            (1920, 1080),
-            Duration::from_secs(60),
-            40.,
-            true,
-            true,
-            true,
-        )
-    }
-}
-
 impl ClientConfig {
 
     /// Create a configuration from minimal data.
