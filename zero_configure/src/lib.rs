@@ -13,13 +13,14 @@ use async_dnssd::{
     Interface,
     browse,
     BrowsedFlag};
-use futures::Stream;
-use tokio_core::reactor::Core;
+use futures::{Stream, Future};
+use tokio_core::reactor::{Core, Timeout};
 
 use zmq::{Context, Socket};
 
 use std::error::Error;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::thread;
 use std::collections::HashMap;
 
@@ -106,12 +107,31 @@ impl Controller {
                         None
                     }
                 })
-                .and_then(|event| event.resolve(&handle))
+                .and_then(|event| {
+                    let resolve_result = event.resolve(&handle);
+                    // Attach the service name to the resolve result so we can uniformly use it
+                    // to identify a particular client.
+                    resolve_result.map(move |res| (res, event.service_name))
+                })
+                .and_then(|(resolve_stream, service_name)| {
+                    // Create a stream that produces None after a timeout, select the two streams,
+                    // take items until we produce None due to timeout, then filter them.
+                    Ok(Timeout::new(Duration::from_secs(1), &handle)
+                        .expect("Couldn't create timeout future.")
+                        .into_stream()
+                        .map(|_| None)
+                        .select(resolve_stream.map(Some))
+                        .take_while(|item| Ok(item.is_some()))
+                        .filter_map(|x| x)
+                        // Tack on the service name.
+                        .map(move |resolved| (resolved, service_name.clone())))
+                })
                 .flatten()
-                .for_each(|service| {
+                .for_each(|(service, name)| {
+                    // Open a REQ socket to this service and add it to the collection.
                     match req_socket(&service.host_target, service.port, &mut ctx) {
                         Ok(socket) => {
-                            services_remote.lock().unwrap().insert(service.host_target, socket);
+                            services_remote.lock().unwrap().insert(name, socket);
                         },
                         Err(e) => {
                             println!("Could not connect to '{}':\n{}", service.host_target, e);
