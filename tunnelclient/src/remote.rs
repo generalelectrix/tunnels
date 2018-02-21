@@ -216,10 +216,12 @@ fn parse_y_n(s: &str) -> Result<bool, String> {
     }
 }
 
+/// Prompt for a yes/no answer.
 fn prompt_y_n(msg: &str) -> bool {
     prompt(&format!("{}? Y/n", msg), parse_y_n)
 }
 
+/// Parse string as an unsigned integer.
 fn parse_uint(s: &str) -> Result<u64, String> {
     s.parse().map_err(|e| format!("Could not parse '{}' as positive integer: {}", s, e))
 }
@@ -292,7 +294,7 @@ quit    Quit.";
         println!("Commands:\n{}", usage);
         match prompt_input("Enter a command").as_ref() {
             "list" | "l" => {
-                println!("Available clients:\n{}", admin.clients().join("\n"));
+                println!("Available clients:\n{}\n", admin.clients().join("\n"));
             },
             "conf" | "c" => {
                 let client_name = prompt("Enter client name", &parse_client_name);
