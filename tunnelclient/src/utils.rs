@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 const ALMOST_EQ_TOLERANCE: f64 = 0.000_000_1;
 
 /// True modulus operator.
@@ -30,4 +33,27 @@ pub fn angle_almost_eq(a: f64, b: f64) -> bool {
 #[inline(always)]
 pub fn assert_almost_eq(a: f64, b: f64) {
     assert!(almost_eq(a, b), "{} != {}", a, b);
+}
+
+
+/// A helper wrapper around an atomically-reference-counted atomic boolean.
+/// Used to control program flow across multiple threads.
+#[derive(Debug, Clone)]
+pub struct RunFlag(Arc<AtomicBool>);
+
+impl RunFlag {
+    /// Create a flag set to run.
+    pub fn new() -> Self {
+        RunFlag(Arc::new(AtomicBool::new(true)))
+    }
+
+    /// Return true if the program should continue.
+    pub fn should_run(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Command the program to stop.
+    pub fn stop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
 }

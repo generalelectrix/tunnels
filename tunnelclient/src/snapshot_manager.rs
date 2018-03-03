@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_interp_two_frames_exact_newer() {
-        let (mut sm, snap0, snap1) = setup_two_frame_test();
+        let (mut sm, _snap0, snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(10.0) {
             assert_eq!(snap1.layers, f);
         }
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_interp_two_frames_exact_older() {
-        let (mut sm, snap0, snap1) = setup_two_frame_test();
+        let (mut sm, snap0, _snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(0.0) {
             assert_eq!(snap0.layers, f);
         }
