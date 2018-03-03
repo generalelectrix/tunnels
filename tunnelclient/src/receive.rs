@@ -3,12 +3,13 @@
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 use rmp_serde::Deserializer;
-use rmp_serde::decode::Error;
+use rmp_serde::decode::Error as DecodeError;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::io::Cursor;
 use std::sync::mpsc::{Receiver, channel};
 use std::thread;
+use std::error::Error;
 use utils::{almost_eq, angle_almost_eq};
 
 // --- types used for communication with host server ---
@@ -88,7 +89,7 @@ impl Eq for Snapshot {}
 // --- receive and handle messages ---
 
 
-pub type ReceiveResult<T> = Result<T, Error>;
+pub type ReceiveResult<T> = Result<T, DecodeError>;
 
 pub trait Receive {
     /// Return the raw message buffer if one was available.
@@ -118,22 +119,24 @@ pub struct SubReceiver {
 
 impl SubReceiver {
     /// Create a new 0mq SUB connected to the provided socket addr.
-    pub fn new(host: &str, port: u64, topic: &[u8], ctx: &mut Context) -> Self {
-        let socket = ctx.socket(zmq::SUB).unwrap();
+    pub fn new(host: &str, port: u64, topic: &[u8], ctx: &mut Context) -> Result<Self, Box<Error>> {
+        let socket = ctx.socket(zmq::SUB)?;
         let addr = format!("tcp://{}:{}", host, port);
-        socket.connect(&addr).unwrap();
+        socket.connect(&addr)?;
         socket.set_subscribe(topic);
 
-        SubReceiver {socket}
+        Ok(SubReceiver {socket})
     }
 
     // FIXME should pass errors back to main thread instead of ignoring.
     /// Run this receiver in a thread, posting deserialized messages to a channel.
     /// Takes ownership of the receiver and moves to the worker thread.
     /// Quits when the output queue is dropped.
-    pub fn run_async<T: DeserializeOwned + Send + 'static>(mut self) -> Receiver<T> {
+    pub fn run_async<T>(mut self) -> Receiver<T>
+        where T: DeserializeOwned + Send + 'static
+    {
         let (tx, rx) = channel::<T>();
-        thread::spawn(move || {
+        thread::Builder::new().name("subscribe_receiver".to_string()).spawn(move || {
             loop {
                 // blocking receive
                 match self.receive(true) {
@@ -156,6 +159,10 @@ impl SubReceiver {
 impl Receive for SubReceiver {
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
         let flag = if block {0} else {DONTWAIT};
+
+        // The frame messages are two parts; the first part is the video channel, used as a 0mq
+        // topic filter.  Discard the topic filter, leaving just the msgpacked frame data as the
+        // second part of the message.
         if let Ok(mut parts) = self.socket.recv_multipart(flag) {
             let n_parts = parts.len();
             if n_parts != 2 {

@@ -39,14 +39,17 @@ pub struct Client {
 
 impl Client {
     /// Create a new 0mq REQ connected to the provided socket addr.
-    /// Not a lot of error handling in here; we instantiate this entity at startup and if we can't
-    /// create it we can't continue anyway.
-    pub fn new(host: &str, ctx: &mut Context) -> Self {
-        let socket = ctx.socket(zmq::REQ).unwrap();
+    pub fn new(host: &str, ctx: &mut Context) -> Result<Self, Box<Error>> {
+        let socket = ctx.socket(zmq::REQ)?;
         let addr = format!("tcp://{}:{}", host, PORT);
-        socket.connect(&addr).unwrap();
+        socket.connect(&addr)?;
 
-        Client {socket, poll_period: Duration::from_millis(500), n_meas: 10}
+        Ok(Client {socket, poll_period: Duration::from_millis(500), n_meas: 10})
+    }
+
+    /// Return an estimate of how long a synchronization will take.
+    pub fn synchronization_duration(&self) -> Duration {
+        self.poll_period * self.n_meas as u32
     }
 
     /// Take a time delay measurement.
@@ -193,7 +196,7 @@ fn test_duration_f64_round_trip() {
 #[test]
 #[ignore]
 fn test_synchronize() {
-    let mut client = Client::new("localhost", &mut Context::new());
-    let sync = client.synchronize().unwrap();
+    let mut client = Client::new("localhost", &mut Context::new()).unwrap();
+    let sync = client.synchronize().expect("Test: synchronization failed");
     println!("Ref time: {:?}, remote estimate: {}", sync.ref_time, sync.host_ref_time);
 }

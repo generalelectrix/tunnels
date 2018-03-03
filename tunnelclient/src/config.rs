@@ -1,63 +1,105 @@
+//! Loading and parsing client configurations.
 use yaml_rust::YamlLoader;
 use std::fs::File;
 use std::io::Read;
-use std::{env, cmp};
+use std::cmp;
 use std::time::Duration;
+use std::error::Error;
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClientConfig {
+    /// Hostname of the machine running the controller.
     pub server_hostname: String,
-    pub video_channel: String,
-    pub render_delay: f64, // milliseconds
+    /// Virtual video channel to listen to.
+    pub video_channel: u64,
+    /// Delay between current time and time to render, in floating-point milliseconds.
+    pub render_delay: f64,
+    /// Delay between host/client time synchronization updates.
     pub timesync_interval: Duration,
     pub x_resolution: u32,
     pub y_resolution: u32,
+    /// If true, perform anti-aliasing.  Adds a small additional GPU load.
     pub anti_alias: bool,
+    /// If true, use alpha-blending rather than stomping underlying beams.
     pub alpha_blend: bool,
+    /// If true, set the window to fullscreen on creation.
     pub fullscreen: bool,
+    /// Used to rescale unit-scale sizes to the current resolution.
     pub critical_size: f64,
+    /// Used to rescale unit-scale lineweights to the current resolution.
     pub thickness_scale: f64,
+    /// Computed pixel x-offset of the drawing coordinate system.
     pub x_center: f64,
-    pub y_center: f64
+    /// Computed pixel y-offset of the drawing coordinate system.
+    pub y_center: f64,
 }
 
-/// Parses first command line arg as an integer video channel.
-/// Parses second command line arg as path to a yaml config file.
-/// Loads, parses, and returns the config.
-/// Panics if something goes wrong.
-pub fn config_from_command_line() -> ClientConfig {
-    let video_channel_str = env::args().nth(1).expect("No video channel provided.");
+impl ClientConfig {
 
-    // Parse video channel as an int and blow up if it isn't one.
-    let video_channel: u64 = video_channel_str.parse().unwrap();
-    // Back into string to construct the channel filter arg.
-    let channel_filter_str = video_channel.to_string();
+    /// Create a configuration from minimal data.
+    pub fn new(
+            video_channel: u64,
+            host: String,
+            resolution: Resolution,
+            timesync_interval: Duration,
+            render_delay: f64,
+            anti_alias: bool,
+            fullscreen: bool,
+            alpha_blend: bool,
+    ) -> ClientConfig {
 
-    let config_path = env::args().nth(2).expect("No config path arg provided.");
-    let mut config_file = File::open(config_path).unwrap();
-    let mut config_file_string = String::new();
-    config_file.read_to_string(&mut config_file_string).unwrap();
-    let docs = YamlLoader::load_from_str(&config_file_string).unwrap();
-    let cfg = &docs[0];
-    let x_resolution = cfg["x_resolution"].as_i64().expect("Bad x resolution.") as u32;
-    let y_resolution = cfg["y_resolution"].as_i64().expect("Bad y resolution.") as u32;
-    let host = cfg["server_hostname"].as_str().unwrap().trim().to_string();
-    let timesync_interval = Duration::from_millis(
-        cfg["timesync_interval"].as_i64().expect("Bad timesync_interval.") as u64);
+        let (x_resolution, y_resolution) = resolution;
 
-    println!("Running on video channel {}.", channel_filter_str);
-    ClientConfig {
-        server_hostname: host,
-        video_channel: channel_filter_str,
-        render_delay: cfg["render_delay"].as_i64().expect("Bad render delay.") as f64,
-        timesync_interval,
-        x_resolution,
-        y_resolution,
-        anti_alias: cfg["anti_alias"].as_bool().expect("Bad anti-alias flag."),
-        fullscreen: cfg["fullscreen"].as_bool().expect("Bad fullscreen flag."),
-        critical_size: cmp::min(x_resolution, y_resolution) as f64,
-        thickness_scale: 0.5,
-        x_center: (x_resolution / 2) as f64,
-        y_center: (y_resolution / 2) as f64,
-        alpha_blend: cfg["alpha_blend"].as_bool().expect("Bad alpha_blend flag.")
+        ClientConfig {
+            server_hostname: host,
+            video_channel,
+            render_delay,
+            timesync_interval,
+            x_resolution,
+            y_resolution,
+            anti_alias,
+            fullscreen,
+            critical_size: cmp::min(x_resolution, y_resolution) as f64,
+            thickness_scale: 0.5,
+            x_center: (x_resolution / 2) as f64,
+            y_center: (y_resolution / 2) as f64,
+            alpha_blend,
+        }
     }
+
+
+    /// Loads, parses, and returns a config from path.
+    /// This method panics if anything is wrong and is only appropriate for use during one-time
+    /// initialization.
+    pub fn load(video_channel: u64, config_path: &str) -> Result<ClientConfig, Box<Error>> {
+
+        let mut config_file = File::open(config_path)?;
+        let mut config_file_string = String::new();
+        config_file.read_to_string(&mut config_file_string)?;
+        let docs = YamlLoader::load_from_str(&config_file_string)?;
+        let cfg = &docs[0];
+        let x_resolution = cfg["x_resolution"].as_i64().ok_or("Bad x resolution.")? as u32;
+        let y_resolution = cfg["y_resolution"].as_i64().ok_or("Bad y resolution.")? as u32;
+        let host = cfg["server_hostname"].as_str().ok_or("Hostname missing.")?.trim().to_string();
+        let timesync_interval = Duration::from_millis(
+            cfg["timesync_interval"].as_i64().ok_or("Bad timesync_interval.")? as u64);
+
+        let flag = |name: &str, missing: &'static str| -> Result<bool, &'static str> {
+            cfg[name].as_bool().ok_or(missing)
+        };
+
+        Ok(ClientConfig::new(
+            video_channel,
+            host,
+            (x_resolution, y_resolution),
+            timesync_interval,
+            cfg["render_delay"].as_i64().ok_or("Bad render delay.")? as f64,
+            flag("anti_alias", "Bad anti-alias flag.")?,
+            flag("fullscreen", "Bad fullscreen flag.")?,
+            flag("alpha_blend", "Bad alpha blend flag.")?,
+        ))
+    }
+
 }
+
+pub type Resolution = (u32, u32);
