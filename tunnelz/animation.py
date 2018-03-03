@@ -1,5 +1,6 @@
 import copy
-from math import sin, pi
+from math import pi
+from .clock import Clock
 from .waveforms import (
     sine,
     triangle,
@@ -61,6 +62,12 @@ class WaveformType (object):
 
 
 class AnimationMI (ModelInterface):
+    # radial units/ms; this is 3pi/sec
+    # the negative sign is here so that turning the animation speed knob
+    # clockwise makes the animation appear to run around the beam in the same
+    # direction
+    max_clock_rate = -1.5
+
     type = MiModelProperty('type', 'set_type')
     pulse = MiModelProperty('pulse', 'set_pulse')
     invert = MiModelProperty('invert', 'set_invert')
@@ -70,11 +77,29 @@ class AnimationMI (ModelInterface):
     weight = MiModelProperty('weight', 'set_knob', knob='weight')
     duty_cycle = MiModelProperty('duty_cycle', 'set_knob', knob='duty_cycle')
     smoothing = MiModelProperty('smoothing', 'set_knob', knob='smoothing')
+    clock = MiModelProperty('clock_source', 'set_clock_source')
 
     def initialize(self):
         super(AnimationMI, self).initialize()
         self.update_controllers('set_pulse', self.model.pulse)
         self.update_controllers('set_invert', self.model.invert)
+        self.update_controllers('set_knob', self._unit_speed, knob='speed')
+
+    @property
+    def _unit_speed(self):
+        """Return the animator's internal clock's speed as a unit float."""
+        return self.model.internal_clock.rate / self.max_clock_rate
+
+    @property
+    @only_if_active
+    def speed(self):
+        return self._unit_speed
+
+    @speed.setter
+    @only_if_active
+    def speed(self, speed):
+        self.model.internal_clock.rate = speed * self.max_clock_rate
+        self.update_controllers('set_knob', speed, knob='speed')
 
     @only_if_active
     def toggle_pulse(self):
@@ -103,7 +128,6 @@ vector_waveforms = {
 class Animation (object):
     """Generate values from a waveform given appropriate parameters."""
 
-    max_speed = 0.0015 # radial units/ms; this is 3pi/sec
     wave_smoothing_scale = 0.25
 
     def __init__(self):
@@ -113,55 +137,73 @@ class Animation (object):
         self.invert = False
         self.n_periods = 0
         self.target = AnimationTarget.Size
-        self.speed = 0.0
         self.weight = 0.0 # unipolar float
         self.duty_cycle = 1.0
         self.smoothing = 0.25
 
-        self.curr_angle = 0.0
+        self.internal_clock = Clock()
+        # numeric index of global clock this animation is slaved to
+        # if None, it is using the internal clock
+        self.clock_source = None
+
+    def clock(self, external_clocks):
+        """Return the clock instance this animation is listening to."""
+        if self.clock_source is None:
+            return self.internal_clock
+        else:
+            return external_clocks[self.clock_source]
+
 
     @property
     def active(self):
         return self.weight > 0.0
 
     def copy(self):
-        """At present, Animation only contains references to immutable types.
-
-        We can thus just use shallow copy and everything is cool.
-
-        In the future, when animations aren't a dumb pile of ints and floats,
-        this method will need to be revisited.
-        """
-        return copy.copy(self)
+        """Return a deep copy of this animation."""
+        copy_of_self = copy.copy(self)
+        copy_of_self.internal_clock = self.internal_clock.copy()
+        return copy_of_self
 
     def update_state(self, delta_t):
         if self.active:
-            self.curr_angle = (self.curr_angle - self.speed*self.max_speed*delta_t) % 1.0
+            self.internal_clock.update_state(delta_t)
 
-    def get_value(self, angle_offset):
+    def get_value(self, angle_offset, external_clocks):
         """Return the current value of the animation, with an offset."""
         if not self.active:
             return 0.
 
-        angle = angle_offset*self.n_periods + self.curr_angle
+        angle = angle_offset*self.n_periods + self.clock(external_clocks).curr_angle
         func = scalar_waveforms[self.type]
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+
+        # scale this animation by submaster level if using external clock
+        if self.clock_source is not None:
+            submaster_level = external_clocks[self.clock_source].submaster_level
+            result = result * submaster_level
+
         if self.invert:
             return -1.0 * result
         else:
             return result
 
-    def get_value_vector(self, angle_offsets):
+    def get_value_vector(self, angle_offsets, external_clocks):
         """Return the current value of the animation for an ndarray of offsets."""
         shape = angle_offsets.shape
 
         if not self.active:
             return np.zeros(shape, float)
 
-        angle = angle_offsets*self.n_periods + self.curr_angle
+        angle = angle_offsets*self.n_periods + self.clock(external_clocks).curr_angle
         func = vector_waveforms[self.type]
 
         result = self.weight * func(angle, self.smoothing*self.wave_smoothing_scale, self.duty_cycle, self.pulse)
+
+        # scale this animation by submaster level if using external clock
+        if self.clock_source is not None:
+            submaster_level = external_clocks[self.clock_source].submaster_level
+            result = result * submaster_level
+
         if self.invert:
             return -1.0 * result
         else:

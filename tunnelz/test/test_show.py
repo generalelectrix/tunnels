@@ -25,10 +25,10 @@ class TestShow (object):
         def check_render(layer_checksums):
             """Some basic checks on the result of drawing layers."""
             # test rendering
-            video_feeds = s.mixer.draw_layers()
+            video_feeds = s.mixer.draw_layers(s.clocks)
 
             # rendering should be idempotent
-            assert_equal(video_feeds, s.mixer.draw_layers())
+            assert_equal(video_feeds, s.mixer.draw_layers(s.clocks))
 
             # should have the right number of video channels
             assert_equal(N_VIDEO_CHANNELS, len(video_feeds))

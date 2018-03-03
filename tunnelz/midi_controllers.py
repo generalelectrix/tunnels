@@ -12,6 +12,7 @@ from .beam_matrix_minder import (
 )
 from bidict import bidict
 from collections import namedtuple
+import logging
 from .midi import NoteOnMapping, NoteOffMapping, ControlChangeMapping
 
 def _build_grid_button_map(page):
@@ -506,6 +507,12 @@ class AnimationMidiController (MidiController):
         self.pulse_button = self.set_callback(NoteOnMapping(1, 0), self.handle_pulse_button)
         self.invert_button = self.set_callback(NoteOnMapping(1, 1), self.handle_invert_button)
 
+        # map external clock select
+        clock_buttons = {i: NoteOnMapping(0, 112+i) for i in xrange(8)}
+        clock_buttons[None] = NoteOnMapping(0, 111)
+
+        self.clock_buttons = self.add_controls(clock_buttons, self.handle_clock_button)
+
     def handle_knob(self, mapping, value):
         knob = self.knobs.inv[mapping]
         setattr(self.mi, knob, self.knob_value_from_midi[knob](value))
@@ -543,3 +550,70 @@ class AnimationMidiController (MidiController):
 
     def set_target(self, target):
         self._set_radio_button(target, self.target_buttons)
+
+    def handle_clock_button(self, mapping, _):
+        self.mi.clock = self.clock_buttons.inv[mapping]
+
+    def set_clock_source(self, clock):
+        self._set_radio_button(clock, self.clock_buttons)
+
+
+class ClockMidiController (MidiController):
+    """Wire up controls for a single clock."""
+
+    def __init__(self, mi, midi_out, channel):
+        """Initialize this clock controller to use a particular midi channel."""
+        self.channel = channel
+        super(ClockMidiController, self).__init__(mi, midi_out)
+
+
+    def setup_controls(self):
+        self.set_callback(NoteOnMapping(self.channel, 110), self.handle_tap)
+        self.set_callback(ControlChangeMapping(self.channel, 1), self.handle_nudge)
+
+        self.retrigger_control = ControlChangeMapping(self.channel, 0)
+        self.set_callback(self.retrigger_control, self.handle_retrigger)
+
+        self.one_shot_control = ControlChangeMapping(self.channel, 2)
+        self.set_callback(self.one_shot_control, self.handle_one_shot)
+
+        self.tick_on = NoteOnMapping(self.channel, 109)
+        self.tick_off = NoteOffMapping(self.channel, 109)
+
+        self.submaster_level_control = ControlChangeMapping(self.channel, 3)
+        self.set_callback(self.submaster_level_control, self.handle_submaster_level)
+
+    def handle_tap(self, mapping, _):
+        self.mi.tap()
+
+    def handle_nudge(self, mapping, value):
+        """Nudge knob is an infinite encoder.
+
+        Values > 64 indicate positive nudge, <64 negative nudge.
+        """
+        self.mi.nudge(value - 64)
+
+    def ticked(self, ticked):
+        self.midi_out.send_from_mapping(
+            self.tick_on if ticked else self.tick_off, 127 if ticked else 0)
+
+    def handle_retrigger(self, mapping, value):
+        self.mi.retrigger = bool(value)
+
+    def set_retrigger(self, value):
+        self.midi_out.send_from_mapping(self.retrigger_control, 127 if value else 0)
+
+    def handle_one_shot(self, mapping, value):
+        self.mi.one_shot = bool(value)
+
+    def set_one_shot(self, value):
+        self.midi_out.send_from_mapping(self.one_shot_control, 127 if value else 0)
+
+    def handle_submaster_level(self, mapping, value):
+        scaled = self.unipolar_from_midi(value)
+        self.mi.submaster_level = scaled
+
+    def set_submaster_level(self, value):
+        unscaled = self.unipolar_to_midi(value)
+        self.midi_out.send_from_mapping(self.submaster_level_control, unscaled)
+

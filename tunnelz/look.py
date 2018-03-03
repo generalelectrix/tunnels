@@ -17,16 +17,18 @@ class Look (Beam):
         """Return a copy of this look."""
         return Look(self.layers)
 
-    def update_state(self, delta_t):
+    def update_state(self, delta_t, external_clocks):
         """Update the state of all Beams in this Look."""
         for layer in self.layers:
-            layer.beam.update_state(delta_t)
+            layer.beam.update_state(delta_t, external_clocks)
 
-    def display(self, level_scale, as_mask):
+    def display(self, level_scale, as_mask, external_clocks):
         """Draw all the Beams in this Look.
 
-        level_scale: unit float
-        as_mask: boolean
+        Args:
+            level_scale: unit float
+            as_mask: boolean
+            external_clocks: collection of clocks
 
         The individual sublayers are unpacked and returned as a single layer of
         many arc segment commands.  The layer punch-ins are ignored and every
@@ -39,7 +41,7 @@ class Look (Beam):
             if level != 0:
                 scaled_level = level_scale * level
                 draw_cmds.extend(layer.beam.display(
-                    scaled_level, as_mask or layer.mask))
+                    scaled_level, as_mask or layer.mask, external_clocks))
         return draw_cmds
 
     def get_animation(self, _):

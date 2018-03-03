@@ -85,13 +85,13 @@ class Mixer (object):
         self.n_video_channels = n_video_channels
         self.layers = [MixerLayer(Tunnel()) for _ in xrange(n_layers)]
 
-    def update_state(self, delta_t):
+    def update_state(self, delta_t, external_clocks):
         """Update the state of all of the beams contained in this mixer."""
         for i, layer in enumerate(self.layers):
             # catch update errors from individual beams to avoid crashing the
             # entire console if one beam has an error.
             try:
-                layer.beam.update_state(delta_t)
+                layer.beam.update_state(delta_t, external_clocks)
             except Exception:
                 if self.test_mode:
                     raise
@@ -147,10 +147,14 @@ class Mixer (object):
         assert channel < self.n_video_channels
         self.layers[layer].video_outs.discard(channel)
 
-    def draw_layers(self):
+    def draw_layers(self, external_clocks):
         """Return a list of lists of draw commands.
 
         Each inner list represents one virtual video channel.
+
+        Args:
+            external_clocks: collection of external clocks that animators may be
+                bound to.
         """
         video_outs = [[] for _ in xrange(self.n_video_channels)]
 
@@ -161,9 +165,9 @@ class Mixer (object):
             try:
                 if level > 0 or bump:
                     if bump:
-                        draw_cmd = layer.beam.display(1.0, layer.mask)
+                        draw_cmd = layer.beam.display(1.0, layer.mask, external_clocks)
                     else:
-                        draw_cmd = layer.beam.display(level, layer.mask)
+                        draw_cmd = layer.beam.display(level, layer.mask, external_clocks)
                 else:
                     draw_cmd = []
             except Exception:

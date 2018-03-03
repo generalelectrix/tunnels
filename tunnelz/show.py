@@ -3,6 +3,7 @@ import traceback
 from Queue import Queue, Empty
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
+from .clock import ControllableClock
 from .devices import initialize_device
 from .meta_mi import MetaMI
 from .midi import MidiInput, MidiOutput, list_ports
@@ -11,7 +12,9 @@ from .midi_controllers import (
     MetaControlMidiController,
     MixerMidiController,
     TunnelMidiController,
-    AnimationMidiController,)
+    AnimationMidiController,
+    ClockMidiController,
+)
 from .mixer import Mixer, MixerMI
 from .render_server import RenderServer
 from . import timesync
@@ -22,6 +25,9 @@ import yaml
 
 # how many virtual video channels should we send?
 N_VIDEO_CHANNELS = 8
+
+# how many globally-available clocks?
+N_CLOCKS = 8
 
 # default configuration parameters
 DEFAULT_CONFIG = dict(
@@ -95,6 +101,8 @@ class Show (object):
         self.tunnel_mi.initialize()
         self.animator_mi.initialize()
         self.meta_mi.initialize()
+        for clock in self.clocks:
+            clock.initialize()
 
         # done!
 
@@ -104,6 +112,8 @@ class Show (object):
             n_layers=self.channel_count,
             n_video_channels=N_VIDEO_CHANNELS,
             test_mode=self.test_mode)
+
+        self.clocks = [ControllableClock() for _ in xrange(N_CLOCKS)]
 
         # if we're not using midi, set up test tunnels
         if self.config.get('stress_test', False):
@@ -146,7 +156,8 @@ class Show (object):
 
             for i, anim in enumerate(tunnel.anims):
                 anim.type = WaveformType.VALUES[i]
-                anim.speed = float(i)/len(tunnel.anims) # various speeds
+                # various animation speeds
+                anim.internal_clock.rate = AnimationMI.max_clock_rate * float(i) / len(tunnel.anims)
                 anim.weight = 0.5 # finite weight
                 anim.target = AnimationTarget.Thickness # hit thickness to do vector math
                 anim.n_periods = 3 # more than zero periods for vector math
@@ -210,17 +221,24 @@ class Show (object):
                     controller = cls(mi, midi_out, **kwargs)
                     midi_in.register_controller(controller)
 
-                # FIXME: shitty hack to use the APC20 as a wing
+                # FIXME: shitty hack to use the APC20 as a wing.
                 if midi_in.name == "Akai APC20":
                     page = 1
                 else:
                     page = 0
 
-                create_controller(MetaControlMidiController, self.meta_mi, page=page)
-                create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
-                create_controller(MixerMidiController, self.mixer_mi, page=page)
-                create_controller(TunnelMidiController, self.tunnel_mi)
-                create_controller(AnimationMidiController, self.animator_mi)
+                # FIXME: this is a terrible way to decide which controllers to
+                # hook up to which control surfaces.
+                if midi_in.name == "ReMOTE SL Port 1" or "Network Session" in midi_in.name:
+                    for i, clock in enumerate(self.clocks):
+                        create_controller(ClockMidiController, clock, channel=i)
+
+                if "Akai APC" in midi_in.name or "Network Session" in midi_in.name:
+                    create_controller(MetaControlMidiController, self.meta_mi, page=page)
+                    create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
+                    create_controller(MixerMidiController, self.mixer_mi, page=page)
+                    create_controller(TunnelMidiController, self.tunnel_mi)
+                    create_controller(AnimationMidiController, self.animator_mi)
 
     def _service_control_event(self, timeout):
         """Service a single control event if one is pending."""
@@ -242,8 +260,12 @@ class Show (object):
 
     def _update_state(self, update_interval):
         """Perform discrete state update on every part of the show."""
+        # update the state of the global clocks
+        for clock in self.clocks:
+            clock.update_state(update_interval)
+
         # update the state of the beams
-        self.mixer.update_state(update_interval)
+        self.mixer.update_state(update_interval, self.clocks)
 
     def run(self, update_interval=20, n_frames=None):
         """Run the show loop.
@@ -295,16 +317,17 @@ class Show (object):
                     # another frame and it hasn't drawn this frame yet
                     if update_number > last_rendered_frame:
                         rendered = render_server.pass_frame_if_ready(
-                            update_number, last_update, self.mixer)
+                            update_number, last_update, self.mixer, self.clocks)
                         if rendered:
                             last_rendered_frame = update_number
 
                     # process a control event for a fraction of the time between now
                     # and when we will need to update state again
                     now = time_millis()
-                    time_to_next_update = last_update + update_interval - now
-                    if time_to_next_update > 0:
 
+                    time_to_next_update = last_update + update_interval - now
+
+                    if time_to_next_update > 0:
                         # timeout arg is a float in seconds
                         # only use, say, 80% of the time we have to prioritize
                         # timely state updates
@@ -374,6 +397,4 @@ def prompt_bool(msg):
             return True
         elif c == 'n':
             return False
-
-
 

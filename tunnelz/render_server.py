@@ -106,7 +106,7 @@ class RenderServer (object):
         if self.running:
             self._stop()
 
-    def pass_frame_if_ready(self, update_number, update_time, mixer):
+    def pass_frame_if_ready(self, update_number, update_time, mixer, clocks):
         """Pass the render server a frame if it is ready to draw one.
 
         Returns a boolean indicating if a frame was drawn or not.
@@ -118,7 +118,13 @@ class RenderServer (object):
                 return False
             else:
                 if req == FRAME_REQ:
-                    self.command.put((FRAME, (update_number, update_time, mixer)))
+                    # just pass the underlying clock objects, not the whole
+                    # clock command wrapper
+                    bare_clocks = [clock.model for clock in clocks]
+                    self.command.put((
+                        FRAME,
+                        (update_number, update_time, mixer, bare_clocks),
+                    ))
                     return True
                 elif req == FATAL_ERROR:
                     self._stop()
@@ -167,10 +173,10 @@ def run_server(command, response, port, report):
                 # we could try again, but who knows how we even got here
                 raise RenderServerError("Unrecognized command: {}".format(action))
 
-            frame_number, frame_time, mixer = payload
+            frame_number, frame_time, mixer, clocks = payload
 
             # render the payload we received
-            video_outs = mixer.draw_layers()
+            video_outs = mixer.draw_layers(clocks)
 
             for video_chan, draw_commands in enumerate(video_outs):
                 serialized = msgpack.dumps(
