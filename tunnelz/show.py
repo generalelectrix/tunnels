@@ -78,7 +78,6 @@ class Show (object):
         # keep a queue of requests from control input handlers to be serviced.
         self.control_requests = Queue()
 
-        self.use_midi = config['use_midi']
         self.channel_count = config.get('channel_count', 16)
 
         self._setup_models(load_path, save_path)
@@ -94,7 +93,8 @@ class Show (object):
         self.meta_mi = MetaMI(mixer_mi, tunnel_mi, animator_mi, self.beam_matrix)
 
         # setup all control surfaces
-        self._setup_controllers()
+        if config['use_midi']:
+            self._setup_midi()
 
         # initialize the MIs
         self.mixer_mi.initialize()
@@ -104,7 +104,10 @@ class Show (object):
         for clock in self.clocks:
             clock.initialize()
 
-        # done!
+        # potentially set up some test patterns if they were requested
+        self._setup_test_pattern()
+
+        # show is ready to run
 
     def _setup_models(self, load_path, save_path):
         """Instantiate all of the model objects."""
@@ -114,16 +117,6 @@ class Show (object):
             test_mode=self.test_mode)
 
         self.clocks = [ControllableClock() for _ in xrange(N_CLOCKS)]
-
-        # if we're not using midi, set up test tunnels
-        if self.config.get('stress_test', False):
-            self.setup_stress_test()
-        elif self.config.get('rotation_test', False):
-            self.setup_rotation_test()
-        elif self.config.get('aliasing_test', False):
-            self.setup_aliasing_test()
-        elif self.config.get('multi_channel_test', False):
-            self.setup_multi_channel_test()
 
         # beam matrix minder
         # FIXME: hardcoded page count
@@ -135,110 +128,45 @@ class Show (object):
         # save a copy of the default tunnel for sanity. Don't erase it!
         beam_matrix.put_beam(4, 7, Tunnel())
 
-    def setup_stress_test(self):
-        """Set up all mixer tunnels to do everything at once."""
-        for i, layer in enumerate(self.mixer.layers):
-
-            # maximally brutal test fixture
-            layer.level = 1.0
-
-            tunnel = layer.beam
-
-            tunnel.col_width = 0.25
-            tunnel.col_spread = 1.0
-            tunnel.col_sat = 0.25
-
-            tunnel.marquee_speed = -1.0 + (2.0 * float(i) / float(self.channel_count))
-
-            tunnel.blacking = 0.0
-
-            tunnel.radius = (0.1*i) % 1.0
-
-            for i, anim in enumerate(tunnel.anims):
-                anim.type = WaveformType.VALUES[i]
-                # various animation speeds
-                anim.internal_clock.rate = AnimationMI.max_clock_rate * float(i) / len(tunnel.anims)
-                anim.weight = 0.5 # finite weight
-                anim.target = AnimationTarget.Thickness # hit thickness to do vector math
-                anim.n_periods = 3 # more than zero periods for vector math
-
-    def setup_rotation_test(self):
-        """Set up one tunnel to test basic rotation."""
-        layer = self.mixer.layers[0]
-        layer.level = 1.0
-        tunnel = layer.beam
-
-        tunnel.segs = 40
-        tunnel.aspect_ratio = 0.5
-
-        tunnel.rot_speed = 0.2
-        tunnel.marquee_speed = 0.0
-
-    def setup_aliasing_test(self):
-        """Set up one tunnel to test render smoothness."""
-        layer = self.mixer.layers[0]
-        layer.level = 1.0
-        tunnel = layer.beam
-
-        tunnel.rot_speed = 0.0
-        tunnel.marquee_speed = 0.05
-
-    def setup_multi_channel_test(self):
-        """Set up eight unique tunnels, one per video output."""
-        for i, layer in enumerate(self.mixer.layers):
-
-            layer.level = 1.0
-            layer.video_outs = {i % N_VIDEO_CHANNELS}
-
-            tunnel = layer.beam
-            tunnel.col_sat = 1.0
-
-            tunnel.marquee_speed = 0.1
-
-            tunnel.col_center = (float(i) / N_VIDEO_CHANNELS) % 1.0
-
-
-    def _setup_controllers(self):
-        self._setup_midi()
-
     def _setup_midi(self):
-        if self.use_midi:
+        """Configure each requested midi port."""
+        self.midi_inputs, self.midi_outputs = [], []
 
-            self.midi_inputs, self.midi_outputs = [], []
+        midi_ports = self.config['midi_ports']
+        # FIXME: #17 if a midi device on the bus anywhere has a different number of
+        # inputs and outputs we need to account for that.
+        for port in midi_ports:
+            midi_in = MidiInput(port, self.control_requests)
+            midi_out = MidiOutput(port)
+            self.midi_inputs.append(midi_in)
+            self.midi_outputs.append(midi_out)
 
-            midi_ports = self.config['midi_ports']
-            for port in midi_ports:
-                midi_in = MidiInput(port, self.control_requests)
-                midi_out = MidiOutput(port)
-                self.midi_inputs.append(midi_in)
-                self.midi_outputs.append(midi_out)
+            # perform device-specific init
+            initialize_device(midi_out)
 
-                # perform device-specific init
-                initialize_device(midi_out)
+            # now attach all of the relevant controllers
+            def create_controller(cls, mi, **kwargs):
+                controller = cls(mi, midi_out, **kwargs)
+                midi_in.register_controller(controller)
 
-                # now attach all of the relevant controllers
-                def create_controller(cls, mi, **kwargs):
-                    controller = cls(mi, midi_out, **kwargs)
-                    midi_in.register_controller(controller)
+            # FIXME: shitty hack to use the APC20 as a wing.
+            if midi_in.name == "Akai APC20":
+                page = 1
+            else:
+                page = 0
 
-                # FIXME: shitty hack to use the APC20 as a wing.
-                if midi_in.name == "Akai APC20":
-                    page = 1
-                else:
-                    page = 0
+            # FIXME: this is a terrible way to decide which controllers to
+            # hook up to which control surfaces.
+            if midi_in.name == "ReMOTE SL Port 1" or "Network Session" in midi_in.name:
+                for i, clock in enumerate(self.clocks):
+                    create_controller(ClockMidiController, clock, channel=i)
 
-                # FIXME: this is a terrible way to decide which controllers to
-                # hook up to which control surfaces.
-                if midi_in.name == "ReMOTE SL Port 1" or "Network Session" in midi_in.name:
-                    for i, clock in enumerate(self.clocks):
-                        create_controller(ClockMidiController, clock, channel=i)
-
-                if "Akai APC" in midi_in.name or "Network Session" in midi_in.name:
-                    create_controller(MetaControlMidiController, self.meta_mi, page=page)
-                    create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
-                    create_controller(MixerMidiController, self.mixer_mi, page=page)
-                    create_controller(TunnelMidiController, self.tunnel_mi)
-                    create_controller(AnimationMidiController, self.animator_mi)
+            if "Akai APC" in midi_in.name or "Network Session" in midi_in.name:
+                create_controller(MetaControlMidiController, self.meta_mi, page=page)
+                create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
+                create_controller(MixerMidiController, self.mixer_mi, page=page)
+                create_controller(TunnelMidiController, self.tunnel_mi)
+                create_controller(AnimationMidiController, self.animator_mi)
 
     def _service_control_event(self, timeout):
         """Service a single control event if one is pending."""
@@ -343,6 +271,79 @@ class Show (object):
         finally:
             render_server.stop()
             log.info("Shut down render server.")
+
+    def _setup_test_pattern(self):
+        """Set up a test pattern if set in the config."""
+        if self.config.get('stress_test', False):
+            self.setup_stress_test()
+        elif self.config.get('rotation_test', False):
+            self.setup_rotation_test()
+        elif self.config.get('aliasing_test', False):
+            self.setup_aliasing_test()
+        elif self.config.get('multi_channel_test', False):
+            self.setup_multi_channel_test()
+
+    def setup_stress_test(self):
+        """Set up all mixer tunnels to do everything at once."""
+        for i, layer in enumerate(self.mixer.layers):
+
+            # maximally brutal test fixture
+            layer.level = 1.0
+
+            tunnel = layer.beam
+
+            tunnel.col_width = 0.25
+            tunnel.col_spread = 1.0
+            tunnel.col_sat = 0.25
+
+            tunnel.marquee_speed = -1.0 + (2.0 * float(i) / float(self.channel_count))
+
+            tunnel.blacking = 0.0
+
+            tunnel.radius = (0.1*i) % 1.0
+
+            for i, anim in enumerate(tunnel.anims):
+                anim.type = WaveformType.VALUES[i]
+                # various animation speeds
+                anim.internal_clock.rate = AnimationMI.max_clock_rate * float(i) / len(tunnel.anims)
+                anim.weight = 0.5 # finite weight
+                anim.target = AnimationTarget.Thickness # hit thickness to do vector math
+                anim.n_periods = 3 # more than zero periods for vector math
+
+    def setup_rotation_test(self):
+        """Set up one tunnel to test basic rotation."""
+        layer = self.mixer.layers[0]
+        layer.level = 1.0
+        tunnel = layer.beam
+
+        tunnel.segs = 40
+        tunnel.aspect_ratio = 0.5
+
+        tunnel.rot_speed = 0.2
+        tunnel.marquee_speed = 0.0
+
+    def setup_aliasing_test(self):
+        """Set up one tunnel to test render smoothness."""
+        layer = self.mixer.layers[0]
+        layer.level = 1.0
+        tunnel = layer.beam
+
+        tunnel.rot_speed = 0.0
+        tunnel.marquee_speed = 0.05
+
+    def setup_multi_channel_test(self):
+        """Set up eight unique tunnels, one per video output."""
+        for i, layer in enumerate(self.mixer.layers):
+
+            layer.level = 1.0
+            layer.video_outs = {i % N_VIDEO_CHANNELS}
+
+            tunnel = layer.beam
+            tunnel.col_sat = 1.0
+
+            tunnel.marquee_speed = 0.1
+
+            tunnel.col_center = (float(i) / N_VIDEO_CHANNELS) % 1.0
 
 
 # --- prompt the user for input to configure a show interactively ---
