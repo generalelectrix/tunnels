@@ -81,7 +81,7 @@ class Show (object):
         self.use_midi = config['use_midi']
         self.channel_count = config.get('channel_count', 16)
 
-        self.setup_models(load_path, save_path)
+        self._setup_models(load_path, save_path)
 
         starting_beam = self.mixer.layers[0].beam
 
@@ -94,7 +94,7 @@ class Show (object):
         self.meta_mi = MetaMI(mixer_mi, tunnel_mi, animator_mi, self.beam_matrix)
 
         # setup all control surfaces
-        self.setup_controllers()
+        self._setup_controllers()
 
         # initialize the MIs
         self.mixer_mi.initialize()
@@ -106,7 +106,7 @@ class Show (object):
 
         # done!
 
-    def setup_models(self, load_path, save_path):
+    def _setup_models(self, load_path, save_path):
         """Instantiate all of the model objects."""
         self.mixer = Mixer(
             n_layers=self.channel_count,
@@ -198,10 +198,10 @@ class Show (object):
             tunnel.col_center = (float(i) / N_VIDEO_CHANNELS) % 1.0
 
 
-    def setup_controllers(self):
-        self.setup_midi()
+    def _setup_controllers(self):
+        self._setup_midi()
 
-    def setup_midi(self):
+    def _setup_midi(self):
         if self.use_midi:
 
             self.midi_inputs, self.midi_outputs = [], []
