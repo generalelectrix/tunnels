@@ -43,7 +43,7 @@ DEFAULT_CONFIG = dict(
 
 
 class Show (object):
-    """Encapsulate the show runtime environment."""
+    """Top-level entity that owns all show resources including the event loop."""
     test_mode = False
 
     @classmethod
