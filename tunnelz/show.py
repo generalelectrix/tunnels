@@ -109,6 +109,83 @@ class Show (object):
 
         # show is ready to run
 
+    def run(self, update_interval=20, n_frames=None):
+        """Run the show loop.
+
+        Args:
+            update_interval (int): number of milliseconds between beam state updates
+            n_frames (None or int): if None, run forever.  if finite number, only
+                run for this many state updates.
+        """
+        report_framerate = self.config.get("report_framerate", False)
+
+        update_number = 0
+
+        # start time synchronization service
+        # FIXME no clean quit mechanism!
+        log.info("Starting time synchronization service...")
+        timesync.run_service()
+        log.info("Time synchronization service started.")
+
+        # start up the render server
+        render_server = RenderServer(report=report_framerate)
+
+        log.info("Starting render server...")
+        render_server.start()
+        log.info("Render server started.")
+
+        time_millis = lambda: int(monotonic()*1000)
+
+        last_update = time_millis()
+
+        last_rendered_frame = -1
+
+        try:
+            while n_frames is None or update_number < n_frames:
+                try:
+                    # compute updates until we're current
+                    now = time_millis()
+                    time_since_last_update = now - last_update
+
+                    while time_since_last_update > update_interval:
+                        self._update_state(update_interval)
+
+                        last_update += update_interval
+                        now = time_millis()
+                        time_since_last_update = now - last_update
+                        update_number += 1
+
+                    # pass the mixer to the render process if it is ready to draw
+                    # another frame and it hasn't drawn this frame yet
+                    if update_number > last_rendered_frame:
+                        rendered = render_server.pass_frame_if_ready(
+                            update_number, last_update, self.mixer, self.clocks)
+                        if rendered:
+                            last_rendered_frame = update_number
+
+                    # process a control event for a fraction of the time between now
+                    # and when we will need to update state again
+                    now = time_millis()
+
+                    time_to_next_update = last_update + update_interval - now
+
+                    if time_to_next_update > 0:
+                        # timeout arg is a float in seconds
+                        # only use, say, 80% of the time we have to prioritize
+                        # timely state updates
+                        timeout = 0.8 * time_to_next_update / 1000.
+                        self._service_control_event(timeout)
+                except Exception:
+                    if self.test_mode:
+                        raise
+                    # trap any exception here and log an error to avoid crashing
+                    # the whole controller
+                    log.exception("Exception in main show loop.")
+
+        finally:
+            render_server.stop()
+            log.info("Shut down render server.")
+
     def _setup_models(self, load_path, save_path):
         """Instantiate all of the model objects."""
         self.mixer = Mixer(
@@ -194,83 +271,6 @@ class Show (object):
 
         # update the state of the beams
         self.mixer.update_state(update_interval, self.clocks)
-
-    def run(self, update_interval=20, n_frames=None):
-        """Run the show loop.
-
-        Args:
-            update_interval (int): number of milliseconds between beam state updates
-            n_frames (None or int): if None, run forever.  if finite number, only
-                run for this many state updates.
-        """
-        report_framerate = self.config.get("report_framerate", False)
-
-        update_number = 0
-
-        # start time synchronization service
-        # FIXME no clean quit mechanism!
-        log.info("Starting time synchronization service...")
-        timesync.run_service()
-        log.info("Time synchronization service started.")
-
-        # start up the render server
-        render_server = RenderServer(report=report_framerate)
-
-        log.info("Starting render server...")
-        render_server.start()
-        log.info("Render server started.")
-
-        time_millis = lambda: int(monotonic()*1000)
-
-        last_update = time_millis()
-
-        last_rendered_frame = -1
-
-        try:
-            while n_frames is None or update_number < n_frames:
-                try:
-                    # compute updates until we're current
-                    now = time_millis()
-                    time_since_last_update = now - last_update
-
-                    while time_since_last_update > update_interval:
-                        self._update_state(update_interval)
-
-                        last_update += update_interval
-                        now = time_millis()
-                        time_since_last_update = now - last_update
-                        update_number += 1
-
-                    # pass the mixer to the render process if it is ready to draw
-                    # another frame and it hasn't drawn this frame yet
-                    if update_number > last_rendered_frame:
-                        rendered = render_server.pass_frame_if_ready(
-                            update_number, last_update, self.mixer, self.clocks)
-                        if rendered:
-                            last_rendered_frame = update_number
-
-                    # process a control event for a fraction of the time between now
-                    # and when we will need to update state again
-                    now = time_millis()
-
-                    time_to_next_update = last_update + update_interval - now
-
-                    if time_to_next_update > 0:
-                        # timeout arg is a float in seconds
-                        # only use, say, 80% of the time we have to prioritize
-                        # timely state updates
-                        timeout = 0.8 * time_to_next_update / 1000.
-                        self._service_control_event(timeout)
-                except Exception:
-                    if self.test_mode:
-                        raise
-                    # trap any exception here and log an error to avoid crashing
-                    # the whole controller
-                    log.exception("Exception in main show loop.")
-
-        finally:
-            render_server.stop()
-            log.info("Shut down render server.")
 
     def _setup_test_pattern(self):
         """Set up a test pattern if set in the config."""
