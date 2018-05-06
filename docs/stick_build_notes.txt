@@ -1,0 +1,34 @@
+Machine Setup:
+	Install Ubuntu 18.04
+	Set user to "imagine"
+	Set password to "trust"
+	Run software update
+
+General Software:
+	Install Git
+	Install curl
+	Install Rust
+	Restart Machine
+
+Build Specific Software:
+	Clone Pytunnel
+	Install build-essential
+	Install Avahi and libdnssd compatibility:
+		sudo apt-get install avahi-daemon avahi-discover avahi-utils libnss-mdns mdns-scan
+		sudo apt-get install libavahi-compat-libdnssd-dev
+
+	Install zmq (note OS specific commands):
+		sudo -i
+		echo "deb http://download.opensuse.org/repositories/network:/messaging:/zeromq:/release-stable/xUbuntu_18.04/ ./" >> /etc/apt/sources.list
+		wget https://download.opensuse.org/repositories/network:/messaging:/zeromq:/release-stable/xUbuntu_18.04/Release.key -O- | sudo apt-key add
+		apt-get install libzmq3-dev
+		exit
+
+	Install sdl2.
+		sudo apt-get install libsdl2-dev
+
+Tunnelclient build:
+	Cargo build
+
+
+
