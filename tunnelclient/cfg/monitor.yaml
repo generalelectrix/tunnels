@@ -5,4 +5,5 @@ x_resolution: 960
 y_resolution: 540
 anti_alias: true
 fullscreen: false
+capture_mouse: false
 alpha_blend: true
