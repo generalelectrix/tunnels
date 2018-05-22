@@ -240,8 +240,10 @@ fn configure_one<H>(hostname: H) -> ClientConfig
     let mut timesync_interval = Duration::from_secs(60);
     let mut render_delay = 40.;
     let mut alpha_blend = true;
+    let mut capture_mouse = true;
 
     if prompt_y_n("Configure advanced settings") {
+        capture_mouse = prompt_y_n("Capture mouse");
         anti_alias = prompt_y_n("Use anti-aliasing");
         alpha_blend = prompt_y_n("Use alpha channel blending");
         let timesync_interval_secs = prompt(
@@ -260,6 +262,7 @@ fn configure_one<H>(hostname: H) -> ClientConfig
         anti_alias,
         fullscreen,
         alpha_blend,
+        capture_mouse,
     )
 }
 

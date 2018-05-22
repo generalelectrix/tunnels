@@ -24,6 +24,8 @@ pub struct ClientConfig {
     pub alpha_blend: bool,
     /// If true, set the window to fullscreen on creation.
     pub fullscreen: bool,
+    /// If true, capture and hide the cursor.
+    pub capture_mouse: bool,
     /// Used to rescale unit-scale sizes to the current resolution.
     pub critical_size: f64,
     /// Used to rescale unit-scale lineweights to the current resolution.
@@ -46,6 +48,7 @@ impl ClientConfig {
             anti_alias: bool,
             fullscreen: bool,
             alpha_blend: bool,
+            capture_mouse: bool,
     ) -> ClientConfig {
 
         let (x_resolution, y_resolution) = resolution;
@@ -59,6 +62,7 @@ impl ClientConfig {
             y_resolution,
             anti_alias,
             fullscreen,
+            capture_mouse,
             critical_size: cmp::min(x_resolution, y_resolution) as f64,
             thickness_scale: 0.5,
             x_center: (x_resolution / 2) as f64,
@@ -97,6 +101,7 @@ impl ClientConfig {
             flag("anti_alias", "Bad anti-alias flag.")?,
             flag("fullscreen", "Bad fullscreen flag.")?,
             flag("alpha_blend", "Bad alpha blend flag.")?,
+            flag("capture_mouse", "Bad mouse capture flag.")?,
         ))
     }
 

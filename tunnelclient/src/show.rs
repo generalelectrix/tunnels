@@ -97,7 +97,7 @@ impl Show {
             .fullscreen(cfg.fullscreen)
             .build()?;
 
-        window.set_capture_cursor(true);
+        window.set_capture_cursor(cfg.capture_mouse);
         window.set_max_fps(120);
 
         Ok(Show {
