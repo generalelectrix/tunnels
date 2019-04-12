@@ -1,7 +1,0 @@
-Master
-    Start server with ./run.sh
-    Run admin
-        cargo run admin
-
-Slave
-    
