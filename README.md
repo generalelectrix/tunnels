@@ -54,6 +54,20 @@ that exposes them to the server via DNSSD (aka Bonjour), which then subscribe to
 a virtual video stream broadcast by the server and render the feeds to video.
 Interaction between the server and clients is mediated by 0MQ and msgpack.
 
+## Hardware requirements
+
+Minimally:
+- 1x Mac, which can co-host the server and a client.
+- 1x digital video projector, preferably with excellent contrast.
+- 1x hazer, or a lot of incense.
+- 1x large-format tablet (such as an iPad) running TouchOSC.
+
+Recommended:
+- 1x Akai APC-40
+
+Nice to have:
+- Lots more projectors, with client computers to run them.
+
 ## Server installation and running (Python 2)
 
 0. In a fresh virtual environment: $ python setup.py install
