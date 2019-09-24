@@ -123,10 +123,10 @@ class BeamMatrixMinder (object):
         """Pickle the contents of this minder to a file on disk."""
         # since we periodically save to disk, don't want to crash the show if this fails
         try:
-            with open(self._cache_path, 'w+') as f:
+            with open(self._cache_path, 'wb+') as f:
                 pickle.dump((self._beams, self._is_look), f, pickle.HIGHEST_PROTOCOL)
         except Exception as err:
-            log.error("An error occurred while saving beam matrix to disk: {}", err)
+            log.error("An error occurred while saving beam matrix to disk: %s", err)
 
     def _load_from_disk(self, path):
         """Unpickle a saved file and return its contents."""
