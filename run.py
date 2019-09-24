@@ -1,5 +1,5 @@
 from tunnelz import Show
-print r"""
+print(r"""
 
                   )     )       (        )
   *   )        ( /(  ( /(       )\ )  ( /(
@@ -12,7 +12,7 @@ print r"""
 
 
 CONFIGURATION
-"""
+""")
 show = Show.from_prompt()
-print "Show loaded, bound to 'show' in interpreter."
+print("Show loaded, bound to 'show' in interpreter.")
 show.run()
