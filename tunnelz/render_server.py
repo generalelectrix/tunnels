@@ -182,7 +182,7 @@ def run_server(command, response, port, report):
                 serialized = msgpack.dumps(
                     (frame_number, frame_time, draw_commands),
                     use_single_float=True)
-                socket.send_multipart((str(video_chan), serialized))
+                socket.send_multipart((str(video_chan).encode(), serialized))
 
             if report:# and frame_number % 1 == 0:
                 now = monotonic()
