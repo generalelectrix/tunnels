@@ -132,7 +132,7 @@ impl Administrator {
     /// Command a particular client to run using the provided configuration.
     /// If the client is available, returns the string response from sending the config.
     /// Returns Err if the specified client doesn't exist.
-    pub fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String, Box<Error>> {
+    pub fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String, Box<dyn Error>> {
         // Serialize the config.
         let mut serialized = Vec::new();
         write(&mut serialized, &config)?;
@@ -301,7 +301,7 @@ quit    Quit.";
             },
             "conf" | "c" => {
                 let client_name = prompt("Enter client name", &parse_client_name);
-                let config = configure_one(host.as_ref());
+                let config = configure_one(host.clone());
                 match admin.run_with_config(&client_name, config) {
                     Ok(msg) => {
                         println!("{}", msg);

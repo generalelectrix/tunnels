@@ -39,7 +39,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new 0mq REQ connected to the provided socket addr.
-    pub fn new(host: &str, ctx: &mut Context) -> Result<Self, Box<Error>> {
+    pub fn new(host: &str, ctx: &mut Context) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::REQ)?;
         let addr = format!("tcp://{}:{}", host, PORT);
         socket.connect(&addr)?;
@@ -53,7 +53,7 @@ impl Client {
     }
 
     /// Take a time delay measurement.
-    fn measure(&mut self) -> Result<Measurement, Box<Error>> {
+    fn measure(&mut self) -> Result<Measurement, Box<dyn Error>> {
         let now = Instant::now();
         self.socket.send(&[][..], 0)?;
         let buf = match self.receive_buffer(true) {
@@ -66,7 +66,7 @@ impl Client {
     }
 
     /// Get the offset between this machine's system clock and the host's.
-    pub fn synchronize(&mut self) -> Result<Timesync, Box<Error>> {
+    pub fn synchronize(&mut self) -> Result<Timesync, Box<dyn Error>> {
         let reference_time = Instant::now();
         // Take a bunch of measurements, sleeping in between.
         let mut measurements = Vec::with_capacity(self.n_meas);

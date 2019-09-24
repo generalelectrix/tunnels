@@ -75,7 +75,7 @@ impl ClientConfig {
     /// Loads, parses, and returns a config from path.
     /// This method panics if anything is wrong and is only appropriate for use during one-time
     /// initialization.
-    pub fn load(video_channel: u64, config_path: &str) -> Result<ClientConfig, Box<Error>> {
+    pub fn load(video_channel: u64, config_path: &str) -> Result<ClientConfig, Box<dyn Error>> {
 
         let mut config_file = File::open(config_path)?;
         let mut config_file_string = String::new();

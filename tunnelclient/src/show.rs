@@ -31,7 +31,7 @@ pub struct Show {
 }
 
 impl Show {
-    pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Result<Self, Box<Error>> {
+    pub fn new(cfg: ClientConfig, ctx: &mut Context, run_flag: RunFlag) -> Result<Self, Box<dyn Error>> {
         println!("Running on video channel {}.", cfg.video_channel);
 
         // Start up the timesync service.
