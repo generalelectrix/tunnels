@@ -119,11 +119,11 @@ pub struct SubReceiver {
 
 impl SubReceiver {
     /// Create a new 0mq SUB connected to the provided socket addr.
-    pub fn new(host: &str, port: u64, topic: &[u8], ctx: &mut Context) -> Result<Self, Box<Error>> {
+    pub fn new(host: &str, port: u64, topic: &[u8], ctx: &mut Context) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::SUB)?;
         let addr = format!("tcp://{}:{}", host, port);
         socket.connect(&addr)?;
-        socket.set_subscribe(topic);
+        socket.set_subscribe(topic)?;
 
         Ok(SubReceiver {socket})
     }
