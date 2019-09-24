@@ -109,7 +109,7 @@ class Show (object):
 
         # show is ready to run
 
-    def run(self, update_interval=20, n_frames=None):
+    def run(self, update_interval=16, n_frames=None):
         """Run the show loop.
 
         Args:
