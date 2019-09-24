@@ -68,9 +68,11 @@ Recommended:
 Nice to have:
 - Lots more projectors, with client computers to run them.
 
-## Server installation and running (Python 2)
+## Server installation and running
 
-0. In a fresh virtual environment: $ python setup.py install
+In a fresh virtual environment:
+0. `$ pip install cython numpy`
+0. `$ python setup.py install`
 0. `$ ./run.sh`
 
 ## Controllers
@@ -87,6 +89,7 @@ APC40 and APC20 should work out of the box.
 0. Install Homebrew: https://brew.sh/
 0. `$ brew install sdl2`
 0. `$ brew install zmq`
+0. `$ brew install pkgconfig` (needed for Rust to find libzmq)
 0. Inside `tunnelclient/` `$ cargo build --release`
 0. Get up and make some tea or something while it compiles.
 
