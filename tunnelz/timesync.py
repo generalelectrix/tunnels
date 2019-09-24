@@ -43,4 +43,4 @@ def test_receive():
     socket.connect(addr)
     socket.send("hello")
     msg = socket.recv()
-    print "Received {}".format(msgpack.loads(msg))
+    print("Received {}".format(msgpack.loads(msg)))

@@ -1,5 +1,5 @@
 import copy
-from itertools import izip, tee
+from itertools import tee
 from monotonic import monotonic
 from .model_interface import ModelInterface, MiProperty, MiModelProperty
 
@@ -169,7 +169,7 @@ class TapSync (object):
             # iterate over all pairs of times to get differences
             first_iter, second_iter = tee(self._tap_times)
             next(second_iter, None)
-            deltas = list(second - first for first, second in izip(first_iter, second_iter))
+            deltas = list(second - first for first, second in zip(first_iter, second_iter))
 
             self._period = sum(deltas) / len(deltas)
             self._rate = 1.0 / self._period

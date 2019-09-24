@@ -57,7 +57,7 @@ class TestShow (object):
         try:
             os.remove(self.test_save_file_path)
         except OSError as err:
-            print "Couldn't delete saved test file:", err
+            print("Couldn't delete saved test file:", err)
 
     # before update, every beam should be identical as we haven't let them
     # evolve at all yet

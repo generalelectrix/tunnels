@@ -51,7 +51,7 @@ class ModelInterfaceMeta (type):
         new_dct['model_properties'] = model_properties = set()
         new_dct['mi_properties'] = mi_properties = set()
 
-        for key, value in dct.iteritems():
+        for key, value in dct.items():
             new_dct[key] = value
 
             # for UiProperties, do the legwork to create a property
@@ -82,12 +82,11 @@ def only_if_active(method):
     return call_if_active
 
 
-class ModelInterface (object):
+class ModelInterface (object, metaclass=ModelInterfaceMeta):
     """Base class for UIs.  Mostly responsible for implementing Observer.
 
     Maintains observing controllers using a weak reference set.
     """
-    __metaclass__ = ModelInterfaceMeta
     def __init__(self, model):
         """Initialize a user interface to an underlying model object."""
         self.model = model

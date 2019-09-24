@@ -1,7 +1,7 @@
 import logging as log
 from monotonic import monotonic
 from multiprocessing import Process, Queue
-from Queue import Empty
+from queue import Empty
 import msgpack
 import zmq
 import sys

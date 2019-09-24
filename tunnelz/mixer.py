@@ -16,7 +16,7 @@ class MixerMI (ModelInterface):
             self.update_controllers('set_level', i, layer.level)
             self.update_controllers('set_bump_button', i, layer.bump)
             self.update_controllers('set_mask_button', i, layer.mask)
-            for chan in xrange(self.mixer.n_video_channels):
+            for chan in range(self.mixer.n_video_channels):
                 self.update_controllers(
                     'set_video_channel', i, chan, chan in layer.video_outs)
 
@@ -83,7 +83,7 @@ class Mixer (object):
     def __init__(self, n_layers, n_video_channels, test_mode):
         self.test_mode = test_mode
         self.n_video_channels = n_video_channels
-        self.layers = [MixerLayer(Tunnel()) for _ in xrange(n_layers)]
+        self.layers = [MixerLayer(Tunnel()) for _ in range(n_layers)]
 
     def update_state(self, delta_t, external_clocks):
         """Update the state of all of the beams contained in this mixer."""
@@ -156,7 +156,7 @@ class Mixer (object):
             external_clocks: collection of external clocks that animators may be
                 bound to.
         """
-        video_outs = [[] for _ in xrange(self.n_video_channels)]
+        video_outs = [[] for _ in range(self.n_video_channels)]
 
         for i, layer in enumerate(self.layers):
             level = layer.level

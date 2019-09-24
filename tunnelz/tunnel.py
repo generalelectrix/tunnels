@@ -1,7 +1,7 @@
 from .animation import Animation, AnimationTarget
 from .beam import Beam
 from .geometry import geometry
-from itertools import izip
+
 from copy import deepcopy
 from math import pi
 import numpy as np
@@ -114,7 +114,7 @@ class Tunnel (Beam):
 
         self.x_offset, self.y_offset = 0.0, 0.0
 
-        self.anims = [Animation() for _ in xrange(self.n_anim)]
+        self.anims = [Animation() for _ in range(self.n_anim)]
 
     def copy(self):
         """Use deep_copy to recursively copy this Tunnel."""
@@ -211,7 +211,7 @@ class Tunnel (Beam):
         # above 40.
         segs = segs + 1 if segs > 40 and segs % 2 else segs
 
-        seg_num = np.array(xrange(segs))
+        seg_num = np.array(range(segs))
 
         blacking = self.blacking_integer
 
@@ -289,7 +289,7 @@ class Tunnel (Beam):
         rad_y = abs(size - thickness_allowance + size_adjust)
 
         if as_mask:
-            val_iter = izip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
+            val_iter = zip(stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
             for strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
                 draw_calls.append((
                     1.0,
@@ -316,7 +316,7 @@ class Tunnel (Beam):
 
             sat = clamp_to_unit(self.col_sat + col_sat_adjust)
 
-            val_iter = izip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
+            val_iter = zip(hue, sat, stroke_weight, x_center, y_center, rad_x, rad_y, seg_angle, stop)
 
             for h, s, strk, x, y, r_x, r_y, start_angle, stop_angle in val_iter:
                 draw_calls.append((

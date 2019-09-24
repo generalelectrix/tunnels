@@ -18,8 +18,8 @@ from .midi import NoteOnMapping, NoteOffMapping, ControlChangeMapping
 def _build_grid_button_map(page):
     mapping = {}
     col_offset = BeamMatrixMinder.col_per_page * page
-    for row in xrange(BeamMatrixMinder.n_rows):
-        for column in xrange(BeamMatrixMinder.col_per_page):
+    for row in range(BeamMatrixMinder.n_rows):
+        for column in range(BeamMatrixMinder.col_per_page):
             mapping[(row, column+col_offset)] = NoteOnMapping(column, row + 0x35)
     return bidict(mapping)
 
@@ -45,7 +45,7 @@ class MidiController (object):
 
         Returns the bidirectional version of the control map.
         """
-        self.set_callback_for_mappings(control_map.itervalues(), callback)
+        self.set_callback_for_mappings(control_map.values(), callback)
         return bidict(control_map)
 
     def set_callback(self, mapping, callback):
@@ -60,7 +60,7 @@ class MidiController (object):
 
     def _set_radio_button(self, set_value, control_map):
         """Set only one out of a set of controls on."""
-        for value, mapping in control_map.iteritems():
+        for value, mapping in control_map.items():
             self.midi_out.send_from_mapping(mapping, int(value == set_value))
 
     # --- helper functions for useful knobs ---
@@ -133,9 +133,9 @@ class BeamMatrixMidiController (MidiController):
         self.grid_button_map = _build_grid_button_map(self.page)
         # the controls which will be registered with the midi service
         self.set_callback_for_mappings(
-            self.grid_button_map.itervalues(), self.handle_grid_button)
+            self.grid_button_map.values(), self.handle_grid_button)
         self.set_callback_for_mappings(
-            self.control_map.itervalues(), self.handle_state_button)
+            self.control_map.values(), self.handle_state_button)
 
     def column_in_range(self, col):
         """Return True if this column is on the page assigned to this controller."""
@@ -156,7 +156,7 @@ class BeamMatrixMidiController (MidiController):
         led_state = self.state_to_led_state_map[state]
         message_mappings = tuple(
             (mapping, getattr(led_state, control))
-            for control, mapping in self.control_map.iteritems())
+            for control, mapping in self.control_map.items())
         self.midi_out.send_from_mappings(message_mappings)
 
     def set_button_state(self, row, column, state):
@@ -197,7 +197,7 @@ class MetaControlMidiController (MidiController):
 
         ts_mappings = {
             chan+self.channel_offset: NoteOnMapping(chan, 0x33)
-            for chan in xrange(self.page_size)}
+            for chan in range(self.page_size)}
 
         self.track_select = self.add_controls(
             ts_mappings,
@@ -205,7 +205,7 @@ class MetaControlMidiController (MidiController):
 
         # TODO: DRY out number of animators
         self.animation_select_buttons = self.add_controls({
-            n: NoteOnMapping(0, 0x57+n) for n in xrange(4)},
+            n: NoteOnMapping(0, 0x57+n) for n in range(4)},
             self.handle_current_animator)
 
         self.set_callback(NoteOnMapping(0, 0x65), self.handle_animation_copy)
@@ -272,7 +272,7 @@ class MixerMidiController (MidiController):
         # add controls for all mixer channels for this page
         offset = self.page * self.page_size
 
-        for chan in xrange(self.page_size):
+        for chan in range(self.page_size):
             # tricky; need to offset the internal channel while keeping the midi
             # channel in the range 0-7 to match the APC layout.
             self.channel_faders[chan+offset] = ControlChangeMapping(chan, 0x7)
@@ -283,13 +283,13 @@ class MixerMidiController (MidiController):
 
         # update the controls
         self.set_callback_for_mappings(
-            self.channel_faders.itervalues(), self.handle_channel_fader)
+            self.channel_faders.values(), self.handle_channel_fader)
         self.set_callback_for_mappings(
-            self.bump_button_on.itervalues(), self.handle_bump_button_on)
+            self.bump_button_on.values(), self.handle_bump_button_on)
         self.set_callback_for_mappings(
-            self.bump_button_off.itervalues(), self.handle_bump_button_off)
+            self.bump_button_off.values(), self.handle_bump_button_off)
         self.set_callback_for_mappings(
-            self.mask_buttons.itervalues(), self.handle_mask_button)
+            self.mask_buttons.values(), self.handle_mask_button)
 
         # configure video channel select
         # broken out as a method as we will probably want to move this eventually
@@ -347,14 +347,14 @@ class MixerMidiController (MidiController):
     def setup_video_channel_select(self):
         self.video_channel_selects = bidict()
 
-        for chan in xrange(self.mi.mixer.layer_count):
-            for video_chan in xrange(self.mi.mixer.n_video_channels):
+        for chan in range(self.mi.mixer.layer_count):
+            for video_chan in range(self.mi.mixer.n_video_channels):
                 chan_0_midi_note = 66
                 mapping = NoteOnMapping(chan, chan_0_midi_note + video_chan)
                 self.video_channel_selects[(chan, video_chan)] = mapping
 
         self.set_callback_for_mappings(
-            self.video_channel_selects.itervalues(),
+            self.video_channel_selects.values(),
             self.handle_video_channel_select)
 
 
@@ -496,7 +496,7 @@ class AnimationMidiController (MidiController):
             self.handle_type_button)
 
         self.n_periods_buttons = self.add_controls(
-            {n: NoteOnMapping(0, n) for n in xrange(16)},
+            {n: NoteOnMapping(0, n) for n in range(16)},
             self.handle_n_periods_button)
 
         # FIXME-NUMERIC TARGETS
@@ -508,7 +508,7 @@ class AnimationMidiController (MidiController):
         self.invert_button = self.set_callback(NoteOnMapping(1, 1), self.handle_invert_button)
 
         # map external clock select
-        clock_buttons = {i: NoteOnMapping(0, 112+i) for i in xrange(8)}
+        clock_buttons = {i: NoteOnMapping(0, 112+i) for i in range(8)}
         clock_buttons[None] = NoteOnMapping(0, 111)
 
         self.clock_buttons = self.add_controls(clock_buttons, self.handle_clock_button)

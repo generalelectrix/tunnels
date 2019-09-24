@@ -1,6 +1,6 @@
 import logging as log
 import traceback
-from Queue import Queue, Empty
+from queue import Queue, Empty
 from .animation import WaveformType, AnimationTarget, AnimationMI
 from .beam_matrix_minder import BeamMatrixMinder
 from .clock import ControllableClock
@@ -193,7 +193,7 @@ class Show (object):
             n_video_channels=N_VIDEO_CHANNELS,
             test_mode=self.test_mode)
 
-        self.clocks = [ControllableClock() for _ in xrange(N_CLOCKS)]
+        self.clocks = [ControllableClock() for _ in range(N_CLOCKS)]
 
         # beam matrix minder
         # FIXME: hardcoded page count
@@ -371,8 +371,8 @@ def prompt_for_midi():
     ports = []
     while prompt_bool("Add a midi port?"):
         inputs, outputs = list_ports()
-        print inputs
-        print outputs
+        print(inputs)
+        print(outputs)
         port = prompt_int("Select a port:")
         ports.append(port)
     return ports
@@ -380,16 +380,16 @@ def prompt_for_midi():
 def prompt_int(msg):
     """Prompt the user and parse input as an int."""
     while True:
-        user_input = raw_input(msg)
+        user_input = input(msg)
         try:
             return int(user_input)
         except ValueError:
-            print "Please enter an integer."
+            print("Please enter an integer.")
 
 def prompt_bool(msg):
     """Prompt the user to answer a yes or no question."""
     while True:
-        user_input = raw_input("{} y/n:".format(msg)).lower()
+        user_input = input("{} y/n:".format(msg)).lower()
         if len(user_input) == 0:
             continue
 

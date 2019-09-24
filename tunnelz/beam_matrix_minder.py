@@ -1,4 +1,4 @@
-import cPickle as pickle
+import pickle
 from datetime import datetime
 import logging as log
 import numpy as np
@@ -32,8 +32,8 @@ class BeamMatrixMI (ModelInterface):
 
     def initialize(self):
         super(BeamMatrixMI, self).initialize()
-        for row in xrange(self.beam_matrix.n_rows):
-            for col in xrange(self.beam_matrix.n_columns):
+        for row in range(self.beam_matrix.n_rows):
+            for col in range(self.beam_matrix.n_columns):
                 state = ButtonEmpty
                 if self.beam_matrix.element_has_data(row, col):
                     if self.beam_matrix.element_is_look(row, col):
@@ -113,7 +113,7 @@ class BeamMatrixMinder (object):
 
         if load_path is None:
             self._is_look = np.zeros((self.n_rows, self.n_columns), bool)
-            self._beams = [[None for _ in xrange(self.n_columns)] for _ in xrange(self.n_rows)]
+            self._beams = [[None for _ in range(self.n_columns)] for _ in range(self.n_rows)]
         else:
             self._beams, self._is_look = self._load_from_disk(load_path)
 

@@ -1,9 +1,8 @@
 from abc import ABCMeta, abstractmethod
 
 #TODO: formalize as an ABC
-class Beam (object):
+class Beam (object, metaclass=ABCMeta):
     """Generic Beam base class."""
-    __metaclass__ = ABCMeta
 
     # avoid a lot of isinstance checking.
     # TODO: refactor how looks work to avoid needing this!
