@@ -17,6 +17,7 @@ requires = [
     'monotonic',
     'pyYAML',
     'nose',
+    'ipython',
 ]
 
 extensions = [
