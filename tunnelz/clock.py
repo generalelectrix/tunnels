@@ -126,8 +126,8 @@ class Clock (object):
             self.curr_angle = 0.0
             self.reset_on_update = False
         else:
-            # delta_t has units of ms, need to divide by 1000
-            new_angle = self.curr_angle + (self.rate*delta_t/1000.)
+            # delta_t has units of us, need to divide by 1000000
+            new_angle = self.curr_angle + (self.rate*delta_t/1000000.)
 
             # if we're running in one-shot mode, clamp the angle at 1.0
             if self.one_shot and new_angle >= 1.0:

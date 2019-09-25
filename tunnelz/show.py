@@ -109,11 +109,11 @@ class Show (object):
 
         # show is ready to run
 
-    def run(self, update_interval=16, n_frames=None):
+    def run(self, update_interval=16667, n_frames=None):
         """Run the show loop.
 
         Args:
-            update_interval (int): number of milliseconds between beam state updates
+            update_interval (int): number of microseconds between beam state updates
             n_frames (None or int): if None, run forever.  if finite number, only
                 run for this many state updates.
         """
@@ -134,9 +134,9 @@ class Show (object):
         render_server.start()
         log.info("Render server started.")
 
-        time_millis = lambda: int(monotonic()*1000)
+        time_micros = lambda: int(monotonic()*1000000)
 
-        last_update = time_millis()
+        last_update = time_micros()
 
         last_rendered_frame = -1
 
@@ -144,14 +144,14 @@ class Show (object):
             while n_frames is None or update_number < n_frames:
                 try:
                     # compute updates until we're current
-                    now = time_millis()
+                    now = time_micros()
                     time_since_last_update = now - last_update
 
                     while time_since_last_update > update_interval:
                         self._update_state(update_interval)
 
                         last_update += update_interval
-                        now = time_millis()
+                        now = time_micros()
                         time_since_last_update = now - last_update
                         update_number += 1
 
@@ -165,7 +165,7 @@ class Show (object):
 
                     # process a control event for a fraction of the time between now
                     # and when we will need to update state again
-                    now = time_millis()
+                    now = time_micros()
 
                     time_to_next_update = last_update + update_interval - now
 

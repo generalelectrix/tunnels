@@ -149,7 +149,7 @@ class Tunnel (Beam):
         """Update the state of this tunnel in preparation for drawing a frame.
 
         Args:
-            delta_t (int): evolution time in milliseconds
+            delta_t (int): evolution time in microseconds
             external_clocks: collection of external clocks that may be used by
                 this beam's animators.
         """
@@ -183,16 +183,16 @@ class Tunnel (Beam):
         # calulcate the rotation, wrap to 0 to 1
         self.curr_rot_angle = (
             (self.curr_rot_angle +
-            # delta_t*0.03 implies the same speed scale as we had at 30fps with evolution tied to frame
+            # delta_t*0.00003 implies the same speed scale as we had at 30fps with evolution tied to frame
             # square rot speed control parameter for more slow resolution
-            (scale_speed(self.rot_speed)*delta_t*0.03 + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
+            (scale_speed(self.rot_speed)*delta_t*0.00003 + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
 
         # calulcate the marquee angle, wrap to 0 to 1
         self.curr_marquee_angle = (
             (self.curr_marquee_angle +
-            # delta_t*0.03 implies the same speed scale as we had at 30fps with evolution tied to frame
+            # delta_t*0.00003 implies the same speed scale as we had at 30fps with evolution tied to frame
             # square marquee speed control parameter for more slow resolution
-            (scale_speed(self.marquee_speed)*delta_t*0.03 + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
+            (scale_speed(self.marquee_speed)*delta_t*0.00003 + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
 
     def display(self, level_scale, as_mask, external_clocks):
         """Return the current state of the beam.
