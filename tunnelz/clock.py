@@ -1,6 +1,6 @@
 import copy
 from itertools import tee
-from monotonic import monotonic
+from time import monotonic
 from .model_interface import ModelInterface, MiProperty, MiModelProperty
 
 

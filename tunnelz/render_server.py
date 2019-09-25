@@ -1,5 +1,5 @@
 import logging as log
-from monotonic import monotonic
+from time import monotonic
 from multiprocessing import Process, Queue
 from queue import Empty
 import msgpack

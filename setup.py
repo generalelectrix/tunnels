@@ -14,7 +14,6 @@ requires = [
     'msgpack-python',
     'pyzmq',
     'python-rtmidi',
-    'monotonic',
     'pyYAML',
     'nose',
     'ipython',

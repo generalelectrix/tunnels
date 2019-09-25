@@ -1,6 +1,6 @@
 """Simple service to roughly synchronize clocks between this server and clients."""
 
-from monotonic import monotonic
+from time import monotonic
 import msgpack
 import zmq
 from multiprocessing import Process

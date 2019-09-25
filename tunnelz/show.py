@@ -18,7 +18,7 @@ from .midi_controllers import (
 from .mixer import Mixer, MixerMI
 from .render_server import RenderServer
 from . import timesync
-from monotonic import monotonic
+from time import monotonic
 from .tunnel import Tunnel, TunnelMI
 
 import yaml
