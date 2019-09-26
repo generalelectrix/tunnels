@@ -135,9 +135,10 @@ impl SnapshotManager {
                         let newer_time = newer.time.0 as f64;
                         let alpha = (time.0 as f64 - older_time) / (newer_time - older_time);
 
-                        let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
+                        //let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
+                        
                         self.oldest_relevant_snapshot_time = older.time;
-                        return InterpResult::Good(interpolation_result);
+                        return InterpResult::Good(newer.layers.clone());
                     }
                 }
                 InterpResult::Error(Vec::from(snaps.clone()))
