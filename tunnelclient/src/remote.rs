@@ -19,6 +19,7 @@ use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use regex::Regex;
 use hostname::get_hostname;
+use timesync::Seconds;
 
 const SERVICE_NAME: &'static str = "tunnelclient";
 const PORT: u16 = 15000;
@@ -226,6 +227,11 @@ fn parse_uint(s: &str) -> Result<u64, String> {
     s.parse().map_err(|e| format!("Could not parse '{}' as positive integer: {}", s, e))
 }
 
+/// Parse string as float.
+fn parse_f64(s: &str) -> Result<f64, String> {
+    s.parse().map_err(|e| format!("Could not parse '{}' as float: {}", s, e))
+}
+
 /// Interactive series of user prompts, producing a configuration.
 fn configure_one<H>(hostname: H) -> ClientConfig
     where H: Into<String>
@@ -238,7 +244,7 @@ fn configure_one<H>(hostname: H) -> ClientConfig
     // Some defaults we might configure in advanced mode.
     let mut anti_alias = true;
     let mut timesync_interval = Duration::from_secs(60);
-    let mut render_delay = 40.;
+    let mut render_delay = 0.040;
     let mut alpha_blend = true;
     let mut capture_mouse = true;
 
@@ -250,7 +256,7 @@ fn configure_one<H>(hostname: H) -> ClientConfig
             "Host/client time resynchronization interval in seconds (default 60)",
             parse_uint);
         timesync_interval = Duration::from_secs(timesync_interval_secs);
-        render_delay = prompt("Client render delay in milliseconds (default 40)", parse_uint) as f64;
+        render_delay = prompt("Client render delay in seconds (default 0.040)", parse_f64);
     }
 
     ClientConfig::new(
@@ -258,7 +264,7 @@ fn configure_one<H>(hostname: H) -> ClientConfig
         hostname.into(),
         resolution,
         timesync_interval,
-        render_delay,
+        Seconds(render_delay),
         anti_alias,
         fullscreen,
         alpha_blend,

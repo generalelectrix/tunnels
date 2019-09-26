@@ -12,21 +12,32 @@ use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 use interpolation::lerp;
 
-pub type Timestamp = f64;
+#[derive(Display, Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Add, Sub, From)]
+pub struct Seconds(pub f64);
+
+impl Seconds {
+    pub fn from_duration(dur: Duration) -> Self {
+        let v = dur.as_secs() as f64 + dur.subsec_nanos() as f64 / 1_000_000_000.0;
+        Self(v)
+    }
+
+    pub fn as_duration(&self) -> Duration {
+        let secs = self.0.floor();
+        let nanos = (self.0 - secs) * 1_000_000_000.0;
+        Duration::new(secs as u64, nanos as u32)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Add, From)]
+pub struct Microseconds(pub u64);
+
+impl Microseconds {
+    pub fn from_seconds(s: Seconds) -> Self {
+        Self((s.0 * 1_000_000.) as u64)
+    }
+}
 
 const PORT: u64 = 8989;
-
-/// Convert floating-point seconds into a Duration.
-fn f64_to_duration(v: f64) -> Duration {
-    let secs = v.floor();
-    let nanos = (v - secs) * 1_000_000_000.0;
-    Duration::new(secs as u64, nanos as u32)
-}
-
-/// Convert a Duration into floating-point seconds.
-fn duration_to_f64(dur: Duration) -> f64 {
-    dur.as_secs() as f64 + dur.subsec_nanos() as f64 / 1_000_000_000.0
-}
 
 /// Provide estimates of the offset between this host's monotonic clock and the server's.
 pub struct Client {
@@ -61,7 +72,7 @@ impl Client {
             None => bail!("Unable to receive a response from timesync server.")
         };
         let elapsed = now.elapsed();
-        let timestamp: f64 = self.deserialize_msg(buf)?;
+        let timestamp: Seconds = self.deserialize_msg(buf)?;
         Ok(Measurement {sent: now, round_trip: elapsed, timestamp})
     }
 
@@ -78,8 +89,8 @@ impl Client {
         // Sort the measurements by round-trip time and remove outliers.
         measurements.sort_by_key(|m| m.round_trip);
         let median_delay = measurements[(self.n_meas / 2) as usize].round_trip;
-        let stddev = stddev(measurements.iter().map(|m| duration_to_f64(m.round_trip)));
-        let cutoff = f64_to_duration(duration_to_f64(median_delay) + stddev);
+        let stddev = Seconds(stddev(measurements.iter().map(|m| Seconds::from_duration(m.round_trip).0)));
+        let cutoff = median_delay + stddev.as_duration();
 
         measurements.retain(|m| m.round_trip < cutoff);
 
@@ -92,10 +103,11 @@ impl Client {
             measurements.iter()
                 .map(|m| {
                     let delta = (m.sent + m.round_trip / 2).duration_since(reference_time);
-                    m.timestamp - duration_to_f64(delta)
+                    let s = m.timestamp - Seconds::from_duration(delta);
+                    s.0
                 });
         // Take the average of these estimates, and we're done
-        let best_remote_time_estimate = mean(remote_time_estimates);
+        let best_remote_time_estimate = Seconds(mean(remote_time_estimates));
         Ok(Timesync { ref_time: reference_time, host_ref_time: best_remote_time_estimate })
     }
 }
@@ -112,21 +124,19 @@ impl Receive for Client {
 struct Measurement {
     sent: Instant,
     round_trip: Duration,
-    timestamp: Timestamp
+    timestamp: Seconds,
 }
 
 #[derive(Debug, Clone)]
 pub struct Timesync {
     ref_time: Instant,
-    host_ref_time: Timestamp
+    host_ref_time: Seconds,
 }
 
 impl Timesync {
     /// Return an estimate of what time it is now on the host.
-    /// This is in milliseconds.
-    pub fn now_as_timestamp(&self) -> Timestamp {
-        let time_secs = self.host_ref_time + duration_to_f64(self.ref_time.elapsed());
-        time_secs * 1000.0
+    pub fn now(&self) -> Seconds {
+        self.host_ref_time + Seconds::from_duration(self.ref_time.elapsed())
     }
 }
 
@@ -170,24 +180,24 @@ impl Synchronizer {
     }
 
     /// Get a (possibly interpolated) estimate of the time on the host.
-    pub fn now_as_timestamp(&mut self) -> Timestamp {
-        let current = self.current.now_as_timestamp();
+    pub fn now(&mut self) -> Seconds {
+        let current = self.current.now();
         if self.alpha == 1.0 {
             current
         }
         else {
-            let old = self.last.now_as_timestamp();
-            lerp(&old, &current, &self.alpha)
+            let old = self.last.now();
+            Seconds(lerp(&old.0, &current.0, &self.alpha))
         }
     }
 }
 
 #[test]
-fn test_duration_f64_round_trip() {
+fn test_seconds_round_trip() {
     let now = Instant::now();
     sleep(Duration::from_millis(100));
     let delta = now.elapsed();
-    let rt = f64_to_duration(duration_to_f64(delta));
+    let rt = Seconds::from_duration(delta).as_duration();
     println!("delta: {:?}, rt: {:?}", delta, rt);
     assert_eq!(delta, rt);
 }

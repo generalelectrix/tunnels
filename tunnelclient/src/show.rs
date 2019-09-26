@@ -57,9 +57,9 @@ impl Show {
                 thread::sleep(timesync_period);
                 match timesync_client.synchronize() {
                     Ok(sync) => {
-                        let new_estimate = sync.now_as_timestamp();
+                        let new_estimate = sync.now();
                         let mut synchronizer = timesync_remote.lock().expect("Timesync mutex poisoned.");
-                        let old_estimate = synchronizer.now_as_timestamp();
+                        let old_estimate = synchronizer.now();
                         println!(
                             "Updating time sync.  Change from previous estimate: {}",
                             new_estimate - old_estimate);
@@ -83,7 +83,7 @@ impl Show {
         let opengl = OpenGL::V3_2;
 
         // Sleep for a render delay to make sure we have snapshots before we start rendering.
-        thread::sleep(Duration::from_millis(cfg.render_delay as u64));
+        thread::sleep(cfg.render_delay.as_duration());
 
         // Create the window.
         let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
@@ -150,7 +150,7 @@ impl Show {
                 println!("Timesync service crashed; aborting show.");
                 return
             },
-            Ok(ref mut ts) => ts.now_as_timestamp() - self.cfg.render_delay as f64,
+            Ok(ref mut ts) => ts.now() - self.cfg.render_delay,
         };
 
         let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {

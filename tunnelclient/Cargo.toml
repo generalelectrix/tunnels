@@ -16,7 +16,7 @@ pistoncore-glutin_window = "^0.42.0"
 piston2d-opengl_graphics = "^0.49.0"
 interpolation = "0.1.0"
 yaml-rust = "0.3.5"
-rmp-serde = "0.13.7"
+rmp-serde = "0.14.0"
 serde = "^1"
 serde_derive = "^1"
 streaming-stats = "0.1.28"
@@ -26,6 +26,7 @@ zero_configure = { path = "../zero_configure" }
 regex = "0.2.6"
 lazy_static = "^1"
 hostname = "0.1.4"
+derive_more = "0.15.0"
 
 [dependencies.pistoncore-sdl2_window]
 git = "https://github.com/PistonDevelopers/sdl2_window"

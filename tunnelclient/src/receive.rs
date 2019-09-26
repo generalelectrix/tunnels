@@ -11,6 +11,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 use std::error::Error;
 use utils::{almost_eq, angle_almost_eq};
+use timesync::Microseconds;
 
 // --- types used for communication with host server ---
 
@@ -79,7 +80,7 @@ pub type LayerCollection = Vec<Vec<ArcSegment>>;
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Snapshot {
     pub frame_number: u64,
-    pub time: u64, // ms
+    pub time: Microseconds,
     pub layers: LayerCollection,
 }
 
