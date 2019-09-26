@@ -329,7 +329,7 @@ class Show (object):
         tunnel = layer.beam
 
         tunnel.rot_speed = 0.0
-        tunnel.marquee_speed = 0.05
+        tunnel.marquee_speed = 1.0
 
     def setup_multi_channel_test(self):
         """Set up eight unique tunnels, one per video output."""
