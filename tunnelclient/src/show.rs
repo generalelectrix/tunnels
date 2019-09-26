@@ -90,7 +90,7 @@ impl Show {
             format!("tunnelclient: channel {}", cfg.video_channel),
             [cfg.x_resolution, cfg.y_resolution]
         )
-            .opengl(opengl)
+            .graphics_api(opengl)
             .exit_on_esc(true)
             .vsync(true)
             .samples(if cfg.anti_alias { 4 } else { 0 })

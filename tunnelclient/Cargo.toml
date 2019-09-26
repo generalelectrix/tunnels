@@ -3,30 +3,30 @@
 name = "tunnelclient"
 version = "0.1.0"
 authors = [
-    "Chris Macklin <chris@imaginaryphotons.com>",
+    "Chris Macklin <chris.macklin@gmail.com>",
 ]
 
 [[bin]]
 name = "tunnelclient"
 
 [dependencies]
-piston_window = "^0.73.0"
-piston2d-graphics = "^0.23.0"
-pistoncore-glutin_window = "^0.42.0"
-piston2d-opengl_graphics = "^0.49.0"
-interpolation = "0.1.0"
-yaml-rust = "0.3.5"
+piston_window = "0.105"
+piston2d-graphics = "0.35"
+pistoncore-glutin_window = "0.63"
+piston2d-opengl_graphics = "0.69"
+interpolation = "0.2"
+yaml-rust = "0.4"
 rmp-serde = "0.14.0"
-serde = "^1"
-serde_derive = "^1"
-streaming-stats = "0.1.28"
-simple-error = "0.1.10"
-zmq = "0.8.2"
+serde = "1"
+serde_derive = "1"
+streaming-stats = "0.1"
+simple-error = "0.1"
+zmq = "0.8"
 zero_configure = { path = "../zero_configure" }
-regex = "0.2.6"
-lazy_static = "^1"
-hostname = "0.1.4"
-derive_more = "0.15.0"
+regex = "1"
+lazy_static = "1"
+hostname = "0.1"
+derive_more = "0.15"
 
 [dependencies.pistoncore-sdl2_window]
 git = "https://github.com/PistonDevelopers/sdl2_window"
