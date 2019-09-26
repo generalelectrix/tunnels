@@ -212,16 +212,16 @@ mod tests {
     fn test_drop_stale() {
         let (_, mut sm) = setup_sm();
         let snaps = [
-            mksnapshot(0, Microseconds(0000)),
+            mksnapshot(0, Microseconds(0)),
             mksnapshot(1, Microseconds(1000)),
             mksnapshot(2, Microseconds(2000)),
         ];
         for s in &snaps {sm.insert_snapshot(s.clone());}
-        sm.oldest_relevant_snapshot_time = Microseconds(2);
+        sm.oldest_relevant_snapshot_time = Microseconds(2000);
         sm.drop_stale_snapshots();
 
         assert!(sm.snapshots.len() == 1);
-        assert!(sm.snapshots[0].time.0 == 2);
+        assert!(sm.snapshots[0].time.0 == 2000);
     }
 
     #[test]
@@ -236,7 +236,7 @@ mod tests {
         let (_, mut sm) = setup_sm();
         let snap = mksnapshot_with_arc(0, Microseconds(0), ArcSegment::for_test(0.2, 0.3));
         sm.insert_snapshot(snap.clone());
-        if let MissingNewer(f) = sm.get_interpolated(Seconds(1.0)) {
+        if let MissingNewer(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap.layers, f);
         }
         else {panic!();}
@@ -247,7 +247,7 @@ mod tests {
         let (_, mut sm) = setup_sm();
         let snap = mksnapshot_with_arc(0, Microseconds(10000), ArcSegment::for_test(0.2, 0.3));
         sm.insert_snapshot(snap.clone());
-        if let MissingOlder(f) = sm.get_interpolated(Seconds(1.0)) {
+        if let MissingOlder(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap.layers, f);
         }
         else {panic!();}
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn test_interp_two_frames_exact_newer() {
         let (mut sm, _snap0, snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(10.0)) {
+        if let Good(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap1.layers, f);
         }
         else {panic!();}
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn test_interp_two_frames_middle() {
         let (mut sm, snap0, snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(5.0)) {
+        if let Good(f) = sm.get_interpolated(Seconds(0.005)) {
             assert_eq!(snap0.layers.interpolate_with(&snap1.layers, 0.0), f);
         }
         else {panic!();}
