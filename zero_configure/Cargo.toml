@@ -1,11 +1,11 @@
 [package]
 name = "zero_configure"
 version = "0.1.0"
-authors = ["Chris Macklin <chris@imaginaryphotons.com>"]
+authors = ["Chris Macklin <chris.macklin@gmail.com>"]
 
 [dependencies]
 async-dnssd = "^0.3"
 tokio-core = "^0.1"
 futures = "^0.1"
 simple-error = "^0.1"
-zmq = "^0.8.2"
+zmq = "^0.9"
