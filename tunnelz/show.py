@@ -173,7 +173,7 @@ class Show (object):
                         # timeout arg is a float in seconds
                         # only use, say, 80% of the time we have to prioritize
                         # timely state updates
-                        timeout = 0.8 * time_to_next_update / 1000.
+                        timeout = 0.8 * time_to_next_update / 10000000.
                         self._service_control_event(timeout)
                 except Exception:
                     if self.test_mode:
