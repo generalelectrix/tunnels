@@ -30,7 +30,7 @@ fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
 /// by the action callback back to the requester.
-pub fn run_service<F>(name: &str, port: u16, mut action: F) -> Result<(), Box<Error>>
+pub fn run_service<F>(name: &str, port: u16, mut action: F) -> Result<(), Box<dyn Error>>
     where F: FnMut(&[u8]) -> Vec<u8>
 {
 
@@ -154,7 +154,7 @@ impl Controller {
     }
 
     /// Send a message to one of the services on this controller, returning the response.
-    pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>, Box<Error>> {
+    pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
         let services = self.services.lock().unwrap();
         let socket = match services.get(name) {
             None => bail!(format!("No service named '{}' available.", name)),
@@ -167,7 +167,7 @@ impl Controller {
 }
 
 /// Try to connect a REQ socket at this host and port.
-fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<Error>> {
+fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<dyn Error>> {
 
     let addr = format!("tcp://{}:{}", host, port);
 
