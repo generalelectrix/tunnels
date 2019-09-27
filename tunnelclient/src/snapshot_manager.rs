@@ -135,6 +135,8 @@ impl SnapshotManager {
                         let newer_time = newer.time.0 as f64;
                         let alpha = (time.0 as f64 - older_time) / (newer_time - older_time);
 
+                        // #11 interpolation is not necessary with 60 fps render server and microsecond timing.
+                        // Also it causes annoying artifacts where chicklets sometimes appear where they shouldn't.
                         //let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
                         
                         self.oldest_relevant_snapshot_time = older.time;
