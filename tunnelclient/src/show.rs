@@ -5,9 +5,8 @@ use opengl_graphics::{ GlGraphics, OpenGL };
 use piston_window::*;
 use receive::{SubReceiver, Snapshot};
 use timesync::{Client as TimesyncClient, Synchronizer};
-use glutin_window::GlutinWindow;
+//use glutin_window::GlutinWindow;
 use sdl2_window::Sdl2Window;
-use std::time::Duration;
 use std::sync::mpsc::Receiver;
 use std::thread;
 use std::sync::{Arc, Mutex};
@@ -21,7 +20,6 @@ use utils::RunFlag;
 
 /// Top-level structure that owns all of the show data.
 pub struct Show {
-    opengl: OpenGL,
     gl: GlGraphics, // OpenGL drawing backend.
     snapshot_manager: SnapshotManager,
     timesync: Arc<Mutex<Synchronizer>>,
@@ -47,7 +45,7 @@ impl Show {
         println!("Synchronized.");
 
         // Spin off another thread to periodically update our host time synchronization.
-        let timesync_period = cfg.timesync_interval.clone();
+        let timesync_period = cfg.timesync_interval;
         let timesync = Arc::new(Mutex::new(synchronizer));
         let timesync_remote = timesync.clone();
         let timesync_run_flag = run_flag.clone();
@@ -76,7 +74,7 @@ impl Show {
         // Set up snapshot reception and management.
         let snapshot_queue: Receiver<Snapshot> =
             SubReceiver::new(&cfg.server_hostname, 6000, cfg.video_channel.to_string().as_bytes(), ctx)?
-                .run_async();
+                .run_async()?;
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);
 
@@ -101,7 +99,6 @@ impl Show {
         window.set_max_fps(120);
 
         Ok(Show {
-            opengl,
             gl: GlGraphics::new(opengl),
             snapshot_manager,
             timesync,
@@ -144,7 +141,7 @@ impl Show {
         // Get frame interpolation from the snapshot service.
 
         let delayed_time = match self.timesync.lock() {
-            Err(e) => {
+            Err(_) => {
                 // The timesync update thread has panicked, abort the show.
                 self.run_flag.stop();
                 println!("Timesync service crashed; aborting show.");

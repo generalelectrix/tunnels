@@ -11,6 +11,16 @@ use graphics::triangulation::stream_quad_tri_list;
 
 use constants::TWOPI;
 
+pub enum TransformDirection {
+    Vertical,
+    Horizontal,
+}
+
+pub enum Transform {
+    Flip(TransformDirection),
+    Mirror(TransformDirection),
+}
+
 pub trait Draw<G: Graphics> {
     /// Given a context and gl instance, draw this entity to the screen.
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig);

@@ -53,15 +53,13 @@ pub fn run_service<F>(name: &str, port: u16, mut action: F) -> Result<(), Box<dy
         None,
         None,
         port,
-        "".as_bytes(),
+        b"",
         &core.handle())?;
 
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {
-            let response = action(&msg);
-            match socket.send(&response, 0) {
-                Err(e) => println!("Failed to send response: {}", e),
-                _ => (),
+            if let Err(e) = socket.send(&action(&msg), 0) {
+                println!("Failed to send response: {}", e);
             }
         }
     }
@@ -150,7 +148,7 @@ impl Controller {
 
     /// List the services available on this controller.
     pub fn list(&self) -> Vec<String> {
-        self.services.lock().unwrap().keys().map(|name| name.clone()).collect()
+        self.services.lock().unwrap().keys().cloned().collect()
     }
 
     /// Send a message to one of the services on this controller, returning the response.

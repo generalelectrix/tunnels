@@ -133,7 +133,7 @@ impl SubReceiver {
     /// Run this receiver in a thread, posting deserialized messages to a channel.
     /// Takes ownership of the receiver and moves to the worker thread.
     /// Quits when the output queue is dropped.
-    pub fn run_async<T>(mut self) -> Receiver<T>
+    pub fn run_async<T>(mut self) -> Result<Receiver<T>, Box<dyn Error>>
         where T: DeserializeOwned + Send + 'static
     {
         let (tx, rx) = channel::<T>();
@@ -152,8 +152,8 @@ impl SubReceiver {
                     _ => continue
                 }
             }
-        });
-        rx
+        })?;
+        Ok(rx)
     }
 }
 
@@ -192,7 +192,6 @@ fn test_parse_arc() {
     let mut de = Deserializer::new(cur);
     let result: ArcSegment = Deserialize::deserialize(&mut de).unwrap();
     println!("{:?}", result);
-    assert!(true);
 }
 
 #[test]
@@ -202,7 +201,6 @@ fn test_parse_msg() {
     let mut de = Deserializer::new(cur);
     let result: Snapshot = Deserialize::deserialize(&mut de).unwrap();
     println!("{:?}", result);
-    assert!(true);
 }
 
 #[test]

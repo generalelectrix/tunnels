@@ -17,11 +17,11 @@ pub struct Seconds(pub f64);
 
 impl Seconds {
     pub fn from_duration(dur: Duration) -> Self {
-        let v = dur.as_secs() as f64 + dur.subsec_nanos() as f64 / 1_000_000_000.0;
+        let v = dur.as_secs() as f64 + f64::from(dur.subsec_nanos()) / 1_000_000_000.0;
         Self(v)
     }
 
-    pub fn as_duration(&self) -> Duration {
+    pub fn as_duration(self) -> Duration {
         let secs = self.0.floor();
         let nanos = (self.0 - secs) * 1_000_000_000.0;
         Duration::new(secs as u64, nanos as u32)

@@ -21,7 +21,7 @@ use regex::Regex;
 use hostname::get_hostname;
 use timesync::Seconds;
 
-const SERVICE_NAME: &'static str = "tunnelclient";
+const SERVICE_NAME: &str = "tunnelclient";
 const PORT: u16 = 15000;
 
 // --- client remote control ---
@@ -94,10 +94,12 @@ pub fn run_remote_service(ctx: &mut Context, sender: Sender<(ClientConfig, RunFl
                 running_flag = Some(new_run_flag.clone());
 
                 // Send the config and flag back to the show thread.
-                sender.send((config, new_run_flag));
-
-                // everything is OK
-                format!("{}\nStarting a new show.", show_stop_message)
+                if let Err(e) = sender.send((config, new_run_flag)) {
+                    format!("{}\nError trying to start new show: {}.", show_stop_message, e)
+                } else {
+                    // everything is OK
+                    format!("{}\nStarting a new show.", show_stop_message)
+                }
             },
             Err(e) => format!("Could not parse request as a show configuration:\n{}", e),
         }.into_bytes()
@@ -208,9 +210,9 @@ fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
 /// Accepts anything whose first letter is y or n, upper or lowercase.
 fn parse_y_n(s: &str) -> Result<bool, String> {
     let lowered = s.to_lowercase();
-    if lowered.starts_with("y") {
+    if lowered.starts_with('y') {
         Ok(true)
-    } else if lowered.starts_with("n") {
+    } else if lowered.starts_with('n') {
         Ok(false)
     } else {
         Err(format!("Please enter y/n, not '{}'.", s))

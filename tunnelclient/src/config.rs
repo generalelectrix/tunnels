@@ -64,10 +64,10 @@ impl ClientConfig {
             anti_alias,
             fullscreen,
             capture_mouse,
-            critical_size: cmp::min(x_resolution, y_resolution) as f64,
+            critical_size: f64::from(cmp::min(x_resolution, y_resolution)),
             thickness_scale: 0.5,
-            x_center: (x_resolution / 2) as f64,
-            y_center: (y_resolution / 2) as f64,
+            x_center: f64::from(x_resolution / 2),
+            y_center: f64::from(y_resolution / 2),
             alpha_blend,
         }
     }

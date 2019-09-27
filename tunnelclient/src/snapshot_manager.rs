@@ -131,12 +131,11 @@ impl SnapshotManager {
                 // Find the two snapshots that bracket the requested timestamp.
                 for (newer, older) in snaps.iter().zip(snaps.iter().skip(1)) {
                     if time <= newer.time && time >= older.time {
-                        let older_time = older.time.0 as f64;
-                        let newer_time = newer.time.0 as f64;
-                        let alpha = (time.0 as f64 - older_time) / (newer_time - older_time);
-
                         // #11 interpolation is not necessary with 60 fps render server and microsecond timing.
                         // Also it causes annoying artifacts where chicklets sometimes appear where they shouldn't.
+                        // let older_time = older.time.0 as f64;
+                        // let newer_time = newer.time.0 as f64;
+                        //let alpha = (time.0 as f64 - older_time) / (newer_time - older_time);
                         //let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
                         
                         self.oldest_relevant_snapshot_time = older.time;
@@ -160,7 +159,7 @@ mod tests {
     fn mksnapshot(n: u64, time: Microseconds) -> Snapshot {
         Snapshot{
             frame_number: n,
-            time: time,
+            time,
             layers: Vec::new()
         }
     }
