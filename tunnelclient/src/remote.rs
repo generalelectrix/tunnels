@@ -20,6 +20,7 @@ use std::sync::mpsc::{channel, Sender};
 use regex::Regex;
 use hostname::get_hostname;
 use timesync::Seconds;
+use draw::{Transform, TransformDirection};
 
 const SERVICE_NAME: &str = "tunnelclient";
 const PORT: u16 = 15000;
@@ -242,6 +243,12 @@ fn configure_one<H>(hostname: H) -> ClientConfig
     let resolution = prompt(
         "Specify display resolution (widthxheight or heightp for 16:9)", parse_resolution);
     let fullscreen = prompt_y_n("Fullscreen");
+    let transformation =
+        if prompt_y_n("Flip horizontal") {
+            Some(Transform::Flip(TransformDirection::Horizontal))
+        } else {
+            None
+        };
 
     // Some defaults we might configure in advanced mode.
     let mut anti_alias = true;
@@ -271,6 +278,7 @@ fn configure_one<H>(hostname: H) -> ClientConfig
         fullscreen,
         alpha_blend,
         capture_mouse,
+        transformation,
     )
 }
 

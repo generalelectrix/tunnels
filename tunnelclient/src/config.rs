@@ -6,6 +6,7 @@ use std::cmp;
 use std::time::Duration;
 use std::error::Error;
 use timesync::Seconds;
+use draw::{Transform, TransformDirection};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -35,6 +36,8 @@ pub struct ClientConfig {
     pub x_center: f64,
     /// Computed pixel y-offset of the drawing coordinate system.
     pub y_center: f64,
+    /// Geometric transformation to optionally apply to the entire image.
+    pub transformation: Option<Transform>,
 }
 
 impl ClientConfig {
@@ -50,6 +53,7 @@ impl ClientConfig {
             fullscreen: bool,
             alpha_blend: bool,
             capture_mouse: bool,
+            transformation: Option<Transform>,
     ) -> ClientConfig {
 
         let (x_resolution, y_resolution) = resolution;
@@ -69,6 +73,7 @@ impl ClientConfig {
             x_center: f64::from(x_resolution / 2),
             y_center: f64::from(y_resolution / 2),
             alpha_blend,
+            transformation,
         }
     }
 
@@ -93,6 +98,13 @@ impl ClientConfig {
             cfg[name].as_bool().ok_or(missing)
         };
 
+        let transformation =
+            if flag("flip_horizontal", "Bad horizontal flip flag.")? {
+                Some(Transform::Flip(TransformDirection::Horizontal))
+            } else {
+                None
+            };
+
         Ok(ClientConfig::new(
             video_channel,
             host,
@@ -103,6 +115,7 @@ impl ClientConfig {
             flag("fullscreen", "Bad fullscreen flag.")?,
             flag("alpha_blend", "Bad alpha blend flag.")?,
             flag("capture_mouse", "Bad mouse capture flag.")?,
+            transformation,
         ))
     }
 

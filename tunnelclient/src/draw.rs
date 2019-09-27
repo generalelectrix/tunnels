@@ -11,14 +11,18 @@ use graphics::triangulation::stream_quad_tri_list;
 
 use constants::TWOPI;
 
+/// The axis along which to perform a transformation.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum TransformDirection {
     Vertical,
     Horizontal,
 }
 
+/// Action and direction of a geometric transformation to perform.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum Transform {
+    /// Flip the image in the specified direction.
     Flip(TransformDirection),
-    Mirror(TransformDirection),
 }
 
 pub trait Draw<G: Graphics> {
@@ -148,8 +152,16 @@ impl<G: Graphics> Draw<G> for ArcSegment {
 
         let color = hsv_to_rgb(self.hue, self.sat, val, alpha);
 
-        let x = self.x * cfg.x_resolution as f64 + cfg.x_center;
-        let y = self.y * cfg.y_resolution as f64 + cfg.y_center;
+        let (x, y) = {
+            let x0 = self.x * f64::from(cfg.x_resolution) + cfg.x_center;
+            let y0 = self.y * f64::from(cfg.y_resolution) + cfg.y_center;
+            match cfg.transformation {
+                None => (x0, y0),
+                Some(Transform::Flip(TransformDirection::Horizontal)) => (-1.0 * x0, y0),
+                Some(Transform::Flip(TransformDirection::Vertical)) => (x0, -1.0 * y0),
+            }
+        };
+
         let transform = c.transform.trans(x, y).rot_rad(self.rot_angle*TWOPI);
 
         let x_size = self.rad_x * cfg.critical_size;
