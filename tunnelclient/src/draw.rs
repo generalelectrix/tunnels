@@ -23,6 +23,8 @@ pub enum TransformDirection {
 pub enum Transform {
     /// Flip the image in the specified direction.
     Flip(TransformDirection),
+    // /// Mirror the image in the specified direction.
+    //Mirror(TransformDirection),
 }
 
 pub trait Draw<G: Graphics> {
@@ -153,23 +155,30 @@ impl<G: Graphics> Draw<G> for ArcSegment {
         let color = hsv_to_rgb(self.hue, self.sat, val, alpha);
 
         let (x, y) = {
-            let x0 = self.x * f64::from(cfg.x_resolution) + cfg.x_center;
-            let y0 = self.y * f64::from(cfg.y_resolution) + cfg.y_center;
-            match cfg.transformation {
-                None => (x0, y0),
-                Some(Transform::Flip(TransformDirection::Horizontal)) => (-1.0 * x0, y0),
-                Some(Transform::Flip(TransformDirection::Vertical)) => (x0, -1.0 * y0),
-            }
+            let (x0, y0) = match cfg.transformation {
+                None => (self.x, self.y),
+                Some(Transform::Flip(TransformDirection::Horizontal)) => (-1.0 * self.x, self.y),
+                Some(Transform::Flip(TransformDirection::Vertical)) => (self.x, -1.0 * self.y),
+            };
+            let x = x0 * f64::from(cfg.x_resolution) + cfg.x_center;
+            let y = y0 * f64::from(cfg.y_resolution) + cfg.y_center;
+            (x, y)
         };
 
-        let transform = c.transform.trans(x, y).rot_rad(self.rot_angle*TWOPI);
+        let transform = {
+            let t = c.transform.trans(x, y).rot_rad(self.rot_angle*TWOPI);
+            match cfg.transformation {
+                None => t,
+                Some(Transform::Flip(TransformDirection::Horizontal)) => t.flip_h(),
+                Some(Transform::Flip(TransformDirection::Vertical)) => t.flip_v(),
+            }
+        };
 
         let x_size = self.rad_x * cfg.critical_size;
         let y_size = self.rad_y * cfg.critical_size;
 
         let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
 
-        // one last modulo to be damn well sure we don't generate visual artifacts
         let start = self.start * TWOPI;
         let stop = self.stop * TWOPI;
 
