@@ -132,7 +132,6 @@ impl SubReceiver {
         Ok(SubReceiver { socket })
     }
 
-    // FIXME should pass errors back to main thread instead of ignoring.
     /// Run this receiver in a thread, posting deserialized messages to a channel.
     /// Takes ownership of the receiver and moves to the worker thread.
     /// Quits when the output queue is dropped.
