@@ -1,10 +1,10 @@
 //! Handle emptying a queue of snapshots, maintaining a time-ordered collection,
 //! and interpolating between them on demand.
+use interpolate::Interpolate;
+use receive::{LayerCollection, Snapshot};
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, TryRecvError};
-use timesync::{Seconds, Microseconds};
-use receive::{Snapshot, LayerCollection};
-use interpolate::Interpolate;
+use timesync::{Microseconds, Seconds};
 
 /// Handle receiving and maintaining a collection of snapshots.
 /// Provide interpolated snapshots on request.
@@ -14,24 +14,26 @@ pub struct SnapshotManager {
     oldest_relevant_snapshot_time: Microseconds,
 }
 
-pub enum SnapshotUpdateError {Disconnected}
+pub enum SnapshotUpdateError {
+    Disconnected,
+}
 
 pub enum InterpResult {
-    NoData, // no data is available at all
-    Good(LayerCollection), // Both snapshots were available.
+    NoData,                        // no data is available at all
+    Good(LayerCollection),         // Both snapshots were available.
     MissingNewer(LayerCollection), // Data is out-of-date for current timestamp.
     MissingOlder(LayerCollection), // We only have snapshot data newer than requested.
-    Error(Vec<Snapshot>) // Something went wrong and we couldn't perform interpolation.
+    Error(Vec<Snapshot>),          // Something went wrong and we couldn't perform interpolation.
 }
 
 enum InsertStrategy {
     PushFront,
-    Insert
+    Insert,
 }
 
 impl SnapshotManager {
     pub fn new(queue: Receiver<Snapshot>) -> Self {
-        SnapshotManager{
+        SnapshotManager {
             snapshot_queue: queue,
             snapshots: VecDeque::new(),
             oldest_relevant_snapshot_time: Microseconds(0),
@@ -40,26 +42,32 @@ impl SnapshotManager {
 
     /// Add a new snapshot, ensuring the collection remains ordered.
     fn insert_snapshot(&mut self, snapshot: Snapshot) {
-
         let insert_strategy = match self.snapshots.front() {
             None => InsertStrategy::PushFront,
-            Some(s) => if snapshot.time > s.time {InsertStrategy::PushFront} else {InsertStrategy::Insert}
+            Some(s) => {
+                if snapshot.time > s.time {
+                    InsertStrategy::PushFront
+                } else {
+                    InsertStrategy::Insert
+                }
+            }
         };
         match insert_strategy {
-            InsertStrategy::PushFront => {self.snapshots.push_front(snapshot);},
+            InsertStrategy::PushFront => {
+                self.snapshots.push_front(snapshot);
+            }
             InsertStrategy::Insert => {
                 let mut insert_index = 0;
                 // iterate backwards and find the right spot to insert
                 for (index, older_snapshot) in self.snapshots.iter().enumerate() {
                     if snapshot.time > older_snapshot.time {
                         insert_index = index;
-                        break
+                        break;
                     }
                 }
                 self.snapshots.insert(insert_index, snapshot);
             }
         }
-
     }
 
     /// Get the latest snapshot from the queue, if one is available.
@@ -67,7 +75,7 @@ impl SnapshotManager {
         match self.snapshot_queue.try_recv() {
             Ok(snapshot) => Ok(Some(snapshot)),
             Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => Err(SnapshotUpdateError::Disconnected)
+            Err(TryRecvError::Disconnected) => Err(SnapshotUpdateError::Disconnected),
         }
     }
 
@@ -75,9 +83,11 @@ impl SnapshotManager {
     fn drain_queue(&mut self) -> Result<(), SnapshotUpdateError> {
         loop {
             match self.get_from_queue() {
-                Ok(Some(snapshot)) => {self.insert_snapshot(snapshot);},
+                Ok(Some(snapshot)) => {
+                    self.insert_snapshot(snapshot);
+                }
                 Ok(None) => return Ok(()),
-                Err(e) => return Err(e)
+                Err(e) => return Err(e),
             }
         }
     }
@@ -87,10 +97,13 @@ impl SnapshotManager {
         loop {
             let do_pop = match self.snapshots.back() {
                 Some(b) if b.time < self.oldest_relevant_snapshot_time => true,
-                _ => false
+                _ => false,
             };
-            if do_pop {self.snapshots.pop_back();}
-            else {break}
+            if do_pop {
+                self.snapshots.pop_back();
+            } else {
+                break;
+            }
         }
     }
 
@@ -115,18 +128,19 @@ impl SnapshotManager {
                 let s = &snaps[0];
                 if s.time < time {
                     self.oldest_relevant_snapshot_time = s.time;
-                    InterpResult::MissingNewer(s.layers.clone())}
-                else {
+                    InterpResult::MissingNewer(s.layers.clone())
+                } else {
                     // don't update oldest relevant time as we're missing it!
-                    InterpResult::MissingOlder(s.layers.clone())}
+                    InterpResult::MissingOlder(s.layers.clone())
+                }
             }
             _ => {
-
                 // If we're lagging on snapshots, just draw the most recent one.
                 if let Some(s) = snaps.front() {
                     if s.time < time {
                         self.oldest_relevant_snapshot_time = s.time;
-                        return InterpResult::MissingNewer(s.layers.clone());}
+                        return InterpResult::MissingNewer(s.layers.clone());
+                    }
                 }
                 // Find the two snapshots that bracket the requested timestamp.
                 for (newer, older) in snaps.iter().zip(snaps.iter().skip(1)) {
@@ -137,7 +151,7 @@ impl SnapshotManager {
                         // let newer_time = newer.time.0 as f64;
                         //let alpha = (time.0 as f64 - older_time) / (newer_time - older_time);
                         //let interpolation_result = older.layers.interpolate_with(&newer.layers, alpha);
-                        
+
                         self.oldest_relevant_snapshot_time = older.time;
                         return InterpResult::Good(newer.layers.clone());
                     }
@@ -149,30 +163,32 @@ impl SnapshotManager {
 }
 
 mod tests {
-    use receive::{Snapshot, ArcSegment};
-    use super::*;
-    use std::sync::mpsc::{channel, Sender};
-    use std::iter::Iterator;
     use super::InterpResult::*;
+    use super::*;
     use interpolate::Interpolate;
+    use receive::{ArcSegment, Snapshot};
+    use std::iter::Iterator;
+    use std::sync::mpsc::{channel, Sender};
 
     fn mksnapshot(n: u64, time: Microseconds) -> Snapshot {
-        Snapshot{
+        Snapshot {
             frame_number: n,
             time,
-            layers: Vec::new()
+            layers: Vec::new(),
         }
     }
 
     fn mksnapshot_with_arc(n: u64, time: Microseconds, arc: ArcSegment) -> Snapshot {
         let mut snap = mksnapshot(n, time);
-        snap.layers.push(vec!(arc));
+        snap.layers.push(vec![arc]);
         snap
     }
 
-    fn zip_assert_same<A: Eq, T, U>(a: T, b: U) where
-            T: IntoIterator<Item=A>,
-            U: IntoIterator<Item=A> {
+    fn zip_assert_same<A: Eq, T, U>(a: T, b: U)
+    where
+        T: IntoIterator<Item = A>,
+        U: IntoIterator<Item = A>,
+    {
         for (ai, bi) in a.into_iter().zip(b.into_iter()) {
             assert!(ai == bi);
         }
@@ -196,18 +212,14 @@ mod tests {
             sm.insert_snapshot(s.clone());
         }
 
-        zip_assert_same(
-            sm.snapshots.iter(),
-            snapshots_ordered.iter().rev());
+        zip_assert_same(sm.snapshots.iter(), snapshots_ordered.iter().rev());
 
         let unordered_snapshot = mksnapshot(3, Microseconds(15000));
         sm.insert_snapshot(unordered_snapshot.clone());
 
         let correct_ordering = [30000, 20000, 15000, 10000];
 
-        zip_assert_same(
-            sm.snapshots.iter().map(|s| &s.time.0),
-            &correct_ordering);
+        zip_assert_same(sm.snapshots.iter().map(|s| &s.time.0), &correct_ordering);
     }
 
     #[test]
@@ -218,7 +230,9 @@ mod tests {
             mksnapshot(1, Microseconds(1000)),
             mksnapshot(2, Microseconds(2000)),
         ];
-        for s in &snaps {sm.insert_snapshot(s.clone());}
+        for s in &snaps {
+            sm.insert_snapshot(s.clone());
+        }
         sm.oldest_relevant_snapshot_time = Microseconds(2000);
         sm.drop_stale_snapshots();
 
@@ -229,8 +243,10 @@ mod tests {
     #[test]
     fn test_interp_no_data() {
         let (_, mut sm) = setup_sm();
-        if let NoData = sm.get_interpolated(Seconds(0.0)) {}
-        else {panic!();}
+        if let NoData = sm.get_interpolated(Seconds(0.0)) {
+        } else {
+            panic!();
+        }
     }
 
     #[test]
@@ -240,8 +256,9 @@ mod tests {
         sm.insert_snapshot(snap.clone());
         if let MissingNewer(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap.layers, f);
+        } else {
+            panic!();
         }
-        else {panic!();}
     }
 
     #[test]
@@ -251,8 +268,9 @@ mod tests {
         sm.insert_snapshot(snap.clone());
         if let MissingOlder(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap.layers, f);
+        } else {
+            panic!();
         }
-        else {panic!();}
     }
 
     fn setup_two_frame_test() -> (SnapshotManager, Snapshot, Snapshot) {
@@ -269,8 +287,9 @@ mod tests {
         let (mut sm, _snap0, snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap1.layers, f);
+        } else {
+            panic!();
         }
-        else {panic!();}
     }
 
     #[test]
@@ -278,8 +297,9 @@ mod tests {
         let (mut sm, snap0, _snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(Seconds(0.0)) {
             assert_eq!(snap0.layers, f);
+        } else {
+            panic!();
         }
-        else {panic!();}
     }
 
     #[test]
@@ -287,8 +307,9 @@ mod tests {
         let (mut sm, snap0, snap1) = setup_two_frame_test();
         if let Good(f) = sm.get_interpolated(Seconds(0.005)) {
             assert_eq!(snap0.layers.interpolate_with(&snap1.layers, 0.0), f);
+        } else {
+            panic!();
         }
-        else {panic!();}
     }
 
 }

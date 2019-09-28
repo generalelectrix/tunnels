@@ -3,37 +3,34 @@
 #[macro_use]
 extern crate simple_error;
 extern crate async_dnssd;
-extern crate tokio_core;
 extern crate futures;
+extern crate tokio_core;
 extern crate zmq;
 
-use async_dnssd::{
-    register,
-    RegisterFlag,
-    Interface,
-    browse,
-    BrowsedFlag};
-use futures::{Stream, Future};
+use async_dnssd::{browse, register, BrowsedFlag, Interface, RegisterFlag};
+use futures::{Future, Stream};
 use tokio_core::reactor::{Core, Timeout};
 
 use zmq::{Context, Socket};
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use std::thread;
-use std::collections::HashMap;
+use std::time::Duration;
 
 /// Format a service name into a DNS-SD TCP registration type.
-fn reg_type(name: &str) -> String { format!("_{}._tcp", name) }
+fn reg_type(name: &str) -> String {
+    format!("_{}._tcp", name)
+}
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
 /// by the action callback back to the requester.
 pub fn run_service<F>(name: &str, port: u16, mut action: F) -> Result<(), Box<dyn Error>>
-    where F: FnMut(&[u8]) -> Vec<u8>
+where
+    F: FnMut(&[u8]) -> Vec<u8>,
 {
-
     let ctx = Context::new();
 
     // Open the 0mq socket we'll use to service requests.
@@ -54,7 +51,8 @@ pub fn run_service<F>(name: &str, port: u16, mut action: F) -> Result<(), Box<dy
         None,
         port,
         b"",
-        &core.handle())?;
+        &core.handle(),
+    )?;
 
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {
@@ -89,11 +87,7 @@ impl Controller {
 
             let handle = core.handle();
 
-            let browse_result = browse(
-                Interface::Any,
-                &registration_type,
-                None,
-                &handle)
+            let browse_result = browse(Interface::Any, &registration_type, None, &handle)
                 .unwrap()
                 .filter_map(|event| {
                     // If this service was added, continue processing.
@@ -130,7 +124,7 @@ impl Controller {
                     match req_socket(&service.host_target, service.port, &mut ctx) {
                         Ok(socket) => {
                             services_remote.lock().unwrap().insert(name, socket);
-                        },
+                        }
                         Err(e) => {
                             println!("Could not connect to '{}':\n{}", service.host_target, e);
                         }
@@ -141,9 +135,7 @@ impl Controller {
             core.run(browse_result).unwrap();
         });
 
-        Controller {
-            services,
-        }
+        Controller { services }
     }
 
     /// List the services available on this controller.
@@ -166,7 +158,6 @@ impl Controller {
 
 /// Try to connect a REQ socket at this host and port.
 fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<dyn Error>> {
-
     let addr = format!("tcp://{}:{}", host, port);
 
     // Connect a REQ socket.
@@ -181,17 +172,22 @@ mod tests {
     use std::time::Duration;
 
     /// Return a byte vector containing DEADBEEF.
-    fn deadbeef() -> Vec<u8> { vec!(0xD, 0xE, 0xA, 0xD, 0xB, 0xE, 0xE, 0xF) }
+    fn deadbeef() -> Vec<u8> {
+        vec![0xD, 0xE, 0xA, 0xD, 0xB, 0xE, 0xE, 0xF]
+    }
 
     /// Return a byte vector containing 0123.
-    fn testbytes() -> Vec<u8> { vec!(0, 1, 2, 3) }
+    fn testbytes() -> Vec<u8> {
+        vec![0, 1, 2, 3]
+    }
 
-    fn sleep(dt: u64) { thread::sleep(Duration::from_millis(dt)) }
+    fn sleep(dt: u64) {
+        thread::sleep(Duration::from_millis(dt))
+    }
 
     /// Test that we can advertise a single service and successfully connect to it.
     #[test]
     fn test_pair() {
-
         let name = "test";
         let port = 10000;
 
@@ -207,7 +203,8 @@ mod tests {
             run_service(name, port, |buffer| {
                 assert_eq!(testbytes(), buffer);
                 deadbeef()
-            }).unwrap();
+            })
+            .unwrap();
         });
 
         // Give the service a moment to get situated.

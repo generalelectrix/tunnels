@@ -1,7 +1,7 @@
 //! Perform linear interpolation between entities.
 
 use interpolation::lerp;
-use receive::{ArcSegment};
+use receive::ArcSegment;
 use utils::{min_included_angle, modulo};
 
 /// Allow an entity to be interpolated with another instance of Self.
@@ -13,8 +13,11 @@ pub trait Interpolate {
 impl<T: Interpolate + Clone> Interpolate for Vec<T> {
     fn interpolate_with(&self, other: &Self, alpha: f64) -> Self {
         if self.len() != other.len() {
-            if alpha < 0.5 {return self.clone()}
-            else {return other.clone()}
+            if alpha < 0.5 {
+                return self.clone();
+            } else {
+                return other.clone();
+            }
         }
         self.iter()
             .zip(other.iter())
@@ -34,7 +37,7 @@ fn interpolate_angle(a: f64, b: f64, alpha: f64) -> f64 {
 
 impl Interpolate for ArcSegment {
     fn interpolate_with(&self, other: &Self, alpha: f64) -> Self {
-        ArcSegment{
+        ArcSegment {
             level: lerp(&self.level, &other.level, &alpha),
             thickness: lerp(&self.thickness, &other.thickness, &alpha),
             hue: interpolate_angle(self.hue, other.hue, alpha),
@@ -46,15 +49,15 @@ impl Interpolate for ArcSegment {
             rad_y: lerp(&self.rad_y, &other.rad_y, &alpha),
             start: interpolate_angle(self.start, other.start, alpha),
             stop: interpolate_angle(self.stop, other.stop, alpha),
-            rot_angle: interpolate_angle(self.rot_angle, other.rot_angle, alpha)
+            rot_angle: interpolate_angle(self.rot_angle, other.rot_angle, alpha),
         }
     }
 }
 
 mod tests {
-    use interpolation::lerp;
     use super::{interpolate_angle, Interpolate};
-    use receive::{ArcSegment};
+    use interpolation::lerp;
+    use receive::ArcSegment;
     use utils::assert_almost_eq;
 
     #[test]
@@ -84,9 +87,9 @@ mod tests {
 
     #[test]
     fn test_interp_vec() {
-        let a = vec!(0.0, 0.0, 0.0);
-        let b = vec!(1.0, 1.0, 1.0);
-        let halfway = vec!(0.5, 0.5, 0.5);
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 1.0, 1.0];
+        let halfway = vec![0.5, 0.5, 0.5];
         assert_eq!(a, a.interpolate_with(&b, 0.0));
         assert_eq!(b, a.interpolate_with(&b, 1.0));
         assert_eq!(halfway, a.interpolate_with(&b, 0.5));

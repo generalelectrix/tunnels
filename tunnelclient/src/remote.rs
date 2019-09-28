@@ -5,22 +5,22 @@
 //! parameters.
 //! Also provide the tools needed for simple remote administration.
 
-use zero_configure::{run_service, Controller};
-use zmq::Context;
-use show::Show;
-use config::{Resolution, ClientConfig};
+use config::{ClientConfig, Resolution};
+use draw::{Transform, TransformDirection};
+use hostname::get_hostname;
+use regex::Regex;
 use rmp_serde::decode::from_read;
 use rmp_serde::encode::write;
-use utils::RunFlag;
-use std::thread;
+use show::Show;
 use std::error::Error;
-use std::time::Duration;
 use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
-use regex::Regex;
-use hostname::get_hostname;
+use std::thread;
+use std::time::Duration;
 use timesync::Seconds;
-use draw::{Transform, TransformDirection};
+use utils::RunFlag;
+use zero_configure::{run_service, Controller};
+use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelclient";
 const PORT: u16 = 15000;
@@ -38,10 +38,13 @@ pub fn run_remote(ctx: &mut Context) {
     let (send, recv) = channel();
 
     // Spawn a thread to receive config requests.
-    thread::Builder::new().name("remote_service".to_string()).spawn(|| {
-        let mut ctx = Context::new();
-        run_remote_service(&mut ctx, send);
-    }).expect("Failed to spawn remote service thread");
+    thread::Builder::new()
+        .name("remote_service".to_string())
+        .spawn(|| {
+            let mut ctx = Context::new();
+            run_remote_service(&mut ctx, send);
+        })
+        .expect("Failed to spawn remote service thread");
 
     loop {
         println!("Waiting for show configuration.");
@@ -56,14 +59,12 @@ pub fn run_remote(ctx: &mut Context) {
                 // Run the show until the remote thread tells us to quit.
                 show.run();
                 println!("Show exited.");
-            },
+            }
 
             // TODO: enable some kind of remote logging so we can collect these messages at the
             // controller.
             Err(e) => println!("Failed to initialize show: {}", e),
         }
-
-
     }
 }
 
@@ -71,24 +72,20 @@ pub fn run_remote(ctx: &mut Context) {
 /// flags back to the main thread.
 /// Panics if the service completes with an error.
 pub fn run_remote_service(ctx: &mut Context, sender: Sender<(ClientConfig, RunFlag)>) {
-
     // Run flag for currently-executing show, if there is one.
     let mut running_flag: Option<RunFlag> = None;
 
     run_service(SERVICE_NAME, PORT, |request_buffer| {
-
         // Attempt to deserialize this request buffer as a client configuration.
         match deserialize_config(request_buffer) {
             Ok(config) => {
-
                 // If there's currently a show running, pull the run flag out and stop it.
-                let show_stop_message =
-                    if let Some(ref mut flag) = running_flag {
-                        flag.stop();
-                        "Stopped a running show."
-                    } else {
-                        "No show was running."
-                    };
+                let show_stop_message = if let Some(ref mut flag) = running_flag {
+                    flag.stop();
+                    "Stopped a running show."
+                } else {
+                    "No show was running."
+                };
 
                 // Create a new run control for the show we're about to start.
                 let new_run_flag = RunFlag::new();
@@ -96,22 +93,25 @@ pub fn run_remote_service(ctx: &mut Context, sender: Sender<(ClientConfig, RunFl
 
                 // Send the config and flag back to the show thread.
                 if let Err(e) = sender.send((config, new_run_flag)) {
-                    format!("{}\nError trying to start new show: {}.", show_stop_message, e)
+                    format!(
+                        "{}\nError trying to start new show: {}.",
+                        show_stop_message, e
+                    )
                 } else {
                     // everything is OK
                     format!("{}\nStarting a new show.", show_stop_message)
                 }
-            },
+            }
             Err(e) => format!("Could not parse request as a show configuration:\n{}", e),
-        }.into_bytes()
-    }).expect("Remote configuration service crashed")
+        }
+        .into_bytes()
+    })
+    .expect("Remote configuration service crashed")
 }
 
 fn deserialize_config(buffer: &[u8]) -> Result<ClientConfig, String> {
     from_read(buffer).map_err(|e| e.to_string())
 }
-
-
 
 // --- remote administration ---
 
@@ -136,7 +136,11 @@ impl Administrator {
     /// Command a particular client to run using the provided configuration.
     /// If the client is available, returns the string response from sending the config.
     /// Returns Err if the specified client doesn't exist.
-    pub fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String, Box<dyn Error>> {
+    pub fn run_with_config(
+        &self,
+        client: &str,
+        config: ClientConfig,
+    ) -> Result<String, Box<dyn Error>> {
         // Serialize the config.
         let mut serialized = Vec::new();
         write(&mut serialized, &config)?;
@@ -148,12 +152,13 @@ impl Administrator {
     }
 }
 
-
 /// Read a single line from stdin and return it as a string.
 /// Panic if there's some IO-related error.
 fn read_input() -> String {
     let mut val = String::new();
-    stdin().read_line(&mut val).expect("Error trying to read user input");
+    stdin()
+        .read_line(&mut val)
+        .expect("Error trying to read user input");
     val.pop();
     val
 }
@@ -169,14 +174,15 @@ fn prompt_input(msg: &str) -> String {
 /// Repeatedly prompt the user for input until they provide an acceptable value.
 /// Prints msg followed by a colon and a space.
 fn prompt<P, T>(msg: &str, parser: P) -> T
-    where P: Fn(&str) -> Result<T, String>
+where
+    P: Fn(&str) -> Result<T, String>,
 {
     loop {
         let input = prompt_input(msg);
         match parser(&input) {
             Ok(result) => {
                 return result;
-            },
+            }
             Err(e) => {
                 println!("{}", e);
             }
@@ -193,18 +199,27 @@ fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
     }
     // Try matching against shorthand.
     if let Some(caps) = SHORTHAND_RE.captures(res_str) {
-        let height: u32 = caps[1].parse().expect("Regex should only have matched integers");
+        let height: u32 = caps[1]
+            .parse()
+            .expect("Regex should only have matched integers");
         let width = height * 16 / 9;
         return Ok((width, height));
     }
     // Try matching generic expression.
     if let Some(caps) = WIDTH_HEIGHT_RE.captures(res_str) {
-        let width: u32 = caps[1].parse().expect("Regex should only have matched integers.");
-        let height: u32 = caps[2].parse().expect("Regex should only have matched integers.");
+        let width: u32 = caps[1]
+            .parse()
+            .expect("Regex should only have matched integers.");
+        let height: u32 = caps[2]
+            .parse()
+            .expect("Regex should only have matched integers.");
         return Ok((width, height));
     }
     // Nothing matched.
-    Err(format!("Couldn't parse {} as resolution expression.", res_str))
+    Err(format!(
+        "Couldn't parse {} as resolution expression.",
+        res_str
+    ))
 }
 
 /// Extremely basic parsing of yes/no.
@@ -227,28 +242,32 @@ fn prompt_y_n(msg: &str) -> bool {
 
 /// Parse string as an unsigned integer.
 fn parse_uint(s: &str) -> Result<u64, String> {
-    s.parse().map_err(|e| format!("Could not parse '{}' as positive integer: {}", s, e))
+    s.parse()
+        .map_err(|e| format!("Could not parse '{}' as positive integer: {}", s, e))
 }
 
 /// Parse string as float.
 fn parse_f64(s: &str) -> Result<f64, String> {
-    s.parse().map_err(|e| format!("Could not parse '{}' as float: {}", s, e))
+    s.parse()
+        .map_err(|e| format!("Could not parse '{}' as float: {}", s, e))
 }
 
 /// Interactive series of user prompts, producing a configuration.
 fn configure_one<H>(hostname: H) -> ClientConfig
-    where H: Into<String>
+where
+    H: Into<String>,
 {
     let video_channel = prompt("Select video channel", parse_uint);
     let resolution = prompt(
-        "Specify display resolution (widthxheight or heightp for 16:9)", parse_resolution);
+        "Specify display resolution (widthxheight or heightp for 16:9)",
+        parse_resolution,
+    );
     let fullscreen = prompt_y_n("Fullscreen");
-    let transformation =
-        if prompt_y_n("Flip horizontal") {
-            Some(Transform::Flip(TransformDirection::Horizontal))
-        } else {
-            None
-        };
+    let transformation = if prompt_y_n("Flip horizontal") {
+        Some(Transform::Flip(TransformDirection::Horizontal))
+    } else {
+        None
+    };
 
     // Some defaults we might configure in advanced mode.
     let mut anti_alias = true;
@@ -263,7 +282,8 @@ fn configure_one<H>(hostname: H) -> ClientConfig
         alpha_blend = prompt_y_n("Use alpha channel blending");
         let timesync_interval_secs = prompt(
             "Host/client time resynchronization interval in seconds (default 60)",
-            parse_uint);
+            parse_uint,
+        );
         timesync_interval = Duration::from_secs(timesync_interval_secs);
         render_delay = prompt("Client render delay in seconds (default 0.040)", parse_f64);
     }
@@ -314,19 +334,19 @@ quit    Quit.";
         match prompt_input("Enter a command").as_ref() {
             "list" | "l" => {
                 println!("Available clients:\n{}\n", admin.clients().join("\n"));
-            },
+            }
             "conf" | "c" => {
                 let client_name = prompt("Enter client name", &parse_client_name);
                 let config = configure_one(host.clone());
                 match admin.run_with_config(&client_name, config) {
                     Ok(msg) => {
                         println!("{}", msg);
-                    },
+                    }
                     Err(e) => {
                         println!("Could not configure due to an error: {}", e);
                     }
                 }
-            },
+            }
             "quit" | "q" => {
                 break;
             }

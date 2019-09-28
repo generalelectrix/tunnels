@@ -1,13 +1,11 @@
-use graphics::{CircleArc, rectangle, Transformed, Graphics, DrawState};
-use piston_window::Context;
-
-use receive::{Snapshot, ArcSegment};
 use config::ClientConfig;
-
-use graphics::types::Color;
-use graphics::types::{Matrix2d, Scalar, Resolution, Radius, Rectangle};
 use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
+use graphics::types::Color;
+use graphics::types::{Matrix2d, Radius, Rectangle, Resolution, Scalar};
+use graphics::{rectangle, CircleArc, DrawState, Graphics, Transformed};
+use piston_window::Context;
+use receive::{ArcSegment, Snapshot};
 
 use constants::TWOPI;
 
@@ -32,9 +30,11 @@ pub trait Draw<G: Graphics> {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig);
 }
 
-impl<T, G> Draw<G> for Vec<T> where
-        G: Graphics,
-        T: Draw<G> {
+impl<T, G> Draw<G> for Vec<T>
+where
+    G: Graphics,
+    T: Draw<G>,
+{
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         for e in self {
             e.draw(c, gl, cfg);
@@ -53,7 +53,7 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     if sat == 0.0 {
         color_from_rgb(val, val, val, alpha)
     } else {
-        let var_h = if hue == 1.0 {0.0} else {hue * 6.0};
+        let var_h = if hue == 1.0 { 0.0 } else { hue * 6.0 };
 
         let var_i = var_h.floor();
         let var_1 = val * (1.0 - sat);
@@ -66,7 +66,7 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
             2 => color_from_rgb(var_1, val, var_3, alpha),
             3 => color_from_rgb(var_1, var_2, val, alpha),
             4 => color_from_rgb(var_3, var_1, val, alpha),
-            _ => color_from_rgb(val, var_1, var_2, alpha)
+            _ => color_from_rgb(val, var_1, var_2, alpha),
         }
     }
 }
@@ -77,24 +77,22 @@ pub fn draw_circle_arc_improved<R: Into<Rectangle>, G>(
     rectangle: R,
     draw_state: &DrawState,
     transform: Matrix2d,
-    g: &mut G
-)
-    where G: Graphics
+    g: &mut G,
+) where
+    G: Graphics,
 {
     let rectangle = rectangle.into();
-    g.tri_list(
-        &draw_state,
-        &ca.color,
-        |f|
-    improved_with_arc_tri_list(
-        ca.start,
-        ca.end,
-        ca.resolution,
-        transform,
-        rectangle,
-        ca.radius,
-        |vertices| f(vertices)
-    ));
+    g.tri_list(&draw_state, &ca.color, |f| {
+        improved_with_arc_tri_list(
+            ca.start,
+            ca.end,
+            ca.resolution,
+            transform,
+            rectangle,
+            ca.radius,
+            |vertices| f(vertices),
+        )
+    });
 }
 
 /// Streams an arc between the two radian boundaries.
@@ -106,12 +104,10 @@ fn improved_with_arc_tri_list<F>(
     m: Matrix2d,
     rect: Rectangle,
     border_radius: Radius,
-    f: F
-)
-    where
-        F: FnMut(&[[f32; 2]])
+    f: F,
+) where
+    F: FnMut(&[[f32; 2]]),
 {
-
     let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
     let (cw, ch) = (0.5 * w, 0.5 * h);
     let (cw1, ch1) = (cw + border_radius, ch + border_radius);
@@ -131,26 +127,36 @@ fn improved_with_arc_tri_list<F>(
 
     // n_quads * seg_size exactly spans the included angle.
     let seg_size = delta / n_quads as Scalar;
-    stream_quad_tri_list(m, || {
-        if i > n_quads { return None; }
+    stream_quad_tri_list(
+        m,
+        || {
+            if i > n_quads {
+                return None;
+            }
 
-        let angle = start_radians + (i as Scalar * seg_size);
+            let angle = start_radians + (i as Scalar * seg_size);
 
-        let cos = angle.cos();
-        let sin = angle.sin();
-        i += 1;
-        Some(([cx + cos * cw1, cy + sin * ch1],
-            [cx + cos * cw2, cy + sin * ch2]))
-    }, f);
+            let cos = angle.cos();
+            let sin = angle.sin();
+            i += 1;
+            Some((
+                [cx + cos * cw1, cy + sin * ch1],
+                [cx + cos * cw2, cy + sin * ch2],
+            ))
+        },
+        f,
+    );
 }
 
 impl<G: Graphics> Draw<G> for ArcSegment {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
 
-        let (val, alpha) =
-            if cfg.alpha_blend {(self.val, self.level)}
-            else {(self.val * self.level, 1.0)};
+        let (val, alpha) = if cfg.alpha_blend {
+            (self.val, self.level)
+        } else {
+            (self.val * self.level, 1.0)
+        };
 
         let color = hsv_to_rgb(self.hue, self.sat, val, alpha);
 
@@ -166,7 +172,7 @@ impl<G: Graphics> Draw<G> for ArcSegment {
         };
 
         let transform = {
-            let t = c.transform.trans(x, y).rot_rad(self.rot_angle*TWOPI);
+            let t = c.transform.trans(x, y).rot_rad(self.rot_angle * TWOPI);
             match cfg.transformation {
                 None => t,
                 Some(Transform::Flip(TransformDirection::Horizontal)) => t.flip_h(),

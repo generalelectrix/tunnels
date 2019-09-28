@@ -2,15 +2,15 @@
 //! Using this simple technique:
 //! http://www.mine-control.com/zack/timesync/timesync.html
 
-use receive::{Receive};
-use std::time::{Instant, Duration};
-use std::thread::sleep;
+use interpolation::lerp;
+use receive::Receive;
+use stats::{mean, stddev};
 use std::error::Error;
 use std::mem;
-use stats::{mean, stddev};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
-use interpolation::lerp;
 
 #[derive(Display, Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Add, Sub, From)]
 pub struct Seconds(pub f64);
@@ -55,7 +55,11 @@ impl Client {
         let addr = format!("tcp://{}:{}", host, PORT);
         socket.connect(&addr)?;
 
-        Ok(Client {socket, poll_period: Duration::from_millis(500), n_meas: 10})
+        Ok(Client {
+            socket,
+            poll_period: Duration::from_millis(500),
+            n_meas: 10,
+        })
     }
 
     /// Return an estimate of how long a synchronization will take.
@@ -69,11 +73,15 @@ impl Client {
         self.socket.send(&[][..], 0)?;
         let buf = match self.receive_buffer(true) {
             Some(buf) => buf,
-            None => bail!("Unable to receive a response from timesync server.")
+            None => bail!("Unable to receive a response from timesync server."),
         };
         let elapsed = now.elapsed();
         let timestamp: Seconds = self.deserialize_msg(buf)?;
-        Ok(Measurement {sent: now, round_trip: elapsed, timestamp})
+        Ok(Measurement {
+            sent: now,
+            round_trip: elapsed,
+            timestamp,
+        })
     }
 
     /// Get the offset between this machine's system clock and the host's.
@@ -89,34 +97,45 @@ impl Client {
         // Sort the measurements by round-trip time and remove outliers.
         measurements.sort_by_key(|m| m.round_trip);
         let median_delay = measurements[(self.n_meas / 2) as usize].round_trip;
-        let stddev = Seconds(stddev(measurements.iter().map(|m| Seconds::from_duration(m.round_trip).0)));
+        let stddev = Seconds(stddev(
+            measurements
+                .iter()
+                .map(|m| Seconds::from_duration(m.round_trip).0),
+        ));
         let cutoff = median_delay + stddev.as_duration();
 
         measurements.retain(|m| m.round_trip < cutoff);
 
         if measurements.len() < self.n_meas / 2 {
-            bail!(format!("Only got {} usable synchronization samples.", measurements.len()));
+            bail!(format!(
+                "Only got {} usable synchronization samples.",
+                measurements.len()
+            ));
         }
 
         // Estimate the remote clock time that corresponds to our reference time.
-        let remote_time_estimates =
-            measurements.iter()
-                .map(|m| {
-                    let delta = (m.sent + m.round_trip / 2).duration_since(reference_time);
-                    let s = m.timestamp - Seconds::from_duration(delta);
-                    s.0
-                });
+        let remote_time_estimates = measurements.iter().map(|m| {
+            let delta = (m.sent + m.round_trip / 2).duration_since(reference_time);
+            let s = m.timestamp - Seconds::from_duration(delta);
+            s.0
+        });
         // Take the average of these estimates, and we're done
         let best_remote_time_estimate = Seconds(mean(remote_time_estimates));
-        Ok(Timesync { ref_time: reference_time, host_ref_time: best_remote_time_estimate })
+        Ok(Timesync {
+            ref_time: reference_time,
+            host_ref_time: best_remote_time_estimate,
+        })
     }
 }
 
 impl Receive for Client {
     fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
-        let flag = if block {0} else {DONTWAIT};
-        if let Ok(b) = self.socket.recv_bytes(flag) {Some(b)}
-        else {None}
+        let flag = if block { 0 } else { DONTWAIT };
+        if let Ok(b) = self.socket.recv_bytes(flag) {
+            Some(b)
+        } else {
+            None
+        }
     }
 }
 
@@ -184,8 +203,7 @@ impl Synchronizer {
         let current = self.current.now();
         if self.alpha == 1.0 {
             current
-        }
-        else {
+        } else {
             let old = self.last.now();
             Seconds(lerp(&old.0, &current.0, &self.alpha))
         }
@@ -208,5 +226,8 @@ fn test_seconds_round_trip() {
 fn test_synchronize() {
     let mut client = Client::new("localhost", &mut Context::new()).unwrap();
     let sync = client.synchronize().expect("Test: synchronization failed");
-    println!("Ref time: {:?}, remote estimate: {}", sync.ref_time, sync.host_ref_time);
+    println!(
+        "Ref time: {:?}, remote estimate: {}",
+        sync.ref_time, sync.host_ref_time
+    );
 }

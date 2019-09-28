@@ -1,11 +1,13 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const ALMOST_EQ_TOLERANCE: f64 = 0.000_000_1;
 
 /// True modulus operator.
 #[inline(always)]
-pub fn modulo(a: f64, b: f64) -> f64 { ((a % b) + b) % b }
+pub fn modulo(a: f64, b: f64) -> f64 {
+    ((a % b) + b) % b
+}
 
 /// Minimum included angle between two unit angles.
 /// Might be negative.
@@ -34,7 +36,6 @@ pub fn angle_almost_eq(a: f64, b: f64) -> bool {
 pub fn assert_almost_eq(a: f64, b: f64) {
     assert!(almost_eq(a, b), "{} != {}", a, b);
 }
-
 
 /// A helper wrapper around an atomically-reference-counted atomic boolean.
 /// Used to control program flow across multiple threads.
