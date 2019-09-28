@@ -56,19 +56,6 @@ fn main() {
     if first_arg == "remote" {
         run_remote(&mut ctx);
     } else if first_arg == "admin" {
-        //        let admin = Administrator::new();
-        //
-        //        ::std::thread::sleep_ms(2000);
-        //
-        //        let clients = admin.clients();
-        //        println!("Clients: {:?}", clients);
-        //
-        //        let config = ClientConfig::load(0, "cfg/monitor.yaml");
-        //        match admin.run_with_config(&clients[0], config.unwrap()) {
-        //            Ok(msg) => println!("Success:\n{}", msg),
-        //            Err(e) => println!("Error:\n{:?}", e),
-        //        }
-        //        return
         administrate();
     } else {
         let video_channel: u64 = first_arg
