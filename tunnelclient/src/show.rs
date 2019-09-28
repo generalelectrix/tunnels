@@ -158,31 +158,28 @@ impl Show {
             Ok(ref mut ts) => ts.now() - self.cfg.render_delay,
         };
 
-        let (msg, maybe_frame) = match self.snapshot_manager.get_interpolated(delayed_time) {
-            NoData => (
-                Some("No data available from snapshot service.".to_string()),
-                None,
-            ),
+        let maybe_frame = match self.snapshot_manager.get_interpolated(delayed_time) {
+            NoData => {
+                println!("No data available from snapshot service.");
+                None
+            }
             Error(snaps) => {
                 let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
-                let msg = format!(
+                println!(
                     "Something went wrong with snapshot interpolation for time {}.\n{:?}\n",
                     delayed_time, snap_times
                 );
-                (Some(msg), None)
+                None
             }
-            Good(layers) => (None, Some(layers)),
-            MissingNewer(layers) => (
-                Some("Interpolation had no newer layer.".to_string()),
-                Some(layers),
-            ),
-            MissingOlder(layers) => (
-                Some("Interpolation had no older layer".to_string()),
-                Some(layers),
-            ),
-        };
-        if let Some(m) = msg {
-            println!("{}", m);
+            Good(layers) => Some(layers),
+            MissingNewer(layers) => {
+                println!("Interpolation had no newer layer.");
+                Some(layers)
+            }
+            MissingOlder(layers) => {
+                println!("Interpolation had no older layer");
+                Some(layers)
+            }
         };
 
         if let Some(frame) = maybe_frame {
