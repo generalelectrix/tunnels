@@ -174,7 +174,6 @@ class Show (object):
                         # only use, say, 80% of the time we have to prioritize
                         # timely state updates
                         timeout = (0.8 * time_to_next_update) / 1000000.
-                        log.info("Control timeout: %f", timeout)
                         self._service_control_event(timeout)
                 except Exception:
                     if self.test_mode:
