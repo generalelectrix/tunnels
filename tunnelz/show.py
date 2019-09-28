@@ -134,7 +134,7 @@ class Show (object):
         render_server.start()
         log.info("Render server started.")
 
-        time_micros = lambda: int(monotonic()*1000000)
+        time_micros = lambda: int(monotonic()*1000000.)
 
         last_update = time_micros()
 
@@ -173,7 +173,8 @@ class Show (object):
                         # timeout arg is a float in seconds
                         # only use, say, 80% of the time we have to prioritize
                         # timely state updates
-                        timeout = 0.8 * time_to_next_update / 10000000.
+                        timeout = (0.8 * time_to_next_update) / 1000000.
+                        log.info("Control timeout: %f", timeout)
                         self._service_control_event(timeout)
                 except Exception:
                     if self.test_mode:

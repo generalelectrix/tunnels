@@ -116,22 +116,23 @@ class RenderServer (object):
                 req, payload = self.response.get(block=False)
             except Empty:
                 return False
-            else:
-                if req == FRAME_REQ:
-                    # just pass the underlying clock objects, not the whole
-                    # clock command wrapper
-                    bare_clocks = [clock.model for clock in clocks]
-                    self.command.put((
-                        FRAME,
-                        (update_number, update_time, mixer, bare_clocks),
-                    ))
-                    return True
-                elif req == FATAL_ERROR:
-                    self._stop()
-                    raise RenderServerError(payload[0], payload[1])
-                else:
-                    raise RenderServerError(
-                        "Unknown response: {}, {}".format(req, payload))
+
+            if req == FRAME_REQ:
+                # just pass the underlying clock objects, not the whole
+                # clock command wrapper
+                bare_clocks = [clock.model for clock in clocks]
+                self.command.put((
+                    FRAME,
+                    (update_number, update_time, mixer, bare_clocks),
+                ))
+                return True
+
+            if req == FATAL_ERROR:
+                self._stop()
+                raise RenderServerError(payload[0], payload[1])
+
+            raise RenderServerError(
+                "Unknown response: {}, {}".format(req, payload))
         return False
 
 def run_server(command, response, port, report):
