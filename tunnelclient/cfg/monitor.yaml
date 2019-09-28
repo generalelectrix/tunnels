@@ -8,3 +8,4 @@ anti_alias: true
 fullscreen: false
 capture_mouse: false
 alpha_blend: true
+log_level_debug: false

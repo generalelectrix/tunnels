@@ -172,7 +172,7 @@ impl Receive for SubReceiver {
         if let Ok(mut parts) = self.socket.recv_multipart(flag) {
             let n_parts = parts.len();
             if n_parts != 2 {
-                println!("Buffer receive error, got {} parts: {:?}", n_parts, parts);
+                error!("Buffer receive error, got {} parts: {:?}", n_parts, parts);
                 None
             } else {
                 parts.pop()

@@ -1,11 +1,10 @@
 use config::ClientConfig;
+use draw::Draw;
 use graphics::clear;
+use log::{max_level, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::*;
 use receive::{Snapshot, SubReceiver};
-use timesync::{Client as TimesyncClient, Synchronizer};
-//use glutin_window::GlutinWindow;
-use draw::Draw;
 use sdl2_window::Sdl2Window;
 use snapshot_manager::InterpResult::*;
 use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
@@ -13,6 +12,7 @@ use std::error::Error;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use timesync::{Client as TimesyncClient, Seconds, Synchronizer};
 use utils::RunFlag;
 use zmq::Context;
 
@@ -24,6 +24,7 @@ pub struct Show {
     cfg: ClientConfig,
     run_flag: RunFlag,
     window: PistonWindow<Sdl2Window>,
+    render_logger: RenderIssueLogger,
 }
 
 impl Show {
@@ -32,20 +33,20 @@ impl Show {
         ctx: &mut Context,
         run_flag: RunFlag,
     ) -> Result<Self, Box<dyn Error>> {
-        println!("Running on video channel {}.", cfg.video_channel);
+        info!("Running on video channel {}.", cfg.video_channel);
 
         // Start up the timesync service.
         let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx)?;
 
         // Synchronize timing with master host.
-        println!(
+        info!(
             "Synchronizing timing.  This will take about {} seconds.",
             timesync_client.synchronization_duration().as_secs()
         );
 
         let synchronizer = Synchronizer::new(timesync_client.synchronize()?);
 
-        println!("Synchronized.");
+        info!("Synchronized.");
 
         // Spin off another thread to periodically update our host time synchronization.
         let timesync_period = cfg.timesync_interval;
@@ -64,18 +65,18 @@ impl Show {
                             let mut synchronizer =
                                 timesync_remote.lock().expect("Timesync mutex poisoned.");
                             let old_estimate = synchronizer.now();
-                            println!(
+                            info!(
                                 "Updating time sync.  Change from previous estimate: {}",
                                 new_estimate - old_estimate
                             );
                             synchronizer.update_current(sync);
                         }
                         Err(e) => {
-                            println!("{}", e);
+                            warn!("{}", e);
                         }
                     }
                 }
-                println!("Timesync service shutting down.");
+                info!("Timesync service shutting down.");
             })
             .map_err(|e| format!("Timesync service thread failed to spawn: {}", e))?;
 
@@ -117,6 +118,7 @@ impl Show {
             cfg,
             run_flag,
             window,
+            render_logger: RenderIssueLogger::new(Seconds(1.0)),
         })
     }
 
@@ -125,7 +127,7 @@ impl Show {
         // Run the event loop.
         while let Some(e) = self.window.next() {
             if !self.run_flag.should_run() {
-                println!("Quit flag tripped, ending show.");
+                info!("Quit flag tripped, ending show.");
                 break;
             }
 
@@ -152,7 +154,7 @@ impl Show {
             Err(_) => {
                 // The timesync update thread has panicked, abort the show.
                 self.run_flag.stop();
-                println!("Timesync service crashed; aborting show.");
+                error!("Timesync service crashed; aborting show.");
                 return;
             }
             Ok(ref mut ts) => ts.now() - self.cfg.render_delay,
@@ -160,12 +162,13 @@ impl Show {
 
         let maybe_frame = match self.snapshot_manager.get_interpolated(delayed_time) {
             NoData => {
-                println!("No data available from snapshot service.");
+                self.render_logger
+                    .log(delayed_time, "No data available from snapshot service.");
                 None
             }
             Error(snaps) => {
                 let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
-                println!(
+                error!(
                     "Something went wrong with snapshot interpolation for time {}.\n{:?}\n",
                     delayed_time, snap_times
                 );
@@ -173,11 +176,13 @@ impl Show {
             }
             Good(layers) => Some(layers),
             MissingNewer(layers) => {
-                println!("Interpolation had no newer layer.");
+                self.render_logger
+                    .log(delayed_time, "Interpolation had no newer layer.");
                 Some(layers)
             }
             MissingOlder(layers) => {
-                println!("Interpolation had no older layer");
+                self.render_logger
+                    .log(delayed_time, "Interpolation had no older layer");
                 Some(layers)
             }
         };
@@ -210,5 +215,42 @@ impl Show {
             .lock()
             .expect("Timesync mutex poisoned")
             .update(dt);
+    }
+}
+
+/// Logging helper that either logs everything at debug level or occasionally logs at warn level.
+struct RenderIssueLogger {
+    interval: Seconds,
+    last_logged: Seconds,
+    missed: u32,
+    log_all: bool,
+}
+
+impl RenderIssueLogger {
+    fn new(interval: Seconds) -> Self {
+        Self {
+            interval,
+            last_logged: Seconds(0.0),
+            missed: 0,
+            log_all: max_level() >= Level::Debug,
+        }
+    }
+
+    fn log(&mut self, now: Seconds, msg: &str) {
+        if self.log_all {
+            debug!("{}", msg);
+            return;
+        }
+        self.missed += 1;
+
+        if now > self.last_logged + self.interval {
+            let dt = now - self.last_logged;
+            self.last_logged = now;
+            warn!(
+                "Missed {} snapshots in the last {} seconds.",
+                self.missed, dt
+            );
+            self.missed = 0;
+        }
     }
 }

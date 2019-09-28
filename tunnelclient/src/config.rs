@@ -1,5 +1,6 @@
 //! Loading and parsing client configurations.
 use draw::{Transform, TransformDirection};
+use log::Level;
 use std::cmp;
 use std::error::Error;
 use std::fs::File;
@@ -38,6 +39,8 @@ pub struct ClientConfig {
     pub y_center: f64,
     /// Geometric transformation to optionally apply to the entire image.
     pub transformation: Option<Transform>,
+    /// Log at debug level?  This option is ignored when running in remote mode.
+    pub log_level_debug: bool,
 }
 
 impl ClientConfig {
@@ -53,6 +56,7 @@ impl ClientConfig {
         alpha_blend: bool,
         capture_mouse: bool,
         transformation: Option<Transform>,
+        log_level_debug: bool,
     ) -> ClientConfig {
         let (x_resolution, y_resolution) = resolution;
 
@@ -72,6 +76,7 @@ impl ClientConfig {
             y_center: f64::from(y_resolution / 2),
             alpha_blend,
             transformation,
+            log_level_debug,
         }
     }
 
@@ -118,6 +123,7 @@ impl ClientConfig {
             flag("alpha_blend", "Bad alpha blend flag.")?,
             flag("capture_mouse", "Bad mouse capture flag.")?,
             transformation,
+            flag("log_level_debug", "Bad log level flag.")?,
         ))
     }
 }

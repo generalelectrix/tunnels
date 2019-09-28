@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
-#[derive(Display, Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Add, Sub, From)]
+#[derive(Display, Debug, Copy, Clone, PartialEq, PartialOrd, Serialize, Deserialize, Add, Sub, From)]
 pub struct Seconds(pub f64);
 
 impl Seconds {

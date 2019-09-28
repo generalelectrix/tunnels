@@ -6,6 +6,8 @@ extern crate simple_error;
 extern crate lazy_static;
 #[macro_use]
 extern crate derive_more;
+#[macro_use]
+extern crate log;
 extern crate glutin_window;
 extern crate graphics;
 extern crate hostname;
@@ -16,6 +18,7 @@ extern crate regex;
 extern crate rmp_serde;
 extern crate sdl2_window;
 extern crate serde;
+extern crate simplelog;
 extern crate stats;
 extern crate yaml_rust;
 extern crate zero_configure;
@@ -42,6 +45,7 @@ use show::Show;
 use std::env;
 use utils::RunFlag;
 use zmq::Context;
+use simplelog::{SimpleLogger, LevelFilter, Config as LogConfig};
 
 fn main() {
     // Check if running in remote mode.
@@ -54,8 +58,10 @@ fn main() {
     let mut ctx = Context::new();
 
     if first_arg == "remote" {
+        init_logger(LevelFilter::Info);
         run_remote(&mut ctx);
     } else if first_arg == "admin" {
+        init_logger(LevelFilter::Info);
         administrate();
     } else {
         let video_channel: u64 = first_arg
@@ -65,9 +71,14 @@ fn main() {
         let config_path = env::args().nth(2).expect("No config path arg provided.");
 
         let cfg = ClientConfig::load(video_channel, &config_path).expect("Failed to load config");
+        init_logger(if cfg.log_level_debug {LevelFilter::Debug} else {LevelFilter::Info});
 
         let mut show = Show::new(cfg, &mut ctx, RunFlag::new()).expect("Failed to initialize show");
 
         show.run();
     }
+}
+
+fn init_logger(level: LevelFilter) {
+    SimpleLogger::init(level, LogConfig::default()).expect("Could not configure logger.");
 }

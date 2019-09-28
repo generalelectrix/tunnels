@@ -27,6 +27,8 @@ regex = "1"
 lazy_static = "1"
 hostname = "0.1"
 derive_more = "0.15"
+log = "0.4"
+simplelog = "0.7"
 
 [dependencies.pistoncore-sdl2_window]
 git = "https://github.com/PistonDevelopers/sdl2_window"
