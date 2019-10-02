@@ -215,11 +215,15 @@ fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
             .expect("Regex should only have matched integers.");
         return Ok((width, height));
     }
-    // Nothing matched.
-    Err(format!(
-        "Couldn't parse {} as resolution expression.",
-        res_str
-    ))
+    let res_str = res_str.to_lowercase();
+    // Normalize input and check against whitelist.
+    match res_str.as_ref() {
+        "sxga+" | "sx+" => Ok((1400, 1050)),
+        _ => Err(format!(
+            "Couldn't parse {} as resolution expression.",
+            res_str
+        )),
+    }
 }
 
 /// Extremely basic parsing of yes/no.
