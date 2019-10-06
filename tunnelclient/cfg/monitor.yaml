@@ -3,7 +3,7 @@ render_delay: 0.040
 timesync_interval: 60000
 x_resolution: 800
 y_resolution: 600
-underhung: false
+underhung: true
 flip_horizontal: false
 anti_alias: true
 fullscreen: false

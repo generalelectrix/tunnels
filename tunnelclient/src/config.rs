@@ -109,7 +109,7 @@ impl ClientConfig {
             cfg[name].as_bool().ok_or(missing)
         };
 
-        let orientation = if flag("Is projector underhung?", "Bad underhung flip flag.")? {
+        let orientation = if flag("underhung", "Bad underhung flip flag.")? {
             Orientation::Underhung
         } else {
             Orientation::Overhung

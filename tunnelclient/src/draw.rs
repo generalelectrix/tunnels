@@ -192,14 +192,7 @@ impl<G: Graphics> Draw<G> for ArcSegment {
         };
 
         let transform = {
-            let t = c
-                .transform
-                .rot_rad(match cfg.orientation {
-                    Orientation::Overhung => 0.0,
-                    Orientation::Underhung => PI,
-                })
-                .trans(x, y)
-                .rot_rad(self.rot_angle * TWOPI);
+            let t = c.transform.trans(x, y).rot_rad(self.rot_angle * TWOPI);
             match cfg.transformation {
                 None => t,
                 Some(Transform::Flip(TransformDirection::Horizontal)) => t.flip_h(),
