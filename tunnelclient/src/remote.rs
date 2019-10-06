@@ -6,7 +6,7 @@
 //! Also provide the tools needed for simple remote administration.
 
 use crate::config::{ClientConfig, Resolution};
-use crate::draw::{Transform, TransformDirection};
+use crate::draw::{Orientation, Transform, TransformDirection};
 use crate::show::Show;
 use hostname;
 use lazy_static::lazy_static;
@@ -268,6 +268,13 @@ where
         parse_resolution,
     );
     let fullscreen = prompt_y_n("Fullscreen");
+
+    let orientation = if prompt_y_n("Is the projector underhung?") {
+        Orientation::Underhung
+    } else {
+        Orientation::Overhung
+    };
+
     let transformation = if prompt_y_n("Flip horizontal") {
         Some(Transform::Flip(TransformDirection::Horizontal))
     } else {
@@ -303,6 +310,7 @@ where
         fullscreen,
         alpha_blend,
         capture_mouse,
+        orientation,
         transformation,
         false,
     )
