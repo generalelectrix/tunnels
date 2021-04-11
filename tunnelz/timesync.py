@@ -24,8 +24,15 @@ def run_service(port=PORT):
     This service waits to receive a request, and replies with the current time.
     The content of a request packet is completely ignored.
     """
-    def run():
-        socket = create_rep_socket(port)
+    service = timesyncService(port)
+    proc = Process(target=service)
+    proc.start()
+
+class timesyncService:
+    def __init__(self, port):
+        self.port = port
+    def __call__(self):
+        socket = create_rep_socket(self.port)
         while True:
             try:
                 msg = socket.recv()
@@ -33,8 +40,6 @@ def run_service(port=PORT):
                 socket.send(msgpack.dumps(now))
             except Exception as err:
                 logging.error(err)
-    proc = Process(target=run)
-    proc.start()
 
 def test_receive():
     context = zmq.Context()
