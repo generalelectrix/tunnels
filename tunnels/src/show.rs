@@ -1,0 +1,40 @@
+use log;
+use serde::{Deserialize, Serialize};
+
+/// How many virtual video channels should we send?
+const N_VIDEO_CHANNELS: i32 = 8;
+
+/// how many globally-available clocks?
+const N_CLOCKS: i32 = 8;
+
+#[derive(Copy, Clone, Debug)]
+pub enum TestMode {
+    Stress,
+    Rotation,
+    Aliasing,
+    MultiChannel,
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    use_midi: bool,
+    midi_ports: Vec<i32>,
+    report_framerate: bool,
+    log_level: log::Level,
+    test_mode: Option<TestMode>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            use_midi: false,
+            midi_ports: Vec::new(),
+            report_framerate: false,
+            log_level: log::Level::Debug,
+            test_mode: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Show {}
