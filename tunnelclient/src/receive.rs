@@ -1,5 +1,8 @@
 //! 0mq communication and deserialization.
 
+use crate::timesync::Microseconds;
+use crate::utils::{almost_eq, angle_almost_eq};
+use log::error;
 use rmp_serde::decode::Error as DecodeError;
 use rmp_serde::Deserializer;
 use serde::de::DeserializeOwned;
@@ -8,8 +11,6 @@ use std::error::Error;
 use std::io::Cursor;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
-use timesync::Microseconds;
-use utils::{almost_eq, angle_almost_eq};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
@@ -32,28 +33,6 @@ pub struct ArcSegment {
     pub rot_angle: f64,
 }
 
-impl ArcSegment {
-    /// Return an arc segment for testing, with all linear coordinates set to
-    /// linear, and all radial coordinates set to radial.
-    pub fn for_test(linear: f64, radial: f64) -> Self {
-        ArcSegment {
-            level: linear,
-            thickness: linear,
-            sat: linear,
-            val: linear,
-            x: linear,
-            y: linear,
-            rad_x: linear,
-            rad_y: linear,
-            // radial items
-            hue: radial,
-            start: radial,
-            stop: radial,
-            rot_angle: radial,
-        }
-    }
-}
-
 impl PartialEq for ArcSegment {
     fn eq(&self, o: &Self) -> bool {
         almost_eq(self.level, o.level)
@@ -72,6 +51,25 @@ impl PartialEq for ArcSegment {
 }
 
 impl Eq for ArcSegment {}
+
+#[cfg(test)]
+pub fn arc_segment_for_test(linear: f64, radial: f64) -> ArcSegment {
+    ArcSegment {
+        level: linear,
+        thickness: linear,
+        sat: linear,
+        val: linear,
+        x: linear,
+        y: linear,
+        rad_x: linear,
+        rad_y: linear,
+        // radial items
+        hue: radial,
+        start: radial,
+        stop: radial,
+        rot_angle: radial,
+    }
+}
 
 pub type LayerCollection = Vec<Vec<ArcSegment>>;
 
@@ -185,8 +183,8 @@ impl Receive for SubReceiver {
 
 #[test]
 fn test_arc_eq() {
-    let a = ArcSegment::for_test(1.0, 0.5);
-    let b = ArcSegment::for_test(0.4, 0.5);
+    let a = arc_segment_for_test(1.0, 0.5);
+    let b = arc_segment_for_test(0.4, 0.5);
     assert_eq!(a, a);
     assert_ne!(a, b);
 }

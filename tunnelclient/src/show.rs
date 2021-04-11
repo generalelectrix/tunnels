@@ -1,19 +1,19 @@
-use config::ClientConfig;
-use draw::Draw;
+use crate::config::ClientConfig;
+use crate::draw::Draw;
+use crate::receive::{Snapshot, SubReceiver};
+use crate::snapshot_manager::InterpResult::*;
+use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
+use crate::timesync::{Client as TimesyncClient, Seconds, Synchronizer};
+use crate::utils::RunFlag;
 use graphics::clear;
-use log::{max_level, Level};
+use log::{debug, error, info, max_level, warn, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::*;
-use receive::{Snapshot, SubReceiver};
 use sdl2_window::Sdl2Window;
-use snapshot_manager::InterpResult::*;
-use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use std::error::Error;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use timesync::{Client as TimesyncClient, Seconds, Synchronizer};
-use utils::RunFlag;
 use zmq::Context;
 
 /// Top-level structure that owns all of the show data.

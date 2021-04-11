@@ -5,6 +5,7 @@ version = "0.1.0"
 authors = [
     "Chris Macklin <chris.macklin@gmail.com>",
 ]
+edition = "2018"
 
 [[bin]]
 name = "tunnelclient"
@@ -17,8 +18,7 @@ piston2d-opengl_graphics = "0.77"
 interpolation = "0.2"
 yaml-rust = "0.4"
 rmp-serde = "0.15"
-serde = "1"
-serde_derive = "1"
+serde = { version = "1", features = ["derive"] }
 streaming-stats = "0.2"
 simple-error = "0.2"
 zmq = "0.9"

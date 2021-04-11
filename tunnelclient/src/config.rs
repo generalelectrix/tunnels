@@ -1,12 +1,13 @@
 //! Loading and parsing client configurations.
-use draw::{Transform, TransformDirection};
-use log::Level;
+use crate::draw::{Transform, TransformDirection};
+
+use crate::timesync::Seconds;
+use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
-use timesync::Seconds;
 use yaml_rust::YamlLoader;
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -5,20 +5,22 @@
 //! parameters.
 //! Also provide the tools needed for simple remote administration.
 
-use config::{ClientConfig, Resolution};
-use draw::{Transform, TransformDirection};
+use crate::config::{ClientConfig, Resolution};
+use crate::draw::{Transform, TransformDirection};
+use crate::show::Show;
+use crate::timesync::Seconds;
+use crate::utils::RunFlag;
 use hostname;
+use lazy_static::lazy_static;
+use log::{error, info};
 use regex::Regex;
 use rmp_serde::decode::from_read;
 use rmp_serde::encode::write;
-use show::Show;
 use std::error::Error;
 use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
-use timesync::Seconds;
-use utils::RunFlag;
 use zero_configure::{run_service, Controller};
 use zmq::Context;
 
@@ -71,7 +73,7 @@ pub fn run_remote(ctx: &mut Context) {
 /// Run the remote discovery and configuration service, passing config states and cancellation
 /// flags back to the main thread.
 /// Panics if the service completes with an error.
-pub fn run_remote_service(ctx: &mut Context, sender: Sender<(ClientConfig, RunFlag)>) {
+pub fn run_remote_service(_ctx: &mut Context, sender: Sender<(ClientConfig, RunFlag)>) {
     // Run flag for currently-executing show, if there is one.
     let mut running_flag: Option<RunFlag> = None;
 

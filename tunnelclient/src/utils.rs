@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use timesync::Seconds;
 
 const ALMOST_EQ_TOLERANCE: f64 = 0.000_000_1;
 
@@ -33,7 +32,7 @@ pub fn angle_almost_eq(a: f64, b: f64) -> bool {
 }
 
 /// Panic if a and b are not almost equal.
-#[inline(always)]
+#[cfg(test)]
 pub fn assert_almost_eq(a: f64, b: f64) {
     assert!(almost_eq(a, b), "{} != {}", a, b);
 }

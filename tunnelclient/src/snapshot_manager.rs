@@ -1,10 +1,10 @@
 //! Handle emptying a queue of snapshots, maintaining a time-ordered collection,
 //! and interpolating between them on demand.
-use interpolate::Interpolate;
-use receive::{LayerCollection, Snapshot};
+
+use crate::receive::{LayerCollection, Snapshot};
+use crate::timesync::{Microseconds, Seconds};
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, TryRecvError};
-use timesync::{Microseconds, Seconds};
 
 /// Handle receiving and maintaining a collection of snapshots.
 /// Provide interpolated snapshots on request.
@@ -162,11 +162,11 @@ impl SnapshotManager {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    use super::InterpResult::*;
     use super::*;
-    use interpolate::Interpolate;
-    use receive::{ArcSegment, Snapshot};
+    use crate::interpolate::Interpolate;
+    use crate::receive::{arc_segment_for_test, ArcSegment, Snapshot};
     use std::iter::Iterator;
     use std::sync::mpsc::{channel, Sender};
 
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn test_interp_no_data() {
         let (_, mut sm) = setup_sm();
-        if let NoData = sm.get_interpolated(Seconds(0.0)) {
+        if let InterpResult::NoData = sm.get_interpolated(Seconds(0.0)) {
         } else {
             panic!();
         }
@@ -252,9 +252,9 @@ mod tests {
     #[test]
     fn test_interp_one_older_frame() {
         let (_, mut sm) = setup_sm();
-        let snap = mksnapshot_with_arc(0, Microseconds(0), ArcSegment::for_test(0.2, 0.3));
+        let snap = mksnapshot_with_arc(0, Microseconds(0), arc_segment_for_test(0.2, 0.3));
         sm.insert_snapshot(snap.clone());
-        if let MissingNewer(f) = sm.get_interpolated(Seconds(0.001)) {
+        if let InterpResult::MissingNewer(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap.layers, f);
         } else {
             panic!();
@@ -264,9 +264,9 @@ mod tests {
     #[test]
     fn test_interp_one_newer_frame() {
         let (_, mut sm) = setup_sm();
-        let snap = mksnapshot_with_arc(0, Microseconds(10000), ArcSegment::for_test(0.2, 0.3));
+        let snap = mksnapshot_with_arc(0, Microseconds(10000), arc_segment_for_test(0.2, 0.3));
         sm.insert_snapshot(snap.clone());
-        if let MissingOlder(f) = sm.get_interpolated(Seconds(0.001)) {
+        if let InterpResult::MissingOlder(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap.layers, f);
         } else {
             panic!();
@@ -275,8 +275,8 @@ mod tests {
 
     fn setup_two_frame_test() -> (SnapshotManager, Snapshot, Snapshot) {
         let (_, mut sm) = setup_sm();
-        let snap0 = mksnapshot_with_arc(0, Microseconds(0), ArcSegment::for_test(0.2, 0.3));
-        let snap1 = mksnapshot_with_arc(1, Microseconds(10000), ArcSegment::for_test(0.2, 0.3));
+        let snap0 = mksnapshot_with_arc(0, Microseconds(0), arc_segment_for_test(0.2, 0.3));
+        let snap1 = mksnapshot_with_arc(1, Microseconds(10000), arc_segment_for_test(0.2, 0.3));
         sm.insert_snapshot(snap0.clone());
         sm.insert_snapshot(snap1.clone());
         (sm, snap0, snap1)
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_interp_two_frames_exact_newer() {
         let (mut sm, _snap0, snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(0.001)) {
+        if let InterpResult::Good(f) = sm.get_interpolated(Seconds(0.001)) {
             assert_eq!(snap1.layers, f);
         } else {
             panic!();
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn test_interp_two_frames_exact_older() {
         let (mut sm, snap0, _snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(0.0)) {
+        if let InterpResult::Good(f) = sm.get_interpolated(Seconds(0.0)) {
             assert_eq!(snap0.layers, f);
         } else {
             panic!();
@@ -305,11 +305,10 @@ mod tests {
     #[test]
     fn test_interp_two_frames_middle() {
         let (mut sm, snap0, snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(0.005)) {
+        if let InterpResult::Good(f) = sm.get_interpolated(Seconds(0.005)) {
             assert_eq!(snap0.layers.interpolate_with(&snap1.layers, 0.0), f);
         } else {
             panic!();
         }
     }
-
 }

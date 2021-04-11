@@ -2,8 +2,11 @@
 //! Using this simple technique:
 //! http://www.mine-control.com/zack/timesync/timesync.html
 
+use crate::receive::Receive;
+use derive_more::{Add, Display, From, Sub};
 use interpolation::lerp;
-use receive::Receive;
+use serde::{Deserialize, Serialize};
+use simple_error::bail;
 use stats::{mean, stddev};
 use std::error::Error;
 use std::mem;
@@ -12,7 +15,9 @@ use std::time::{Duration, Instant};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
-#[derive(Display, Debug, Copy, Clone, PartialEq, PartialOrd, Serialize, Deserialize, Add, Sub, From)]
+#[derive(
+    Display, Debug, Copy, Clone, PartialEq, PartialOrd, Serialize, Deserialize, Add, Sub, From,
+)]
 pub struct Seconds(pub f64);
 
 impl Seconds {

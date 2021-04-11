@@ -1,8 +1,8 @@
 //! Perform linear interpolation between entities.
 
+use crate::receive::ArcSegment;
+use crate::utils::{min_included_angle, modulo};
 use interpolation::lerp;
-use receive::ArcSegment;
-use utils::{min_included_angle, modulo};
 
 /// Allow an entity to be interpolated with another instance of Self.
 pub trait Interpolate {
@@ -54,11 +54,12 @@ impl Interpolate for ArcSegment {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    use super::{interpolate_angle, Interpolate};
+    use super::*;
+    use crate::receive::arc_segment_for_test;
+    use crate::utils::assert_almost_eq;
     use interpolation::lerp;
-    use receive::ArcSegment;
-    use utils::assert_almost_eq;
 
     #[test]
     fn test_interp_angle() {
@@ -71,9 +72,9 @@ mod tests {
 
     #[test]
     fn test_interp_arcs() {
-        let a = ArcSegment::for_test(0.0, 0.0);
-        let b = ArcSegment::for_test(1.0, 0.4);
-        let halfway = ArcSegment::for_test(0.5, 0.2);
+        let a = arc_segment_for_test(0.0, 0.0);
+        let b = arc_segment_for_test(1.0, 0.4);
+        let halfway = arc_segment_for_test(0.5, 0.2);
         assert_eq!(a, a.interpolate_with(&b, 0.0));
         assert_eq!(b, a.interpolate_with(&b, 1.0));
         assert_eq!(halfway, a.interpolate_with(&b, 0.5));
@@ -94,5 +95,4 @@ mod tests {
         assert_eq!(b, a.interpolate_with(&b, 1.0));
         assert_eq!(halfway, a.interpolate_with(&b, 0.5));
     }
-
 }
