@@ -5,9 +5,6 @@ use std::sync::mpsc::{channel, Receiver};
 /// How many virtual video channels should we send?
 const N_VIDEO_CHANNELS: i32 = 8;
 
-/// how many globally-available clocks?
-const N_CLOCKS: i32 = 8;
-
 #[derive(Copy, Clone, Debug)]
 pub enum TestMode {
     Stress,
