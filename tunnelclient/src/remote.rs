@@ -7,7 +7,7 @@
 
 use config::{ClientConfig, Resolution};
 use draw::{Transform, TransformDirection};
-use hostname::get_hostname;
+use hostname;
 use regex::Regex;
 use rmp_serde::decode::from_read;
 use rmp_serde::encode::write;
@@ -309,7 +309,10 @@ where
 
 /// Slightly janky interactive command line utility for administering a fleet of tunnel clients.
 pub fn administrate() {
-    let host = get_hostname().expect("Couldn't get hostname for this machine");
+    let host = hostname::get()
+        .expect("Couldn't get hostname for this machine")
+        .into_string()
+        .unwrap();
     println!("Starting administrator...");
     let admin = Administrator::new();
 
