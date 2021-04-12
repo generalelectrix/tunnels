@@ -11,3 +11,4 @@ serde = { version = "^1", features = ["derive"]}
 log = "^0.4"
 simplelog = "^0.10"
 derive_more = "^0.99"
+midir = "^0.7"
