@@ -1,44 +1,29 @@
 use midir::{
     MidiIO, MidiInput, MidiInputConnection, MidiInputPort, MidiOutput, MidiOutputConnection,
-    MidiOutputPort, SendError,
+    SendError,
 };
+use serde::{Deserialize, Serialize};
 use simple_error::bail;
 use std::error::Error;
 
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum EventType {
     NoteOn,
     NoteOff,
     ControlChange,
 }
 
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Mapping {
     pub event_type: EventType,
     pub channel: u8,
     pub control: u8,
 }
 
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub mapping: Mapping,
     pub value: u8,
-}
-
-impl Mapping {
-    pub fn event_type(&self) -> u8 {
-        match *self {
-            Mapping::ControlChange {
-                chan: _,
-                control: _,
-            } => 11 << 4,
-            Mapping::NoteOn {
-                chan: _,
-                control: _,
-            } => 9 << 4,
-            Mapping::NoteOff {
-                chan: _,
-                control: _,
-            } => 8 << 4,
-        }
-    }
 }
 
 // Return the available ports as descriptive strings.
@@ -84,8 +69,8 @@ impl Output {
         Ok(Self { name, conn })
     }
 
-    pub fn send(&self, event: Event) -> Result<(), SendError> {
-        let msg: [u8; 3] = [0; 3];
+    pub fn send(&mut self, event: Event) -> Result<(), SendError> {
+        let mut msg: [u8; 3] = [0; 3];
         msg[0] = match event.mapping.event_type {
             EventType::ControlChange => 11 << 4,
             EventType::NoteOn => 9 << 4,
@@ -95,4 +80,13 @@ impl Output {
         msg[2] = event.value;
         self.conn.send(&msg)
     }
+
+    pub fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError> {
+        self.conn.send(msg)
+    }
+}
+
+pub struct Input {
+    name: String,
+    conn: MidiInputConnection<()>,
 }

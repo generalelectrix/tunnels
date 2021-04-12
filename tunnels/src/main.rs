@@ -1,5 +1,6 @@
 mod animation;
 mod clock;
+mod device;
 mod midi;
 mod numbers;
 mod show;
