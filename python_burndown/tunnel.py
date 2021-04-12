@@ -82,55 +82,6 @@ class Tunnel (Beam):
         """Get an animation by index."""
         return self.anims[anim]
 
-    def update_state(self, delta_t, external_clocks):
-        """Update the state of this tunnel in preparation for drawing a frame.
-
-        Args:
-            delta_t (int): evolution time in microseconds
-            external_clocks: collection of external clocks that may be used by
-                this beam's animators.
-        """
-        # ensure we don't exceed the set bounds of the screen
-        self.x_offset = min(max(self.x_offset, -geometry.max_x_offset), geometry.max_x_offset)
-        self.y_offset = min(max(self.y_offset, -geometry.max_y_offset), geometry.max_y_offset)
-
-        rot_angle_adjust = 0.0
-        marquee_angle_adjust = 0.0
-
-        # update the state of the animations and get relevant values
-        for anim in self.anims:
-
-            anim.update_state(delta_t)
-            target = anim.target
-
-            # what is this animation targeting?
-            # at least for non-chicklet-level targets...
-            if target == AnimationTarget.Rotation: # rotation speed
-                rot_angle_adjust += anim.get_value(0, external_clocks) * 0.5
-            elif target == AnimationTarget.MarqueeRotation: # marquee rotation speed
-                marquee_angle_adjust += anim.get_value(0, external_clocks) * 0.5
-
-        def scale_speed(speed):
-            """Scale speeds with a quadratic curve."""
-            if speed > 0:
-                return speed**2
-            else:
-                return -1*(speed**2)
-
-        # calulcate the rotation, wrap to 0 to 1
-        self.curr_rot_angle = (
-            (self.curr_rot_angle +
-            # delta_t*0.00003 implies the same speed scale as we had at 30fps with evolution tied to frame
-            # square rot speed control parameter for more slow resolution
-            (scale_speed(self.rot_speed)*delta_t*0.00003 + rot_angle_adjust)*self.rot_speed_scale)) % 1.0
-
-        # calulcate the marquee angle, wrap to 0 to 1
-        self.curr_marquee_angle = (
-            (self.curr_marquee_angle +
-            # delta_t*0.00003 implies the same speed scale as we had at 30fps with evolution tied to frame
-            # square marquee speed control parameter for more slow resolution
-            (scale_speed(self.marquee_speed)*delta_t*0.00003 + marquee_angle_adjust)*self.marquee_speed_scale)) % 1.0
-
     def display(self, level_scale, as_mask, external_clocks):
         """Return the current state of the beam.
 
