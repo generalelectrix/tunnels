@@ -6,10 +6,6 @@ import weakref
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
 
-NoteOn = namedtuple('NoteOn', ('channel', 'pitch', 'velocity'))
-NoteOff = namedtuple('NoteOff', ('channel', 'pitch', 'velocity'))
-ControlChange = namedtuple('ControlChange', ('channel', 'control', 'value'))
-
 MidiMapping = namedtuple('MidiMapping', ('channel', 'control', 'kind'))
 
 # use kind argument and partials to ensure that notes and CCs hash differently
@@ -23,25 +19,8 @@ message_type_to_event_type = {
     'ControlChange': 11 << 4,
 }
 
-def list_ports():
-    """Return the available ports as descriptive strings."""
-
-    def format_ports(ports):
-        return "\n".join("{}: {}".format(i, port) for i, port in enumerate(ports))
-
-    inputs = "Available input ports:\n{}".format(format_ports(MidiIn().get_ports()))
-    outputs = "Available output ports:\n{}".format(format_ports(MidiOut().get_ports()))
-    return inputs, outputs
-
-
 class MidiOutput (object):
     """Wrap a midi port into a more useful interface."""
-
-    def __init__(self, port_number):
-        """Add a new port to send messages to."""
-        port, name = open_midiport(port_number, type_="output")
-        self.name = name
-        self.port = port
 
     def send_from_mappings(self, messages):
         """Send an arbitrary number of midi messages.
