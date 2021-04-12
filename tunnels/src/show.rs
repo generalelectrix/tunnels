@@ -16,7 +16,7 @@ pub enum TestMode {
 #[derive(Clone, Debug)]
 pub struct Config {
     use_midi: bool,
-    midi_ports: Vec<i32>,
+    midi_devices: Vec<String>,
     report_framerate: bool,
     log_level: log::Level,
     test_mode: Option<TestMode>,
@@ -26,7 +26,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             use_midi: false,
-            midi_ports: Vec::new(),
+            midi_devices: Vec::new(),
             report_framerate: false,
             log_level: log::Level::Debug,
             test_mode: None,
