@@ -2,10 +2,10 @@ use log;
 use serde::{Deserialize, Serialize};
 use std::sync::mpsc::{channel, Receiver};
 
-use crate::{clock::ClockBank, device::Device, midi::Manager, mixer::Mixer};
-
-/// How many virtual video channels should we send?
-pub const N_VIDEO_CHANNELS: usize = 8;
+use crate::{
+    beam_matrix_minder::BeamMatrixMinder, clock::ClockBank, device::Device, midi::Manager,
+    mixer::Mixer,
+};
 
 #[derive(Copy, Clone, Debug)]
 pub enum TestMode {
@@ -41,4 +41,5 @@ pub struct Show {
     midi_manager: Manager,
     mixer: Mixer,
     clocks: ClockBank,
+    beam_matrix: BeamMatrixMinder,
 }

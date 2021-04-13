@@ -136,14 +136,6 @@ class BeamMatrixMinder (object):
             beams, is_look = pickle.load(f)
             return beams, is_look
 
-    def put_beam(self, row, column, beam):
-        """Put a copy of a beam into the minder."""
-        self._beams[row][column] = beam.copy()
-
-        self._is_look[row][column] = False
-
-        self._save_to_disk()
-
     def put_look(self, row, column, look):
         """Copy a look into the beam matrix."""
         self._beams[row][column] = look.copy()
@@ -151,14 +143,6 @@ class BeamMatrixMinder (object):
 
         self._save_to_disk()
 
-    def clear_element(self, row, column):
-        self._beams[row][column] = None
-        self._is_look[row][column] = False
-
-        self._save_to_disk()
-
-    def get_element(self, row, column):
-        return self._beams[row][column].copy()
 
     def element_is_look(self, row, column):
         return self._is_look[row][column]

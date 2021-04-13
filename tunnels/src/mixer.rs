@@ -1,11 +1,10 @@
 use crate::{
     clock::ClockBank,
     numbers::UnipolarFloat,
-    show::N_VIDEO_CHANNELS,
     tunnel::{ArcSegment, Tunnel},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, rc::Rc, time::Duration};
 
 /// Index into a particular mixer channel.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -48,6 +47,8 @@ pub struct Mixer {
 }
 
 impl Mixer {
+    const N_VIDEO_CHANNELS: usize = 8;
+
     pub fn new(n_layers: usize) -> Self {
         let mut layers = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
@@ -101,9 +102,9 @@ impl Mixer {
 
     /// Render the current state of the mixer.
     /// Each inner vector represents one virtual video channel.
-    pub fn render(&self, external_clocks: &ClockBank) -> Vec<Vec<Vec<ArcSegment>>> {
-        let mut video_outs = Vec::with_capacity(N_VIDEO_CHANNELS);
-        for _ in 0..N_VIDEO_CHANNELS {
+    pub fn render(&self, external_clocks: &ClockBank) -> Vec<Vec<Rc<Vec<ArcSegment>>>> {
+        let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
+        for _ in 0..Self::N_VIDEO_CHANNELS {
             video_outs.push(Vec::new());
         }
         for layer in &self.layers {
@@ -116,11 +117,8 @@ impl Mixer {
             if level.0 == 0. {
                 continue;
             }
-            let rendered_beam = layer.beam.render(level, layer.mask, external_clocks);
+            let rendered_beam = Rc::new(layer.beam.render(level, layer.mask, external_clocks));
             for video_chan in &layer.video_outs {
-                // FIXME: in Python this was a shared reference, but here we have to clone it
-                // Consider refactoring using Rc and sharing the reference to
-                // render result.
                 video_outs[video_chan.0].push(rendered_beam.clone());
             }
         }

@@ -1,4 +1,5 @@
 mod animation;
+mod beam_matrix_minder;
 mod clock;
 mod device;
 mod midi;
