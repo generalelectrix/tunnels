@@ -6,36 +6,6 @@ import weakref
 from rtmidi import MidiIn, MidiOut
 from rtmidi.midiutil import open_midiport
 
-MidiMapping = namedtuple('MidiMapping', ('channel', 'control', 'kind'))
-
-# use kind argument and partials to ensure that notes and CCs hash differently
-NoteOnMapping = partial(MidiMapping, kind='NoteOn')
-NoteOffMapping = partial(MidiMapping, kind='NoteOff')
-ControlChangeMapping = partial(MidiMapping, kind='ControlChange')
-
-message_type_to_event_type = {
-    'NoteOff': 8 << 4,
-    'NoteOn': 9 << 4,
-    'ControlChange': 11 << 4,
-}
-
-class MidiOutput (object):
-    """Wrap a midi port into a more useful interface."""
-
-    def send_from_mappings(self, messages):
-        """Send an arbitrary number of midi messages.
-
-        Messages should be passed in as tuples of (mapping, value).
-        """
-        for mapping, value in messages:
-            self.send_from_mapping(mapping, value)
-
-    def send_from_mapping(self, mapping, value):
-        """Send a midi message from a mapping and a payload."""
-        b0 = message_type_to_event_type[mapping.kind] + mapping[0]
-        event = (b0, mapping[1], value)
-        log.debug("sending {}, {} to {}".format(mapping, value, self.name))
-        self.port.send_message(event)
 
 # mapping between event type and constructor
 event_type_to_mapping = {
