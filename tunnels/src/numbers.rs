@@ -1,4 +1,4 @@
-use derive_more::{Add, AddAssign, Display, From, Mul, RemAssign, Sub};
+use derive_more::{Add, AddAssign, Display, From, Mul, MulAssign, RemAssign, Sub};
 use serde::{Deserialize, Serialize};
 
 /// A float type constrained to the range [0.0, 1.0].
@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
     From,
     RemAssign,
     AddAssign,
+    MulAssign,
 )]
 pub struct UnipolarFloat(pub f64);
 

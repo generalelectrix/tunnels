@@ -1,7 +1,9 @@
 mod animation;
+mod beam;
 mod beam_matrix_minder;
 mod clock;
 mod device;
+mod look;
 mod midi;
 mod mixer;
 mod numbers;

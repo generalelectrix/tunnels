@@ -1,5 +1,7 @@
 use crate::{
+    beam::Beam,
     clock::ClockBank,
+    look::Look,
     numbers::UnipolarFloat,
     tunnel::{ArcSegment, Tunnel},
 };
@@ -14,7 +16,7 @@ pub struct LayerIdx(usize);
 /// By default, outputs to video feed 0.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Layer {
-    beam: Tunnel,
+    beam: Beam,
     level: UnipolarFloat,
     bump: bool,
     mask: bool,
@@ -22,7 +24,7 @@ pub struct Layer {
 }
 
 impl Layer {
-    fn new(beam: Tunnel) -> Self {
+    fn new(beam: Beam) -> Self {
         let mut video_outs = HashSet::new();
         video_outs.insert(VideoChannel(0));
         Self {
@@ -35,8 +37,29 @@ impl Layer {
     }
 
     /// Update the state of the beam in this layer.
-    fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
+    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
         self.beam.update_state(delta_t, external_clocks);
+    }
+
+    /// Render the beam in this layer.
+    pub fn render(
+        &self,
+        level_scale: UnipolarFloat,
+        mask: bool,
+        external_clocks: &ClockBank,
+    ) -> Vec<ArcSegment> {
+        let mut level: UnipolarFloat = if self.bump {
+            UnipolarFloat(1.0)
+        } else {
+            self.level
+        };
+        // WTF Rust why don't you want to let me multiply my newtypes
+        level = UnipolarFloat(level.0 * level_scale.0);
+        // if this layer is off, don't render at all
+        if level.0 == 0. {
+            return Vec::new();
+        }
+        self.beam.render(level, self.mask || mask, external_clocks)
     }
 }
 
@@ -52,9 +75,14 @@ impl Mixer {
     pub fn new(n_layers: usize) -> Self {
         let mut layers = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
-            layers.push(Layer::new(Tunnel::new()));
+            layers.push(Layer::new(Beam::Tunnel(Tunnel::new())));
         }
         Self { layers }
+    }
+
+    /// Clone the contents of this mixer as a Look.
+    pub fn as_look(&self) -> Look {
+        Look::from_layers(self.layers.clone())
     }
 
     /// Update the state of all of the beams contained in this mixer.
@@ -64,7 +92,7 @@ impl Mixer {
         }
     }
 
-    pub fn put_beam_in_layer(&mut self, layer: LayerIdx, beam: Tunnel) {
+    pub fn put_beam_in_layer(&mut self, layer: LayerIdx, beam: Beam) {
         self.layers[layer.0].beam = beam;
     }
 
@@ -108,18 +136,13 @@ impl Mixer {
             video_outs.push(Vec::new());
         }
         for layer in &self.layers {
-            let level = if layer.bump {
-                UnipolarFloat(1.0)
-            } else {
-                layer.level
-            };
-            // if this layer is off, don't render it at all
-            if level.0 == 0. {
+            let rendered_beam = layer.render(UnipolarFloat(1.0), false, external_clocks);
+            if rendered_beam.len() == 0 {
                 continue;
             }
-            let rendered_beam = Rc::new(layer.beam.render(level, layer.mask, external_clocks));
+            let rendered_ptr = Rc::new(rendered_beam);
             for video_chan in &layer.video_outs {
-                video_outs[video_chan.0].push(rendered_beam.clone());
+                video_outs[video_chan.0].push(rendered_ptr.clone());
             }
         }
         video_outs

@@ -1,16 +1,8 @@
-use crate::tunnel::Tunnel;
-
-enum UIState {
-    Idle,
-    BeamSave,
-    LookSave,
-    Delete,
-    LookEdit,
-}
+use crate::beam::Beam;
 
 /// Dealing with the matrix of APC40 buttons used to store beams.
 pub struct BeamMatrixMinder {
-    beams: Vec<Vec<Option<Tunnel>>>,
+    beams: Vec<Vec<Option<Beam>>>,
 }
 
 impl BeamMatrixMinder {
@@ -26,7 +18,7 @@ impl BeamMatrixMinder {
         Self { beams: rows }
     }
 
-    pub fn put(&mut self, row: usize, col: usize, beam: Tunnel) {
+    pub fn put(&mut self, row: usize, col: usize, beam: Beam) {
         self.beams[row][col] = Some(beam);
     }
 
@@ -34,7 +26,7 @@ impl BeamMatrixMinder {
         self.beams[row][col] = None;
     }
 
-    pub fn get(&mut self, row: usize, col: usize) -> Option<Tunnel> {
+    pub fn get(&mut self, row: usize, col: usize) -> Option<Beam> {
         return self.beams[row][col].clone();
     }
 }
