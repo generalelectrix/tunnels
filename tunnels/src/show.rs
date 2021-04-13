@@ -2,6 +2,8 @@ use log;
 use serde::{Deserialize, Serialize};
 use std::sync::mpsc::{channel, Receiver};
 
+use crate::{device::Device, midi::Event};
+
 /// How many virtual video channels should we send?
 const N_VIDEO_CHANNELS: i32 = 8;
 
@@ -34,7 +36,8 @@ impl Default for Config {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Show {
     config: Config,
+    midi_source: Receiver<(Device, Event)>,
 }
