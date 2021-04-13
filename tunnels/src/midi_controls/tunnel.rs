@@ -1,7 +1,7 @@
 use crate::{
     device::Device,
     midi::Event,
-    midi::{EventType, Mapping},
+    midi::{EventType, Manager, Mapping},
     show::ControlMessage::Tunnel,
     tunnel::ControlMessage,
     tunnel::StateChange,
@@ -78,10 +78,7 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.
-pub fn update_tunnel_control<S>(sc: StateChange, send_midi: S)
-where
-    S: Fn(Device, Event),
-{
+pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
     use StateChange::*;
 
     let event = match sc {
@@ -97,8 +94,8 @@ where
         MarqueeSpeed(v) => control_event(MARQUEE_SPEED, bipolar_to_midi(v)),
         RotationSpeed(v) => control_event(ROT_SPEED, bipolar_to_midi(v)),
     };
-    send_midi(Device::AkaiApc40, event);
-    send_midi(Device::TouchOsc, event);
+    manager.send(Device::AkaiApc40, event);
+    manager.send(Device::TouchOsc, event);
 }
 
 fn control_event(control: u8, value: u8) -> Event {

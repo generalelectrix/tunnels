@@ -3,7 +3,7 @@ use crate::{
     animation::{Animation, Target},
     clock::ClockBank,
 };
-use crate::{clock::Clock, waveforms::sawtooth};
+use crate::{clock::Clock, ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
@@ -279,13 +279,10 @@ impl Tunnel {
 
     /// Handle a control event.
     /// Emit any state changes that have happened as a result of handling.
-    pub fn control<S>(&mut self, msg: ControlMessage, emit: S)
-    where
-        S: Fn(StateChange),
-    {
+    pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
         use ControlMessage::*;
         match msg {
-            Set(sc) => self.handle_state_change(sc, emit),
+            Set(sc) => self.handle_state_change(sc, emitter),
             NudgeLeft => self.x_offset -= X_NUDGE,
             NudgeRight => self.x_offset += X_NUDGE,
             NudgeUp => self.y_offset += Y_NUDGE,
@@ -297,20 +294,17 @@ impl Tunnel {
             ResetRotation => {
                 self.rot_speed = BipolarFloat(0.0);
                 self.curr_rot_angle = UnipolarFloat(0.0);
-                emit(StateChange::RotationSpeed(BipolarFloat(0.0)));
+                emitter.emit_tunnel_state_change(StateChange::RotationSpeed(BipolarFloat(0.0)));
             }
             ResetMarquee => {
                 self.marquee_speed = BipolarFloat(0.0);
                 self.curr_marquee_angle = UnipolarFloat(0.0);
-                emit(StateChange::MarqueeSpeed(BipolarFloat(0.0)));
+                emitter.emit_tunnel_state_change(StateChange::MarqueeSpeed(BipolarFloat(0.0)));
             }
         }
     }
 
-    fn handle_state_change<S>(&mut self, sc: StateChange, emit: S)
-    where
-        S: Fn(StateChange),
-    {
+    fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use StateChange::*;
         match sc {
             MarqueeSpeed(v) => self.marquee_speed = v,
@@ -325,7 +319,7 @@ impl Tunnel {
             Segments(v) => self.segs = v,
             Blacking(v) => self.blacking = v,
         };
-        emit(sc);
+        emitter.emit_tunnel_state_change(sc);
     }
 }
 
@@ -398,4 +392,15 @@ pub enum ControlMessage {
     ResetPosition,
     ResetRotation,
     ResetMarquee,
+}
+
+pub trait EmitStateChange {
+    fn emit_tunnel_state_change(&mut self, sc: StateChange);
+}
+
+impl<T: EmitShowStateChange> EmitStateChange for T {
+    fn emit_tunnel_state_change(&mut self, sc: StateChange) {
+        use crate::show::StateChange as ShowStateChange;
+        self.emit(ShowStateChange::Tunnel(sc))
+    }
 }

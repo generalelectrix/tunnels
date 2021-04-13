@@ -1,13 +1,14 @@
 mod tunnel;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use crate::{
     device::Device,
-    midi::{Event, EventType, Mapping},
+    midi::{Event, EventType, Manager, Mapping},
     numbers::{BipolarFloat, UnipolarFloat},
     show::ControlMessage,
     show::StateChange,
+    ui::EmitStateChange,
 };
 
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
@@ -17,15 +18,20 @@ type ControlMessageCreator = fn(u8) -> ControlMessage;
 type ControlMap = HashMap<(Device, Mapping), ControlMessageCreator>;
 pub struct Dispatcher {
     map: ControlMap,
+    manager: Manager,
 }
 
 impl Dispatcher {
     /// Instantiate the master midi control dispatcher.
-    pub fn new() -> Self {
+    pub fn new(manager: Manager) -> Self {
         let mut map = HashMap::new();
         map_tunnel_controls(Device::AkaiApc40, &mut map);
         map_tunnel_controls(Device::TouchOsc, &mut map);
-        Self { map }
+        Self { map, manager }
+    }
+
+    pub fn receive(&self, timeout: Duration) -> Option<(Device, Event)> {
+        self.manager.receive(timeout)
     }
 
     /// Map a midi source device and event into a tunnels control message.
@@ -35,14 +41,13 @@ impl Dispatcher {
             .get(&(device, event.mapping))
             .map(|c| c(event.value))
     }
+}
 
+impl EmitStateChange for Dispatcher {
     /// Map application state changes into UI update midi messages.
-    pub fn update<S>(&self, sc: StateChange, send_midi: S)
-    where
-        S: Fn(Device, Event),
-    {
+    fn emit(&mut self, sc: StateChange) {
         match sc {
-            StateChange::Tunnel(sc) => update_tunnel_control(sc, send_midi),
+            StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.manager),
         }
     }
 }

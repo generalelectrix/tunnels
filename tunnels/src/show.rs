@@ -1,10 +1,13 @@
 use log;
 use serde::{Deserialize, Serialize};
-use std::sync::mpsc::{channel, Receiver};
+use std::{
+    sync::mpsc::{channel, Receiver},
+    time::Duration,
+};
 
 use crate::{
     beam_matrix_minder::BeamMatrixMinder, clock::ClockBank, device::Device, midi::Manager,
-    mixer::Mixer, tunnel,
+    midi_controls::Dispatcher, mixer::Mixer, tunnel, ui::UI,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -38,10 +41,25 @@ impl Default for Config {
 
 pub struct Show {
     config: Config,
-    midi_manager: Manager,
+    dispatcher: Dispatcher,
+    ui: UI,
     mixer: Mixer,
     clocks: ClockBank,
     beam_matrix: BeamMatrixMinder,
+}
+
+impl Show {
+    fn process_input(&mut self) {
+        if let Some(msg) = self.dispatcher.receive(Default::default()) {
+            if let Some(control_message) = self.dispatcher.dispatch(msg.0, msg.1) {
+                self.ui.handle_control_message(
+                    control_message,
+                    &mut self.mixer,
+                    &mut self.dispatcher,
+                )
+            }
+        }
+    }
 }
 
 pub enum ControlMessage {

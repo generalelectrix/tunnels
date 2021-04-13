@@ -17,15 +17,21 @@ impl UI {
         }
     }
 
-    pub fn handle_control_message<E>(&mut self, msg: ControlMessage, mixer: &mut Mixer, emit: E)
-    where
-        E: Fn(StateChange),
-    {
+    pub fn handle_control_message<E: EmitStateChange>(
+        &mut self,
+        msg: ControlMessage,
+        mixer: &mut Mixer,
+        emitter: &mut E,
+    ) {
         match msg {
             ControlMessage::Tunnel(tm) => match mixer.beam(self.current_layer) {
-                Beam::Tunnel(t) => t.control(tm, |sc| emit(StateChange::Tunnel(sc))),
+                Beam::Tunnel(t) => t.control(tm, emitter),
                 Beam::Look(_) => (),
             },
         }
     }
+}
+
+pub trait EmitStateChange {
+    fn emit(&mut self, sc: StateChange);
 }
