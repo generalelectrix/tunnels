@@ -43,8 +43,8 @@ pub struct Tunnel {
     anims: [Animation; N_ANIM],
 }
 
-impl Default for Tunnel {
-    fn default() -> Self {
+impl Tunnel {
+    fn new() -> Self {
         Self {
             marquee_speed: BipolarFloat(0.0),
             rot_speed: BipolarFloat(0.0),
@@ -64,9 +64,7 @@ impl Default for Tunnel {
             anims: Default::default(),
         }
     }
-}
 
-impl Tunnel {
     /// Return the blacking parameter, scaled to be an int on [-16, 16].
     ///
     /// If -1, return 1 (-1 implies all segments are black)

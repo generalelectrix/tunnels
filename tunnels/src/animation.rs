@@ -45,6 +45,12 @@ pub struct Animation {
 
 impl Default for Animation {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Animation {
+    pub fn new() -> Self {
         Self {
             waveform: Waveform::Sine,
             pulse: false,
@@ -54,13 +60,11 @@ impl Default for Animation {
             weight: UnipolarFloat(0.0),
             duty_cycle: UnipolarFloat(1.0),
             smoothing: UnipolarFloat(0.25),
-            internal_clock: Default::default(),
+            internal_clock: Clock::new(),
             clock_source: None,
         }
     }
-}
 
-impl Animation {
     /// Return true if this animation has nonzero weight.
     fn active(&self) -> bool {
         self.weight.0 > 0.0

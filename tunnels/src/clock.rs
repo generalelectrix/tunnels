@@ -39,8 +39,8 @@ pub struct Clock {
     pub submaster_level: UnipolarFloat,
 }
 
-impl Default for Clock {
-    fn default() -> Self {
+impl Clock {
+    pub fn new() -> Self {
         Self {
             curr_angle: UnipolarFloat(0.0),
             rate: 0.0,
@@ -50,9 +50,7 @@ impl Default for Clock {
             submaster_level: UnipolarFloat(1.0),
         }
     }
-}
 
-impl Clock {
     pub fn update_state(&mut self, delta_t: Duration) {
         if self.reset_on_update {
             self.ticked = true;

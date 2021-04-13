@@ -2,6 +2,7 @@ mod animation;
 mod clock;
 mod device;
 mod midi;
+mod mixer;
 mod numbers;
 mod show;
 mod tunnel;

@@ -5,7 +5,7 @@ use std::sync::mpsc::{channel, Receiver};
 use crate::{device::Device, midi::Manager};
 
 /// How many virtual video channels should we send?
-const N_VIDEO_CHANNELS: i32 = 8;
+const N_VIDEO_CHANNELS: u8 = 8;
 
 #[derive(Copy, Clone, Debug)]
 pub enum TestMode {
