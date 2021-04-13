@@ -27,10 +27,8 @@ pub struct Tunnel {
     col_width: UnipolarFloat,
     col_spread: UnipolarFloat,
     col_sat: UnipolarFloat,
-    /// positive int; could be any number, but previously [0,127]
-    ///
     /// TODO: regularize segs interface into regular float knobs
-    segs: u32,
+    segs: u8,
     /// remove segments at this interval
     ///
     /// bipolar float, internally interpreted as an int on [-16, 16]
@@ -173,19 +171,20 @@ impl Tunnel {
             let mut x_adjust = 0.;
             let mut y_adjust = 0.;
             // accumulate animation adjustments based on targets
+            use Target::*;
             for anim in &self.anims {
                 let anim_value = anim.get_value(rel_angle, external_clocks);
 
                 match anim.target {
-                    Target::Thickness => thickness_adjust += anim_value,
-                    Target::Size => size_adjust += anim_value * 0.5, // limit adjustment
-                    Target::AspectRatio => aspect_ratio_adjust += anim_value,
-                    Target::Color => col_center_adjust += anim_value * 0.5,
-                    Target::ColorSpread => col_width_adjust += anim_value,
-                    Target::ColorPeriodicity => col_period_adjust += anim_value * 8.,
-                    Target::ColorSaturation => col_sat_adjust += anim_value * 0.5, // limit adjustment
-                    Target::PositionX => x_adjust += anim_value,
-                    Target::PositionY => y_adjust += anim_value,
+                    Thickness => thickness_adjust += anim_value,
+                    Size => size_adjust += anim_value * 0.5, // limit adjustment
+                    AspectRatio => aspect_ratio_adjust += anim_value,
+                    Color => col_center_adjust += anim_value * 0.5,
+                    ColorSpread => col_width_adjust += anim_value,
+                    ColorPeriodicity => col_period_adjust += anim_value * 8.,
+                    ColorSaturation => col_sat_adjust += anim_value * 0.5, // limit adjustment
+                    PositionX => x_adjust += anim_value,
+                    PositionY => y_adjust += anim_value,
                     _ => (),
                 }
             }
@@ -261,6 +260,67 @@ impl Tunnel {
         }
         arcs
     }
+
+    /// Emit the current value of all controllable tunnel state.
+    pub fn emit_state(&self, emit: fn(StateChange)) {
+        use StateChange::*;
+        emit(MarqueeSpeed(self.marquee_speed));
+        emit(RotationSpeed(self.rot_speed));
+        emit(Thickness(self.thickness));
+        emit(Size(self.size));
+        emit(AspectRatio(self.aspect_ratio));
+        emit(ColorCenter(self.col_center));
+        emit(ColorWidth(self.col_width));
+        emit(ColorSpread(self.col_spread));
+        emit(ColorSaturation(self.col_sat));
+        emit(Segments(self.segs));
+        emit(Blacking(self.blacking));
+    }
+
+    /// Handle a control event.
+    /// Emit any state changes that have happened as a result of handling.
+    pub fn control(&mut self, msg: ControlMessage, emit: fn(StateChange)) {
+        use ControlMessage::*;
+        match msg {
+            Set(sc) => self.handle_state_change(sc, emit),
+            NudgeLeft => self.x_offset -= X_NUDGE,
+            NudgeRight => self.x_offset += X_NUDGE,
+            NudgeUp => self.y_offset += Y_NUDGE,
+            NudgeDown => self.y_offset -= Y_NUDGE,
+            ResetPosition => {
+                self.x_offset = 0.;
+                self.y_offset = 0.;
+            }
+            ResetRotation => {
+                self.rot_speed = BipolarFloat(0.0);
+                self.curr_rot_angle = UnipolarFloat(0.0);
+                emit(StateChange::RotationSpeed(BipolarFloat(0.0)));
+            }
+            ResetMarquee => {
+                self.marquee_speed = BipolarFloat(0.0);
+                self.curr_marquee_angle = UnipolarFloat(0.0);
+                emit(StateChange::MarqueeSpeed(BipolarFloat(0.0)));
+            }
+        }
+    }
+
+    fn handle_state_change(&mut self, sc: StateChange, emit: fn(StateChange)) {
+        use StateChange::*;
+        match sc {
+            MarqueeSpeed(v) => self.marquee_speed = v,
+            RotationSpeed(v) => self.rot_speed = v,
+            Thickness(v) => self.thickness = v,
+            Size(v) => self.size = v,
+            AspectRatio(v) => self.aspect_ratio = v,
+            ColorCenter(v) => self.col_center = v,
+            ColorWidth(v) => self.col_width = v,
+            ColorSpread(v) => self.col_spread = v,
+            ColorSaturation(v) => self.col_sat = v,
+            Segments(v) => self.segs = v,
+            Blacking(v) => self.blacking = v,
+        };
+        emit(sc);
+    }
 }
 
 /// Scale speeds with a quadratic curve.
@@ -310,7 +370,7 @@ const Y_NUDGE: f64 = 0.025;
 const THICKNESS_SCALE: f64 = 0.5;
 const MAX_ASPECT_RATIO: f64 = 2.0;
 
-pub enum ControlMessage {
+pub enum StateChange {
     MarqueeSpeed(BipolarFloat),
     RotationSpeed(BipolarFloat),
     Thickness(UnipolarFloat),
@@ -320,8 +380,11 @@ pub enum ControlMessage {
     ColorWidth(UnipolarFloat),
     ColorSpread(UnipolarFloat),
     ColorSaturation(UnipolarFloat),
-    Segments(u32), // FIXME integer knob
+    Segments(u8), // FIXME integer knob
     Blacking(BipolarFloat),
+}
+pub enum ControlMessage {
+    Set(StateChange),
     NudgeLeft,
     NudgeRight,
     NudgeUp,

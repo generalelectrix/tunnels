@@ -47,3 +47,7 @@ pub struct Show {
 pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
 }
+
+pub enum StateChange {
+    Tunnel(tunnel::StateChange),
+}
