@@ -30,7 +30,7 @@ pub struct Tunnel {
     /// positive int; could be any number, but previously [0,127]
     ///
     /// TODO: regularize segs interface into regular float knobs
-    segs: i32,
+    segs: u32,
     /// remove segments at this interval
     ///
     /// bipolar float, internally interpreted as an int on [-16, 16]
@@ -150,9 +150,9 @@ impl Tunnel {
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
             let should_draw_segment = if blacking > 0 {
-                seg_num % blacking.abs() == 0
+                (seg_num as i32) % blacking == 0
             } else {
-                seg_num % blacking.abs() != 0
+                (seg_num as i32) % blacking != 0
             };
             if !should_draw_segment {
                 continue;
@@ -290,6 +290,7 @@ pub struct ArcSegment {
     pub rot_angle: f64,
 }
 
+// TODO: move some of these into associated constants
 const N_ANIM: usize = 4;
 /// legacy tuning parameter; tunnel rotated this many radial units/frame at 30fps
 const ROT_SPEED_SCALE: f64 = 0.023;
@@ -308,3 +309,24 @@ const Y_NUDGE: f64 = 0.025;
 /// line thickness scale as fraction of min half-screen
 const THICKNESS_SCALE: f64 = 0.5;
 const MAX_ASPECT_RATIO: f64 = 2.0;
+
+pub enum ControlMessage {
+    MarqueeSpeed(BipolarFloat),
+    RotationSpeed(BipolarFloat),
+    Thickness(UnipolarFloat),
+    Size(UnipolarFloat),
+    AspectRatio(UnipolarFloat),
+    ColorCenter(UnipolarFloat),
+    ColorWidth(UnipolarFloat),
+    ColorSpread(UnipolarFloat),
+    ColorSaturation(UnipolarFloat),
+    Segments(u32), // FIXME integer knob
+    Blacking(BipolarFloat),
+    NudgeLeft,
+    NudgeRight,
+    NudgeUp,
+    NudgeDown,
+    ResetPosition,
+    ResetRotation,
+    ResetMarquee,
+}

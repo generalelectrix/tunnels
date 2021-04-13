@@ -5,6 +5,7 @@ mod clock;
 mod device;
 mod look;
 mod midi;
+mod midi_controls;
 mod mixer;
 mod numbers;
 mod show;

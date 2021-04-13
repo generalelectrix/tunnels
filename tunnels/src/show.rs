@@ -4,7 +4,7 @@ use std::sync::mpsc::{channel, Receiver};
 
 use crate::{
     beam_matrix_minder::BeamMatrixMinder, clock::ClockBank, device::Device, midi::Manager,
-    mixer::Mixer,
+    mixer::Mixer, tunnel,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -42,4 +42,8 @@ pub struct Show {
     mixer: Mixer,
     clocks: ClockBank,
     beam_matrix: BeamMatrixMinder,
+}
+
+pub enum ControlMessage {
+    Tunnel(tunnel::ControlMessage),
 }

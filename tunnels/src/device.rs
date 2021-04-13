@@ -3,7 +3,7 @@ use log::debug;
 use midir::SendError;
 
 /// The input device types that tunnels can work with.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Device {
     AkaiApc40,
     AkaiApc20,

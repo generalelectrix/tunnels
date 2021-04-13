@@ -10,14 +10,14 @@ use std::{
 
 use crate::device::Device;
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
     NoteOn,
     NoteOff,
     ControlChange,
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mapping {
     pub event_type: EventType,
     pub channel: u8,
