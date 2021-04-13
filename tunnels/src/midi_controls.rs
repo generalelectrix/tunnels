@@ -37,7 +37,10 @@ impl Dispatcher {
     }
 
     /// Map application state changes into UI update midi messages.
-    pub fn update(&self, sc: StateChange, send_midi: fn(Device, Event)) {
+    pub fn update<S>(&self, sc: StateChange, send_midi: S)
+    where
+        S: Fn(Device, Event),
+    {
         match sc {
             StateChange::Tunnel(sc) => update_tunnel_control(sc, send_midi),
         }

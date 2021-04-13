@@ -78,7 +78,10 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.
-pub fn update_tunnel_control(sc: StateChange, send_midi: fn(Device, Event)) {
+pub fn update_tunnel_control<S>(sc: StateChange, send_midi: S)
+where
+    S: Fn(Device, Event),
+{
     use StateChange::*;
 
     let event = match sc {

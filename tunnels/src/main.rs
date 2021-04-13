@@ -10,6 +10,7 @@ mod mixer;
 mod numbers;
 mod show;
 mod tunnel;
+mod ui;
 mod waveforms;
 
 use std::error::Error;

@@ -279,7 +279,10 @@ impl Tunnel {
 
     /// Handle a control event.
     /// Emit any state changes that have happened as a result of handling.
-    pub fn control(&mut self, msg: ControlMessage, emit: fn(StateChange)) {
+    pub fn control<S>(&mut self, msg: ControlMessage, emit: S)
+    where
+        S: Fn(StateChange),
+    {
         use ControlMessage::*;
         match msg {
             Set(sc) => self.handle_state_change(sc, emit),
@@ -304,7 +307,10 @@ impl Tunnel {
         }
     }
 
-    fn handle_state_change(&mut self, sc: StateChange, emit: fn(StateChange)) {
+    fn handle_state_change<S>(&mut self, sc: StateChange, emit: S)
+    where
+        S: Fn(StateChange),
+    {
         use StateChange::*;
         match sc {
             MarqueeSpeed(v) => self.marquee_speed = v,

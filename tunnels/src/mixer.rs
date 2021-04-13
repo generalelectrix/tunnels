@@ -11,6 +11,12 @@ use std::{collections::HashSet, rc::Rc, time::Duration};
 /// Index into a particular mixer channel.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct LayerIdx(usize);
+
+impl Default for LayerIdx {
+    fn default() -> Self {
+        LayerIdx(0)
+    }
+}
 /// The contents of a mixer channel.
 ///
 /// By default, outputs to video feed 0.
@@ -92,7 +98,11 @@ impl Mixer {
         }
     }
 
-    pub fn put_beam_in_layer(&mut self, layer: LayerIdx, beam: Beam) {
+    pub fn beam(&mut self, layer: LayerIdx) -> &mut Beam {
+        &mut self.layers[layer.0].beam
+    }
+
+    pub fn put_beam(&mut self, layer: LayerIdx, beam: Beam) {
         self.layers[layer.0].beam = beam;
     }
 
