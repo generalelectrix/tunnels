@@ -50,27 +50,6 @@ class MixerMI (ModelInterface):
         self.update_controllers('set_video_channel', layer, channel, state)
 
 
-class MixerLayer (object):
-    """Data bag for the contents of a mixer channel.
-
-    By default, a mixer channel outputs to video feed 0.
-    """
-    def __init__(self, beam, level=0.0, bump=False, mask=False, video_outs=None):
-        self.beam = beam
-        self.level = level
-        self.bump = bump
-        self.mask = mask
-        self.video_outs = {0} if video_outs is None else video_outs
-
-    def copy(self):
-        return MixerLayer(
-            beam=self.beam.copy(),
-            level=self.level,
-            bump=self.bump,
-            mask=self.mask,
-            video_outs=self.video_outs.copy())
-
-
 class Mixer (object):
 
 

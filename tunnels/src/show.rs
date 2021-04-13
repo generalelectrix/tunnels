@@ -2,7 +2,7 @@ use log;
 use serde::{Deserialize, Serialize};
 use std::sync::mpsc::{channel, Receiver};
 
-use crate::{device::Device, midi::Manager};
+use crate::{clock::ClockBank, device::Device, midi::Manager, mixer::Mixer};
 
 /// How many virtual video channels should we send?
 pub const N_VIDEO_CHANNELS: usize = 8;
@@ -39,4 +39,6 @@ impl Default for Config {
 pub struct Show {
     config: Config,
     midi_manager: Manager,
+    mixer: Mixer,
+    clocks: ClockBank,
 }
