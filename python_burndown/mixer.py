@@ -72,117 +72,14 @@ class MixerLayer (object):
 
 
 class Mixer (object):
-    """Holds a collection of beams in layers, and understands how they are mixed.
 
-    Args:
-        n_layers: Create this many mixer channges.
-        n_video_channels: Make this number of virtual video channels available.
-        test_mode: If True, disable high-level exception handling to allow
-            exceptioons to bubble up rather than catching and logging.
-    """
-    def __init__(self, n_layers, n_video_channels, test_mode):
-        self.test_mode = test_mode
-        self.n_video_channels = n_video_channels
-        self.layers = [MixerLayer(Tunnel()) for _ in range(n_layers)]
-
-    def update_state(self, delta_t, external_clocks):
-        """Update the state of all of the beams contained in this mixer."""
-        for i, layer in enumerate(self.layers):
-            # catch update errors from individual beams to avoid crashing the
-            # entire console if one beam has an error.
-            try:
-                layer.beam.update_state(delta_t, external_clocks)
-            except Exception:
-                if self.test_mode:
-                    raise
-                else:
-                    logging.exception(
-                        "Exception while updating beam in layer %d.",
-                        i)
 
     @property
     def layer_count(self):
         return len(self.layers)
 
-    def put_beam_in_layer(self, layer, beam):
-        self.layers[layer].beam = beam
-
     def get_beam_from_layer(self, layer):
         return self.layers[layer].beam
-
-    def set_level(self, layer, level):
-        """level: unit float"""
-        self.layers[layer].level = level
-
-    def bump_on(self, layer):
-        self.layers[layer].bump = True
-
-    def bump_off(self, layer):
-        self.layers[layer].bump = False
-
-    def toggle_mask_state(self, layer):
-        self.layers[layer].mask = mask_state = not self.layers[layer].mask
-        return mask_state
-
-    def toggle_video_channel(self, layer, channel):
-        """Toggle the whether layer is drawn to video channel.
-
-        Return the new state of display of this channel.
-        """
-        assert channel < self.n_video_channels
-        layer_video_outs = self.layers[layer].video_outs
-        if channel in layer_video_outs:
-            layer_video_outs.remove(channel)
-            return False
-        else:
-            layer_video_outs.add(channel)
-            return True
-
-    def video_channel_in(self, layer, channel):
-        """Draw this layer on the specified channel."""
-        self.layers[layer].video_outs.add(channel)
-
-    def video_channel_out(self, layer, channel):
-        """Do not draw this layer on the specified channel."""
-        assert channel < self.n_video_channels
-        self.layers[layer].video_outs.discard(channel)
-
-    def draw_layers(self, external_clocks):
-        """Return a list of lists of draw commands.
-
-        Each inner list represents one virtual video channel.
-
-        Args:
-            external_clocks: collection of external clocks that animators may be
-                bound to.
-        """
-        video_outs = [[] for _ in range(self.n_video_channels)]
-
-        for i, layer in enumerate(self.layers):
-            level = layer.level
-            bump = layer.bump
-
-            try:
-                if level > 0 or bump:
-                    if bump:
-                        draw_cmd = layer.beam.display(1.0, layer.mask, external_clocks)
-                    else:
-                        draw_cmd = layer.beam.display(level, layer.mask, external_clocks)
-                else:
-                    draw_cmd = []
-            except Exception:
-                if self.test_mode:
-                    raise
-                else:
-                    logging.exception(
-                        "Exception while displaying beam in layer %d.",
-                        i)
-                    draw_cmd = []
-
-            for video_chan in layer.video_outs:
-                video_outs[video_chan].append(draw_cmd)
-
-        return video_outs
 
     def get_copy_of_current_look(self):
         """Return a frozen copy of the entire current look."""

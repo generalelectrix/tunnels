@@ -44,7 +44,7 @@ pub struct Tunnel {
 }
 
 impl Tunnel {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             marquee_speed: BipolarFloat(0.0),
             rot_speed: BipolarFloat(0.0),
