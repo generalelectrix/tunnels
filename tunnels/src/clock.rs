@@ -34,7 +34,7 @@ pub struct Clock {
     /// the clock runs for one cycle when triggered then waits for another
     /// trigger event
     one_shot: bool,
-    /// should this clock reset and tick on its next update?
+    /// should this clock reset and tick on the next state update action?
     reset_on_update: bool,
     /// submaster level for this clock
     pub submaster_level: UnipolarFloat,
@@ -76,21 +76,6 @@ impl Clock {
     pub fn curr_angle(&self) -> UnipolarFloat {
         self.curr_angle
     }
-
-    /// Handle a control event.
-    /// Emit any state changes that have happened as a result of handling.
-    pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
-        use ControlMessage::*;
-        match msg {
-            Set(sc) => self.handle_state_change(sc, emitter),
-        }
-    }
-
-    fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
-        use StateChange::*;
-        match sc {};
-        emitter.emit_clock_state_change(sc);
-    }
 }
 
 /// A clock with a complete set of controls.
@@ -98,12 +83,98 @@ pub struct ControllableClock {
     clock: Clock,
     sync: TapSync,
     tick_age: Option<Duration>,
+    /// If true, reset the clock's phase to zero on every tap.
+    retrigger: bool,
 }
 
-pub enum StateChange {}
+impl ControllableClock {
+    pub fn new() -> Self {
+        Self {
+            clock: Clock::new(),
+            sync: TapSync::new(),
+            tick_age: None,
+            retrigger: false,
+        }
+    }
+
+    const TICK_DISPLAY_DURATION: Duration = Duration::from_millis(250);
+
+    /// Update the state of this clock.
+    /// The clock may need to emit state update messages.
+    pub fn update_state<E: EmitStateChange>(&mut self, delta_t: Duration, emitter: &mut E) {
+        self.clock.update_state(delta_t);
+        if self.clock.ticked {
+            emitter.emit_clock_state_change(StateChange::Ticked(true));
+            self.tick_age = Some(Duration::new(0, 0));
+        } else if let Some(tick_age) = self.tick_age {
+            let new_tick_age = tick_age + delta_t;
+            if new_tick_age > Self::TICK_DISPLAY_DURATION {
+                self.tick_age = None;
+                emitter.emit_clock_state_change(StateChange::Ticked(false));
+            } else {
+                self.tick_age = Some(new_tick_age);
+            }
+        }
+    }
+
+    fn tick_indicator_state(&self) -> bool {
+        if let Some(age) = self.tick_age {
+            age < Self::TICK_DISPLAY_DURATION
+        } else {
+            false
+        }
+    }
+
+    /// Emit the current value of all controllable state.
+    pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
+        use StateChange::*;
+        emitter.emit_clock_state_change(Retrigger(self.retrigger));
+        emitter.emit_clock_state_change(OneShot(self.clock.one_shot));
+        emitter.emit_clock_state_change(SubmasterLevel(self.clock.submaster_level));
+        emitter.emit_clock_state_change(Ticked(self.tick_indicator_state()));
+    }
+
+    /// Handle a control event.
+    /// Emit any state changes that have happened as a result of handling.
+    pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
+        use ControlMessage::*;
+        match msg {
+            Set(sc) => self.handle_state_change(sc, emitter),
+            Tap => {
+                if self.retrigger {
+                    self.clock.reset_on_update = true;
+                } else {
+                    if let Some(rate) = self.sync.tap() {
+                        self.clock.rate = rate;
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
+        use StateChange::*;
+        match sc {
+            Retrigger(v) => self.retrigger = v,
+            OneShot(v) => self.clock.one_shot = v,
+            SubmasterLevel(v) => self.clock.submaster_level = v,
+            Ticked(_) => (),
+        };
+        emitter.emit_clock_state_change(sc);
+    }
+}
+
+pub enum StateChange {
+    Retrigger(bool),
+    OneShot(bool),
+    SubmasterLevel(UnipolarFloat),
+    /// Outgoing only, no effect as control.
+    Ticked(bool),
+}
 
 pub enum ControlMessage {
     Set(StateChange),
+    Tap,
 }
 
 pub trait EmitStateChange {
@@ -160,7 +231,8 @@ impl TapSync {
         }
     }
 
-    pub fn tap(&mut self) {
+    /// Process a tap event.  Return our new rate estimate if we have one.
+    pub fn tap(&mut self) -> Option<f64> {
         let tap = Instant::now();
         // if the tap buffer isn't empty, determine elapsed time from the last
         // tap to this one
@@ -182,5 +254,6 @@ impl TapSync {
             }
             None => self.add_tap(tap),
         }
+        self.rate
     }
 }
