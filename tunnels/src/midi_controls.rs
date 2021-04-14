@@ -1,5 +1,6 @@
 mod animation;
 mod beam_store;
+mod mixer;
 mod tunnel;
 
 use std::{collections::HashMap, time::Duration};
@@ -16,7 +17,7 @@ use crate::{
 use self::animation::{map_animation_controls, update_animation_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
-type ControlMessageCreator = fn(u8) -> ControlMessage;
+type ControlMessageCreator = Box<Fn(u8) -> ControlMessage>;
 
 pub struct ControlMap(pub HashMap<(Device, Mapping), ControlMessageCreator>);
 
@@ -41,6 +42,8 @@ impl Dispatcher {
         let mut map = ControlMap::new();
         map_tunnel_controls(Device::AkaiApc40, &mut map);
         map_tunnel_controls(Device::TouchOsc, &mut map);
+        map_animation_controls(Device::AkaiApc40, &mut map);
+        map_animation_controls(Device::TouchOsc, &mut map);
         Self { map, manager }
     }
 

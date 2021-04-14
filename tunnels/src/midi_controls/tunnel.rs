@@ -35,41 +35,54 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     let mut add = |mapping, creator| map.add(device, mapping, creator);
 
     // unipolar knobs
-    add(THICKNESS, |v| Tunnel(Set(Thickness(unipolar_from_midi(v)))));
-    add(SIZE, |v| Tunnel(Set(Size(unipolar_from_midi(v)))));
-    add(COL_CENTER, |v| {
-        Tunnel(Set(ColorCenter(unipolar_from_midi(v))))
-    });
-    add(COL_WIDTH, |v| {
-        Tunnel(Set(ColorWidth(unipolar_from_midi(v))))
-    });
-    add(COL_SPREAD, |v| {
-        Tunnel(Set(ColorSpread(unipolar_from_midi(v))))
-    });
-    add(COL_SAT, |v| {
-        Tunnel(Set(ColorSaturation(unipolar_from_midi(v))))
-    });
-    add(ASPECT_RATIO, |v| {
-        Tunnel(Set(AspectRatio(unipolar_from_midi(v))))
-    });
+    add(
+        THICKNESS,
+        Box::new(|v| Tunnel(Set(Thickness(unipolar_from_midi(v))))),
+    );
+    add(SIZE, Box::new(|v| Tunnel(Set(Size(unipolar_from_midi(v))))));
+    add(
+        COL_CENTER,
+        Box::new(|v| Tunnel(Set(ColorCenter(unipolar_from_midi(v))))),
+    );
+    add(
+        COL_WIDTH,
+        Box::new(|v| Tunnel(Set(ColorWidth(unipolar_from_midi(v))))),
+    );
+    add(
+        COL_SPREAD,
+        Box::new(|v| Tunnel(Set(ColorSpread(unipolar_from_midi(v))))),
+    );
+    add(
+        COL_SAT,
+        Box::new(|v| Tunnel(Set(ColorSaturation(unipolar_from_midi(v))))),
+    );
+    add(
+        ASPECT_RATIO,
+        Box::new(|v| Tunnel(Set(AspectRatio(unipolar_from_midi(v))))),
+    );
     // bipolar knobs
-    add(ROT_SPEED, |v| {
-        Tunnel(Set(RotationSpeed(bipolar_from_midi(v))))
-    });
-    add(MARQUEE_SPEED, |v| {
-        Tunnel(Set(MarqueeSpeed(bipolar_from_midi(v))))
-    });
-    add(BLACKING, |v| Tunnel(Set(Blacking(bipolar_from_midi(v)))));
+    add(
+        ROT_SPEED,
+        Box::new(|v| Tunnel(Set(RotationSpeed(bipolar_from_midi(v))))),
+    );
+    add(
+        MARQUEE_SPEED,
+        Box::new(|v| Tunnel(Set(MarqueeSpeed(bipolar_from_midi(v))))),
+    );
+    add(
+        BLACKING,
+        Box::new(|v| Tunnel(Set(Blacking(bipolar_from_midi(v))))),
+    );
     // FIXME segments tied to midi value
-    add(SEGMENTS, |v| Tunnel(Set(Segments(v + 1))));
+    add(SEGMENTS, Box::new(|v| Tunnel(Set(Segments(v + 1)))));
 
-    add(NUDGE_RIGHT, |_| Tunnel(NudgeRight));
-    add(NUDGE_LEFT, |_| Tunnel(NudgeLeft));
-    add(NUDGE_UP, |_| Tunnel(NudgeUp));
-    add(NUDGE_DOWN, |_| Tunnel(NudgeDown));
-    add(RESET_POSITION, |_| Tunnel(ResetPosition));
-    add(RESET_ROTATION, |_| Tunnel(ResetRotation));
-    add(RESET_MARQUEE, |_| Tunnel(ResetMarquee));
+    add(NUDGE_RIGHT, Box::new(|_| Tunnel(NudgeRight)));
+    add(NUDGE_LEFT, Box::new(|_| Tunnel(NudgeLeft)));
+    add(NUDGE_UP, Box::new(|_| Tunnel(NudgeUp)));
+    add(NUDGE_DOWN, Box::new(|_| Tunnel(NudgeDown)));
+    add(RESET_POSITION, Box::new(|_| Tunnel(ResetPosition)));
+    add(RESET_ROTATION, Box::new(|_| Tunnel(ResetRotation)));
+    add(RESET_MARQUEE, Box::new(|_| Tunnel(ResetMarquee)));
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.

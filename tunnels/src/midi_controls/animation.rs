@@ -88,91 +88,119 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
 
     let mut add = |mapping, creator| map.add(device, mapping, creator);
 
-    add(SPEED, |v| Animation(Set(Speed(bipolar_from_midi(v)))));
-    add(WEIGHT, |v| Animation(Set(Weight(unipolar_from_midi(v)))));
-    add(DUTY_CYCLE, |v| {
-        Animation(Set(DutyCycle(unipolar_from_midi(v))))
-    });
-    add(SMOOTHING, |v| {
-        Animation(Set(Smoothing(unipolar_from_midi(v))))
-    });
+    add(
+        SPEED,
+        Box::new(|v| Animation(Set(Speed(bipolar_from_midi(v))))),
+    );
+    add(
+        WEIGHT,
+        Box::new(|v| Animation(Set(Weight(unipolar_from_midi(v))))),
+    );
+    add(
+        DUTY_CYCLE,
+        Box::new(|v| Animation(Set(DutyCycle(unipolar_from_midi(v))))),
+    );
+    add(
+        SMOOTHING,
+        Box::new(|v| Animation(Set(Smoothing(unipolar_from_midi(v))))),
+    );
 
     // waveform select
-    add(SINE, |_| Animation(Set(Waveform(Sine))));
-    add(TRIANGLE, |_| Animation(Set(Waveform(Triangle))));
-    add(SQUARE, |_| Animation(Set(Waveform(Square))));
-    add(SAWTOOTH, |_| Animation(Set(Waveform(Sawtooth))));
+    add(SINE, Box::new(|_| Animation(Set(Waveform(Sine)))));
+    add(TRIANGLE, Box::new(|_| Animation(Set(Waveform(Triangle)))));
+    add(SQUARE, Box::new(|_| Animation(Set(Waveform(Square)))));
+    add(SAWTOOTH, Box::new(|_| Animation(Set(Waveform(Sawtooth)))));
 
     // n periods select
     // can't do this in a loop because the callback must be fn, not a closure
-    add(note_ch0(0), |_| Animation(Set(NPeriods(0))));
-    add(note_ch0(1), |_| Animation(Set(NPeriods(1))));
-    add(note_ch0(2), |_| Animation(Set(NPeriods(2))));
-    add(note_ch0(3), |_| Animation(Set(NPeriods(3))));
-    add(note_ch0(4), |_| Animation(Set(NPeriods(4))));
-    add(note_ch0(5), |_| Animation(Set(NPeriods(5))));
-    add(note_ch0(6), |_| Animation(Set(NPeriods(6))));
-    add(note_ch0(7), |_| Animation(Set(NPeriods(7))));
-    add(note_ch0(8), |_| Animation(Set(NPeriods(8))));
-    add(note_ch0(9), |_| Animation(Set(NPeriods(9))));
-    add(note_ch0(10), |_| Animation(Set(NPeriods(10))));
-    add(note_ch0(11), |_| Animation(Set(NPeriods(11))));
-    add(note_ch0(12), |_| Animation(Set(NPeriods(12))));
-    add(note_ch0(13), |_| Animation(Set(NPeriods(13))));
-    add(note_ch0(14), |_| Animation(Set(NPeriods(14))));
-    add(note_ch0(15), |_| Animation(Set(NPeriods(15))));
+    add(note_ch0(0), Box::new(|_| Animation(Set(NPeriods(0)))));
+    add(note_ch0(1), Box::new(|_| Animation(Set(NPeriods(1)))));
+    add(note_ch0(2), Box::new(|_| Animation(Set(NPeriods(2)))));
+    add(note_ch0(3), Box::new(|_| Animation(Set(NPeriods(3)))));
+    add(note_ch0(4), Box::new(|_| Animation(Set(NPeriods(4)))));
+    add(note_ch0(5), Box::new(|_| Animation(Set(NPeriods(5)))));
+    add(note_ch0(6), Box::new(|_| Animation(Set(NPeriods(6)))));
+    add(note_ch0(7), Box::new(|_| Animation(Set(NPeriods(7)))));
+    add(note_ch0(8), Box::new(|_| Animation(Set(NPeriods(8)))));
+    add(note_ch0(9), Box::new(|_| Animation(Set(NPeriods(9)))));
+    add(note_ch0(10), Box::new(|_| Animation(Set(NPeriods(10)))));
+    add(note_ch0(11), Box::new(|_| Animation(Set(NPeriods(11)))));
+    add(note_ch0(12), Box::new(|_| Animation(Set(NPeriods(12)))));
+    add(note_ch0(13), Box::new(|_| Animation(Set(NPeriods(13)))));
+    add(note_ch0(14), Box::new(|_| Animation(Set(NPeriods(14)))));
+    add(note_ch0(15), Box::new(|_| Animation(Set(NPeriods(15)))));
 
     // target select
-    add(ROTATION, |_| Animation(Set(Target(Rotation))));
-    add(THICKNESS, |_| Animation(Set(Target(Thickness))));
-    add(SIZE, |_| Animation(Set(Target(Size))));
-    add(ASPECT_RATIO, |_| Animation(Set(Target(AspectRatio))));
-    add(COLOR, |_| Animation(Set(Target(Color))));
-    add(COLOR_SPREAD, |_| Animation(Set(Target(ColorSpread))));
-    add(COLOR_PERIODICITY, |_| {
-        Animation(Set(Target(ColorPeriodicity)))
-    });
-    add(COLOR_SATURATION, |_| {
-        Animation(Set(Target(ColorSaturation)))
-    });
-    add(MARQUEE, |_| Animation(Set(Target(MarqueeRotation))));
-    add(SEGMENTS, |_| Animation(Set(Target(Segments))));
-    add(BLACKING, |_| Animation(Set(Target(Blacking))));
-    add(POSITIONX, |_| Animation(Set(Target(PositionX))));
-    add(POSITIONY, |_| Animation(Set(Target(PositionY))));
+    add(ROTATION, Box::new(|_| Animation(Set(Target(Rotation)))));
+    add(THICKNESS, Box::new(|_| Animation(Set(Target(Thickness)))));
+    add(SIZE, Box::new(|_| Animation(Set(Target(Size)))));
+    add(
+        ASPECT_RATIO,
+        Box::new(|_| Animation(Set(Target(AspectRatio)))),
+    );
+    add(COLOR, Box::new(|_| Animation(Set(Target(Color)))));
+    add(
+        COLOR_SPREAD,
+        Box::new(|_| Animation(Set(Target(ColorSpread)))),
+    );
+    add(
+        COLOR_PERIODICITY,
+        Box::new(|_| Animation(Set(Target(ColorPeriodicity)))),
+    );
+    add(
+        COLOR_SATURATION,
+        Box::new(|_| Animation(Set(Target(ColorSaturation)))),
+    );
+    add(
+        MARQUEE,
+        Box::new(|_| Animation(Set(Target(MarqueeRotation)))),
+    );
+    add(SEGMENTS, Box::new(|_| Animation(Set(Target(Segments)))));
+    add(BLACKING, Box::new(|_| Animation(Set(Target(Blacking)))));
+    add(POSITIONX, Box::new(|_| Animation(Set(Target(PositionX)))));
+    add(POSITIONY, Box::new(|_| Animation(Set(Target(PositionY)))));
 
     // pulse/invert
-    add(PULSE, |_| Animation(TogglePulse));
-    add(INVERT, |_| Animation(ToggleInvert));
+    add(PULSE, Box::new(|_| Animation(TogglePulse)));
+    add(INVERT, Box::new(|_| Animation(ToggleInvert)));
 
     // clock select
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8), |_| {
-        Animation(Set(ClockSource(None)))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 0) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(0)))))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 1) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(1)))))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 2) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(2)))))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 3) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(3)))))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 4) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(4)))))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 5) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(5)))))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 6) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(6)))))
-    });
-    add(note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 7) as u8), |_| {
-        Animation(Set(ClockSource(Some(ClockIdx(7)))))
-    });
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8),
+        Box::new(|_| Animation(Set(ClockSource(None)))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 0) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(0)))))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 1) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(1)))))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 2) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(2)))))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 3) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(3)))))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 4) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(4)))))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 5) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(5)))))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 6) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(6)))))),
+    );
+    add(
+        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 7) as u8),
+        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(7)))))),
+    );
 }
 
 /// Emit midi messages to update UIs given the provided state change.

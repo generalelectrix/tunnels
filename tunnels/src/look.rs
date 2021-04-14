@@ -6,7 +6,7 @@ use std::time::Duration;
 /// All channel settings are preserved.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Look {
-    channels: Vec<Channel>,
+    pub channels: Vec<Channel>,
 }
 
 impl Look {

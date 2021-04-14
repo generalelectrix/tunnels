@@ -153,33 +153,53 @@ impl Mixer {
     /// Emit any state changes that have happened as a result of handling.
     pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
         use ChannelControlMessage::*;
-        match msg.message {
-            Set(sc) => self.handle_state_change(
-                StateChange {
-                    channel: msg.channel,
-                    change: sc,
-                },
-                emitter,
-            ),
-            ToggleMask => {
-                let toggled = !self.channels[msg.channel.0].mask;
-                self.handle_state_change(
+        use ControlMessage::*;
+        match msg {
+            Channel((channel, chan_msg)) => match chan_msg {
+                Set(sc) => self.handle_state_change(
                     StateChange {
-                        channel: msg.channel,
-                        change: ChannelStateChange::Mask(toggled),
+                        channel: channel,
+                        change: sc,
                     },
                     emitter,
-                )
-            }
-            ToggleVideoChannel(vc) => {
-                let toggled = !self.channels[msg.channel.0].video_outs.contains(&vc);
-                self.handle_state_change(
-                    StateChange {
-                        channel: msg.channel,
-                        change: ChannelStateChange::VideoChannel((vc, toggled)),
-                    },
-                    emitter,
-                )
+                ),
+                ToggleMask => {
+                    let toggled = !self.channels[channel.0].mask;
+                    self.handle_state_change(
+                        StateChange {
+                            channel: channel,
+                            change: ChannelStateChange::Mask(toggled),
+                        },
+                        emitter,
+                    )
+                }
+                ToggleVideoChannel(vc) => {
+                    let toggled = !self.channels[channel.0].video_outs.contains(&vc);
+                    self.handle_state_change(
+                        StateChange {
+                            channel: channel,
+                            change: ChannelStateChange::VideoChannel((vc, toggled)),
+                        },
+                        emitter,
+                    )
+                }
+                PutBeam(b) => {
+                    let is_look = match *b {
+                        Beam::Look(_) => true,
+                        _ => false,
+                    };
+                    self.channels[channel.0].beam = *b;
+                    emitter.emit_mixer_state_change(StateChange {
+                        channel: channel,
+                        change: ChannelStateChange::ContainsLook(is_look),
+                    })
+                }
+            },
+            SetLook(look) => {
+                // clobber the entire mixer state
+                self.channels = look.channels;
+                // update the state given the new channel data
+                self.emit_state(emitter);
             }
         }
     }
@@ -207,13 +227,14 @@ impl Mixer {
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct VideoChannel(usize);
 
-pub struct ControlMessage {
-    channel: ChannelIdx,
-    message: ChannelControlMessage,
+pub enum ControlMessage {
+    Channel((ChannelIdx, ChannelControlMessage)),
+    SetLook(Look),
 }
 
 pub enum ChannelControlMessage {
     Set(ChannelStateChange),
+    PutBeam(Box<Beam>),
     ToggleMask,
     ToggleVideoChannel(VideoChannel),
 }
