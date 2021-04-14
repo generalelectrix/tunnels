@@ -35,13 +35,22 @@ pub const fn note_on(channel: u8, control: u8) -> Mapping {
     }
 }
 
+/// Helper constructor for a note off mapping.
+pub const fn note_off(channel: u8, control: u8) -> Mapping {
+    Mapping {
+        event_type: EventType::NoteOff,
+        channel,
+        control,
+    }
+}
+
 /// Helper constructor - most controls are on channel 0.
-pub const fn note_ch0(control: u8) -> Mapping {
+pub const fn note_on_ch0(control: u8) -> Mapping {
     note_on(0, control)
 }
 
 /// Helper constructor - other relevant special case is channel 1.
-pub const fn note_ch1(control: u8) -> Mapping {
+pub const fn note_on_ch1(control: u8) -> Mapping {
     note_on(1, control)
 }
 

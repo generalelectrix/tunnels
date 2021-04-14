@@ -5,7 +5,7 @@ use crate::{
     animation::Waveform as WaveformType,
     clock::ClockIdx,
     device::Device,
-    midi::{cc_ch0, event, note_ch0, note_ch1, Manager, Mapping},
+    midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
     show::ControlMessage::Animation,
 };
 use lazy_static::lazy_static;
@@ -22,29 +22,29 @@ const DUTY_CYCLE: Mapping = cc_ch0(50);
 const SMOOTHING: Mapping = cc_ch0(51);
 
 // waveform type buttons
-const SINE: Mapping = note_ch0(24);
-const TRIANGLE: Mapping = note_ch0(25);
-const SQUARE: Mapping = note_ch0(26);
-const SAWTOOTH: Mapping = note_ch0(27);
+const SINE: Mapping = note_on_ch0(24);
+const TRIANGLE: Mapping = note_on_ch0(25);
+const SQUARE: Mapping = note_on_ch0(26);
+const SAWTOOTH: Mapping = note_on_ch0(27);
 
 // target buttons
-const ROTATION: Mapping = note_ch0(35);
-const THICKNESS: Mapping = note_ch0(36);
-const SIZE: Mapping = note_ch0(37);
-const ASPECT_RATIO: Mapping = note_ch0(38);
-const COLOR: Mapping = note_ch0(39);
-const COLOR_SPREAD: Mapping = note_ch0(40);
-const COLOR_PERIODICITY: Mapping = note_ch0(41);
-const COLOR_SATURATION: Mapping = note_ch0(42);
-const MARQUEE: Mapping = note_ch0(43);
-const SEGMENTS: Mapping = note_ch0(44);
-const BLACKING: Mapping = note_ch0(45);
-const POSITIONX: Mapping = note_ch0(46);
-const POSITIONY: Mapping = note_ch0(47);
+const ROTATION: Mapping = note_on_ch0(35);
+const THICKNESS: Mapping = note_on_ch0(36);
+const SIZE: Mapping = note_on_ch0(37);
+const ASPECT_RATIO: Mapping = note_on_ch0(38);
+const COLOR: Mapping = note_on_ch0(39);
+const COLOR_SPREAD: Mapping = note_on_ch0(40);
+const COLOR_PERIODICITY: Mapping = note_on_ch0(41);
+const COLOR_SATURATION: Mapping = note_on_ch0(42);
+const MARQUEE: Mapping = note_on_ch0(43);
+const SEGMENTS: Mapping = note_on_ch0(44);
+const BLACKING: Mapping = note_on_ch0(45);
+const POSITIONX: Mapping = note_on_ch0(46);
+const POSITIONY: Mapping = note_on_ch0(47);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
-const PULSE: Mapping = note_ch1(0);
-const INVERT: Mapping = note_ch1(1);
+const PULSE: Mapping = note_on_ch1(0);
+const INVERT: Mapping = note_on_ch1(1);
 
 const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
@@ -53,7 +53,7 @@ lazy_static! {
         mappings: vec!(SINE, TRIANGLE, SQUARE, SAWTOOTH)
     };
     static ref n_periods_select_buttons: RadioButtons = RadioButtons {
-        mappings: (0..15).map(note_ch0).collect(),
+        mappings: (0..15).map(note_on_ch0).collect(),
     };
     static ref target_select_buttons: RadioButtons = RadioButtons {
         mappings: vec!(
@@ -75,7 +75,7 @@ lazy_static! {
     static ref clock_select_buttons: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
         mappings: (-1..8)
-            .map(|clock_id| note_ch1((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
+            .map(|clock_id| note_on_ch1((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
             .collect(),
     };
 }
@@ -114,7 +114,7 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
     // n periods select
     for n_periods in 0..16 {
         add(
-            note_ch0(n_periods as u8),
+            note_on_ch0(n_periods as u8),
             Box::new(move |_| Animation(Set(NPeriods(n_periods)))),
         );
     }
@@ -155,12 +155,12 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
 
     // clock select
     add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8),
+        note_on_ch1((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8),
         Box::new(|_| Animation(Set(ClockSource(None)))),
     );
     for clock_num in 0..8 {
         add(
-            note_ch1((CLOCK_SELECT_CONTROL_OFFSET + clock_num) as u8),
+            note_on_ch1((CLOCK_SELECT_CONTROL_OFFSET + clock_num) as u8),
             Box::new(move |_| Animation(Set(ClockSource(Some(ClockIdx(clock_num as usize)))))),
         );
     }
@@ -192,7 +192,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 send,
             );
         }
-        NPeriods(v) => n_periods_select_buttons.select(note_ch0(v as u8), send),
+        NPeriods(v) => n_periods_select_buttons.select(note_on_ch0(v as u8), send),
         Target(v) => {
             use AnimationTarget::*;
             target_select_buttons.select(
@@ -221,8 +221,10 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 Some(source) => (source.0 as i32),
                 None => -1,
             };
-            clock_select_buttons
-                .select(note_ch1((index + CLOCK_SELECT_CONTROL_OFFSET) as u8), send);
+            clock_select_buttons.select(
+                note_on_ch1((index + CLOCK_SELECT_CONTROL_OFFSET) as u8),
+                send,
+            );
         }
     }
 }

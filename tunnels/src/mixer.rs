@@ -13,7 +13,7 @@ use typed_index_derive::TypedIndex;
 /// Index into a particular mixer channel.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, TypedIndex)]
 #[typed_index(Channel)]
-pub struct ChannelIdx(usize);
+pub struct ChannelIdx(pub usize);
 
 impl Default for ChannelIdx {
     fn default() -> Self {
@@ -80,7 +80,7 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    const N_VIDEO_CHANNELS: usize = 8;
+    pub const N_VIDEO_CHANNELS: usize = 8;
 
     pub fn new(n_channels: usize) -> Self {
         let mut channels = Vec::with_capacity(n_channels);
@@ -228,7 +228,7 @@ impl Mixer {
 
 /// Index into a particular virtual video channel.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct VideoChannel(usize);
+pub struct VideoChannel(pub usize);
 
 pub enum ControlMessage {
     Channel((ChannelIdx, ChannelControlMessage)),
@@ -243,8 +243,8 @@ pub enum ChannelControlMessage {
 }
 
 pub struct StateChange {
-    channel: ChannelIdx,
-    change: ChannelStateChange,
+    pub channel: ChannelIdx,
+    pub change: ChannelStateChange,
 }
 pub enum ChannelStateChange {
     Level(UnipolarFloat),

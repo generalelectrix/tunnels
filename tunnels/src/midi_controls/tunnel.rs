@@ -1,7 +1,7 @@
 use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap};
 use crate::{
     device::Device,
-    midi::{cc_ch0, event, note_ch0, Manager, Mapping},
+    midi::{cc_ch0, event, note_on_ch0, Manager, Mapping},
     show::ControlMessage::Tunnel,
     tunnel::ControlMessage,
     tunnel::StateChange,
@@ -21,13 +21,13 @@ const BLACKING: Mapping = cc_ch0(54);
 const SEGMENTS: Mapping = cc_ch0(53);
 
 // Buttons
-const NUDGE_RIGHT: Mapping = note_ch0(0x60);
-const NUDGE_LEFT: Mapping = note_ch0(0x61);
-const NUDGE_UP: Mapping = note_ch0(0x5F);
-const NUDGE_DOWN: Mapping = note_ch0(0x5E);
-const RESET_POSITION: Mapping = note_ch0(0x62);
-const RESET_ROTATION: Mapping = note_ch0(120);
-const RESET_MARQUEE: Mapping = note_ch0(121);
+const NUDGE_RIGHT: Mapping = note_on_ch0(0x60);
+const NUDGE_LEFT: Mapping = note_on_ch0(0x61);
+const NUDGE_UP: Mapping = note_on_ch0(0x5F);
+const NUDGE_DOWN: Mapping = note_on_ch0(0x5E);
+const RESET_POSITION: Mapping = note_on_ch0(0x62);
+const RESET_ROTATION: Mapping = note_on_ch0(120);
+const RESET_MARQUEE: Mapping = note_on_ch0(121);
 
 pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     use ControlMessage::*;
