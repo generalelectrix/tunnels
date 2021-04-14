@@ -73,6 +73,7 @@ impl Show {
 pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
     Animation(animation::ControlMessage),
+    Mixer(mixer::ControlMessage),
 }
 
 pub enum StateChange {

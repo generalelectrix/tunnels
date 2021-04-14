@@ -8,9 +8,11 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, rc::Rc, time::Duration};
+use typed_index_derive::TypedIndex;
 
 /// Index into a particular mixer channel.
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, TypedIndex)]
+#[typed_index(Channel)]
 pub struct ChannelIdx(usize);
 
 impl Default for ChannelIdx {
@@ -18,6 +20,7 @@ impl Default for ChannelIdx {
         ChannelIdx(0)
     }
 }
+
 /// The contents of a mixer channel.
 ///
 /// By default, outputs to video feed 0.
@@ -100,7 +103,7 @@ impl Mixer {
     }
 
     pub fn beam(&mut self, channel: ChannelIdx) -> &mut Beam {
-        &mut self.channels[channel.0].beam
+        &mut self.channels[channel].beam
     }
 
     /// Render the current state of the mixer.
@@ -164,7 +167,7 @@ impl Mixer {
                     emitter,
                 ),
                 ToggleMask => {
-                    let toggled = !self.channels[channel.0].mask;
+                    let toggled = !self.channels[channel].mask;
                     self.handle_state_change(
                         StateChange {
                             channel: channel,
@@ -174,7 +177,7 @@ impl Mixer {
                     )
                 }
                 ToggleVideoChannel(vc) => {
-                    let toggled = !self.channels[channel.0].video_outs.contains(&vc);
+                    let toggled = !self.channels[channel].video_outs.contains(&vc);
                     self.handle_state_change(
                         StateChange {
                             channel: channel,
@@ -188,7 +191,7 @@ impl Mixer {
                         Beam::Look(_) => true,
                         _ => false,
                     };
-                    self.channels[channel.0].beam = *b;
+                    self.channels[channel].beam = *b;
                     emitter.emit_mixer_state_change(StateChange {
                         channel: channel,
                         change: ChannelStateChange::ContainsLook(is_look),
@@ -207,14 +210,14 @@ impl Mixer {
     fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use ChannelStateChange::*;
         match sc.change {
-            Level(v) => self.channels[sc.channel.0].level = v,
-            Bump(v) => self.channels[sc.channel.0].bump = v,
-            Mask(v) => self.channels[sc.channel.0].mask = v,
+            Level(v) => self.channels[sc.channel].level = v,
+            Bump(v) => self.channels[sc.channel].bump = v,
+            Mask(v) => self.channels[sc.channel].mask = v,
             VideoChannel((vc, active)) => {
                 if active {
-                    self.channels[sc.channel.0].video_outs.insert(vc);
+                    self.channels[sc.channel].video_outs.insert(vc);
                 } else {
-                    self.channels[sc.channel.0].video_outs.remove(&vc);
+                    self.channels[sc.channel].video_outs.remove(&vc);
                 }
             }
             ContainsLook(_) => (),

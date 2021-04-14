@@ -7,6 +7,7 @@ use crate::{clock::Clock, ui::EmitStateChange as EmitShowStateChange, waveforms:
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
+use typed_index_derive::TypedIndex;
 
 #[derive(Clone, Serialize, Deserialize)]
 /// Ellipsoidal tunnels.
@@ -81,12 +82,12 @@ impl Tunnel {
 
     /// Borrow an animation as a mutable reference.
     pub fn animation(&mut self, anim_num: AnimationIdx) -> &mut Animation {
-        &mut self.anims[anim_num.0]
+        &mut self.anims[anim_num]
     }
 
     /// Replace an animation with another.
     pub fn replace_animation(&mut self, anim_num: AnimationIdx, new_anim: Animation) {
-        self.anims[anim_num.0] = new_anim;
+        self.anims[anim_num] = new_anim;
     }
 
     /// Update the state of this tunnel in preparation for drawing a frame.
@@ -338,7 +339,8 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
     BipolarFloat(scaled)
 }
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, TypedIndex)]
+#[typed_index(Animation)]
 pub struct AnimationIdx(pub usize);
 
 /// A command to draw a single arc segment.
