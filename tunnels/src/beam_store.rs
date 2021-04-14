@@ -1,11 +1,11 @@
 use crate::beam::Beam;
 
-/// Dealing with the matrix of APC40 buttons used to store beams.
-pub struct BeamMatrixMinder {
+/// Save beams in a grid store intended for simple access via APC button grid.
+pub struct BeamStore {
     beams: Vec<Vec<Option<Beam>>>,
 }
 
-impl BeamMatrixMinder {
+impl BeamStore {
     const N_ROWS: usize = 5;
     const COLS_PER_PAGE: usize = 8;
 

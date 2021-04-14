@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    animation, beam_matrix_minder::BeamMatrixMinder, clock::ClockBank, device::Device,
-    midi::Manager, midi_controls::Dispatcher, mixer::Mixer, tunnel, ui::UI,
+    animation, beam_store::BeamStore, clock::ClockBank, device::Device, midi::Manager,
+    midi_controls::Dispatcher, mixer::Mixer, tunnel, ui::UI,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -45,7 +45,7 @@ pub struct Show {
     ui: UI,
     mixer: Mixer,
     clocks: ClockBank,
-    beam_matrix: BeamMatrixMinder,
+    beam_matrix: BeamStore,
 }
 
 impl Show {

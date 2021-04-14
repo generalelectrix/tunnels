@@ -1,6 +1,6 @@
 mod animation;
 mod beam;
-mod beam_matrix_minder;
+mod beam_store;
 mod clock;
 mod device;
 mod look;
