@@ -45,6 +45,9 @@ impl UI {
                     t.animation(*curr_anim).control(am, emitter);
                 }
             },
+            ControlMessage::Mixer(mm) => {
+                mixer.control(mm, emitter);
+            }
         }
     }
 }

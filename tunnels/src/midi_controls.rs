@@ -15,6 +15,7 @@ use crate::{
 };
 
 use self::animation::{map_animation_controls, update_animation_control};
+use self::mixer::{map_mixer_controls, update_mixer_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
 type ControlMessageCreator = Box<Fn(u8) -> ControlMessage>;
@@ -42,8 +43,14 @@ impl Dispatcher {
         let mut map = ControlMap::new();
         map_tunnel_controls(Device::AkaiApc40, &mut map);
         map_tunnel_controls(Device::TouchOsc, &mut map);
+
         map_animation_controls(Device::AkaiApc40, &mut map);
         map_animation_controls(Device::TouchOsc, &mut map);
+
+        map_mixer_controls(Device::AkaiApc40, 0, &mut map);
+        map_mixer_controls(Device::AkaiApc20, 1, &mut map);
+        map_mixer_controls(Device::TouchOsc, 0, &mut map);
+        map_mixer_controls(Device::TouchOsc, 1, &mut map);
         Self { map, manager }
     }
 
@@ -67,6 +74,7 @@ impl EmitStateChange for Dispatcher {
         match sc {
             StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.manager),
             StateChange::Animation(sc) => update_animation_control(sc, &mut self.manager),
+            StateChange::Mixer(sc) => update_mixer_control(sc, &mut self.manager),
         }
     }
 }
