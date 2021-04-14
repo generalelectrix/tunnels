@@ -361,7 +361,7 @@ pub struct ArcSegment {
 }
 
 // TODO: move some of these into associated constants
-const N_ANIM: usize = 4;
+pub const N_ANIM: usize = 4;
 /// legacy tuning parameter; tunnel rotated this many radial units/frame at 30fps
 const ROT_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; marquee rotated this many radial units/frame at 30fps

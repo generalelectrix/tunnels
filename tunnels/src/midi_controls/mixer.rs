@@ -25,7 +25,7 @@ const LOOK: u8 = 0x30;
 const VIDEO_CHAN_0: u8 = 66;
 
 /// The number of mixer channels on a single mixer page.
-const PAGE_SIZE: usize = 8;
+pub const PAGE_SIZE: usize = 8;
 
 pub fn map_mixer_controls(device: Device, page: usize, map: &mut ControlMap) {
     use ChannelControlMessage::*;
