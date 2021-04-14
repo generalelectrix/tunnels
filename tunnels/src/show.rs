@@ -15,8 +15,8 @@ use crate::{
     midi_controls::Dispatcher,
     mixer,
     mixer::Mixer,
-    tunnel,
-    ui::UI,
+    tunnel, ui,
+    ui::MasterUI,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -51,10 +51,9 @@ impl Default for Config {
 pub struct Show {
     config: Config,
     dispatcher: Dispatcher,
-    ui: UI,
+    ui: MasterUI,
     mixer: Mixer,
     clocks: ClockBank,
-    beam_matrix: BeamStore,
 }
 
 impl Show {
@@ -75,6 +74,7 @@ pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
     Animation(animation::ControlMessage),
     Mixer(mixer::ControlMessage),
+    MasterUI(ui::ControlMessage),
 }
 
 pub enum StateChange {
@@ -82,5 +82,6 @@ pub enum StateChange {
     Animation(animation::StateChange),
     Mixer(mixer::StateChange),
     Clock(clock::StateChange),
+    MasterUI(ui::StateChange),
     //BeamStore(beam_store::StateChange),
 }
