@@ -1,5 +1,5 @@
 mod animation;
-mod beam_matrix_minder;
+mod beam_store;
 mod tunnel;
 
 use std::{collections::HashMap, time::Duration};

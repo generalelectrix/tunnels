@@ -9,17 +9,6 @@ class MixerMI (ModelInterface):
         super(MixerMI, self).__init__(mixer)
         self.mixer = mixer
 
-    def initialize(self):
-        super(MixerMI, self).initialize()
-        for i, layer in enumerate(self.mixer.layers):
-            self.update_controllers('set_look_indicator', i, isinstance(layer.beam, Look))
-            self.update_controllers('set_level', i, layer.level)
-            self.update_controllers('set_bump_button', i, layer.bump)
-            self.update_controllers('set_mask_button', i, layer.mask)
-            for chan in range(self.mixer.n_video_channels):
-                self.update_controllers(
-                    'set_video_channel', i, chan, chan in layer.video_outs)
-
     def put_beam_in_layer(self, layer, beam):
         """Replace the beam in numbered layer with this beam."""
         self.mixer.put_beam_in_layer(layer, beam)
