@@ -1,6 +1,7 @@
 use crate::numbers::UnipolarFloat;
+use crate::ui::EmitStateChange as EmitShowStateChange;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// how many globally-available clocks?
 const N_CLOCKS: usize = 8;
@@ -74,5 +75,112 @@ impl Clock {
 
     pub fn curr_angle(&self) -> UnipolarFloat {
         self.curr_angle
+    }
+
+    /// Handle a control event.
+    /// Emit any state changes that have happened as a result of handling.
+    pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
+        use ControlMessage::*;
+        match msg {
+            Set(sc) => self.handle_state_change(sc, emitter),
+        }
+    }
+
+    fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
+        use StateChange::*;
+        match sc {};
+        emitter.emit_clock_state_change(sc);
+    }
+}
+
+/// A clock with a complete set of controls.
+pub struct ControllableClock {
+    clock: Clock,
+    sync: TapSync,
+    tick_age: Option<Duration>,
+}
+
+pub enum StateChange {}
+
+pub enum ControlMessage {
+    Set(StateChange),
+}
+
+pub trait EmitStateChange {
+    fn emit_clock_state_change(&mut self, sc: StateChange);
+}
+
+impl<T: EmitShowStateChange> EmitStateChange for T {
+    fn emit_clock_state_change(&mut self, sc: StateChange) {
+        use crate::show::StateChange as ShowStateChange;
+        self.emit(ShowStateChange::Clock(sc))
+    }
+}
+
+/// Estimate rate from a series of taps.
+struct TapSync {
+    taps: Vec<Instant>,
+    rate: Option<f64>,
+    period: Option<Duration>,
+}
+
+impl TapSync {
+    /// Fractional threshold at which we'll discard the current tap buffer and
+    /// start a new one.
+    const RESET_THRESHOLD: f64 = 0.1;
+
+    pub fn new() -> Self {
+        Self {
+            taps: Vec::new(),
+            rate: None,
+            period: None,
+        }
+    }
+
+    fn reset_buffer(&mut self, tap: Instant) {
+        self.taps.clear();
+        self.taps.push(tap);
+        self.rate = None;
+        self.period = None;
+    }
+
+    fn add_tap(&mut self, tap: Instant) {
+        self.taps.push(tap);
+        if self.taps.len() < 2 {
+            return;
+        }
+        // compute rate if we have at least two taps
+        match (self.taps.first(), self.taps.last()) {
+            (Some(first), Some(last)) => {
+                let period = (*last - *first) / (self.taps.len() as u32 - 1);
+                self.period = Some(period);
+                self.rate = Some(1.0 / period.as_secs_f64());
+            }
+            _ => (),
+        }
+    }
+
+    pub fn tap(&mut self) {
+        let tap = Instant::now();
+        // if the tap buffer isn't empty, determine elapsed time from the last
+        // tap to this one
+        match self.period {
+            Some(period) => {
+                let dt = tap - *self.taps.last().unwrap();
+
+                // if this single estimate of tempo is within +-10% of current, use it
+                // otherwise, empty the buffer and start over
+                let fractional_difference = (period - dt).as_secs_f64() / period.as_secs_f64();
+
+                if fractional_difference.abs() > Self::RESET_THRESHOLD {
+                    // outlier, empty the buffer
+                    self.reset_buffer(tap);
+                } else {
+                    // append to buffer and update
+                    self.add_tap(tap);
+                }
+            }
+            None => self.add_tap(tap),
+        }
     }
 }

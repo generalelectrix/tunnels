@@ -8,6 +8,7 @@ use std::{
 use crate::{
     animation,
     beam_store::{self, BeamStore},
+    clock,
     clock::ClockBank,
     device::Device,
     midi::Manager,
@@ -80,5 +81,6 @@ pub enum StateChange {
     Tunnel(tunnel::StateChange),
     Animation(animation::StateChange),
     Mixer(mixer::StateChange),
+    Clock(clock::StateChange),
     //BeamStore(beam_store::StateChange),
 }
