@@ -10,6 +10,7 @@ use std::{
 
 use crate::device::Device;
 
+/// Specification for what type of midi event.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
     NoteOn,
@@ -17,6 +18,7 @@ pub enum EventType {
     ControlChange,
 }
 
+/// A specification of a midi mapping.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mapping {
     pub event_type: EventType,
@@ -24,10 +26,49 @@ pub struct Mapping {
     pub control: u8,
 }
 
+/// Helper constructor for a note on mapping.
+pub const fn note_on(channel: u8, control: u8) -> Mapping {
+    Mapping {
+        event_type: EventType::NoteOn,
+        channel,
+        control,
+    }
+}
+
+/// Helper constructor - most controls are on channel 0.
+pub const fn note_ch0(control: u8) -> Mapping {
+    note_on(0, control)
+}
+
+/// Helper constructor - other relevant special case is channel 1.
+pub const fn note_ch1(control: u8) -> Mapping {
+    note_on(1, control)
+}
+
+/// Helper constructor for a control change mapping.
+pub const fn cc(channel: u8, control: u8) -> Mapping {
+    Mapping {
+        event_type: EventType::ControlChange,
+        channel,
+        control,
+    }
+}
+
+/// Helper constructor - most controls are on channel 0.
+pub const fn cc_ch0(control: u8) -> Mapping {
+    cc(0, control)
+}
+
+/// A fully-specified midi event.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub mapping: Mapping,
     pub value: u8,
+}
+
+/// Helper constructor for a midi event.
+pub const fn event(mapping: Mapping, value: u8) -> Event {
+    Event { mapping, value }
 }
 
 // Return the available ports as descriptive strings.

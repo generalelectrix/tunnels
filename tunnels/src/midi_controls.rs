@@ -1,4 +1,5 @@
 mod animation;
+mod beam_matrix_minder;
 mod tunnel;
 
 use std::{collections::HashMap, time::Duration};
@@ -17,7 +18,18 @@ use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
 type ControlMessageCreator = fn(u8) -> ControlMessage;
 
-type ControlMap = HashMap<(Device, Mapping), ControlMessageCreator>;
+pub struct ControlMap(pub HashMap<(Device, Mapping), ControlMessageCreator>);
+
+impl ControlMap {
+    fn new() -> Self {
+        Self(HashMap::new())
+    }
+    pub fn add(&mut self, device: Device, mapping: Mapping, creator: ControlMessageCreator) {
+        if self.0.insert((device, mapping), creator).is_some() {
+            panic!("duplicate control definition: {:?} {:?}", device, mapping);
+        }
+    }
+}
 pub struct Dispatcher {
     map: ControlMap,
     manager: Manager,
@@ -26,7 +38,7 @@ pub struct Dispatcher {
 impl Dispatcher {
     /// Instantiate the master midi control dispatcher.
     pub fn new(manager: Manager) -> Self {
-        let mut map = HashMap::new();
+        let mut map = ControlMap::new();
         map_tunnel_controls(Device::AkaiApc40, &mut map);
         map_tunnel_controls(Device::TouchOsc, &mut map);
         Self { map, manager }
@@ -40,6 +52,7 @@ impl Dispatcher {
     /// Return None if no mapping is registered.
     pub fn dispatch(&self, device: Device, event: Event) -> Option<ControlMessage> {
         self.map
+            .0
             .get(&(device, event.mapping))
             .map(|c| c(event.value))
     }
@@ -52,17 +65,6 @@ impl EmitStateChange for Dispatcher {
             StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.manager),
             StateChange::Animation(sc) => update_animation_control(sc, &mut self.manager),
         }
-    }
-}
-
-fn add_control(
-    map: &mut ControlMap,
-    device: Device,
-    mapping: Mapping,
-    creator: ControlMessageCreator,
-) {
-    if map.insert((device, mapping), creator).is_some() {
-        panic!("duplicate control definition: {:?} {:?}", device, mapping);
     }
 }
 
