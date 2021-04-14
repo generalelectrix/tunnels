@@ -4,13 +4,13 @@ mod beam_store;
 mod clock;
 mod device;
 mod look;
+mod master_ui;
 mod midi;
 mod midi_controls;
 mod mixer;
 mod numbers;
 mod show;
 mod tunnel;
-mod ui;
 mod waveforms;
 
 use std::error::Error;

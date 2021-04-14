@@ -1,4 +1,4 @@
-use crate::ui::EmitStateChange as EmitShowStateChange;
+use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::{
     beam::Beam,
     clock::ClockBank,

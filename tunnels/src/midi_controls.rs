@@ -8,11 +8,11 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::{
     device::Device,
+    master_ui::EmitStateChange,
     midi::{Event, Manager, Mapping},
     numbers::{BipolarFloat, UnipolarFloat},
     show::ControlMessage,
     show::StateChange,
-    ui::EmitStateChange,
 };
 
 use self::animation::{map_animation_controls, update_animation_control};

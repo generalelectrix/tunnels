@@ -3,7 +3,7 @@ use crate::{
     animation::{Animation, Target},
     clock::ClockBank,
 };
-use crate::{clock::Clock, ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
+use crate::{clock::Clock, master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;

@@ -47,16 +47,3 @@ class MetaMI (ModelInterface):
         self.mixer_mi.set_look(look)
         self._update_current_layer()
 
-    def animation_copy(self):
-        """Copy the current animator to the clipboard."""
-        if not self.get_current_beam().is_look:
-            self.animation_clipboard = self.animator_mi.model.copy()
-
-    def animation_paste(self):
-        """Paste the clipboard into the current beam's current animator slot."""
-        beam = self.get_current_beam()
-        if not beam.is_look:
-            animator = self.animation_clipboard.copy()
-            if animator is not None:
-                beam.replace_animation(self.active_animator_number, animator)
-                self.animator_mi.swap_model(animator)

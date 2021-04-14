@@ -1,5 +1,5 @@
+use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::numbers::UnipolarFloat;
-use crate::ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms;
 use crate::{
     clock::{Clock, ClockBank, ClockIdx},

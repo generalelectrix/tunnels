@@ -11,12 +11,13 @@ use crate::{
     clock,
     clock::ClockBank,
     device::Device,
+    master_ui,
+    master_ui::MasterUI,
     midi::Manager,
     midi_controls::Dispatcher,
     mixer,
     mixer::Mixer,
-    tunnel, ui,
-    ui::MasterUI,
+    tunnel,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -74,7 +75,7 @@ pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
     Animation(animation::ControlMessage),
     Mixer(mixer::ControlMessage),
-    MasterUI(ui::ControlMessage),
+    MasterUI(master_ui::ControlMessage),
 }
 
 pub enum StateChange {
@@ -82,6 +83,6 @@ pub enum StateChange {
     Animation(animation::StateChange),
     Mixer(mixer::StateChange),
     Clock(clock::StateChange),
-    MasterUI(ui::StateChange),
+    MasterUI(master_ui::StateChange),
     //BeamStore(beam_store::StateChange),
 }

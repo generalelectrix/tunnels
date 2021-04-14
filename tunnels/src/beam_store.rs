@@ -1,5 +1,5 @@
 use crate::beam::Beam;
-use crate::ui::EmitStateChange as EmitShowStateChange;
+use crate::master_ui::EmitStateChange as EmitShowStateChange;
 
 /// Save beams in a grid store intended for simple access via APC button grid.
 pub struct BeamStore {
