@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    beam_matrix_minder::BeamMatrixMinder, clock::ClockBank, device::Device, midi::Manager,
-    midi_controls::Dispatcher, mixer::Mixer, tunnel, ui::UI,
+    animation, beam_matrix_minder::BeamMatrixMinder, clock::ClockBank, device::Device,
+    midi::Manager, midi_controls::Dispatcher, mixer::Mixer, tunnel, ui::UI,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -64,8 +64,10 @@ impl Show {
 
 pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
+    Animation(animation::ControlMessage),
 }
 
 pub enum StateChange {
     Tunnel(tunnel::StateChange),
+    Animation(animation::StateChange),
 }

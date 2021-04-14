@@ -6,7 +6,7 @@ use std::time::Duration;
 const N_CLOCKS: usize = 8;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct ClockIdx(usize);
+pub struct ClockIdx(pub usize);
 
 /// Maintain a indexable collection of clocks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,7 +26,7 @@ impl ClockBank {
 pub struct Clock {
     curr_angle: UnipolarFloat,
     /// in unit angle per second
-    rate: f64,
+    pub rate: f64,
     /// did the clock tick on its most recent update?
     ticked: bool,
     /// is this clock running in "one-shot" mode?

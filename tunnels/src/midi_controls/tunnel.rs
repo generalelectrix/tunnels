@@ -1,3 +1,7 @@
+use super::{
+    add_control, bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi,
+    ControlMap,
+};
 use crate::{
     device::Device,
     midi::Event,
@@ -20,18 +24,22 @@ const MARQUEE_SPEED: u8 = 20;
 const BLACKING: u8 = 54;
 const SEGMENTS: u8 = 53;
 
-use super::{
-    add_control, bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi,
-    ControlMap,
-};
-
 pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     use ControlMessage::*;
     use StateChange::*;
     {
         // inner lexical scope for temporary borrow of map in this closure
         let mut cc = |control, creator| {
-            add_control(map, device, EventType::ControlChange, 0, control, creator)
+            add_control(
+                map,
+                device,
+                Mapping {
+                    event_type: EventType::ControlChange,
+                    channel: 0,
+                    control: control,
+                },
+                creator,
+            )
         };
         // unipolar knobs
         cc(THICKNESS, |v| Tunnel(Set(Thickness(unipolar_from_midi(v)))));
@@ -64,8 +72,18 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     }
     {
         // inner lexical scope for temporary borrow of map in this closure
-        let mut note_on =
-            |control, creator| add_control(map, device, EventType::NoteOn, 0, control, creator);
+        let mut note_on = |control, creator| {
+            add_control(
+                map,
+                device,
+                Mapping {
+                    event_type: EventType::NoteOn,
+                    channel: 0,
+                    control: control,
+                },
+                creator,
+            )
+        };
 
         note_on(0x60, |_| Tunnel(NudgeRight));
         note_on(0x61, |_| Tunnel(NudgeLeft));

@@ -1,3 +1,4 @@
+mod animation;
 mod tunnel;
 
 use std::{collections::HashMap, time::Duration};
@@ -11,6 +12,7 @@ use crate::{
     ui::EmitStateChange,
 };
 
+use self::animation::{map_animation_controls, update_animation_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
 type ControlMessageCreator = fn(u8) -> ControlMessage;
@@ -48,6 +50,7 @@ impl EmitStateChange for Dispatcher {
     fn emit(&mut self, sc: StateChange) {
         match sc {
             StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.manager),
+            StateChange::Animation(sc) => update_animation_control(sc, &mut self.manager),
         }
     }
 }
@@ -55,16 +58,9 @@ impl EmitStateChange for Dispatcher {
 fn add_control(
     map: &mut ControlMap,
     device: Device,
-    event_type: EventType,
-    channel: u8,
-    control: u8,
+    mapping: Mapping,
     creator: ControlMessageCreator,
 ) {
-    let mapping = Mapping {
-        event_type,
-        channel,
-        control,
-    };
     if map.insert((device, mapping), creator).is_some() {
         panic!("duplicate control definition: {:?} {:?}", device, mapping);
     }
@@ -85,4 +81,25 @@ fn unipolar_from_midi(val: u8) -> UnipolarFloat {
 
 fn unipolar_to_midi(val: UnipolarFloat) -> u8 {
     (val.0 * 127.) as u8
+}
+
+/// Defines a collection of button mappings, only one of which can be active.
+/// Knows how to emit MIDI to active just the selected one.
+/// Assumes that value 0 turns a indicator off and 1 turns it on.
+pub struct RadioButtons {
+    mappings: Vec<Mapping>,
+}
+
+impl RadioButtons {
+    /// Emit midi to ensure that only the selected mapping is selected.
+    /// Performs no check that the selected mapping is actually present.
+    pub fn select<S: FnMut(Event)>(&self, selected: Mapping, mut send: S) {
+        for mapping in &self.mappings {
+            let value = (*mapping == selected) as u8;
+            send(Event {
+                mapping: *mapping,
+                value,
+            });
+        }
+    }
 }

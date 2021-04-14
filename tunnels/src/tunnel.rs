@@ -79,9 +79,14 @@ impl Tunnel {
         }
     }
 
+    /// Borrow an animation as a mutable reference.
+    pub fn animation(&mut self, anim_num: AnimationIdx) -> &mut Animation {
+        &mut self.anims[anim_num.0]
+    }
+
     /// Replace an animation with another.
-    pub fn replace_animation(&mut self, anim_num: usize, new_anim: Animation) {
-        self.anims[anim_num] = new_anim;
+    pub fn replace_animation(&mut self, anim_num: AnimationIdx, new_anim: Animation) {
+        self.anims[anim_num.0] = new_anim;
     }
 
     /// Update the state of this tunnel in preparation for drawing a frame.
@@ -262,19 +267,19 @@ impl Tunnel {
     }
 
     /// Emit the current value of all controllable tunnel state.
-    pub fn emit_state(&self, emit: fn(StateChange)) {
+    pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
         use StateChange::*;
-        emit(MarqueeSpeed(self.marquee_speed));
-        emit(RotationSpeed(self.rot_speed));
-        emit(Thickness(self.thickness));
-        emit(Size(self.size));
-        emit(AspectRatio(self.aspect_ratio));
-        emit(ColorCenter(self.col_center));
-        emit(ColorWidth(self.col_width));
-        emit(ColorSpread(self.col_spread));
-        emit(ColorSaturation(self.col_sat));
-        emit(Segments(self.segs));
-        emit(Blacking(self.blacking));
+        emitter.emit_tunnel_state_change(MarqueeSpeed(self.marquee_speed));
+        emitter.emit_tunnel_state_change(RotationSpeed(self.rot_speed));
+        emitter.emit_tunnel_state_change(Thickness(self.thickness));
+        emitter.emit_tunnel_state_change(Size(self.size));
+        emitter.emit_tunnel_state_change(AspectRatio(self.aspect_ratio));
+        emitter.emit_tunnel_state_change(ColorCenter(self.col_center));
+        emitter.emit_tunnel_state_change(ColorWidth(self.col_width));
+        emitter.emit_tunnel_state_change(ColorSpread(self.col_spread));
+        emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat));
+        emitter.emit_tunnel_state_change(Segments(self.segs));
+        emitter.emit_tunnel_state_change(Blacking(self.blacking));
     }
 
     /// Handle a control event.
@@ -332,6 +337,9 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
     }
     BipolarFloat(scaled)
 }
+
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct AnimationIdx(pub usize);
 
 /// A command to draw a single arc segment.
 #[derive(Serialize, Deserialize, Debug, Clone)]

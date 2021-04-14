@@ -312,6 +312,7 @@ name = "tunnels"
 version = "0.1.0"
 dependencies = [
  "derive_more",
+ "lazy_static",
  "log",
  "midir",
  "serde",
