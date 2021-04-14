@@ -112,23 +112,12 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
     add(SAWTOOTH, Box::new(|_| Animation(Set(Waveform(Sawtooth)))));
 
     // n periods select
-    // can't do this in a loop because the callback must be fn, not a closure
-    add(note_ch0(0), Box::new(|_| Animation(Set(NPeriods(0)))));
-    add(note_ch0(1), Box::new(|_| Animation(Set(NPeriods(1)))));
-    add(note_ch0(2), Box::new(|_| Animation(Set(NPeriods(2)))));
-    add(note_ch0(3), Box::new(|_| Animation(Set(NPeriods(3)))));
-    add(note_ch0(4), Box::new(|_| Animation(Set(NPeriods(4)))));
-    add(note_ch0(5), Box::new(|_| Animation(Set(NPeriods(5)))));
-    add(note_ch0(6), Box::new(|_| Animation(Set(NPeriods(6)))));
-    add(note_ch0(7), Box::new(|_| Animation(Set(NPeriods(7)))));
-    add(note_ch0(8), Box::new(|_| Animation(Set(NPeriods(8)))));
-    add(note_ch0(9), Box::new(|_| Animation(Set(NPeriods(9)))));
-    add(note_ch0(10), Box::new(|_| Animation(Set(NPeriods(10)))));
-    add(note_ch0(11), Box::new(|_| Animation(Set(NPeriods(11)))));
-    add(note_ch0(12), Box::new(|_| Animation(Set(NPeriods(12)))));
-    add(note_ch0(13), Box::new(|_| Animation(Set(NPeriods(13)))));
-    add(note_ch0(14), Box::new(|_| Animation(Set(NPeriods(14)))));
-    add(note_ch0(15), Box::new(|_| Animation(Set(NPeriods(15)))));
+    for n_periods in 0..16 {
+        add(
+            note_ch0(n_periods as u8),
+            Box::new(move |_| Animation(Set(NPeriods(n_periods)))),
+        );
+    }
 
     // target select
     add(ROTATION, Box::new(|_| Animation(Set(Target(Rotation)))));
@@ -169,38 +158,12 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
         note_ch1((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8),
         Box::new(|_| Animation(Set(ClockSource(None)))),
     );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 0) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(0)))))),
-    );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 1) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(1)))))),
-    );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 2) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(2)))))),
-    );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 3) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(3)))))),
-    );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 4) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(4)))))),
-    );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 5) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(5)))))),
-    );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 6) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(6)))))),
-    );
-    add(
-        note_ch1((CLOCK_SELECT_CONTROL_OFFSET + 7) as u8),
-        Box::new(|_| Animation(Set(ClockSource(Some(ClockIdx(7)))))),
-    );
+    for clock_num in 0..8 {
+        add(
+            note_ch1((CLOCK_SELECT_CONTROL_OFFSET + clock_num) as u8),
+            Box::new(move |_| Animation(Set(ClockSource(Some(ClockIdx(clock_num as usize)))))),
+        );
+    }
 }
 
 /// Emit midi messages to update UIs given the provided state change.
