@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
 /// how many globally-available clocks?
-const N_CLOCKS: usize = 8;
+pub const N_CLOCKS: usize = 4;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ClockIdx(pub usize);

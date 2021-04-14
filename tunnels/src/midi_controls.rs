@@ -1,5 +1,6 @@
 mod animation;
 mod beam_store;
+mod clock;
 mod mixer;
 mod tunnel;
 
@@ -7,7 +8,7 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::{
     device::Device,
-    midi::{Event, EventType, Manager, Mapping},
+    midi::{Event, Manager, Mapping},
     numbers::{BipolarFloat, UnipolarFloat},
     show::ControlMessage,
     show::StateChange,
@@ -15,6 +16,7 @@ use crate::{
 };
 
 use self::animation::{map_animation_controls, update_animation_control};
+use self::clock::{map_clock_controls, update_clock_control};
 use self::mixer::{map_mixer_controls, update_mixer_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
@@ -51,6 +53,9 @@ impl Dispatcher {
         map_mixer_controls(Device::AkaiApc20, 1, &mut map);
         map_mixer_controls(Device::TouchOsc, 0, &mut map);
         map_mixer_controls(Device::TouchOsc, 1, &mut map);
+
+        // TODO: map clock controls for new hardware
+        map_clock_controls(Device::TouchOsc, &mut map);
         Self { map, manager }
     }
 
@@ -75,6 +80,7 @@ impl EmitStateChange for Dispatcher {
             StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.manager),
             StateChange::Animation(sc) => update_animation_control(sc, &mut self.manager),
             StateChange::Mixer(sc) => update_mixer_control(sc, &mut self.manager),
+            StateChange::Clock(sc) => update_clock_control(sc, &mut self.manager),
         }
     }
 }
