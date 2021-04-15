@@ -2,7 +2,7 @@ use log;
 use serde::{Deserialize, Serialize};
 use std::{
     sync::mpsc::{channel, Receiver},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -55,6 +55,7 @@ pub struct Show {
     ui: MasterUI,
     mixer: Mixer,
     clocks: ClockBank,
+    start: Instant,
 }
 
 impl Show {

@@ -1,5 +1,4 @@
 mod animation;
-mod beam_store;
 mod clock;
 mod master_ui;
 mod mixer;
