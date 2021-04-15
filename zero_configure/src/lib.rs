@@ -1,14 +1,9 @@
 //! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
 //! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
-#[macro_use]
-extern crate simple_error;
-extern crate async_dnssd;
-extern crate futures;
-extern crate tokio_core;
-extern crate zmq;
 
 use async_dnssd::{browse, register_extended, BrowsedFlags, RegisterData, RegisterFlags};
 use futures::{Future, Stream};
+use simple_error::bail;
 use tokio_core::reactor::{Core, Timeout};
 
 use zmq::{Context, Socket};
