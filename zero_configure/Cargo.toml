@@ -5,7 +5,7 @@ authors = ["Chris Macklin <chris.macklin@gmail.com>"]
 
 [dependencies]
 async-dnssd = "^0.4"
-tokio-core = "0.1"
-futures = "0.1"
+tokio-core = "^0.1"
+futures = "^0.1"
 simple-error = "0.2"
 zmq = "0.9"
