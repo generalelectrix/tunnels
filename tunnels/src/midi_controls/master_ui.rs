@@ -1,7 +1,4 @@
-use super::{
-    bipolar_from_midi, bipolar_to_midi, mixer::PAGE_SIZE, unipolar_from_midi, unipolar_to_midi,
-    ControlMap, RadioButtons,
-};
+use super::{mixer::PAGE_SIZE, ControlMap, RadioButtons};
 use crate::{
     beam_store::{BeamStore, BeamStoreAddr},
     device::Device,
@@ -10,7 +7,6 @@ use crate::{
     master_ui::{BeamButtonState, BeamStoreState as BeamStoreStatePayload},
     midi::{cc, event, note_on, note_on_ch0, Manager, Mapping},
     mixer::ChannelIdx,
-    show::ControlMessage as ShowControlMessage,
     show::ControlMessage::MasterUI,
     tunnel::{AnimationIdx, N_ANIM},
 };

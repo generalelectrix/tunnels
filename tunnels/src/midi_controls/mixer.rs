@@ -1,5 +1,4 @@
 use crate::{
-    clock::ClockIdx,
     device::Device,
     midi::{cc, event, note_off, note_on, Manager, Mapping},
     mixer::ControlMessage,
@@ -11,10 +10,7 @@ use crate::{
     show::ControlMessage as ShowControlMessage,
 };
 
-use super::{
-    bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap,
-    RadioButtons,
-};
+use super::{unipolar_from_midi, unipolar_to_midi, ControlMap};
 
 const FADER: u8 = 0x7;
 const BUMP: u8 = 0x32;

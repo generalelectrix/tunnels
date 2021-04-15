@@ -21,7 +21,7 @@ use self::master_ui::{map_master_ui_controls, update_master_ui_control};
 use self::mixer::{map_mixer_controls, update_mixer_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
-type ControlMessageCreator = Box<Fn(u8) -> ControlMessage>;
+type ControlMessageCreator = Box<dyn Fn(u8) -> ControlMessage>;
 
 pub struct ControlMap(pub HashMap<(Device, Mapping), ControlMessageCreator>);
 

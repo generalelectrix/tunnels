@@ -1,6 +1,8 @@
 use crate::beam::Beam;
+use serde::{Deserialize, Serialize};
 
 /// Save beams in a grid store intended for simple access via APC button grid.
+#[derive(Serialize, Deserialize)]
 pub struct BeamStore {
     beams: Vec<Vec<Option<Beam>>>,
 }

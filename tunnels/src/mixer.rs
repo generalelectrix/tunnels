@@ -10,69 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, rc::Rc, time::Duration};
 use typed_index_derive::TypedIndex;
 
-/// Index into a particular mixer channel.
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, TypedIndex)]
-#[typed_index(Channel)]
-pub struct ChannelIdx(pub usize);
-
-impl Default for ChannelIdx {
-    fn default() -> Self {
-        ChannelIdx(0)
-    }
-}
-
-/// The contents of a mixer channel.
-///
-/// By default, outputs to video feed 0.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Channel {
-    beam: Beam,
-    level: UnipolarFloat,
-    bump: bool,
-    mask: bool,
-    video_outs: HashSet<VideoChannel>,
-}
-
-impl Channel {
-    fn new(beam: Beam) -> Self {
-        let mut video_outs = HashSet::new();
-        video_outs.insert(VideoChannel(0));
-        Self {
-            beam,
-            level: UnipolarFloat(0.0),
-            bump: false,
-            mask: false,
-            video_outs,
-        }
-    }
-
-    /// Update the state of the beam in this channel.
-    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
-        self.beam.update_state(delta_t, external_clocks);
-    }
-
-    /// Render the beam in this channel.
-    pub fn render(
-        &self,
-        level_scale: UnipolarFloat,
-        mask: bool,
-        external_clocks: &ClockBank,
-    ) -> Vec<ArcSegment> {
-        let mut level: UnipolarFloat = if self.bump {
-            UnipolarFloat(1.0)
-        } else {
-            self.level
-        };
-        // WTF Rust why don't you want to let me multiply my newtypes
-        level = UnipolarFloat(level.0 * level_scale.0);
-        // if this channel is off, don't render at all
-        if level.0 == 0. {
-            return Vec::new();
-        }
-        self.beam.render(level, self.mask || mask, external_clocks)
-    }
-}
-
 /// Holds a collection of beams in channels, and understands how they are mixed.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Mixer {
@@ -229,6 +166,71 @@ impl Mixer {
             ContainsLook(_) => (),
         };
         emitter.emit_mixer_state_change(sc);
+    }
+}
+
+/// The contents of a mixer channel.
+///
+/// By default, outputs to video feed 0.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Channel {
+    beam: Beam,
+    level: UnipolarFloat,
+    bump: bool,
+    mask: bool,
+    video_outs: HashSet<VideoChannel>,
+}
+
+impl Channel {
+    fn new(beam: Beam) -> Self {
+        let mut video_outs = HashSet::new();
+        video_outs.insert(VideoChannel(0));
+        Self {
+            beam,
+            level: UnipolarFloat(0.0),
+            bump: false,
+            mask: false,
+            video_outs,
+        }
+    }
+
+    /// Update the state of the beam in this channel.
+    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
+        self.beam.update_state(delta_t, external_clocks);
+    }
+
+    /// Render the beam in this channel.
+    pub fn render(
+        &self,
+        level_scale: UnipolarFloat,
+        mask: bool,
+        external_clocks: &ClockBank,
+    ) -> Vec<ArcSegment> {
+        let mut level: UnipolarFloat = if self.bump {
+            UnipolarFloat(1.0)
+        } else {
+            self.level
+        };
+        // WTF Rust why don't you want to let me multiply my newtypes
+        level = UnipolarFloat(level.0 * level_scale.0);
+        // if this channel is off, don't render at all
+        if level.0 == 0. {
+            return Vec::new();
+        }
+        self.beam.render(level, self.mask || mask, external_clocks)
+    }
+}
+
+/// Index into a particular mixer channel.
+#[derive(
+    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
+)]
+#[typed_index(Channel)]
+pub struct ChannelIdx(pub usize);
+
+impl Default for ChannelIdx {
+    fn default() -> Self {
+        ChannelIdx(0)
     }
 }
 

@@ -3,7 +3,7 @@ use crate::{
     animation::{Animation, Target},
     clock::ClockBank,
 };
-use crate::{clock::Clock, master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
+use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
@@ -339,7 +339,9 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
     BipolarFloat(scaled)
 }
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, TypedIndex)]
+#[derive(
+    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
+)]
 #[typed_index(Animation)]
 pub struct AnimationIdx(pub usize);
 

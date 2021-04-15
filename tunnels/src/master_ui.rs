@@ -9,8 +9,11 @@ use crate::{
     tunnel::AnimationIdx,
 };
 
+use serde::{Deserialize, Serialize};
+
 /// Manage stateful aspects of the UI.
 /// Mediate between the input systems and the show data.
+#[derive(Serialize, Deserialize)]
 pub struct MasterUI {
     current_channel: ChannelIdx,
     /// Index which animation is selected for the channel corresponding to the
@@ -260,7 +263,7 @@ pub enum StateChange {
     BeamStoreState(BeamStoreState),
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum BeamStoreState {
     Idle,
     BeamSave,
