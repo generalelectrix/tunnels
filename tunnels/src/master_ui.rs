@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     animation::Animation,
     beam::Beam,
-    beam_store::BeamStore,
+    beam_store::{BeamStore, BeamStoreAddr},
     mixer::{ChannelIdx, Mixer},
     show::{ControlMessage as ShowControlMessage, StateChange as ShowStateChange},
     tunnel::AnimationIdx,
@@ -19,6 +19,7 @@ pub struct MasterUI {
     current_animation_for_channel: Vec<AnimationIdx>,
     animation_clipboard: Animation,
     beam_store: BeamStore,
+    beam_store_state: BeamStoreState,
 }
 
 impl MasterUI {
@@ -28,6 +29,7 @@ impl MasterUI {
             current_animation_for_channel: vec![AnimationIdx(0); n_mixer_channels],
             animation_clipboard: Animation::new(),
             beam_store: BeamStore::new(n_mixer_pages),
+            beam_store_state: BeamStoreState::Idle,
         }
     }
 
@@ -77,6 +79,16 @@ impl MasterUI {
         self.emit_current_channel_state(mixer, emitter);
     }
 
+    /// Emit state for the beam store.
+    fn emit_beam_store_state<E: EmitStateChange>(&self, emitter: &mut E) {
+        for (addr, beam) in self.beam_store.items() {
+            emitter.emit_master_ui_state_change(StateChange::BeamButton((
+                addr,
+                BeamButtonState::from_beam(beam),
+            )));
+        }
+    }
+
     /// Emit state for the active animator.
     fn emit_animator_state<E: EmitStateChange>(&self, mixer: &mut Mixer, emitter: &mut E) {
         if let Some(a) = self.current_animation(mixer) {
@@ -100,6 +112,22 @@ impl MasterUI {
         self.emit_animator_state(mixer, emitter);
     }
 
+    fn set_beam_store_state<E: EmitStateChange>(&mut self, state: BeamStoreState, emitter: &mut E) {
+        self.beam_store_state = state;
+        emitter.emit_master_ui_state_change(StateChange::BeamStoreState(state));
+    }
+
+    fn put_beam_in_store<E: EmitStateChange>(
+        &mut self,
+        addr: BeamStoreAddr,
+        beam: Option<Beam>,
+        emitter: &mut E,
+    ) {
+        let button_state = BeamButtonState::from_beam(&beam);
+        self.beam_store.put(addr, beam);
+        emitter.emit_master_ui_state_change(StateChange::BeamButton((addr, button_state)));
+    }
+
     fn control<E: EmitStateChange>(
         &mut self,
         msg: ControlMessage,
@@ -120,6 +148,59 @@ impl MasterUI {
                     *a = self.animation_clipboard.clone();
                 }
                 self.emit_animator_state(mixer, emitter);
+            }
+            BeamGridButtonPress(addr) => self.handle_beam_grid_button_press(addr, mixer, emitter),
+            ToggleBeamStoreState(state) => {
+                self.set_beam_store_state(
+                    if self.beam_store_state == state {
+                        BeamStoreState::Idle
+                    } else {
+                        state
+                    },
+                    emitter,
+                );
+            }
+        }
+    }
+
+    fn handle_beam_grid_button_press<E: EmitStateChange>(
+        &mut self,
+        addr: BeamStoreAddr,
+        mixer: &mut Mixer,
+        emitter: &mut E,
+    ) {
+        use BeamStoreState::*;
+        match self.beam_store_state {
+            Idle => {
+                // Request to replace the beam in the current mixer with
+                // the beam in this button.
+                if let Some(beam) = self.beam_store.get(addr) {
+                    *self.current_beam(mixer) = beam;
+                    self.emit_current_channel_state(mixer, emitter);
+                }
+            }
+            BeamSave => {
+                // Dump the current beam into the selected slot.
+                self.put_beam_in_store(addr, Some(self.current_beam(mixer).clone()), emitter);
+                self.set_beam_store_state(Idle, emitter);
+            }
+            LookSave => {
+                // Dump the whole mixer state.
+                self.put_beam_in_store(addr, Some(Beam::Look(mixer.as_look())), emitter);
+                self.set_beam_store_state(Idle, emitter);
+            }
+            Delete => {
+                self.put_beam_in_store(addr, None, emitter);
+                self.set_beam_store_state(Idle, emitter);
+            }
+            LookEdit => {
+                // If the beam in the requested slot is a look, explode
+                // it into the mixer.
+                if let Some(Beam::Look(look)) = self.beam_store.get(addr) {
+                    mixer.set_look(look, emitter);
+                    self.emit_current_channel_state(mixer, emitter);
+                    self.set_beam_store_state(Idle, emitter);
+                }
             }
         }
     }
@@ -145,6 +226,9 @@ impl MasterUI {
                 self.current_animation_for_channel[self.current_channel.0] = a;
                 self.emit_animator_state(mixer, emitter);
             }
+            // Output only.
+            BeamButton(_) => (),
+            BeamStoreState(_) => (),
         }
     }
 }
@@ -166,9 +250,39 @@ pub enum ControlMessage {
     Set(StateChange),
     AnimationCopy,
     AnimationPaste,
+    BeamGridButtonPress(BeamStoreAddr),
+    ToggleBeamStoreState(BeamStoreState),
 }
 
 pub enum StateChange {
     Channel(ChannelIdx),
     Animation(AnimationIdx),
+    BeamButton((BeamStoreAddr, BeamButtonState)),
+    BeamStoreState(BeamStoreState),
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum BeamStoreState {
+    Idle,
+    BeamSave,
+    LookSave,
+    Delete,
+    LookEdit,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum BeamButtonState {
+    Empty,
+    Beam,
+    Look,
+}
+
+impl BeamButtonState {
+    pub fn from_beam(beam: &Option<Beam>) -> Self {
+        match beam {
+            Some(Beam::Tunnel(_)) => Self::Beam,
+            Some(Beam::Look(_)) => Self::Look,
+            None => Self::Empty,
+        }
+    }
 }

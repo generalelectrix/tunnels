@@ -129,4 +129,14 @@ impl RadioButtons {
             });
         }
     }
+
+    /// Emit midi to turn every mapping off.
+    pub fn all_off<S: FnMut(Event)>(&self, mut send: S) {
+        for mapping in &self.mappings {
+            send(Event {
+                mapping: *mapping,
+                value: 0,
+            });
+        }
+    }
 }

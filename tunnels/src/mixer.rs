@@ -95,6 +95,12 @@ impl Mixer {
         Look::from_channels(self.channels.clone())
     }
 
+    /// Clobber the state of this mixer with the provided look.
+    pub fn set_look<E: EmitStateChange>(&mut self, look: Look, emitter: &mut E) {
+        self.channels = look.channels;
+        self.emit_state(emitter);
+    }
+
     /// Update the state of all of the beams contained in this mixer.
     pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
         for channel in &mut self.channels {

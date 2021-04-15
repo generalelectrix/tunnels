@@ -78,7 +78,21 @@ pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager) {
             let page = c.0 / PAGE_SIZE;
             let channel_offset = page * PAGE_SIZE;
             let midi_channel = (c.0 - channel_offset) as u8;
-            channel_select_buttons.select(note_on(midi_channel, CHANNEL_SELECT), send);
+
+            // Send to the appropriate device based on page.
+            // If this channel is on page 0, disable all channel buttons on APC20.
+            // If page 1, disable all buttons on APC40/TouchOSC.
+            if page == 0 {
+                channel_select_buttons.select(note_on(midi_channel, CHANNEL_SELECT), send);
+                channel_select_buttons.all_off(|event| {
+                    manager.send(Device::AkaiApc20, event);
+                })
+            } else {
+                channel_select_buttons.all_off(send);
+                channel_select_buttons.select(note_on(midi_channel, CHANNEL_SELECT), |event| {
+                    manager.send(Device::AkaiApc20, event);
+                })
+            }
         }
     }
 }
