@@ -50,10 +50,10 @@ const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
 lazy_static! {
     static ref waveform_select_buttons: RadioButtons = RadioButtons {
-        mappings: vec!(SINE, TRIANGLE, SQUARE, SAWTOOTH)
+        mappings: vec!(SINE, TRIANGLE, SQUARE, SAWTOOTH), off: 0, on: 1,
     };
     static ref n_periods_select_buttons: RadioButtons = RadioButtons {
-        mappings: (0..15).map(note_on_ch0).collect(),
+        mappings: (0..15).map(note_on_ch0).collect(), off: 0, on: 1,
     };
     static ref target_select_buttons: RadioButtons = RadioButtons {
         mappings: vec!(
@@ -70,13 +70,16 @@ lazy_static! {
             BLACKING,
             POSITIONX,
             POSITIONY,
-        )
+        ),
+        off: 0, on: 1
     };
     static ref clock_select_buttons: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
         mappings: (-1..8)
             .map(|clock_id| note_on_ch1((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
             .collect(),
+        off: 0,
+        on: 1,
     };
 }
 

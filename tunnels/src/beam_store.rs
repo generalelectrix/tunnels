@@ -6,8 +6,8 @@ pub struct BeamStore {
 }
 
 impl BeamStore {
-    const N_ROWS: usize = 5;
-    const COLS_PER_PAGE: usize = 8;
+    pub const N_ROWS: usize = 5;
+    pub const COLS_PER_PAGE: usize = 8;
 
     pub fn new(n_pages: usize) -> Self {
         let mut rows = Vec::with_capacity(Self::N_ROWS);

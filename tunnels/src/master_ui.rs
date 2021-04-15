@@ -150,16 +150,6 @@ impl MasterUI {
                 self.emit_animator_state(mixer, emitter);
             }
             BeamGridButtonPress(addr) => self.handle_beam_grid_button_press(addr, mixer, emitter),
-            ToggleBeamStoreState(state) => {
-                self.set_beam_store_state(
-                    if self.beam_store_state == state {
-                        BeamStoreState::Idle
-                    } else {
-                        state
-                    },
-                    emitter,
-                );
-            }
         }
     }
 
@@ -211,9 +201,8 @@ impl MasterUI {
         mixer: &mut Mixer,
         emitter: &mut E,
     ) {
-        use StateChange::*;
         match sc {
-            Channel(chan) => {
+            StateChange::Channel(chan) => {
                 // No action if we already have this channel selected.
                 if chan == self.current_channel {
                     return;
@@ -222,13 +211,22 @@ impl MasterUI {
                 self.emit_current_channel_state(mixer, emitter);
                 emitter.emit_master_ui_state_change(sc);
             }
-            Animation(a) => {
+            StateChange::Animation(a) => {
                 self.current_animation_for_channel[self.current_channel.0] = a;
                 self.emit_animator_state(mixer, emitter);
             }
+            StateChange::BeamStoreState(state) => {
+                self.set_beam_store_state(
+                    if self.beam_store_state == state {
+                        BeamStoreState::Idle
+                    } else {
+                        state
+                    },
+                    emitter,
+                );
+            }
             // Output only.
-            BeamButton(_) => (),
-            BeamStoreState(_) => (),
+            StateChange::BeamButton(_) => (),
         }
     }
 }
@@ -251,13 +249,14 @@ pub enum ControlMessage {
     AnimationCopy,
     AnimationPaste,
     BeamGridButtonPress(BeamStoreAddr),
-    ToggleBeamStoreState(BeamStoreState),
 }
 
 pub enum StateChange {
     Channel(ChannelIdx),
     Animation(AnimationIdx),
     BeamButton((BeamStoreAddr, BeamButtonState)),
+    // Note that when provided as a control, this acts like a toggle.
+    // One press sets the mode, a second press sets back to idle.
     BeamStoreState(BeamStoreState),
 }
 

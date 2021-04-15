@@ -111,10 +111,11 @@ fn unipolar_to_midi(val: UnipolarFloat) -> u8 {
 }
 
 /// Defines a collection of button mappings, only one of which can be active.
-/// Knows how to emit MIDI to active just the selected one.
-/// Assumes that value 0 turns a indicator off and 1 turns it on.
+/// Knows how to emit MIDI to activate just the selected one.
 pub struct RadioButtons {
     mappings: Vec<Mapping>,
+    off: u8,
+    on: u8,
 }
 
 impl RadioButtons {
@@ -122,7 +123,11 @@ impl RadioButtons {
     /// Performs no check that the selected mapping is actually present.
     pub fn select<S: FnMut(Event)>(&self, selected: Mapping, mut send: S) {
         for mapping in &self.mappings {
-            let value = (*mapping == selected) as u8;
+            let value = if *mapping == selected {
+                self.on
+            } else {
+                self.off
+            };
             send(Event {
                 mapping: *mapping,
                 value,
@@ -135,7 +140,7 @@ impl RadioButtons {
         for mapping in &self.mappings {
             send(Event {
                 mapping: *mapping,
-                value: 0,
+                value: self.off,
             });
         }
     }
