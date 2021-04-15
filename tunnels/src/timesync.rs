@@ -8,45 +8,61 @@ use tunnels_lib::RunFlag;
 use zmq;
 use zmq::Context;
 
-pub fn run(
-    ctx: &mut Context,
-    port: u16,
-    start: Instant,
+pub struct TimesyncServer {
+    join_handle: Option<thread::JoinHandle<()>>,
     run: RunFlag,
-) -> Result<thread::JoinHandle<()>, Box<dyn Error>> {
-    let socket = ctx.socket(zmq::REP)?;
-    let addr = format!("tcp://*:{}", port);
-    socket.bind(&addr)?;
-    // time out once per second
-    socket.set_rcvtimeo(1000)?;
+}
 
-    // start up the service in a new thread
-    let jh = thread::Builder::new()
-        .name("timesync".to_string())
-        .spawn(move || {
-            let mut resp_buf = Vec::new();
-            loop {
-                if !run.should_run() {
-                    return;
-                }
+impl TimesyncServer {
+    /// Start the timesync server.
+    /// The server will run until it is dropped.
+    pub fn start(ctx: &mut Context, port: u16, start: Instant) -> Result<Self, Box<dyn Error>> {
+        let socket = ctx.socket(zmq::REP)?;
+        let addr = format!("tcp://*:{}", port);
+        socket.bind(&addr)?;
+        // time out once per second
+        socket.set_rcvtimeo(1000)?;
+        let run = RunFlag::new();
+        let run_local = run.clone();
 
-                match socket.recv_bytes(0) {
-                    Err(zmq::Error::EAGAIN) => (),
-                    Err(e) => {
-                        error!("Timesync receieve error: {}.", e);
+        // start up the service in a new thread
+        let jh = thread::Builder::new()
+            .name("timesync".to_string())
+            .spawn(move || {
+                let mut resp_buf = Vec::new();
+                loop {
+                    if !run.should_run() {
+                        return;
                     }
-                    Ok(_) => {
-                        let now = start.elapsed().as_secs_f64();
-                        if let Err(e) = now.serialize(&mut Serializer::new(&mut resp_buf)) {
-                            error!("Timesync serialization error: {}.", e);
+
+                    match socket.recv_bytes(0) {
+                        Err(zmq::Error::EAGAIN) => (),
+                        Err(e) => {
+                            error!("Timesync receieve error: {}.", e);
                         }
-                        if let Err(e) = socket.send(&resp_buf, 0) {
-                            error!("Timesync send error: {}.", e);
+                        Ok(_) => {
+                            let now = start.elapsed().as_secs_f64();
+                            if let Err(e) = now.serialize(&mut Serializer::new(&mut resp_buf)) {
+                                error!("Timesync serialization error: {}.", e);
+                            }
+                            if let Err(e) = socket.send(&resp_buf, 0) {
+                                error!("Timesync send error: {}.", e);
+                            }
                         }
                     }
+                    resp_buf.clear();
                 }
-                resp_buf.clear();
-            }
-        })?;
-    Ok(jh)
+            })?;
+        Ok(Self {
+            join_handle: Some(jh),
+            run: run_local,
+        })
+    }
+}
+
+impl Drop for TimesyncServer {
+    fn drop(&mut self) {
+        self.run.stop();
+        self.join_handle.take().unwrap().join().unwrap();
+    }
 }

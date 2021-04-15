@@ -17,6 +17,7 @@ use crate::{
     midi_controls::Dispatcher,
     mixer,
     mixer::Mixer,
+    timesync::TimesyncServer,
     tunnel,
 };
 
@@ -56,6 +57,7 @@ pub struct Show {
     mixer: Mixer,
     clocks: ClockBank,
     start: Instant,
+    timesync: TimesyncServer,
 }
 
 impl Show {
