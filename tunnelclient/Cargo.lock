@@ -48,10 +48,11 @@ checksum = "000444226fcff248f2bc4c7625be32c63caccfecc2723a2b9f78a7487a49c407"
 
 [[package]]
 name = "async-dnssd"
-version = "0.3.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbf013011927ec3250bf41158d1141d54450d7b62bc355fe0f2f4b575b05f93e"
+checksum = "b8e788281a638bbb72e6c4bedb20cf10a404dd92b9ce69a582d09a00fdb7d62f"
 dependencies = [
+ "bitflags",
  "futures",
  "libc",
  "log 0.3.9",

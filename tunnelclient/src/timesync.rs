@@ -22,8 +22,7 @@ pub struct Seconds(pub f64);
 
 impl Seconds {
     pub fn from_duration(dur: Duration) -> Self {
-        let v = dur.as_secs() as f64 + f64::from(dur.subsec_nanos()) / 1_000_000_000.0;
-        Self(v)
+        Self(dur.as_secs_f64())
     }
 
     pub fn as_duration(self) -> Duration {
