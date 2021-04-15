@@ -1,7 +1,6 @@
 //! 0mq communication and deserialization.
 
 use crate::timesync::Microseconds;
-use crate::utils::{almost_eq, angle_almost_eq};
 use log::error;
 use rmp_serde::decode::Error as DecodeError;
 use rmp_serde::Deserializer;
@@ -11,46 +10,11 @@ use std::error::Error;
 use std::io::Cursor;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
+use tunnels_lib::ArcSegment;
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
 // --- types used for communication with host server ---
-
-/// A command to draw a single arc segment.
-#[derive(Deserialize, Debug, Clone)]
-pub struct ArcSegment {
-    pub level: f64,
-    pub thickness: f64,
-    pub hue: f64,
-    pub sat: f64,
-    pub val: f64,
-    pub x: f64,
-    pub y: f64,
-    pub rad_x: f64,
-    pub rad_y: f64,
-    pub start: f64,
-    pub stop: f64,
-    pub rot_angle: f64,
-}
-
-impl PartialEq for ArcSegment {
-    fn eq(&self, o: &Self) -> bool {
-        almost_eq(self.level, o.level)
-            && almost_eq(self.thickness, o.thickness)
-            && almost_eq(self.sat, o.sat)
-            && almost_eq(self.val, o.val)
-            && almost_eq(self.x, o.x)
-            && almost_eq(self.y, o.y)
-            && almost_eq(self.rad_x, o.rad_x)
-            && almost_eq(self.rad_y, o.rad_y)
-            && angle_almost_eq(self.hue, o.hue)
-            && angle_almost_eq(self.start, o.start)
-            && angle_almost_eq(self.stop, o.stop)
-            && angle_almost_eq(self.rot_angle, o.rot_angle)
-    }
-}
-
-impl Eq for ArcSegment {}
 
 #[cfg(test)]
 pub fn arc_segment_for_test(linear: f64, radial: f64) -> ArcSegment {

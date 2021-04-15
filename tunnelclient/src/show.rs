@@ -4,7 +4,6 @@ use crate::receive::{Snapshot, SubReceiver};
 use crate::snapshot_manager::InterpResult::*;
 use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use crate::timesync::{Client as TimesyncClient, Seconds, Synchronizer};
-use crate::utils::RunFlag;
 use graphics::clear;
 use log::{debug, error, info, max_level, warn, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
@@ -14,6 +13,7 @@ use std::error::Error;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use tunnels_lib::RunFlag;
 use zmq::Context;
 
 /// Top-level structure that owns all of the show data.
@@ -57,6 +57,8 @@ impl Show {
         thread::Builder::new()
             .name("timesync".to_string())
             .spawn(move || {
+                // FIXME: rather than sleep/flag polling we should use a select
+                // mechanism to ensure prompt quit.
                 while timesync_run_flag.should_run() {
                     thread::sleep(timesync_period);
                     match timesync_client.synchronize() {

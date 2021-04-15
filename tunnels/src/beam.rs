@@ -1,11 +1,7 @@
-use crate::{
-    clock::ClockBank,
-    look::Look,
-    numbers::UnipolarFloat,
-    tunnel::{ArcSegment, Tunnel},
-};
+use crate::{clock::ClockBank, look::Look, numbers::UnipolarFloat, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tunnels_lib::ArcSegment;
 
 /// Union type for all of the kinds of beams we can have.
 /// Since we don't need beam to be very extensible, we will try this approach

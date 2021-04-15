@@ -23,6 +23,7 @@ streaming-stats = "0.2"
 simple-error = "0.2"
 zmq = "0.9"
 zero_configure = { path = "../zero_configure" }
+tunnels_lib = { path = "../tunnels_lib" }
 regex = "1"
 lazy_static = "1"
 hostname = "0.3"

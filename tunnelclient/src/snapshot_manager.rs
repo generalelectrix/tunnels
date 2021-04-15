@@ -164,9 +164,11 @@ impl SnapshotManager {
 
 #[cfg(test)]
 mod tests {
+    use tunnels_lib::ArcSegment;
+
     use super::*;
     use crate::interpolate::Interpolate;
-    use crate::receive::{arc_segment_for_test, ArcSegment, Snapshot};
+    use crate::receive::{arc_segment_for_test, Snapshot};
     use std::iter::Iterator;
     use std::sync::mpsc::{channel, Sender};
 

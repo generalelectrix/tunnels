@@ -1,8 +1,8 @@
 //! Perform linear interpolation between entities.
 
-use crate::receive::ArcSegment;
-use crate::utils::{min_included_angle, modulo};
 use interpolation::lerp;
+use tunnels_lib::ArcSegment;
+use tunnels_lib::{min_included_angle, modulo};
 
 /// Allow an entity to be interpolated with another instance of Self.
 pub trait Interpolate {
@@ -58,8 +58,8 @@ impl Interpolate for ArcSegment {
 mod tests {
     use super::*;
     use crate::receive::arc_segment_for_test;
-    use crate::utils::assert_almost_eq;
     use interpolation::lerp;
+    use tunnels_lib::assert_almost_eq;
 
     #[test]
     fn test_interp_angle() {

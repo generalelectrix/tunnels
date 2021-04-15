@@ -10,6 +10,7 @@ mod midi_controls;
 mod mixer;
 mod numbers;
 mod show;
+mod timesync;
 mod tunnel;
 mod waveforms;
 

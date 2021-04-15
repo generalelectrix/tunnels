@@ -1,6 +1,6 @@
 use crate::config::ClientConfig;
 use crate::constants::TWOPI;
-use crate::receive::{ArcSegment, Snapshot};
+use crate::receive::Snapshot;
 use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
 use graphics::types::Color;
@@ -8,6 +8,7 @@ use graphics::types::{Matrix2d, Radius, Rectangle, Resolution, Scalar};
 use graphics::{rectangle, CircleArc, DrawState, Graphics, Transformed};
 use piston_window::Context;
 use serde::{Deserialize, Serialize};
+use tunnels_lib::ArcSegment;
 
 /// The axis along which to perform a transformation.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]

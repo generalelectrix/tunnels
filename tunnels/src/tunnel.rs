@@ -7,6 +7,7 @@ use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtoo
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
+use tunnels_lib::ArcSegment;
 use typed_index_derive::TypedIndex;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -344,23 +345,6 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
 )]
 #[typed_index(Animation)]
 pub struct AnimationIdx(pub usize);
-
-/// A command to draw a single arc segment.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ArcSegment {
-    pub level: f64,
-    pub thickness: f64,
-    pub hue: f64,
-    pub sat: f64,
-    pub val: f64,
-    pub x: f64,
-    pub y: f64,
-    pub rad_x: f64,
-    pub rad_y: f64,
-    pub start: f64,
-    pub stop: f64,
-    pub rot_angle: f64,
-}
 
 // TODO: move some of these into associated constants
 pub const N_ANIM: usize = 4;

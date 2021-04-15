@@ -9,7 +9,6 @@ use crate::config::{ClientConfig, Resolution};
 use crate::draw::{Transform, TransformDirection};
 use crate::show::Show;
 use crate::timesync::Seconds;
-use crate::utils::RunFlag;
 use hostname;
 use lazy_static::lazy_static;
 use log::{error, info};
@@ -21,6 +20,7 @@ use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
+use tunnels_lib::RunFlag;
 use zero_configure::{run_service, Controller};
 use zmq::Context;
 

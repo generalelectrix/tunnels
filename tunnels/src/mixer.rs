@@ -1,13 +1,8 @@
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
-use crate::{
-    beam::Beam,
-    clock::ClockBank,
-    look::Look,
-    numbers::UnipolarFloat,
-    tunnel::{ArcSegment, Tunnel},
-};
+use crate::{beam::Beam, clock::ClockBank, look::Look, numbers::UnipolarFloat, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, rc::Rc, time::Duration};
+use tunnels_lib::ArcSegment;
 use typed_index_derive::TypedIndex;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.

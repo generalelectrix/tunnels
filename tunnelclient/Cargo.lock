@@ -2128,9 +2128,17 @@ dependencies = [
  "simple-error",
  "simplelog",
  "streaming-stats",
+ "tunnels_lib",
  "yaml-rust",
  "zero_configure",
  "zmq",
+]
+
+[[package]]
+name = "tunnels_lib"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

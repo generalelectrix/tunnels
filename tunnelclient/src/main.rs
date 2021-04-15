@@ -11,14 +11,13 @@ mod remote;
 mod show;
 mod snapshot_manager;
 mod timesync;
-mod utils;
 
 use crate::config::ClientConfig;
 use crate::remote::{administrate, run_remote};
 use crate::show::Show;
-use crate::utils::RunFlag;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
+use tunnels_lib::RunFlag;
 use zmq::Context;
 
 fn main() {
