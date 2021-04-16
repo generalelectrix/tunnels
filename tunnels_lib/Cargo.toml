@@ -8,3 +8,5 @@ edition = "2018"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+derive_more = "^0.99"
+num-traits = "^0.2"

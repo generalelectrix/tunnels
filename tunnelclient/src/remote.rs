@@ -8,7 +8,6 @@
 use crate::config::{ClientConfig, Resolution};
 use crate::draw::{Transform, TransformDirection};
 use crate::show::Show;
-use crate::timesync::Seconds;
 use hostname;
 use lazy_static::lazy_static;
 use log::{error, info};
@@ -299,7 +298,7 @@ where
         hostname.into(),
         resolution,
         timesync_interval,
-        Seconds(render_delay),
+        Duration::from_secs_f64(render_delay),
         anti_alias,
         fullscreen,
         alpha_blend,

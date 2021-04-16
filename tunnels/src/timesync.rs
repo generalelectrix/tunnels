@@ -4,7 +4,7 @@ use std::{error::Error, time::Duration, time::Instant};
 
 use rmp_serde::Serializer;
 use serde::Serialize;
-use tunnels_lib::RunFlag;
+use tunnels_lib::{RunFlag, Timestamp};
 use zmq;
 use zmq::Context;
 
@@ -41,16 +41,17 @@ impl TimesyncServer {
                             error!("Timesync receieve error: {}.", e);
                         }
                         Ok(_) => {
-                            let now = start.elapsed().as_secs_f64();
-                            if let Err(e) = now.serialize(&mut Serializer::new(&mut resp_buf)) {
+                            if let Err(e) = Timestamp::since(start)
+                                .serialize(&mut Serializer::new(&mut resp_buf))
+                            {
                                 error!("Timesync serialization error: {}.", e);
                             }
                             if let Err(e) = socket.send(&resp_buf, 0) {
                                 error!("Timesync send error: {}.", e);
                             }
+                            resp_buf.clear();
                         }
                     }
-                    resp_buf.clear();
                 }
             })?;
         Ok(Self {

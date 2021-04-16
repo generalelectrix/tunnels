@@ -1,6 +1,5 @@
 //! 0mq communication and deserialization.
 
-use crate::timesync::Microseconds;
 use log::error;
 use rmp_serde::decode::Error as DecodeError;
 use rmp_serde::Deserializer;
@@ -11,6 +10,7 @@ use std::io::Cursor;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 use tunnels_lib::ArcSegment;
+use tunnels_lib::Timestamp;
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
@@ -42,7 +42,7 @@ pub type LayerCollection = Vec<Vec<ArcSegment>>;
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Snapshot {
     pub frame_number: u64,
-    pub time: Microseconds,
+    pub time: Timestamp,
     pub layers: LayerCollection,
 }
 

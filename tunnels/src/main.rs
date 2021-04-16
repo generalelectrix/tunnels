@@ -9,6 +9,7 @@ mod midi;
 mod midi_controls;
 mod mixer;
 mod numbers;
+mod send;
 mod show;
 mod timesync;
 mod tunnel;

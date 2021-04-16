@@ -3,43 +3,16 @@
 //! http://www.mine-control.com/zack/timesync/timesync.html
 
 use crate::receive::Receive;
-use derive_more::{Add, Display, From, Sub};
 use interpolation::lerp;
-use serde::{Deserialize, Serialize};
 use simple_error::bail;
 use stats::{mean, stddev};
 use std::error::Error;
 use std::mem;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+use tunnels_lib::Timestamp;
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
-
-#[derive(
-    Display, Debug, Copy, Clone, PartialEq, PartialOrd, Serialize, Deserialize, Add, Sub, From,
-)]
-pub struct Seconds(pub f64);
-
-impl Seconds {
-    pub fn from_duration(dur: Duration) -> Self {
-        Self(dur.as_secs_f64())
-    }
-
-    pub fn as_duration(self) -> Duration {
-        let secs = self.0.floor();
-        let nanos = (self.0 - secs) * 1_000_000_000.0;
-        Duration::new(secs as u64, nanos as u32)
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Add, From)]
-pub struct Microseconds(pub u64);
-
-impl Microseconds {
-    pub fn from_seconds(s: Seconds) -> Self {
-        Self((s.0 * 1_000_000.) as u64)
-    }
-}
 
 const PORT: u64 = 8989;
 
@@ -80,7 +53,7 @@ impl Client {
             None => bail!("Unable to receive a response from timesync server."),
         };
         let elapsed = now.elapsed();
-        let timestamp: Seconds = self.deserialize_msg(buf)?;
+        let timestamp: Timestamp = self.deserialize_msg(buf)?;
         Ok(Measurement {
             sent: now,
             round_trip: elapsed,
@@ -101,12 +74,10 @@ impl Client {
         // Sort the measurements by round-trip time and remove outliers.
         measurements.sort_by_key(|m| m.round_trip);
         let median_delay = measurements[(self.n_meas / 2) as usize].round_trip;
-        let stddev = Seconds(stddev(
-            measurements
-                .iter()
-                .map(|m| Seconds::from_duration(m.round_trip).0),
+        let stddev = Duration::from_secs_f64(stddev(
+            measurements.iter().map(|m| m.round_trip.as_secs_f64()),
         ));
-        let cutoff = median_delay + stddev.as_duration();
+        let cutoff = median_delay + stddev;
 
         measurements.retain(|m| m.round_trip < cutoff);
 
@@ -120,11 +91,10 @@ impl Client {
         // Estimate the remote clock time that corresponds to our reference time.
         let remote_time_estimates = measurements.iter().map(|m| {
             let delta = (m.sent + m.round_trip / 2).duration_since(reference_time);
-            let s = m.timestamp - Seconds::from_duration(delta);
-            s.0
+            m.timestamp - Timestamp::from_duration(delta)
         });
         // Take the average of these estimates, and we're done
-        let best_remote_time_estimate = Seconds(mean(remote_time_estimates));
+        let best_remote_time_estimate = Timestamp(mean(remote_time_estimates) as i64);
         Ok(Timesync {
             ref_time: reference_time,
             host_ref_time: best_remote_time_estimate,
@@ -147,19 +117,19 @@ impl Receive for Client {
 struct Measurement {
     sent: Instant,
     round_trip: Duration,
-    timestamp: Seconds,
+    timestamp: Timestamp,
 }
 
 #[derive(Debug, Clone)]
 pub struct Timesync {
     ref_time: Instant,
-    host_ref_time: Seconds,
+    host_ref_time: Timestamp,
 }
 
 impl Timesync {
     /// Return an estimate of what time it is now on the host.
-    pub fn now(&self) -> Seconds {
-        self.host_ref_time + Seconds::from_duration(self.ref_time.elapsed())
+    pub fn now(&self) -> Timestamp {
+        self.host_ref_time + Timestamp::from_duration(self.ref_time.elapsed())
     }
 }
 
@@ -203,25 +173,15 @@ impl Synchronizer {
     }
 
     /// Get a (possibly interpolated) estimate of the time on the host.
-    pub fn now(&mut self) -> Seconds {
+    pub fn now(&mut self) -> Timestamp {
         let current = self.current.now();
         if self.alpha == 1.0 {
             current
         } else {
             let old = self.last.now();
-            Seconds(lerp(&old.0, &current.0, &self.alpha))
+            Timestamp(lerp(&old.0, &current.0, &self.alpha))
         }
     }
-}
-
-#[test]
-fn test_seconds_round_trip() {
-    let now = Instant::now();
-    sleep(Duration::from_millis(100));
-    let delta = now.elapsed();
-    let rt = Seconds::from_duration(delta).as_duration();
-    println!("delta: {:?}, rt: {:?}", delta, rt);
-    assert_eq!(delta, rt);
 }
 
 // This test requires the remote timesync service to be running.
