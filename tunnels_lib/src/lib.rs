@@ -115,6 +115,17 @@ impl PartialEq for ArcSegment {
 
 impl Eq for ArcSegment {}
 
+pub type LayerCollection = Vec<Arc<Vec<ArcSegment>>>;
+
+/// A complete single-frame video snapshot.
+/// This is the top-level structure sent in each serialized frame.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    pub frame_number: u64,
+    pub time: Timestamp,
+    pub layers: LayerCollection,
+}
+
 const ALMOST_EQ_TOLERANCE: f64 = 0.000_000_1;
 
 /// True modulus operator.

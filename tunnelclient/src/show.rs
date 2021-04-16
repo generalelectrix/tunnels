@@ -1,6 +1,6 @@
 use crate::config::ClientConfig;
 use crate::draw::Draw;
-use crate::receive::{Snapshot, SubReceiver};
+use crate::receive::SubReceiver;
 use crate::snapshot_manager::InterpResult::*;
 use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tunnels_lib::RunFlag;
-use tunnels_lib::Timestamp;
+use tunnels_lib::{Snapshot, Timestamp};
 use zmq::Context;
 
 /// Top-level structure that owns all of the show data.

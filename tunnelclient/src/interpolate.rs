@@ -1,5 +1,7 @@
 //! Perform linear interpolation between entities.
 
+use std::sync::Arc;
+
 use interpolation::lerp;
 use tunnels_lib::ArcSegment;
 use tunnels_lib::{min_included_angle, modulo};
@@ -23,6 +25,12 @@ impl<T: Interpolate + Clone> Interpolate for Vec<T> {
             .zip(other.iter())
             .map(|(a, b)| a.interpolate_with(b, alpha))
             .collect::<Vec<_>>()
+    }
+}
+
+impl<T: Interpolate> Interpolate for Arc<T> {
+    fn interpolate_with(&self, other: &Self, alpha: f64) -> Self {
+        Arc::new((**self).interpolate_with(other, alpha))
     }
 }
 

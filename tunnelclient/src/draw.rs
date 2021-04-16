@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use crate::config::ClientConfig;
 use crate::constants::TWOPI;
-use crate::receive::Snapshot;
 use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
 use graphics::types::Color;
@@ -9,6 +10,7 @@ use graphics::{rectangle, CircleArc, DrawState, Graphics, Transformed};
 use piston_window::Context;
 use serde::{Deserialize, Serialize};
 use tunnels_lib::ArcSegment;
+use tunnels_lib::Snapshot;
 
 /// The axis along which to perform a transformation.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -40,6 +42,16 @@ where
         for e in self {
             e.draw(c, gl, cfg);
         }
+    }
+}
+
+impl<T, G> Draw<G> for Arc<T>
+where
+    G: Graphics,
+    T: Draw<G>,
+{
+    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
+        self.draw(c, gl, cfg);
     }
 }
 

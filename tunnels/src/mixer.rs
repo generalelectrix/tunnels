@@ -1,8 +1,8 @@
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::{beam::Beam, clock::ClockBank, look::Look, numbers::UnipolarFloat, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, rc::Rc, time::Duration};
-use tunnels_lib::ArcSegment;
+use std::{collections::HashSet, sync::Arc, time::Duration};
+use tunnels_lib::{ArcSegment, LayerCollection};
 use typed_index_derive::TypedIndex;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
@@ -46,7 +46,7 @@ impl Mixer {
 
     /// Render the current state of the mixer.
     /// Each inner vector represents one virtual video channel.
-    pub fn render(&self, external_clocks: &ClockBank) -> Vec<Vec<Rc<Vec<ArcSegment>>>> {
+    pub fn render(&self, external_clocks: &ClockBank) -> Vec<LayerCollection> {
         let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
         for _ in 0..Self::N_VIDEO_CHANNELS {
             video_outs.push(Vec::new());
@@ -56,7 +56,7 @@ impl Mixer {
             if rendered_beam.len() == 0 {
                 continue;
             }
-            let rendered_ptr = Rc::new(rendered_beam);
+            let rendered_ptr = Arc::new(rendered_beam);
             for video_chan in &channel.video_outs {
                 video_outs[video_chan.0].push(rendered_ptr.clone());
             }

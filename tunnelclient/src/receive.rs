@@ -9,8 +9,8 @@ use std::error::Error;
 use std::io::Cursor;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
-use tunnels_lib::ArcSegment;
 use tunnels_lib::Timestamp;
+use tunnels_lib::{ArcSegment, Snapshot};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
@@ -34,19 +34,6 @@ pub fn arc_segment_for_test(linear: f64, radial: f64) -> ArcSegment {
         rot_angle: radial,
     }
 }
-
-pub type LayerCollection = Vec<Vec<ArcSegment>>;
-
-/// A complete single-frame video snapshot.
-/// This is the top-level structure sent in each serialized frame.
-#[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct Snapshot {
-    pub frame_number: u64,
-    pub time: Timestamp,
-    pub layers: LayerCollection,
-}
-
-impl Eq for Snapshot {}
 
 // --- receive and handle messages ---
 

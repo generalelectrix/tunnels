@@ -1,10 +1,10 @@
 //! Handle emptying a queue of snapshots, maintaining a time-ordered collection,
 //! and interpolating between them on demand.
 
-use crate::receive::{LayerCollection, Snapshot};
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use tunnels_lib::Timestamp;
+use tunnels_lib::{LayerCollection, Snapshot};
 
 /// Handle receiving and maintaining a collection of snapshots.
 /// Provide interpolated snapshots on request.
@@ -162,13 +162,14 @@ impl SnapshotManager {
 
 #[cfg(test)]
 mod tests {
-    use tunnels_lib::ArcSegment;
+    use tunnels_lib::{ArcSegment, Snapshot};
 
     use super::*;
     use crate::interpolate::Interpolate;
-    use crate::receive::{arc_segment_for_test, Snapshot};
+    use crate::receive::arc_segment_for_test;
     use std::iter::Iterator;
     use std::sync::mpsc::{channel, Sender};
+    use std::sync::Arc;
 
     fn mksnapshot(n: u64, time: Timestamp) -> Snapshot {
         Snapshot {
@@ -180,7 +181,7 @@ mod tests {
 
     fn mksnapshot_with_arc(n: u64, time: Timestamp, arc: ArcSegment) -> Snapshot {
         let mut snap = mksnapshot(n, time);
-        snap.layers.push(vec![arc]);
+        snap.layers.push(Arc::new(vec![arc]));
         snap
     }
 
