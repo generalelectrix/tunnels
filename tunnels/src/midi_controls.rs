@@ -55,12 +55,14 @@ impl Dispatcher {
         map_mixer_controls(Device::AkaiApc40, 0, &mut map);
         map_mixer_controls(Device::AkaiApc20, 1, &mut map);
         map_mixer_controls(Device::TouchOsc, 0, &mut map);
-        map_mixer_controls(Device::TouchOsc, 1, &mut map);
+        // FIXME: need to split out the video controls from the mixer controls
+        // map_mixer_controls(Device::TouchOsc, 1, &mut map);
 
         map_master_ui_controls(Device::AkaiApc40, 0, &mut map);
         map_master_ui_controls(Device::AkaiApc20, 1, &mut map);
         map_master_ui_controls(Device::TouchOsc, 0, &mut map);
-        map_master_ui_controls(Device::TouchOsc, 1, &mut map);
+        // FIXME: need to split out the pagewise controls from the non-pagewise controls
+        // map_master_ui_controls(Device::TouchOsc, 1, &mut map);
 
         // TODO: map clock controls for new hardware
         map_clock_controls(Device::TouchOsc, &mut map);
