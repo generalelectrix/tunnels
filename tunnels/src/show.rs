@@ -1,17 +1,13 @@
 use log::{self, info};
-use serde::{Deserialize, Serialize};
 use simple_error::bail;
 use std::{
     error::Error,
-    sync::mpsc::{channel, Receiver, Sender},
     time::{Duration, Instant},
 };
 use tunnels_lib::Timestamp;
 
 use crate::{
-    animation,
-    beam_store::{self, BeamStore},
-    clock,
+    animation, clock,
     clock::ClockBank,
     device::Device,
     master_ui,
@@ -25,25 +21,15 @@ use crate::{
     tunnel,
 };
 
-#[derive(Copy, Clone, Debug)]
-pub enum TestMode {
-    Stress,
-    Rotation,
-    Aliasing,
-    MultiChannel,
-}
-
 #[derive(Clone, Debug)]
 pub struct Config {
     midi_devices: Vec<DeviceSpec>,
-    test_mode: Option<TestMode>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             midi_devices: Vec::new(),
-            test_mode: None,
         }
     }
 }
@@ -56,11 +42,6 @@ pub struct Show {
 }
 
 impl Show {
-    // /// Create a new show by loading a config file.
-    // fn from_config(path: String) -> Result<Self, Box<dyn Error>> {
-
-    // }
-
     /// Create a new show from the provided config.
     pub fn new(config: Config) -> Result<Self, Box<dyn Error>> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
