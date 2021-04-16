@@ -8,7 +8,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub enum Waveform {
     Sine,
     Triangle,
@@ -16,7 +16,7 @@ pub enum Waveform {
     Sawtooth,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub enum Target {
     Rotation,
     Thickness,
@@ -33,7 +33,7 @@ pub enum Target {
     PositionY,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Animation {
     waveform: Waveform,
     pulse: bool,

@@ -142,8 +142,9 @@ pub enum StateChange {
     MasterUI(master_ui::StateChange),
 }
 
-pub fn setup_mutli_channel_test((i, channel): (usize, &mut Channel)) {
+pub fn setup_multi_channel_test((i, channel): (usize, &mut Channel)) {
     channel.level = UnipolarFloat(1.0);
+    channel.video_outs.clear();
     channel.video_outs.insert(VideoChannel(i));
 
     if let Beam::Tunnel(ref mut tunnel) = channel.beam {

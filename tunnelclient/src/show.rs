@@ -85,13 +85,9 @@ impl Show {
             .map_err(|e| format!("Timesync service thread failed to spawn: {}", e))?;
 
         // Set up snapshot reception and management.
-        let snapshot_queue: Receiver<Snapshot> = SubReceiver::new(
-            &cfg.server_hostname,
-            6000,
-            cfg.video_channel.to_string().as_bytes(),
-            ctx,
-        )?
-        .run_async()?;
+        let snapshot_queue: Receiver<Snapshot> =
+            SubReceiver::new(&cfg.server_hostname, 6000, &[cfg.video_channel as u8], ctx)?
+                .run_async()?;
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);
 
@@ -252,7 +248,8 @@ impl RenderIssueLogger {
             self.last_logged = now;
             warn!(
                 "Missed {} snapshots in the last {} seconds.",
-                self.missed, dt
+                self.missed,
+                dt.0 as f64 / 1_000_000.
             );
             self.missed = 0;
         }

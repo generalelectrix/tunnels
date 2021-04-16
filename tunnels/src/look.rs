@@ -5,7 +5,7 @@ use tunnels_lib::ArcSegment;
 
 /// A look is a beam that is essentially the contents of an entire mixer.
 /// All channel settings are preserved.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Look {
     pub channels: Vec<Channel>,
 }

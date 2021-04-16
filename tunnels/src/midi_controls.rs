@@ -98,7 +98,7 @@ impl EmitStateChange for Dispatcher {
 
 fn bipolar_from_midi(val: u8) -> BipolarFloat {
     let denom = if val > 64 { 63. } else { 64. };
-    BipolarFloat((val - 64) as f64 / denom)
+    BipolarFloat((val as f64 - 64.) / denom)
 }
 
 fn bipolar_to_midi(val: BipolarFloat) -> u8 {

@@ -10,7 +10,7 @@ use std::time::Duration;
 use tunnels_lib::ArcSegment;
 use typed_index_derive::TypedIndex;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
 ///
 /// The workhorse.
@@ -48,7 +48,7 @@ impl Tunnel {
         Self {
             marquee_speed: BipolarFloat(0.0),
             rot_speed: BipolarFloat(0.0),
-            thickness: UnipolarFloat(0.0),
+            thickness: UnipolarFloat(0.25),
             size: UnipolarFloat(0.5),
             aspect_ratio: UnipolarFloat(0.5),
             col_center: UnipolarFloat(0.0),

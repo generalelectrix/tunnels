@@ -7,7 +7,7 @@ use tunnels_lib::{ArcSegment, LayerCollection};
 use typed_index_derive::TypedIndex;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Mixer {
     channels: Vec<Channel>,
 }
@@ -153,7 +153,7 @@ impl Mixer {
 /// The contents of a mixer channel.
 ///
 /// By default, outputs to video feed 0.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Channel {
     pub beam: Beam,
     pub level: UnipolarFloat,

@@ -47,7 +47,7 @@ lazy_static! {
     };
     static ref CHANNEL_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..PAGE_SIZE)
-            .map(|cid| cc(cid as u8, CHANNEL_SELECT))
+            .map(|cid| note_on(cid as u8, CHANNEL_SELECT))
             .collect(),
         off: 0,
         on: 1,

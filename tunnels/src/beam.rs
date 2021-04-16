@@ -7,7 +7,7 @@ use tunnels_lib::ArcSegment;
 /// Since we don't need beam to be very extensible, we will try this approach
 /// instead of having to either treat beams as trait objects or store them in
 /// disparate collections.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum Beam {
     Tunnel(Tunnel),
     Look(Look),
