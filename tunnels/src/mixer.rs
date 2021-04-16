@@ -46,6 +46,10 @@ impl Mixer {
         &mut self.channels[channel].beam
     }
 
+    pub fn channels(&mut self) -> impl Iterator<Item = &mut Channel> {
+        self.channels.iter_mut()
+    }
+
     /// Render the current state of the mixer.
     /// Each inner vector represents one virtual video channel.
     pub fn render(&self, external_clocks: &ClockBank) -> Vec<LayerCollection> {
@@ -171,11 +175,11 @@ impl Mixer {
 /// By default, outputs to video feed 0.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Channel {
-    beam: Beam,
-    level: UnipolarFloat,
-    bump: bool,
-    mask: bool,
-    video_outs: HashSet<VideoChannel>,
+    pub beam: Beam,
+    pub level: UnipolarFloat,
+    pub bump: bool,
+    pub mask: bool,
+    pub video_outs: HashSet<VideoChannel>,
 }
 
 impl Channel {

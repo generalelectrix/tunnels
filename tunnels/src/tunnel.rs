@@ -20,22 +20,22 @@ use typed_index_derive::TypedIndex;
 ///
 /// TODO: docstring
 pub struct Tunnel {
-    marquee_speed: BipolarFloat,
-    rot_speed: BipolarFloat,
-    thickness: UnipolarFloat,
-    size: UnipolarFloat,
-    aspect_ratio: UnipolarFloat,
-    col_center: UnipolarFloat,
-    col_width: UnipolarFloat,
-    col_spread: UnipolarFloat,
-    col_sat: UnipolarFloat,
+    pub marquee_speed: BipolarFloat,
+    pub rot_speed: BipolarFloat,
+    pub thickness: UnipolarFloat,
+    pub size: UnipolarFloat,
+    pub aspect_ratio: UnipolarFloat,
+    pub col_center: UnipolarFloat,
+    pub col_width: UnipolarFloat,
+    pub col_spread: UnipolarFloat,
+    pub col_sat: UnipolarFloat,
     /// TODO: regularize segs interface into regular float knobs
-    segs: u8,
+    pub segs: u8,
     /// remove segments at this interval
     ///
     /// bipolar float, internally interpreted as an int on [-16, 16]
     /// defaults to every other chicklet removed
-    blacking: BipolarFloat,
+    pub blacking: BipolarFloat,
     curr_rot_angle: UnipolarFloat,
     curr_marquee_angle: UnipolarFloat,
     x_offset: f64,

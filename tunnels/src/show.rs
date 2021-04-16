@@ -7,7 +7,9 @@ use std::{
 use tunnels_lib::Timestamp;
 
 use crate::{
-    animation, clock,
+    animation,
+    beam::Beam,
+    clock,
     clock::ClockBank,
     device::Device,
     master_ui,
@@ -15,7 +17,8 @@ use crate::{
     midi::{DeviceSpec, Manager},
     midi_controls::Dispatcher,
     mixer,
-    mixer::Mixer,
+    mixer::{Channel, Mixer, VideoChannel},
+    numbers::{BipolarFloat, UnipolarFloat},
     send::{start_render_service, Frame},
     timesync::TimesyncServer,
     tunnel,
@@ -71,6 +74,11 @@ impl Show {
             mixer,
             clocks: ClockBank::new(),
         })
+    }
+
+    /// Set up the show in a test mode, defined by the provided setup function.
+    pub fn test_mode(&mut self, setup: Box<Fn((usize, &mut Channel))>) {
+        self.mixer.channels().enumerate().for_each(setup);
     }
 
     /// Run the show in the current thread.
@@ -149,5 +157,15 @@ pub enum StateChange {
     Mixer(mixer::StateChange),
     Clock(clock::StateChange),
     MasterUI(master_ui::StateChange),
-    //BeamStore(beam_store::StateChange),
+}
+
+pub fn setup_mutli_channel_test((i, channel): (usize, &mut Channel)) {
+    channel.level = UnipolarFloat(1.0);
+    channel.video_outs.insert(VideoChannel(i));
+
+    if let Beam::Tunnel(ref mut tunnel) = channel.beam {
+        tunnel.col_sat = UnipolarFloat(1.0);
+        tunnel.marquee_speed = BipolarFloat(0.1);
+        tunnel.col_center = UnipolarFloat((i as f64 / Mixer::N_VIDEO_CHANNELS as f64) % 1.0);
+    }
 }
