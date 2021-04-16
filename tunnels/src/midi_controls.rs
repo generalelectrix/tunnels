@@ -21,6 +21,8 @@ use self::master_ui::{map_master_ui_controls, update_master_ui_control};
 use self::mixer::{map_mixer_controls, update_mixer_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
+pub use self::mixer::PAGE_SIZE as MIXER_CHANNELS_PER_PAGE;
+
 type ControlMessageCreator = Box<dyn Fn(u8) -> ControlMessage>;
 
 pub struct ControlMap(pub HashMap<(Device, Mapping), ControlMessageCreator>);
@@ -37,7 +39,7 @@ impl ControlMap {
 }
 pub struct Dispatcher {
     map: ControlMap,
-    manager: Manager,
+    pub manager: Manager,
 }
 
 impl Dispatcher {

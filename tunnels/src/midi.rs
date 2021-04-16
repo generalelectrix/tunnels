@@ -216,14 +216,13 @@ impl Manager {
     }
 
     // Add a device to the manager given input and output port names.
-    pub fn add_device(
-        &mut self,
-        device: Device,
-        input_port_name: String,
-        output_port_name: String,
-    ) -> Result<(), Box<dyn Error>> {
-        let input = Input::new(input_port_name, device, self.send.clone())?;
-        let output = Output::new(output_port_name, device)?;
+    pub fn add_device(&mut self, spec: DeviceSpec) -> Result<(), Box<dyn Error>> {
+        let input = Input::new(spec.input_port_name, spec.device, self.send.clone())?;
+        let mut output = Output::new(spec.output_port_name, spec.device)?;
+
+        // Send initialization commands to the device.
+        spec.device.init_midi(&mut output)?;
+
         self.inputs.push(input);
         self.outputs.push(output);
         Ok(())
@@ -246,4 +245,12 @@ impl Manager {
             }
         }
     }
+}
+
+/// Wrapper struct for the data needed to describe a device to connect to.
+#[derive(Clone, Debug)]
+pub struct DeviceSpec {
+    pub device: Device,
+    pub input_port_name: String,
+    pub output_port_name: String,
 }

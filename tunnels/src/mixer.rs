@@ -1,4 +1,5 @@
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
+use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
 use crate::{beam::Beam, clock::ClockBank, look::Look, numbers::UnipolarFloat, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -14,7 +15,8 @@ pub struct Mixer {
 impl Mixer {
     pub const N_VIDEO_CHANNELS: usize = 8;
 
-    pub fn new(n_channels: usize) -> Self {
+    pub fn new(n_pages: usize) -> Self {
+        let n_channels = n_pages * MIXER_CHANNELS_PER_PAGE;
         let mut channels = Vec::with_capacity(n_channels);
         for i in 0..n_channels {
             channels.push(Channel::new(Beam::Tunnel(Tunnel::new())));

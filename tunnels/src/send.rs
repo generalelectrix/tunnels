@@ -12,12 +12,14 @@ use zmq::{Context, Socket};
 
 use crate::{clock::ClockBank, mixer::Mixer};
 
+const PORT: u16 = 6000;
+
 /// Renders the show state and sends it to all connected clients.
 /// Returns a channel for sending frames to be rendered.
 /// The service runs until the channel is dropped.
-pub fn start_render_service(ctx: &mut Context, port: u16) -> Result<Sender<Frame>, Box<dyn Error>> {
+pub fn start_render_service(ctx: &mut Context) -> Result<Sender<Frame>, Box<dyn Error>> {
     let socket = ctx.socket(zmq::PUB)?;
-    let addr = format!("tcp://*:{}", port);
+    let addr = format!("tcp://*:{}", 6000);
     socket.bind(&addr)?;
 
     let (send, mut recv) = channel();
@@ -109,8 +111,8 @@ fn send_snapshot(
 }
 
 pub struct Frame {
-    number: u64,
-    timestamp: Timestamp,
-    mixer: Mixer,
-    clocks: ClockBank,
+    pub number: u64,
+    pub timestamp: Timestamp,
+    pub mixer: Mixer,
+    pub clocks: ClockBank,
 }

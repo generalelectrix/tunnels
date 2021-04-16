@@ -68,7 +68,6 @@ class Show (object):
             load_path (optional): path to saved show file to load
             save_path (optional): path to use to save show file state
         """
-        self.config = config
 
         if config["log_level"] == "debug":
             log.basicConfig(level=log.DEBUG)
@@ -77,10 +76,6 @@ class Show (object):
 
         # keep a queue of requests from control input handlers to be serviced.
         self.control_requests = Queue()
-
-        self.channel_count = config.get('channel_count', 16)
-
-        self._setup_models(load_path, save_path)
 
         starting_beam = self.mixer.layers[0].beam
 
@@ -185,65 +180,6 @@ class Show (object):
         finally:
             render_server.stop()
             log.info("Shut down render server.")
-
-    def _setup_models(self, load_path, save_path):
-        """Instantiate all of the model objects."""
-        self.mixer = Mixer(
-            n_layers=self.channel_count,
-            n_video_channels=N_VIDEO_CHANNELS,
-            test_mode=self.test_mode)
-
-        self.clocks = [ControllableClock() for _ in range(N_CLOCKS)]
-
-        # beam matrix minder
-        # FIXME: hardcoded page count
-        self.beam_matrix = beam_matrix = BeamMatrixMinder(
-            n_pages=2,
-            load_path=load_path,
-            save_path=save_path)
-
-        # save a copy of the default tunnel for sanity. Don't erase it!
-        beam_matrix.put_beam(4, 7, Tunnel())
-
-    def _setup_midi(self):
-        """Configure each requested midi port."""
-        self.midi_inputs, self.midi_outputs = [], []
-
-        midi_ports = self.config['midi_ports']
-        # FIXME: #17 if a midi device on the bus anywhere has a different number of
-        # inputs and outputs we need to account for that.
-        for port in midi_ports:
-            midi_in = MidiInput(port, self.control_requests)
-            midi_out = MidiOutput(port)
-            self.midi_inputs.append(midi_in)
-            self.midi_outputs.append(midi_out)
-
-            # perform device-specific init
-            initialize_device(midi_out)
-
-            # now attach all of the relevant controllers
-            def create_controller(cls, mi, **kwargs):
-                controller = cls(mi, midi_out, **kwargs)
-                midi_in.register_controller(controller)
-
-            # FIXME: shitty hack to use the APC20 as a wing.
-            if midi_in.name == "Akai APC20":
-                page = 1
-            else:
-                page = 0
-
-            # FIXME: this is a terrible way to decide which controllers to
-            # hook up to which control surfaces.
-            if midi_in.name == "ReMOTE SL Port 1" or "Network Session" in midi_in.name:
-                for i, clock in enumerate(self.clocks):
-                    create_controller(ClockMidiController, clock, channel=i)
-
-            if "Akai APC" in midi_in.name or "Network Session" in midi_in.name:
-                create_controller(MetaControlMidiController, self.meta_mi, page=page)
-                create_controller(BeamMatrixMidiController, self.meta_mi.beam_matrix_mi, page=page)
-                create_controller(MixerMidiController, self.mixer_mi, page=page)
-                create_controller(TunnelMidiController, self.tunnel_mi)
-                create_controller(AnimationMidiController, self.animator_mi)
 
     def _service_control_event(self, timeout):
         """Service a single control event if one is pending."""

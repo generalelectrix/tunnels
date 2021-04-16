@@ -8,6 +8,7 @@ use tunnels_lib::{RunFlag, Timestamp};
 use zmq;
 use zmq::Context;
 
+const PORT: u64 = 8989;
 pub struct TimesyncServer {
     join_handle: Option<thread::JoinHandle<()>>,
     run: RunFlag,
@@ -16,9 +17,9 @@ pub struct TimesyncServer {
 impl TimesyncServer {
     /// Start the timesync server.
     /// The server will run until it is dropped.
-    pub fn start(ctx: &mut Context, port: u16, start: Instant) -> Result<Self, Box<dyn Error>> {
+    pub fn start(ctx: &mut Context, start: Instant) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::REP)?;
-        let addr = format!("tcp://*:{}", port);
+        let addr = format!("tcp://*:{}", PORT);
         socket.bind(&addr)?;
         // time out once per second
         socket.set_rcvtimeo(1000)?;

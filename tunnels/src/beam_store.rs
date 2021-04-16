@@ -1,4 +1,4 @@
-use crate::beam::Beam;
+use crate::{beam::Beam, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 
 /// Save beams in a grid store intended for simple access via APC button grid.
@@ -17,6 +17,9 @@ impl BeamStore {
         for _ in 0..Self::N_ROWS {
             rows.push(vec![None; n_cols]);
         }
+
+        // Start off with the default tunnel in the bottom-right corner.
+        rows[4][7] = Some(Beam::Tunnel(Tunnel::new()));
         Self { beams: rows }
     }
 

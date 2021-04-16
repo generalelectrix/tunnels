@@ -14,12 +14,22 @@ pub struct ClockIdx(pub usize);
 pub struct ClockBank([Clock; N_CLOCKS]);
 
 impl ClockBank {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
     pub fn curr_angle(&self, index: ClockIdx) -> UnipolarFloat {
         self.0[index.0].curr_angle()
     }
 
     pub fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
         self.0[index.0].submaster_level
+    }
+
+    pub fn update_state(&mut self, delta_t: Duration) {
+        for clock in self.0.iter_mut() {
+            clock.update_state(delta_t);
+        }
     }
 }
 
@@ -38,6 +48,12 @@ pub struct Clock {
     reset_on_update: bool,
     /// submaster level for this clock
     pub submaster_level: UnipolarFloat,
+}
+
+impl Default for Clock {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Clock {

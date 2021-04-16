@@ -4,6 +4,7 @@ use crate::{
     animation::Animation,
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
+    midi_controls::MIXER_CHANNELS_PER_PAGE,
     mixer::{ChannelIdx, Mixer},
     show::{ControlMessage as ShowControlMessage, StateChange as ShowStateChange},
     tunnel::AnimationIdx,
@@ -26,10 +27,13 @@ pub struct MasterUI {
 }
 
 impl MasterUI {
-    pub fn new(n_mixer_channels: usize, n_mixer_pages: usize) -> Self {
+    pub fn new(n_mixer_pages: usize) -> Self {
         Self {
             current_channel: Default::default(),
-            current_animation_for_channel: vec![AnimationIdx(0); n_mixer_channels],
+            current_animation_for_channel: vec![
+                AnimationIdx(0);
+                n_mixer_pages * MIXER_CHANNELS_PER_PAGE
+            ],
             animation_clipboard: Animation::new(),
             beam_store: BeamStore::new(n_mixer_pages),
             beam_store_state: BeamStoreState::Idle,
@@ -75,11 +79,11 @@ impl MasterUI {
     }
 
     /// Emit all controllable state.
-    fn emit_state<E: EmitStateChange>(&self, mixer: &mut Mixer, emitter: &mut E) {
-        use StateChange::*;
-        emitter.emit_master_ui_state_change(Channel(self.current_channel));
-        // self.beam_store.emit_state(emitter);
+    pub fn emit_state<E: EmitStateChange>(&self, mixer: &mut Mixer, emitter: &mut E) {
+        emitter.emit_master_ui_state_change(StateChange::Channel(self.current_channel));
+        self.emit_beam_store_state(emitter);
         self.emit_current_channel_state(mixer, emitter);
+        mixer.emit_state(emitter);
     }
 
     /// Emit state for the beam store.
