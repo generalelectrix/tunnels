@@ -9,7 +9,6 @@ use std::error::Error;
 use std::io::Cursor;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
-use tunnels_lib::Timestamp;
 use tunnels_lib::{ArcSegment, Snapshot};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};

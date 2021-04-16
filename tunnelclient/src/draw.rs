@@ -51,7 +51,7 @@ where
     T: Draw<G>,
 {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        self.draw(c, gl, cfg);
+        (**self).draw(c, gl, cfg);
     }
 }
 
