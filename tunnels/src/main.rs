@@ -15,14 +15,13 @@ mod timesync;
 mod tunnel;
 mod waveforms;
 
-use std::error::Error;
-
-use midi::list_ports;
-use show::Show;
+use show::{setup_mutli_channel_test, Show};
+use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
+use std::{error::Error, time::Duration};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (inputs, outputs) = list_ports()?;
-    println!("Available input ports:\n{}\n", inputs);
-    println!("Available output ports:\n{}\n", outputs);
-    Ok(())
+    SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
+    let mut show = Show::new(Vec::new())?;
+    show.test_mode(Box::new(setup_mutli_channel_test));
+    show.run(Duration::from_micros(16667))
 }

@@ -24,19 +24,6 @@ use crate::{
     tunnel,
 };
 
-#[derive(Clone, Debug)]
-pub struct Config {
-    midi_devices: Vec<DeviceSpec>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            midi_devices: Vec::new(),
-        }
-    }
-}
-
 pub struct Show {
     dispatcher: Dispatcher,
     ui: MasterUI,
@@ -46,10 +33,9 @@ pub struct Show {
 
 impl Show {
     /// Create a new show from the provided config.
-    pub fn new(config: Config) -> Result<Self, Box<dyn Error>> {
+    pub fn new(midi_devices: Vec<DeviceSpec>) -> Result<Self, Box<dyn Error>> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
-        let use_wing = config
-            .midi_devices
+        let use_wing = midi_devices
             .iter()
             .any(|spec| spec.device == Device::AkaiApc20);
 
@@ -57,21 +43,14 @@ impl Show {
 
         // Initialize midi system.
         let mut midi_manager = Manager::new();
-        for device_spec in config.midi_devices.into_iter() {
+        for device_spec in midi_devices.into_iter() {
             midi_manager.add_device(device_spec)?;
         }
 
-        let mut mixer = Mixer::new(n_pages);
-        let mut dispatcher = Dispatcher::new(midi_manager);
-        let ui = MasterUI::new(n_pages);
-
-        // Emit initial UI state.
-        ui.emit_state(&mut mixer, &mut dispatcher);
-
         Ok(Self {
-            dispatcher,
-            ui,
-            mixer,
+            dispatcher: Dispatcher::new(midi_manager),
+            ui: MasterUI::new(n_pages),
+            mixer: Mixer::new(n_pages),
             clocks: ClockBank::new(),
         })
     }
@@ -84,6 +63,10 @@ impl Show {
     /// Run the show in the current thread.
     pub fn run(&mut self, update_interval: Duration) -> Result<(), Box<dyn Error>> {
         info!("Show is starting.");
+
+        // Emit initial UI state.
+        self.ui.emit_state(&mut self.mixer, &mut self.dispatcher);
+
         let mut frame_number = 0;
         let mut ctx = zmq::Context::new();
         let start = Instant::now();
