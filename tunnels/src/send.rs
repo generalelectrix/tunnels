@@ -19,7 +19,7 @@ const PORT: u16 = 6000;
 /// The service runs until the channel is dropped.
 pub fn start_render_service(ctx: &mut Context) -> Result<Sender<Frame>, Box<dyn Error>> {
     let socket = ctx.socket(zmq::PUB)?;
-    let addr = format!("tcp://*:{}", 6000);
+    let addr = format!("tcp://*:{}", PORT);
     socket.bind(&addr)?;
 
     let (send, mut recv) = channel();

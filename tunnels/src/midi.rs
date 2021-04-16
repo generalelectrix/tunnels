@@ -80,6 +80,7 @@ pub const fn event(mapping: Mapping, value: u8) -> Event {
     Event { mapping, value }
 }
 
+#[allow(dead_code)]
 // Return the available ports as descriptive strings.
 pub fn list_ports() -> Result<(String, String), Box<dyn Error>> {
     let input = MidiInput::new("tunnels")?;
@@ -142,9 +143,7 @@ impl Output {
 }
 
 pub struct Input {
-    name: String,
-    conn: MidiInputConnection<()>,
-    device: Device,
+    _conn: MidiInputConnection<()>,
 }
 
 impl Input {
@@ -190,7 +189,7 @@ impl Input {
             },
             (),
         )?;
-        Ok(Input { name, conn, device })
+        Ok(Input { _conn: conn })
     }
 }
 

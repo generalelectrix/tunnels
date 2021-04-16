@@ -17,11 +17,11 @@ impl Mixer {
 
     pub fn new(n_pages: usize) -> Self {
         let n_channels = n_pages * MIXER_CHANNELS_PER_PAGE;
-        let mut channels = Vec::with_capacity(n_channels);
-        for i in 0..n_channels {
-            channels.push(Channel::new(Beam::Tunnel(Tunnel::new())));
+        Self {
+            channels: (0..n_channels)
+                .map(|_| Channel::new(Beam::Tunnel(Tunnel::new())))
+                .collect(),
         }
-        Self { channels }
     }
 
     /// Clone the contents of this mixer as a Look.
@@ -100,53 +100,33 @@ impl Mixer {
     /// Emit any state changes that have happened as a result of handling.
     pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
         use ChannelControlMessage::*;
-        use ControlMessage::*;
-        match msg {
-            Channel((channel, chan_msg)) => match chan_msg {
-                Set(sc) => self.handle_state_change(
+        match msg.msg {
+            Set(sc) => self.handle_state_change(
+                StateChange {
+                    channel: msg.channel,
+                    change: sc,
+                },
+                emitter,
+            ),
+            ToggleMask => {
+                let toggled = !self.channels[msg.channel].mask;
+                self.handle_state_change(
                     StateChange {
-                        channel: channel,
-                        change: sc,
+                        channel: msg.channel,
+                        change: ChannelStateChange::Mask(toggled),
                     },
                     emitter,
-                ),
-                ToggleMask => {
-                    let toggled = !self.channels[channel].mask;
-                    self.handle_state_change(
-                        StateChange {
-                            channel: channel,
-                            change: ChannelStateChange::Mask(toggled),
-                        },
-                        emitter,
-                    )
-                }
-                ToggleVideoChannel(vc) => {
-                    let toggled = !self.channels[channel].video_outs.contains(&vc);
-                    self.handle_state_change(
-                        StateChange {
-                            channel: channel,
-                            change: ChannelStateChange::VideoChannel((vc, toggled)),
-                        },
-                        emitter,
-                    )
-                }
-                PutBeam(b) => {
-                    let is_look = match *b {
-                        Beam::Look(_) => true,
-                        _ => false,
-                    };
-                    self.channels[channel].beam = *b;
-                    emitter.emit_mixer_state_change(StateChange {
-                        channel: channel,
-                        change: ChannelStateChange::ContainsLook(is_look),
-                    })
-                }
-            },
-            SetLook(look) => {
-                // clobber the entire mixer state
-                self.channels = look.channels;
-                // update the state given the new channel data
-                self.emit_state(emitter);
+                )
+            }
+            ToggleVideoChannel(vc) => {
+                let toggled = !self.channels[msg.channel].video_outs.contains(&vc);
+                self.handle_state_change(
+                    StateChange {
+                        channel: msg.channel,
+                        change: ChannelStateChange::VideoChannel((vc, toggled)),
+                    },
+                    emitter,
+                )
             }
         }
     }
@@ -239,14 +219,12 @@ impl Default for ChannelIdx {
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct VideoChannel(pub usize);
 
-pub enum ControlMessage {
-    Channel((ChannelIdx, ChannelControlMessage)),
-    SetLook(Look),
+pub struct ControlMessage {
+    pub channel: ChannelIdx,
+    pub msg: ChannelControlMessage,
 }
-
 pub enum ChannelControlMessage {
     Set(ChannelStateChange),
-    PutBeam(Box<Beam>),
     ToggleMask,
     ToggleVideoChannel(VideoChannel),
 }

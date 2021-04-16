@@ -49,13 +49,13 @@ const INVERT: Mapping = note_on_ch1(1);
 const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
 lazy_static! {
-    static ref waveform_select_buttons: RadioButtons = RadioButtons {
+    static ref WAVEFORM_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: vec!(SINE, TRIANGLE, SQUARE, SAWTOOTH), off: 0, on: 1,
     };
-    static ref n_periods_select_buttons: RadioButtons = RadioButtons {
+    static ref N_PERIODS_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..15).map(note_on_ch0).collect(), off: 0, on: 1,
     };
-    static ref target_select_buttons: RadioButtons = RadioButtons {
+    static ref TARGET_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: vec!(
             ROTATION,
             THICKNESS,
@@ -73,7 +73,7 @@ lazy_static! {
         ),
         off: 0, on: 1
     };
-    static ref clock_select_buttons: RadioButtons = RadioButtons {
+    static ref CLOCK_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
         mappings: (-1..8)
             .map(|clock_id| note_on_ch1((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
@@ -185,7 +185,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
         Smoothing(v) => send(event(SMOOTHING, unipolar_to_midi(v))),
         Waveform(v) => {
             use WaveformType::*;
-            waveform_select_buttons.select(
+            WAVEFORM_SELECT_BUTTONS.select(
                 match v {
                     Sine => SINE,
                     Triangle => TRIANGLE,
@@ -195,10 +195,10 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 send,
             );
         }
-        NPeriods(v) => n_periods_select_buttons.select(note_on_ch0(v as u8), send),
+        NPeriods(v) => N_PERIODS_SELECT_BUTTONS.select(note_on_ch0(v as u8), send),
         Target(v) => {
             use AnimationTarget::*;
-            target_select_buttons.select(
+            TARGET_SELECT_BUTTONS.select(
                 match v {
                     Rotation => ROTATION,
                     Thickness => THICKNESS,
@@ -224,7 +224,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 Some(source) => (source.0 as i32),
                 None => -1,
             };
-            clock_select_buttons.select(
+            CLOCK_SELECT_BUTTONS.select(
                 note_on_ch1((index + CLOCK_SELECT_CONTROL_OFFSET) as u8),
                 send,
             );

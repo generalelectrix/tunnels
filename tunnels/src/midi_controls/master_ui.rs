@@ -26,29 +26,33 @@ const BEAM_GRID_ROW_0: u8 = 0x35;
 
 // APC40 main button grid LED states
 const LED_OFF: u8 = 0;
+#[allow(unused)]
 const LED_SOLID_GREEN: u8 = 1;
+#[allow(unused)]
 const LED_BLINK_GREEN: u8 = 2;
 const LED_SOLID_RED: u8 = 3;
+#[allow(unused)]
 const LED_BLINK_RED: u8 = 4;
 const LED_SOLID_ORANGE: u8 = 5;
+#[allow(unused)]
 const LED_BLINK_ORANGE: u8 = 6;
 
 lazy_static! {
-    static ref animation_select_buttons: RadioButtons = RadioButtons {
+    static ref ANIMATION_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..N_ANIM)
             .map(|aid| note_on_ch0(aid as u8 + ANIM_0_BUTTON))
             .collect(),
         off: 0,
         on: 1,
     };
-    static ref channel_select_buttons: RadioButtons = RadioButtons {
+    static ref CHANNEL_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..PAGE_SIZE)
             .map(|cid| cc(cid as u8, CHANNEL_SELECT))
             .collect(),
         off: 0,
         on: 1,
     };
-    static ref beam_store_state_buttons: RadioButtons = RadioButtons {
+    static ref BEAM_STORE_STATE_BUTTONS: RadioButtons = RadioButtons {
         mappings: vec!(BEAM_SAVE, LOOK_SAVE, BEAM_DELETE, LOOK_EDIT),
         off: 0,
         on: 2,
@@ -120,7 +124,7 @@ pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager) {
 
     match sc {
         Animation(a) => {
-            animation_select_buttons.select(note_on_ch0(ANIM_0_BUTTON + a.0 as u8), send_main);
+            ANIMATION_SELECT_BUTTONS.select(note_on_ch0(ANIM_0_BUTTON + a.0 as u8), send_main);
         }
         Channel(c) => {
             let page = c.0 / PAGE_SIZE;
@@ -131,11 +135,11 @@ pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager) {
             // If this channel is on page 0, disable all channel buttons on APC20.
             // If page 1, disable all buttons on APC40/TouchOSC.
             if page == 0 {
-                channel_select_buttons.select(note_on(midi_channel, CHANNEL_SELECT), send_main);
-                channel_select_buttons.all_off(|event| manager.send(Device::AkaiApc20, event));
+                CHANNEL_SELECT_BUTTONS.select(note_on(midi_channel, CHANNEL_SELECT), send_main);
+                CHANNEL_SELECT_BUTTONS.all_off(|event| manager.send(Device::AkaiApc20, event));
             } else {
-                channel_select_buttons.all_off(send_main);
-                channel_select_buttons.select(note_on(midi_channel, CHANNEL_SELECT), |event| {
+                CHANNEL_SELECT_BUTTONS.all_off(send_main);
+                CHANNEL_SELECT_BUTTONS.select(note_on(midi_channel, CHANNEL_SELECT), |event| {
                     manager.send(Device::AkaiApc20, event)
                 });
             }
@@ -169,11 +173,11 @@ pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager) {
             };
             use BeamStoreStatePayload::*;
             match state {
-                Idle => beam_store_state_buttons.all_off(send_all),
-                BeamSave => beam_store_state_buttons.select(BEAM_SAVE, send_all),
-                LookSave => beam_store_state_buttons.select(LOOK_SAVE, send_all),
-                Delete => beam_store_state_buttons.select(BEAM_DELETE, send_all),
-                LookEdit => beam_store_state_buttons.select(LOOK_EDIT, send_all),
+                Idle => BEAM_STORE_STATE_BUTTONS.all_off(send_all),
+                BeamSave => BEAM_STORE_STATE_BUTTONS.select(BEAM_SAVE, send_all),
+                LookSave => BEAM_STORE_STATE_BUTTONS.select(LOOK_SAVE, send_all),
+                Delete => BEAM_STORE_STATE_BUTTONS.select(BEAM_DELETE, send_all),
+                LookEdit => BEAM_STORE_STATE_BUTTONS.select(LOOK_EDIT, send_all),
             }
         }
     }

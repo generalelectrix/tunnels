@@ -1,6 +1,6 @@
 use log::{error, info};
 use std::thread;
-use std::{error::Error, time::Duration, time::Instant};
+use std::{error::Error, time::Instant};
 
 use rmp_serde::Serializer;
 use serde::Serialize;

@@ -56,7 +56,7 @@ impl Show {
     }
 
     /// Set up the show in a test mode, defined by the provided setup function.
-    pub fn test_mode(&mut self, setup: Box<Fn((usize, &mut Channel))>) {
+    pub fn test_mode(&mut self, setup: Box<dyn Fn((usize, &mut Channel))>) {
         self.mixer.channels().enumerate().for_each(setup);
     }
 

@@ -1,6 +1,6 @@
 use crate::{
     device::Device,
-    midi::{cc, event, note_off, note_on, Manager, Mapping},
+    midi::{cc, event, note_off, note_on, Manager},
     mixer::ControlMessage,
     mixer::StateChange,
     mixer::{
@@ -34,10 +34,10 @@ pub fn map_mixer_controls(device: Device, page: usize, map: &mut ControlMap) {
 
     for chan in 0..PAGE_SIZE {
         let mkmsg = move |ccm: ChannelControlMessage| -> ShowControlMessage {
-            ShowControlMessage::Mixer(ControlMessage::Channel((
-                ChannelIdx(chan + channel_offset),
-                ccm,
-            )))
+            ShowControlMessage::Mixer(ControlMessage {
+                channel: ChannelIdx(chan + channel_offset),
+                msg: ccm,
+            })
         };
         add(
             cc(chan as u8, FADER),

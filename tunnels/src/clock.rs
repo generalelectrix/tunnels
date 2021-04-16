@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::numbers::UnipolarFloat;
 use serde::{Deserialize, Serialize};

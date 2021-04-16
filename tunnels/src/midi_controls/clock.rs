@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::{
     clock::ClockIdx,
     clock::ControlMessage,

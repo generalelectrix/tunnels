@@ -128,7 +128,7 @@ impl Tunnel {
         // delta_t*30 implies the same speed scale as we had at 30fps with evolution tied to frame
         self.curr_marquee_angle += UnipolarFloat(
             (scale_speed(self.marquee_speed).0 * timestep_secs * 30. + marquee_angle_adjust)
-                * ROT_SPEED_SCALE,
+                * MARQUEE_SPEED_SCALE,
         );
         self.curr_marquee_angle %= 1.;
     }
@@ -352,7 +352,6 @@ pub const N_ANIM: usize = 4;
 const ROT_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; marquee rotated this many radial units/frame at 30fps
 const MARQUEE_SPEED_SCALE: f64 = 0.023;
-const BLACKING_SCALE: i32 = 4;
 const COLOR_SPREAD_SCALE: f64 = 16.;
 /// maximum X offset as fraction of screen x-size
 const MAX_X_OFFSET: f64 = 0.5;
