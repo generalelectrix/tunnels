@@ -15,9 +15,9 @@ impl Look {
         Self { channels }
     }
 
-    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
+    pub fn update_state(&mut self, delta_t: Duration) {
         for channel in &mut self.channels {
-            channel.update_state(delta_t, external_clocks);
+            channel.update_state(delta_t);
         }
     }
 

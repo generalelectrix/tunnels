@@ -36,9 +36,9 @@ impl Mixer {
     }
 
     /// Update the state of all of the beams contained in this mixer.
-    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
+    pub fn update_state(&mut self, delta_t: Duration) {
         for channel in &mut self.channels {
-            channel.update_state(delta_t, external_clocks);
+            channel.update_state(delta_t);
         }
     }
 
@@ -176,8 +176,8 @@ impl Channel {
     }
 
     /// Update the state of the beam in this channel.
-    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
-        self.beam.update_state(delta_t, external_clocks);
+    pub fn update_state(&mut self, delta_t: Duration) {
+        self.beam.update_state(delta_t);
     }
 
     /// Render the beam in this channel.

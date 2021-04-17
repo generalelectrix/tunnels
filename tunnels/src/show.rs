@@ -108,10 +108,8 @@ impl Show {
     }
 
     fn update_state(&mut self, delta_t: Duration) {
-        // Update the clocks first as other entities may depend on them for
-        // time evolution.
         self.clocks.update_state(delta_t);
-        self.mixer.update_state(delta_t, &self.clocks);
+        self.mixer.update_state(delta_t);
     }
 
     fn service_control_event(&mut self, timeout: Duration) {

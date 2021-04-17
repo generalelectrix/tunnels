@@ -4,6 +4,7 @@ use crate::{
     clock::ClockBank,
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
@@ -92,41 +93,26 @@ impl Tunnel {
     }
 
     /// Update the state of this tunnel in preparation for drawing a frame.
-    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
+    pub fn update_state(&mut self, delta_t: Duration) {
         // ensure we don't exceed the set bounds of the screen
         self.x_offset = f64::min(f64::max(self.x_offset, -MAX_X_OFFSET), MAX_X_OFFSET);
         self.y_offset = f64::min(f64::max(self.y_offset, -MAX_Y_OFFSET), MAX_Y_OFFSET);
 
-        let mut rot_angle_adjust = 0.0;
-        let mut marquee_angle_adjust = 0.0;
-
-        // update the state of the animations and get relevant values
+        // Update the state of the animations.
         for anim in &mut self.anims {
             anim.update_state(delta_t);
-            // what is this animation targeting?
-            // at least for non-chicklet-level targets...
-            if let Target::Rotation = anim.target {
-                // rotation speed
-                rot_angle_adjust += anim.get_value(Phase::ZERO, external_clocks) * 0.5;
-            } else if let Target::MarqueeRotation = anim.target {
-                // marquee rotation speed
-                marquee_angle_adjust += anim.get_value(Phase::ZERO, external_clocks) * 0.5;
-            }
         }
-
         let timestep_secs = delta_t.as_secs_f64();
 
         // calulcate the rotation
         // delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-        self.curr_rot_angle += (scale_speed(self.rot_speed).val() * timestep_secs * 30.
-            + rot_angle_adjust)
-            * ROT_SPEED_SCALE;
+        self.curr_rot_angle +=
+            (scale_speed(self.rot_speed).val() * timestep_secs * 30.) * ROT_SPEED_SCALE;
 
         // calulcate the marquee angle
         // delta_t*30 implies the same speed scale as we had at 30fps with evolution tied to frame
-        self.curr_marquee_angle += (scale_speed(self.marquee_speed).val() * timestep_secs * 30.
-            + marquee_angle_adjust)
-            * MARQUEE_SPEED_SCALE;
+        self.curr_marquee_angle +=
+            (scale_speed(self.marquee_speed).val() * timestep_secs * 30.) * MARQUEE_SPEED_SCALE;
     }
 
     /// Render the current state of the tunnel.
@@ -159,8 +145,6 @@ impl Tunnel {
                 continue;
             }
 
-            // The angle of this particular segment.
-            let start_angle: Phase = self.curr_marquee_angle + marquee_interval * (seg_num as f64);
             let rel_angle = Phase::new(marquee_interval * seg_num as f64);
 
             let mut thickness_adjust = 0.;
@@ -172,12 +156,16 @@ impl Tunnel {
             let mut col_sat_adjust = 0.;
             let mut x_adjust = 0.;
             let mut y_adjust = 0.;
+            let mut rot_angle_adjust = 0.;
+            let mut marquee_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
             use Target::*;
             for anim in &self.anims {
                 let anim_value = anim.get_value(rel_angle, external_clocks);
 
                 match anim.target {
+                    Rotation => rot_angle_adjust += anim_value,
+                    MarqueeRotation => marquee_angle_adjust += anim_value,
                     Thickness => thickness_adjust += anim_value,
                     Size => size_adjust += anim_value * 0.5, // limit adjustment
                     AspectRatio => aspect_ratio_adjust += anim_value,
@@ -187,7 +175,8 @@ impl Tunnel {
                     ColorSaturation => col_sat_adjust += anim_value * 0.5, // limit adjustment
                     PositionX => x_adjust += anim_value,
                     PositionY => y_adjust += anim_value,
-                    _ => (),
+                    Blacking => (), // TODO: figure out how this would even make sense
+                    Segments => (), // TODO: same here, probably have to lift this animator up to the whole beam level
                 }
             }
             // the abs() is there to prevent negative width setting when using multiple animations.
@@ -200,10 +189,6 @@ impl Tunnel {
             let x_center = self.x_offset + x_adjust;
             let y_center = self.y_offset + y_adjust;
 
-            // this angle may exceed 1.0; this is important for correctly displaying
-            // arcs that cross the angular origin.
-            let stop_angle = start_angle.val() + marquee_interval;
-
             // compute ellipse parameters
             let radius_x = ((self.size.val()
                 * (MAX_ASPECT_RATIO * (self.aspect_ratio.val() + aspect_ratio_adjust))
@@ -211,6 +196,17 @@ impl Tunnel {
                 + size_adjust)
                 .abs();
             let radius_y = (self.size.val() - thickness_allowance + size_adjust).abs();
+
+            // The angle of this particular segment.
+            let start_angle: Phase = self.curr_marquee_angle
+                + marquee_interval * (seg_num as f64)
+                + marquee_angle_adjust;
+
+            // this angle may exceed 1.0; this is important for correctly displaying
+            // arcs that cross the angular origin.
+            let stop_angle = start_angle.val() + marquee_interval;
+
+            let rot_angle = self.curr_rot_angle + rot_angle_adjust;
 
             let arc = if as_mask {
                 ArcSegment {
@@ -225,7 +221,7 @@ impl Tunnel {
                     rad_y: radius_y,
                     start: start_angle.val(),
                     stop: stop_angle,
-                    rot_angle: self.curr_rot_angle.val(),
+                    rot_angle: rot_angle.val(),
                 }
             } else {
                 let hue = Phase::new(
@@ -256,7 +252,7 @@ impl Tunnel {
                     rad_y: radius_y,
                     start: start_angle.val(),
                     stop: stop_angle,
-                    rot_angle: self.curr_rot_angle.val(),
+                    rot_angle: rot_angle.val(),
                 }
             };
             arcs.push(arc);

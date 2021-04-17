@@ -14,10 +14,10 @@ pub enum Beam {
 }
 
 impl Beam {
-    pub fn update_state(&mut self, delta_t: Duration, external_clocks: &ClockBank) {
+    pub fn update_state(&mut self, delta_t: Duration) {
         match self {
-            Self::Tunnel(t) => t.update_state(delta_t, external_clocks),
-            Self::Look(l) => l.update_state(delta_t, external_clocks),
+            Self::Tunnel(t) => t.update_state(delta_t),
+            Self::Look(l) => l.update_state(delta_t),
         }
     }
 
