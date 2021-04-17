@@ -1,4 +1,4 @@
-use crate::numbers::{BipolarFloat, UnipolarFloat};
+use crate::numbers::{BipolarFloat, Phase, UnipolarFloat};
 use crate::{
     animation::{Animation, Target},
     clock::ClockBank,
@@ -36,8 +36,8 @@ pub struct Tunnel {
     /// bipolar float, internally interpreted as an int on [-16, 16]
     /// defaults to every other chicklet removed
     pub blacking: BipolarFloat,
-    curr_rot_angle: UnipolarFloat,
-    curr_marquee_angle: UnipolarFloat,
+    curr_rot_angle: Phase,
+    curr_marquee_angle: Phase,
     x_offset: f64,
     y_offset: f64,
     anims: [Animation; N_ANIM],
@@ -46,19 +46,19 @@ pub struct Tunnel {
 impl Tunnel {
     pub fn new() -> Self {
         Self {
-            marquee_speed: BipolarFloat(0.0),
-            rot_speed: BipolarFloat(0.0),
-            thickness: UnipolarFloat(0.25),
-            size: UnipolarFloat(0.5),
-            aspect_ratio: UnipolarFloat(0.5),
-            col_center: UnipolarFloat(0.0),
-            col_width: UnipolarFloat(0.0),
-            col_spread: UnipolarFloat(0.0),
-            col_sat: UnipolarFloat(0.0),
+            marquee_speed: BipolarFloat::ZERO,
+            rot_speed: BipolarFloat::ZERO,
+            thickness: UnipolarFloat::new(0.25),
+            size: UnipolarFloat::new(0.5),
+            aspect_ratio: UnipolarFloat::new(0.5),
+            col_center: UnipolarFloat::ZERO,
+            col_width: UnipolarFloat::ZERO,
+            col_spread: UnipolarFloat::ZERO,
+            col_sat: UnipolarFloat::ZERO,
             segs: 126,
-            blacking: BipolarFloat(0.15),
-            curr_rot_angle: UnipolarFloat(0.0),
-            curr_marquee_angle: UnipolarFloat(0.0),
+            blacking: BipolarFloat::new(0.15),
+            curr_rot_angle: Phase::ZERO,
+            curr_marquee_angle: Phase::ZERO,
             x_offset: 0.0,
             y_offset: 0.0,
             anims: Default::default(),
@@ -70,7 +70,7 @@ impl Tunnel {
     /// If -1, return 1 (-1 implies all segments are black)
     /// If 0, return 1
     fn blacking_integer(&self) -> i32 {
-        let scaled = (17. * self.blacking.0) as i32;
+        let scaled = (17. * self.blacking.val()) as i32;
         let clamped = max(min(scaled, 16), -16);
 
         // remote the "all segments blacked" bug
@@ -107,30 +107,26 @@ impl Tunnel {
             // at least for non-chicklet-level targets...
             if let Target::Rotation = anim.target {
                 // rotation speed
-                rot_angle_adjust += anim.get_value(0., external_clocks) * 0.5;
+                rot_angle_adjust += anim.get_value(Phase::ZERO, external_clocks) * 0.5;
             } else if let Target::MarqueeRotation = anim.target {
                 // marquee rotation speed
-                marquee_angle_adjust += anim.get_value(0., external_clocks) * 0.5;
+                marquee_angle_adjust += anim.get_value(Phase::ZERO, external_clocks) * 0.5;
             }
         }
 
         let timestep_secs = delta_t.as_secs_f64();
 
-        // calulcate the rotation, wrap to 0 to 1
+        // calulcate the rotation
         // delta_t*30. implies the same speed scale as we had at 30fps with evolution tied to frame
-        self.curr_rot_angle += UnipolarFloat(
-            (scale_speed(self.rot_speed).0 * timestep_secs * 30. + rot_angle_adjust)
-                * ROT_SPEED_SCALE,
-        );
-        self.curr_rot_angle %= 1.;
+        self.curr_rot_angle += (scale_speed(self.rot_speed).val() * timestep_secs * 30.
+            + rot_angle_adjust)
+            * ROT_SPEED_SCALE;
 
-        // calulcate the marquee angle, wrap to 0 to 1
+        // calulcate the marquee angle
         // delta_t*30 implies the same speed scale as we had at 30fps with evolution tied to frame
-        self.curr_marquee_angle += UnipolarFloat(
-            (scale_speed(self.marquee_speed).0 * timestep_secs * 30. + marquee_angle_adjust)
-                * MARQUEE_SPEED_SCALE,
-        );
-        self.curr_marquee_angle %= 1.;
+        self.curr_marquee_angle += (scale_speed(self.marquee_speed).val() * timestep_secs * 30.
+            + marquee_angle_adjust)
+            * MARQUEE_SPEED_SCALE;
     }
 
     /// Render the current state of the tunnel.
@@ -164,9 +160,8 @@ impl Tunnel {
             }
 
             // The angle of this particular segment.
-            let start_angle =
-                (marquee_interval * (seg_num as f64) + self.curr_marquee_angle.0) % 1.0;
-            let rel_angle = marquee_interval * seg_num as f64;
+            let start_angle: Phase = self.curr_marquee_angle + marquee_interval * (seg_num as f64);
+            let rel_angle = Phase::new(marquee_interval * seg_num as f64);
 
             let mut thickness_adjust = 0.;
             let mut size_adjust = 0.;
@@ -198,23 +193,24 @@ impl Tunnel {
             // the abs() is there to prevent negative width setting when using multiple animations.
             // TODO: consider if we should change this behavior to make thickness clamp at 0 instead
             // of bounce back via absolute value here.
-            let stroke_weight = (self.thickness.0 * (1. + thickness_adjust)).abs();
-            let thickness_allowance = self.thickness.0 * THICKNESS_SCALE / 2.;
+            let stroke_weight = (self.thickness.val() * (1. + thickness_adjust)).abs();
+            let thickness_allowance = self.thickness.val() * THICKNESS_SCALE / 2.;
 
             // geometry calculations
             let x_center = self.x_offset + x_adjust;
             let y_center = self.y_offset + y_adjust;
 
-            // this angle may exceed 1.0
-            let stop_angle = start_angle + marquee_interval;
+            // this angle may exceed 1.0; this is important for correctly displaying
+            // arcs that cross the angular origin.
+            let stop_angle = start_angle.val() + marquee_interval;
 
             // compute ellipse parameters
-            let radius_x = ((self.size.0
-                * (MAX_ASPECT_RATIO * (self.aspect_ratio.0 + aspect_ratio_adjust))
+            let radius_x = ((self.size.val()
+                * (MAX_ASPECT_RATIO * (self.aspect_ratio.val() + aspect_ratio_adjust))
                 - thickness_allowance)
                 + size_adjust)
                 .abs();
-            let radius_y = (self.size.0 - thickness_allowance + size_adjust).abs();
+            let radius_y = (self.size.val() - thickness_allowance + size_adjust).abs();
 
             let arc = if as_mask {
                 ArcSegment {
@@ -227,40 +223,40 @@ impl Tunnel {
                     y: y_center,
                     rad_x: radius_x,
                     rad_y: radius_y,
-                    start: start_angle,
+                    start: start_angle.val(),
                     stop: stop_angle,
-                    rot_angle: self.curr_rot_angle.0,
+                    rot_angle: self.curr_rot_angle.val(),
                 }
             } else {
-                let mut hue = (self.col_center.0 + col_center_adjust)
-                    + (0.5
-                        * (self.col_width.0 + col_width_adjust)
-                        * sawtooth(
-                            rel_angle
-                                * ((COLOR_SPREAD_SCALE * self.col_spread.0).floor()
-                                    + col_period_adjust),
-                            UnipolarFloat(0.0),
-                            UnipolarFloat(1.0),
-                            false,
-                        ));
+                let hue = Phase::new(
+                    (self.col_center.val() + col_center_adjust)
+                        + (0.5
+                            * (self.col_width.val() + col_width_adjust)
+                            * sawtooth(
+                                rel_angle
+                                    * ((COLOR_SPREAD_SCALE * self.col_spread.val()).floor()
+                                        + col_period_adjust),
+                                UnipolarFloat::ZERO,
+                                UnipolarFloat::ONE,
+                                false,
+                            )),
+                );
 
-                hue = hue % 1.0;
-
-                let sat = f64::min(f64::max(self.col_sat.0 + col_sat_adjust, 0.), 1.);
+                let sat = UnipolarFloat::new(self.col_sat.val() + col_sat_adjust);
 
                 ArcSegment {
-                    level: level_scale.0,
+                    level: level_scale.val(),
                     thickness: stroke_weight,
-                    hue,
-                    sat,
+                    hue: hue.val(),
+                    sat: sat.val(),
                     val: 1.0,
                     x: x_center,
                     y: y_center,
                     rad_x: radius_x,
                     rad_y: radius_y,
-                    start: start_angle,
+                    start: start_angle.val(),
                     stop: stop_angle,
-                    rot_angle: self.curr_rot_angle.0,
+                    rot_angle: self.curr_rot_angle.val(),
                 }
             };
             arcs.push(arc);
@@ -299,14 +295,14 @@ impl Tunnel {
                 self.y_offset = 0.;
             }
             ResetRotation => {
-                self.rot_speed = BipolarFloat(0.0);
-                self.curr_rot_angle = UnipolarFloat(0.0);
-                emitter.emit_tunnel_state_change(StateChange::RotationSpeed(BipolarFloat(0.0)));
+                self.rot_speed = BipolarFloat::ZERO;
+                self.curr_rot_angle = Phase::ZERO;
+                emitter.emit_tunnel_state_change(StateChange::RotationSpeed(BipolarFloat::ZERO));
             }
             ResetMarquee => {
-                self.marquee_speed = BipolarFloat(0.0);
-                self.curr_marquee_angle = UnipolarFloat(0.0);
-                emitter.emit_tunnel_state_change(StateChange::MarqueeSpeed(BipolarFloat(0.0)));
+                self.marquee_speed = BipolarFloat::ZERO;
+                self.curr_marquee_angle = Phase::ZERO;
+                emitter.emit_tunnel_state_change(StateChange::MarqueeSpeed(BipolarFloat::ZERO));
             }
         }
     }
@@ -333,11 +329,11 @@ impl Tunnel {
 /// Scale speeds with a quadratic curve.
 /// This provides more resolution for slower speeds.
 fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
-    let mut scaled = f64::powi(speed.0, 2);
-    if speed.0 < 0. {
+    let mut scaled = f64::powi(speed.val(), 2);
+    if speed < 0. {
         scaled *= -1.
     }
-    BipolarFloat(scaled)
+    BipolarFloat::new(scaled)
 }
 
 #[derive(

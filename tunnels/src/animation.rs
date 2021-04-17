@@ -1,10 +1,10 @@
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::numbers::UnipolarFloat;
 use crate::waveforms;
 use crate::{
     clock::{Clock, ClockBank, ClockIdx},
     numbers::BipolarFloat,
 };
+use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -61,9 +61,9 @@ impl Animation {
             invert: false,
             n_periods: 0,
             target: Target::Size,
-            weight: UnipolarFloat(0.0),
-            duty_cycle: UnipolarFloat(1.0),
-            smoothing: UnipolarFloat(0.25),
+            weight: UnipolarFloat::new(0.0),
+            duty_cycle: UnipolarFloat::new(1.0),
+            smoothing: UnipolarFloat::new(0.25),
             internal_clock: Clock::new(),
             clock_source: None,
         }
@@ -71,13 +71,13 @@ impl Animation {
 
     /// Return true if this animation has nonzero weight.
     fn active(&self) -> bool {
-        self.weight.0 > 0.0
+        self.weight > 0.0
     }
 
-    fn clock_time(&self, external_clocks: &ClockBank) -> UnipolarFloat {
+    fn phase(&self, external_clocks: &ClockBank) -> Phase {
         match self.clock_source {
-            None => self.internal_clock.curr_angle(),
-            Some(id) => external_clocks.curr_angle(id),
+            None => self.internal_clock.phase(),
+            Some(id) => external_clocks.phase(id),
         }
     }
 
@@ -89,12 +89,12 @@ impl Animation {
 
     /// Return the clock's current rate, scaled into a bipolar float.
     fn clock_speed(&self) -> BipolarFloat {
-        return BipolarFloat(self.internal_clock.rate / Self::CLOCK_RATE_SCALE);
+        return BipolarFloat::new(self.internal_clock.rate / Self::CLOCK_RATE_SCALE);
     }
 
     /// Set the clock's current rate, scaling by our scale factor.
     fn set_clock_speed(&mut self, speed: BipolarFloat) {
-        self.internal_clock.rate = speed.0 * Self::CLOCK_RATE_SCALE;
+        self.internal_clock.rate = speed.val() * Self::CLOCK_RATE_SCALE;
     }
 
     pub fn update_state(&mut self, delta_t: Duration) {
@@ -103,25 +103,24 @@ impl Animation {
         }
     }
 
-    pub fn get_value(&self, angle_offset: f64, external_clocks: &ClockBank) -> f64 {
+    pub fn get_value(&self, phase_offset: Phase, external_clocks: &ClockBank) -> f64 {
         if !self.active() {
             return 0.;
         }
 
-        let angle = angle_offset * (self.n_periods as f64) + self.clock_time(external_clocks).0;
+        let angle = self.phase(external_clocks) + phase_offset * (self.n_periods as f64);
         let waveform_func = match self.waveform {
             Waveform::Sine => waveforms::sine,
             Waveform::Square => waveforms::square,
             Waveform::Sawtooth => waveforms::sawtooth,
             Waveform::Triangle => waveforms::triangle,
         };
-        let scaled_smoothing = UnipolarFloat(self.smoothing.0 * WAVE_SMOOTHING_SCALE);
         let mut result =
-            self.weight.0 * waveform_func(angle, scaled_smoothing, self.duty_cycle, self.pulse);
+            self.weight.val() * waveform_func(angle, self.smoothing, self.duty_cycle, self.pulse);
 
         // scale this animation by submaster level if using external clock
         if let Some(id) = self.clock_source {
-            result *= external_clocks.submaster_level(id).0;
+            result *= external_clocks.submaster_level(id).val();
         }
         if self.invert {
             -1.0 * result
@@ -179,8 +178,6 @@ impl Animation {
         emitter.emit_animation_state_change(sc);
     }
 }
-
-const WAVE_SMOOTHING_SCALE: f64 = 0.25;
 
 pub enum StateChange {
     Waveform(Waveform),

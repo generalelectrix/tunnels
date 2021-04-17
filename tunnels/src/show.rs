@@ -143,13 +143,13 @@ pub enum StateChange {
 }
 
 pub fn setup_multi_channel_test((i, channel): (usize, &mut Channel)) {
-    channel.level = UnipolarFloat(1.0);
+    channel.level = UnipolarFloat::ONE;
     channel.video_outs.clear();
     channel.video_outs.insert(VideoChannel(i));
 
     if let Beam::Tunnel(ref mut tunnel) = channel.beam {
-        tunnel.col_sat = UnipolarFloat(1.0);
-        tunnel.marquee_speed = BipolarFloat(0.1);
-        tunnel.col_center = UnipolarFloat((i as f64 / Mixer::N_VIDEO_CHANNELS as f64) % 1.0);
+        tunnel.col_sat = UnipolarFloat::ONE;
+        tunnel.marquee_speed = BipolarFloat::new(0.1);
+        tunnel.col_center = UnipolarFloat::new((i as f64 / Mixer::N_VIDEO_CHANNELS as f64) % 1.0);
     }
 }

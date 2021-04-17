@@ -58,7 +58,7 @@ impl Mixer {
             video_outs.push(Vec::new());
         }
         for channel in &self.channels {
-            let rendered_beam = channel.render(UnipolarFloat(1.0), false, external_clocks);
+            let rendered_beam = channel.render(UnipolarFloat::ONE, false, external_clocks);
             if rendered_beam.len() == 0 {
                 continue;
             }
@@ -168,7 +168,7 @@ impl Channel {
         video_outs.insert(VideoChannel(0));
         Self {
             beam,
-            level: UnipolarFloat(0.0),
+            level: UnipolarFloat::ZERO,
             bump: false,
             mask: false,
             video_outs,
@@ -188,14 +188,13 @@ impl Channel {
         external_clocks: &ClockBank,
     ) -> Vec<ArcSegment> {
         let mut level: UnipolarFloat = if self.bump {
-            UnipolarFloat(1.0)
+            UnipolarFloat::ONE
         } else {
             self.level
         };
-        // WTF Rust why don't you want to let me multiply my newtypes
-        level = UnipolarFloat(level.0 * level_scale.0);
+        level = level * level_scale;
         // if this channel is off, don't render at all
-        if level.0 == 0. {
+        if level == 0. {
             return Vec::new();
         }
         self.beam.render(level, self.mask || mask, external_clocks)

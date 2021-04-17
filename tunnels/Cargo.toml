@@ -18,3 +18,4 @@ typed_index_derive = "0.1.4"
 zmq = "0.9"
 tunnels_lib = { path = "../tunnels_lib" }
 rmp-serde = "0.15"
+plotters = "^0.3.0"

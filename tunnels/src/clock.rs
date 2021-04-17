@@ -1,6 +1,6 @@
 #![allow(unused)]
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::numbers::UnipolarFloat;
+use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
@@ -19,8 +19,8 @@ impl ClockBank {
         Self(Default::default())
     }
 
-    pub fn curr_angle(&self, index: ClockIdx) -> UnipolarFloat {
-        self.0[index.0].curr_angle()
+    pub fn phase(&self, index: ClockIdx) -> Phase {
+        self.0[index.0].phase()
     }
 
     pub fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
@@ -36,7 +36,7 @@ impl ClockBank {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
-    curr_angle: UnipolarFloat,
+    phase: Phase,
     /// in unit angle per second
     pub rate: f64,
     /// did the clock tick on its most recent update?
@@ -60,38 +60,37 @@ impl Default for Clock {
 impl Clock {
     pub fn new() -> Self {
         Self {
-            curr_angle: UnipolarFloat(0.0),
+            phase: Phase::ZERO,
             rate: 0.0,
             ticked: true,
             one_shot: false,
             reset_on_update: false,
-            submaster_level: UnipolarFloat(1.0),
+            submaster_level: UnipolarFloat::new(1.0),
         }
     }
 
     pub fn update_state(&mut self, delta_t: Duration) {
         if self.reset_on_update {
             self.ticked = true;
-            self.curr_angle = UnipolarFloat(0.0);
+            self.phase = Phase::ZERO;
             self.reset_on_update = false;
         } else {
-            // delta_t has units of us, need to divide by 1000000
-            let new_angle = self.curr_angle.0 + (self.rate * delta_t.as_secs_f64());
+            let new_angle = self.phase.val() + (self.rate * delta_t.as_secs_f64());
 
             // if we're running in one-shot mode, clamp the angle at 1.0
             if self.one_shot && new_angle >= 1.0 {
-                self.curr_angle = UnipolarFloat(1.0);
+                self.phase = Phase::ONE;
                 self.ticked = false;
             } else {
                 // if the phase just escaped our range, we ticked this frame
                 self.ticked = new_angle >= 1.0 || new_angle < 0.0;
-                self.curr_angle = UnipolarFloat(new_angle % 1.0);
+                self.phase = Phase::new(new_angle);
             }
         }
     }
 
-    pub fn curr_angle(&self) -> UnipolarFloat {
-        self.curr_angle
+    pub fn phase(&self) -> Phase {
+        self.phase
     }
 }
 
