@@ -49,7 +49,7 @@ impl Tunnel {
         Self {
             marquee_speed: BipolarFloat::ZERO,
             rot_speed: BipolarFloat::ZERO,
-            thickness: UnipolarFloat::new(0.25),
+            thickness: UnipolarFloat::new(0.1),
             size: UnipolarFloat::new(0.5),
             aspect_ratio: UnipolarFloat::new(0.5),
             col_center: UnipolarFloat::ZERO,
