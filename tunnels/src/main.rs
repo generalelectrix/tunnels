@@ -71,6 +71,7 @@ fn prompt_midi(
 
     add_device(Device::TouchOsc)?;
     add_device(Device::AkaiApc40)?;
+    add_device(Device::BehringerCmdMM1)?;
     add_device(Device::AkaiApc20)?;
 
     Ok(devices)
