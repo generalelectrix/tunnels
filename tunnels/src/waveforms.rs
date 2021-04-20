@@ -125,12 +125,12 @@ pub fn sawtooth(
 }
 
 #[cfg(test)]
+#[allow(unused)]
 mod test {
     use std::error::Error;
 
     use super::*;
 
-    #[test]
     fn debug() -> Result<(), Box<dyn Error>> {
         use plotters::prelude::*;
         let points = generate_span(sawtooth, 0.1, 0.5, true);

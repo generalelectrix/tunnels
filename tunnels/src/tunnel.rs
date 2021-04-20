@@ -4,7 +4,6 @@ use crate::{
     clock::ClockBank,
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
-use log::info;
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
@@ -21,22 +20,22 @@ use typed_index_derive::TypedIndex;
 ///
 /// TODO: docstring
 pub struct Tunnel {
-    pub marquee_speed: BipolarFloat,
-    pub rot_speed: BipolarFloat,
-    pub thickness: UnipolarFloat,
-    pub size: UnipolarFloat,
-    pub aspect_ratio: UnipolarFloat,
-    pub col_center: UnipolarFloat,
-    pub col_width: UnipolarFloat,
-    pub col_spread: UnipolarFloat,
-    pub col_sat: UnipolarFloat,
+    marquee_speed: BipolarFloat,
+    rot_speed: BipolarFloat,
+    thickness: UnipolarFloat,
+    size: UnipolarFloat,
+    aspect_ratio: UnipolarFloat,
+    col_center: UnipolarFloat,
+    col_width: UnipolarFloat,
+    col_spread: UnipolarFloat,
+    col_sat: UnipolarFloat,
     /// TODO: regularize segs interface into regular float knobs
-    pub segs: u8,
+    segs: u8,
     /// remove segments at this interval
     ///
     /// bipolar float, internally interpreted as an int on [-16, 16]
     /// defaults to every other chicklet removed
-    pub blacking: BipolarFloat,
+    blacking: BipolarFloat,
     curr_rot_angle: Phase,
     curr_marquee_angle: Phase,
     x_offset: f64,
@@ -90,6 +89,11 @@ impl Tunnel {
     /// Replace an animation with another.
     pub fn replace_animation(&mut self, anim_num: AnimationIdx, new_anim: Animation) {
         self.anims[anim_num] = new_anim;
+    }
+
+    /// Get an iterator over animations.
+    pub fn animations(&mut self) -> impl Iterator<Item = &mut Animation> {
+        self.anims.iter_mut()
     }
 
     /// Update the state of this tunnel in preparation for drawing a frame.

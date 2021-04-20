@@ -35,7 +35,7 @@ pub enum Target {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Animation {
-    waveform: Waveform,
+    pub waveform: Waveform,
     pulse: bool,
     invert: bool,
     n_periods: i32,

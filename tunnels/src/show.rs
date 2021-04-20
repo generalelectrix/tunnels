@@ -7,9 +7,7 @@ use std::{
 use tunnels_lib::Timestamp;
 
 use crate::{
-    animation,
-    beam::Beam,
-    clock,
+    animation, clock,
     clock::ClockBank,
     device::Device,
     master_ui,
@@ -17,8 +15,7 @@ use crate::{
     midi::{DeviceSpec, Manager},
     midi_controls::Dispatcher,
     mixer,
-    mixer::{Channel, Mixer, VideoChannel},
-    numbers::{BipolarFloat, UnipolarFloat},
+    mixer::{Channel, Mixer},
     send::{start_render_service, Frame},
     timesync::TimesyncServer,
     tunnel,
@@ -56,8 +53,12 @@ impl Show {
     }
 
     /// Set up the show in a test mode, defined by the provided setup function.
-    pub fn test_mode(&mut self, setup: Box<dyn Fn((usize, &mut Channel))>) {
-        self.mixer.channels().enumerate().for_each(setup);
+    pub fn test_mode<T: Fn(usize, usize, &mut Channel)>(&mut self, setup: T) {
+        let channel_count = self.mixer.channels().count();
+        self.mixer
+            .channels()
+            .enumerate()
+            .for_each(|(i, chan)| setup(channel_count, i, chan));
     }
 
     /// Run the show in the current thread.
@@ -140,14 +141,73 @@ pub enum StateChange {
     MasterUI(master_ui::StateChange),
 }
 
-pub fn setup_multi_channel_test((i, channel): (usize, &mut Channel)) {
-    channel.level = UnipolarFloat::ONE;
-    channel.video_outs.clear();
-    channel.video_outs.insert(VideoChannel(i));
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::test_mode::stress;
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{Hash, Hasher},
+    };
 
-    if let Beam::Tunnel(ref mut tunnel) = channel.beam {
-        tunnel.col_sat = UnipolarFloat::ONE;
-        tunnel.marquee_speed = BipolarFloat::new(0.1);
-        tunnel.col_center = UnipolarFloat::new((i as f64 / Mixer::N_VIDEO_CHANNELS as f64) % 1.0);
+    fn calculate_hash<T: Hash>(t: &T) -> u64 {
+        let mut s = DefaultHasher::new();
+        t.hash(&mut s);
+        s.finish()
+    }
+
+    /// Test show rendering against static test expectations.
+    /// The purpose of this test is to catch accidental regressions in the
+    /// tunnel state or rendering algorithm.
+    #[test]
+    fn test_render() -> Result<(), Box<dyn Error>> {
+        let mut show = Show::new(Vec::new())?;
+
+        show.test_mode(stress);
+
+        // Before any evolution, all beams should have the same hash.
+        check_render(&show, vec![10192734706909399927; 8]);
+
+        // Evolve by one timestep.
+        show.update_state(Duration::from_micros(16667));
+
+        check_render(
+            &show,
+            vec![
+                11099297128101933385,
+                3353985019292787671,
+                5185332194001566062,
+                11932444950289299954,
+                8376301734077447906,
+                1310600794707049194,
+                3051887567039304307,
+                10270101680240701565,
+            ],
+        );
+        Ok(())
+    }
+
+    /// Render the state of the show, hash the layers, and compare to expectation.
+    fn check_render(show: &Show, beam_hashes: Vec<u64>) {
+        let video_feeds = show.mixer.render(&show.clocks);
+
+        // Should have the expected number of video channels.
+        assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());
+
+        // Channel 0 should contain data, but none of the others.
+        assert!(video_feeds[0].len() > 0);
+        for (i, chan) in video_feeds.iter().enumerate() {
+            if i == 0 {
+                assert!(chan.len() > 0);
+            } else {
+                assert_eq!(0, chan.len());
+            }
+        }
+
+        // Hash each beam and compare to our expectations.
+        assert_eq!(beam_hashes.len(), video_feeds[0].len());
+        for (beam_hash, channel) in beam_hashes.iter().zip(video_feeds[0].iter()) {
+            assert_eq!(*beam_hash, calculate_hash(channel));
+        }
     }
 }

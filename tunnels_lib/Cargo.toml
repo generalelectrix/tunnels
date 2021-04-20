@@ -10,3 +10,4 @@ edition = "2018"
 serde = { version = "1", features = ["derive", "rc"] }
 derive_more = "^0.99"
 num-traits = "^0.2"
+ordered-float = "^2.0"

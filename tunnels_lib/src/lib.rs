@@ -1,8 +1,10 @@
 //! Code shared between the tunnels console and client.
 
 use derive_more::{Add, Display, Div, Mul, Sub};
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::{
+    hash::{Hash, Hasher},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -99,6 +101,24 @@ pub struct ArcSegment {
     pub start: f64,
     pub stop: f64,
     pub rot_angle: f64,
+}
+
+impl Hash for ArcSegment {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        OrderedFloat(self.level).hash(state);
+        OrderedFloat(self.level).hash(state);
+        OrderedFloat(self.thickness).hash(state);
+        OrderedFloat(self.hue).hash(state);
+        OrderedFloat(self.sat).hash(state);
+        OrderedFloat(self.val).hash(state);
+        OrderedFloat(self.x).hash(state);
+        OrderedFloat(self.y).hash(state);
+        OrderedFloat(self.rad_x).hash(state);
+        OrderedFloat(self.rad_y).hash(state);
+        OrderedFloat(self.start).hash(state);
+        OrderedFloat(self.stop).hash(state);
+        OrderedFloat(self.rot_angle).hash(state);
+    }
 }
 
 impl PartialEq for ArcSegment {

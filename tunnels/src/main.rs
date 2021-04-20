@@ -11,6 +11,7 @@ mod mixer;
 mod numbers;
 mod send;
 mod show;
+mod test_mode;
 mod timesync;
 mod tunnel;
 mod waveforms;
@@ -18,10 +19,11 @@ mod waveforms;
 use device::Device;
 use io::Write;
 use midi::{list_ports, DeviceSpec};
-use show::{setup_multi_channel_test, Show};
+use show::Show;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::io;
 use std::{error::Error, time::Duration};
+use test_mode::all_video_outputs;
 
 fn main() -> Result<(), Box<dyn Error>> {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
@@ -38,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut show = Show::new(devices)?;
 
     if test_mode {
-        show.test_mode(Box::new(setup_multi_channel_test));
+        show.test_mode(Box::new(all_video_outputs));
     }
 
     show.run(Duration::from_micros(16667))
