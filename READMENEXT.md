@@ -1,14 +1,14 @@
-# pytunnel
+# tunnels
 
 Tunnels is a system for projecting immersive tunnels of projected light in haze,
 enclosing an audience inside rich, beautiful, dynamic temporary spaces.
 
 ## Architecture
 
-The core of tunnelz is a Python control server.  The server is responsible for
+The core of tunnels is a control server.  The server is responsible for
 interacting with midi control interfaces, storing and updating the state of the
 objects encoding the tunnels, and rendering those tunnels to a compact binary
-format to send over a LAN to clients.  The clients run a compact Rust program
+format to send over a LAN to clients.  The clients run a program
 that exposes them to the server via DNSSD (aka Bonjour), which then subscribe to
 a virtual video stream broadcast by the server and render the feeds to video.
 Interaction between the server and clients is mediated by 0MQ and msgpack.
@@ -27,20 +27,16 @@ Recommended:
 Nice to have:
 - Lots more projectors, with client computers to run them.
 
-## Server installation and running
-
-In a fresh virtual environment:
-0. `$ pip install cython numpy`
-0. `$ python setup.py install`
-0. `$ ./run.sh`
-
 ## Controllers
 
 Install `controller_templates/pytunnel.touchosc` on a tablet of your choice running TouchOSC.  Natively scaled for iPad.  Connect to a network midi session on the server via Audio Midi Setup/Core MIDI ([you may need to turn ipv6 off](https://discussions.apple.com/thread/7695767)).
 
-Note that you may need to rename your network session until I fix [#20](https://github.com/generalelectrix/pytunnel/issues/20).  If you have funky midi devices connected to your system, be wary of [#17](https://github.com/generalelectrix/pytunnel/issues/17).
-
 APC40 and APC20 should work out of the box.
+
+## Running the server
+
+0. `$ cd tunnels`
+0. `$ cargo run --release`
 
 ## Building the render client/administrator (Mac)
 

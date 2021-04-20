@@ -1,14 +1,9 @@
 //! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
 //! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
-#[macro_use]
-extern crate simple_error;
-extern crate async_dnssd;
-extern crate futures;
-extern crate tokio_core;
-extern crate zmq;
 
-use async_dnssd::{browse, register, BrowsedFlag, Interface, RegisterFlag};
+use async_dnssd::{browse, register_extended, BrowsedFlags, RegisterData, RegisterFlags};
 use futures::{Future, Stream};
+use simple_error::bail;
 use tokio_core::reactor::{Core, Timeout};
 
 use zmq::{Context, Socket};
@@ -42,17 +37,9 @@ where
     let core = Core::new()?;
 
     // Start advertising this service over DNS-SD.
-    let _registration = register(
-        RegisterFlag::Shared.into(),
-        Interface::Any,
-        None,
-        &reg_type(name),
-        None,
-        None,
-        port,
-        b"",
-        &core.handle(),
-    )?;
+    let mut register_data = RegisterData::default();
+    register_data.flags = RegisterFlags::SHARED;
+    let _registration = register_extended(&reg_type(name), port, register_data, &core.handle())?;
 
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {
@@ -87,11 +74,11 @@ impl Controller {
 
             let handle = core.handle();
 
-            let browse_result = browse(Interface::Any, &registration_type, None, &handle)
+            let browse_result = browse(&registration_type, &handle)
                 .unwrap()
                 .filter_map(|event| {
                     // If this service was added, continue processing.
-                    if event.flags & BrowsedFlag::Add {
+                    if event.flags.contains(BrowsedFlags::ADD) {
                         Some(event)
                     } else {
                         // This service was dropped, remove it from the collection.

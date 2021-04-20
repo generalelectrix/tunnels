@@ -1,17 +1,17 @@
 //! Handle emptying a queue of snapshots, maintaining a time-ordered collection,
 //! and interpolating between them on demand.
-use interpolate::Interpolate;
-use receive::{LayerCollection, Snapshot};
+
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, TryRecvError};
-use timesync::{Microseconds, Seconds};
+use tunnels_lib::Timestamp;
+use tunnels_lib::{LayerCollection, Snapshot};
 
 /// Handle receiving and maintaining a collection of snapshots.
 /// Provide interpolated snapshots on request.
 pub struct SnapshotManager {
     snapshot_queue: Receiver<Snapshot>,
     snapshots: VecDeque<Snapshot>, // Ordered queue of snapshots; latest is snapshots.front()
-    oldest_relevant_snapshot_time: Microseconds,
+    oldest_relevant_snapshot_time: Timestamp,
 }
 
 pub enum SnapshotUpdateError {
@@ -36,7 +36,7 @@ impl SnapshotManager {
         SnapshotManager {
             snapshot_queue: queue,
             snapshots: VecDeque::new(),
-            oldest_relevant_snapshot_time: Microseconds(0),
+            oldest_relevant_snapshot_time: Timestamp(0),
         }
     }
 
@@ -117,10 +117,8 @@ impl SnapshotManager {
 
     /// Given a timestamp, interpolate between the two most relevant snapshots.
     /// Update the oldest relevant snapshot.
-    pub fn get_interpolated(&mut self, time: Seconds) -> InterpResult {
+    pub fn get_interpolated(&mut self, time: Timestamp) -> InterpResult {
         let snaps = &self.snapshots;
-
-        let time = Microseconds::from_seconds(time);
 
         match snaps.len() {
             0 => InterpResult::NoData,
@@ -162,15 +160,18 @@ impl SnapshotManager {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    use super::InterpResult::*;
+    use tunnels_lib::{ArcSegment, Snapshot};
+
     use super::*;
-    use interpolate::Interpolate;
-    use receive::{ArcSegment, Snapshot};
+    use crate::interpolate::Interpolate;
+    use crate::receive::arc_segment_for_test;
     use std::iter::Iterator;
     use std::sync::mpsc::{channel, Sender};
+    use std::sync::Arc;
 
-    fn mksnapshot(n: u64, time: Microseconds) -> Snapshot {
+    fn mksnapshot(n: u64, time: Timestamp) -> Snapshot {
         Snapshot {
             frame_number: n,
             time,
@@ -178,9 +179,9 @@ mod tests {
         }
     }
 
-    fn mksnapshot_with_arc(n: u64, time: Microseconds, arc: ArcSegment) -> Snapshot {
+    fn mksnapshot_with_arc(n: u64, time: Timestamp, arc: ArcSegment) -> Snapshot {
         let mut snap = mksnapshot(n, time);
-        snap.layers.push(vec![arc]);
+        snap.layers.push(Arc::new(vec![arc]));
         snap
     }
 
@@ -204,9 +205,9 @@ mod tests {
     fn test_insert_snapshot() {
         let (_, mut sm) = setup_sm();
         let snapshots_ordered = [
-            mksnapshot(0, Microseconds(10000)),
-            mksnapshot(1, Microseconds(20000)),
-            mksnapshot(2, Microseconds(30000)),
+            mksnapshot(0, Timestamp(10000)),
+            mksnapshot(1, Timestamp(20000)),
+            mksnapshot(2, Timestamp(30000)),
         ];
         for s in &snapshots_ordered {
             sm.insert_snapshot(s.clone());
@@ -214,7 +215,7 @@ mod tests {
 
         zip_assert_same(sm.snapshots.iter(), snapshots_ordered.iter().rev());
 
-        let unordered_snapshot = mksnapshot(3, Microseconds(15000));
+        let unordered_snapshot = mksnapshot(3, Timestamp(15000));
         sm.insert_snapshot(unordered_snapshot.clone());
 
         let correct_ordering = [30000, 20000, 15000, 10000];
@@ -226,14 +227,14 @@ mod tests {
     fn test_drop_stale() {
         let (_, mut sm) = setup_sm();
         let snaps = [
-            mksnapshot(0, Microseconds(0)),
-            mksnapshot(1, Microseconds(1000)),
-            mksnapshot(2, Microseconds(2000)),
+            mksnapshot(0, Timestamp(0)),
+            mksnapshot(1, Timestamp(1000)),
+            mksnapshot(2, Timestamp(2000)),
         ];
         for s in &snaps {
             sm.insert_snapshot(s.clone());
         }
-        sm.oldest_relevant_snapshot_time = Microseconds(2000);
+        sm.oldest_relevant_snapshot_time = Timestamp(2000);
         sm.drop_stale_snapshots();
 
         assert!(sm.snapshots.len() == 1);
@@ -243,7 +244,7 @@ mod tests {
     #[test]
     fn test_interp_no_data() {
         let (_, mut sm) = setup_sm();
-        if let NoData = sm.get_interpolated(Seconds(0.0)) {
+        if let InterpResult::NoData = sm.get_interpolated(Timestamp(0)) {
         } else {
             panic!();
         }
@@ -252,9 +253,9 @@ mod tests {
     #[test]
     fn test_interp_one_older_frame() {
         let (_, mut sm) = setup_sm();
-        let snap = mksnapshot_with_arc(0, Microseconds(0), ArcSegment::for_test(0.2, 0.3));
+        let snap = mksnapshot_with_arc(0, Timestamp(0), arc_segment_for_test(0.2, 0.3));
         sm.insert_snapshot(snap.clone());
-        if let MissingNewer(f) = sm.get_interpolated(Seconds(0.001)) {
+        if let InterpResult::MissingNewer(f) = sm.get_interpolated(Timestamp(1000)) {
             assert_eq!(snap.layers, f);
         } else {
             panic!();
@@ -264,9 +265,9 @@ mod tests {
     #[test]
     fn test_interp_one_newer_frame() {
         let (_, mut sm) = setup_sm();
-        let snap = mksnapshot_with_arc(0, Microseconds(10000), ArcSegment::for_test(0.2, 0.3));
+        let snap = mksnapshot_with_arc(0, Timestamp(10000), arc_segment_for_test(0.2, 0.3));
         sm.insert_snapshot(snap.clone());
-        if let MissingOlder(f) = sm.get_interpolated(Seconds(0.001)) {
+        if let InterpResult::MissingOlder(f) = sm.get_interpolated(Timestamp(1000)) {
             assert_eq!(snap.layers, f);
         } else {
             panic!();
@@ -275,8 +276,8 @@ mod tests {
 
     fn setup_two_frame_test() -> (SnapshotManager, Snapshot, Snapshot) {
         let (_, mut sm) = setup_sm();
-        let snap0 = mksnapshot_with_arc(0, Microseconds(0), ArcSegment::for_test(0.2, 0.3));
-        let snap1 = mksnapshot_with_arc(1, Microseconds(10000), ArcSegment::for_test(0.2, 0.3));
+        let snap0 = mksnapshot_with_arc(0, Timestamp(0), arc_segment_for_test(0.2, 0.3));
+        let snap1 = mksnapshot_with_arc(1, Timestamp(10000), arc_segment_for_test(0.2, 0.3));
         sm.insert_snapshot(snap0.clone());
         sm.insert_snapshot(snap1.clone());
         (sm, snap0, snap1)
@@ -285,7 +286,7 @@ mod tests {
     #[test]
     fn test_interp_two_frames_exact_newer() {
         let (mut sm, _snap0, snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(0.001)) {
+        if let InterpResult::Good(f) = sm.get_interpolated(Timestamp(1000)) {
             assert_eq!(snap1.layers, f);
         } else {
             panic!();
@@ -295,7 +296,7 @@ mod tests {
     #[test]
     fn test_interp_two_frames_exact_older() {
         let (mut sm, snap0, _snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(0.0)) {
+        if let InterpResult::Good(f) = sm.get_interpolated(Timestamp(0)) {
             assert_eq!(snap0.layers, f);
         } else {
             panic!();
@@ -305,11 +306,10 @@ mod tests {
     #[test]
     fn test_interp_two_frames_middle() {
         let (mut sm, snap0, snap1) = setup_two_frame_test();
-        if let Good(f) = sm.get_interpolated(Seconds(0.005)) {
+        if let InterpResult::Good(f) = sm.get_interpolated(Timestamp(5000)) {
             assert_eq!(snap0.layers.interpolate_with(&snap1.layers, 0.0), f);
         } else {
             panic!();
         }
     }
-
 }

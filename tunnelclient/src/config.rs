@@ -1,12 +1,11 @@
 //! Loading and parsing client configurations.
-use draw::{Transform, TransformDirection};
-use log::Level;
+use crate::draw::{Transform, TransformDirection};
+use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
-use timesync::Seconds;
 use yaml_rust::YamlLoader;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -16,7 +15,7 @@ pub struct ClientConfig {
     /// Virtual video channel to listen to.
     pub video_channel: u64,
     /// Delay between current time and time to render.
-    pub render_delay: Seconds,
+    pub render_delay: Duration,
     /// Delay between host/client time synchronization updates.
     pub timesync_interval: Duration,
     pub x_resolution: u32,
@@ -50,7 +49,7 @@ impl ClientConfig {
         host: String,
         resolution: Resolution,
         timesync_interval: Duration,
-        render_delay: Seconds,
+        render_delay: Duration,
         anti_alias: bool,
         fullscreen: bool,
         alpha_blend: bool,
@@ -117,7 +116,7 @@ impl ClientConfig {
             host,
             (x_resolution, y_resolution),
             timesync_interval,
-            Seconds(cfg["render_delay"].as_f64().ok_or("Bad render delay.")?),
+            Duration::from_secs_f64(cfg["render_delay"].as_f64().ok_or("Bad render delay.")?),
             flag("anti_alias", "Bad anti-alias flag.")?,
             flag("fullscreen", "Bad fullscreen flag.")?,
             flag("alpha_blend", "Bad alpha blend flag.")?,

@@ -1,19 +1,21 @@
-use config::ClientConfig;
-use draw::Draw;
+use crate::config::ClientConfig;
+use crate::draw::Draw;
+use crate::receive::SubReceiver;
+use crate::snapshot_manager::InterpResult::*;
+use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
+use crate::timesync::{Client as TimesyncClient, Synchronizer};
 use graphics::clear;
-use log::{max_level, Level};
+use log::{debug, error, info, max_level, warn, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::*;
-use receive::{Snapshot, SubReceiver};
 use sdl2_window::Sdl2Window;
-use snapshot_manager::InterpResult::*;
-use snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use std::error::Error;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use timesync::{Client as TimesyncClient, Seconds, Synchronizer};
-use utils::RunFlag;
+use std::time::Duration;
+use tunnels_lib::RunFlag;
+use tunnels_lib::{Snapshot, Timestamp};
 use zmq::Context;
 
 /// Top-level structure that owns all of the show data.
@@ -57,6 +59,8 @@ impl Show {
         thread::Builder::new()
             .name("timesync".to_string())
             .spawn(move || {
+                // FIXME: rather than sleep/flag polling we should use a select
+                // mechanism to ensure prompt quit.
                 while timesync_run_flag.should_run() {
                     thread::sleep(timesync_period);
                     match timesync_client.synchronize() {
@@ -81,20 +85,16 @@ impl Show {
             .map_err(|e| format!("Timesync service thread failed to spawn: {}", e))?;
 
         // Set up snapshot reception and management.
-        let snapshot_queue: Receiver<Snapshot> = SubReceiver::new(
-            &cfg.server_hostname,
-            6000,
-            cfg.video_channel.to_string().as_bytes(),
-            ctx,
-        )?
-        .run_async()?;
+        let snapshot_queue: Receiver<Snapshot> =
+            SubReceiver::new(&cfg.server_hostname, 6000, &[cfg.video_channel as u8], ctx)?
+                .run_async()?;
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);
 
         let opengl = OpenGL::V3_2;
 
         // Sleep for a render delay to make sure we have snapshots before we start rendering.
-        thread::sleep(cfg.render_delay.as_duration());
+        thread::sleep(cfg.render_delay);
 
         // Create the window.
         let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
@@ -118,7 +118,7 @@ impl Show {
             cfg,
             run_flag,
             window,
-            render_logger: RenderIssueLogger::new(Seconds(1.0)),
+            render_logger: RenderIssueLogger::new(Duration::from_secs(1)),
         })
     }
 
@@ -157,7 +157,7 @@ impl Show {
                 error!("Timesync service crashed; aborting show.");
                 return;
             }
-            Ok(ref mut ts) => ts.now() - self.cfg.render_delay,
+            Ok(ref mut ts) => ts.now() - Timestamp::from_duration(self.cfg.render_delay),
         };
 
         let maybe_frame = match self.snapshot_manager.get_interpolated(delayed_time) {
@@ -220,35 +220,36 @@ impl Show {
 
 /// Logging helper that either logs everything at debug level or occasionally logs at warn level.
 struct RenderIssueLogger {
-    interval: Seconds,
-    last_logged: Seconds,
+    interval: Duration,
+    last_logged: Timestamp,
     missed: u32,
     log_all: bool,
 }
 
 impl RenderIssueLogger {
-    fn new(interval: Seconds) -> Self {
+    fn new(interval: Duration) -> Self {
         Self {
             interval,
-            last_logged: Seconds(0.0),
+            last_logged: Timestamp(0),
             missed: 0,
             log_all: max_level() >= Level::Debug,
         }
     }
 
-    fn log(&mut self, now: Seconds, msg: &str) {
+    fn log(&mut self, now: Timestamp, msg: &str) {
         if self.log_all {
             debug!("{}", msg);
             return;
         }
         self.missed += 1;
 
-        if now > self.last_logged + self.interval {
+        if now > self.last_logged + Timestamp::from_duration(self.interval) {
             let dt = now - self.last_logged;
             self.last_logged = now;
             warn!(
                 "Missed {} snapshots in the last {} seconds.",
-                self.missed, dt
+                self.missed,
+                dt.0 as f64 / 1_000_000.
             );
             self.missed = 0;
         }
