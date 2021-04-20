@@ -18,6 +18,7 @@ use super::{
 
 const RATE_CH_0: u8 = 6;
 const LEVEL_CH_0: u8 = 48;
+const MIDI_CHANNEL: u8 = 4;
 
 pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
     use ClockControlMessage::*;
@@ -28,7 +29,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
     assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows.");
     for i in 0..N_CLOCKS {
         add(
-            cc(5, RATE_CH_0 + i as u8),
+            cc(MIDI_CHANNEL, RATE_CH_0 + i as u8),
             Box::new(move |v| {
                 Clock(ControlMessage {
                     channel: ClockIdx(i),
@@ -37,7 +38,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             }),
         );
         add(
-            cc(5, LEVEL_CH_0 + i as u8),
+            cc(MIDI_CHANNEL, LEVEL_CH_0 + i as u8),
             Box::new(move |v| {
                 Clock(ControlMessage {
                     channel: ClockIdx(i),

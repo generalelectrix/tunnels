@@ -170,6 +170,7 @@ impl Animation {
     }
 }
 
+#[derive(Debug)]
 pub enum StateChange {
     Waveform(Waveform),
     Pulse(bool),

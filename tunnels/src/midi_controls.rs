@@ -64,8 +64,7 @@ impl Dispatcher {
         // FIXME: need to split out the pagewise controls from the non-pagewise controls
         // map_master_ui_controls(Device::TouchOsc, 1, &mut map);
 
-        // TODO: map clock controls for new hardware
-        map_clock_controls(Device::TouchOsc, &mut map);
+        map_clock_controls(Device::BehringerCmdMM1, &mut map);
         Self { map, manager }
     }
 
