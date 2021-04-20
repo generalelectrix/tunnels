@@ -1,9 +1,6 @@
-use crate::numbers::UnipolarFloat;
-use crate::waveforms;
-use crate::{
-    clock::{Clock, ClockBank, ClockIdx},
-    numbers::BipolarFloat,
-};
+use crate::{clock::Clock, clock_bank::ClockBank, numbers::BipolarFloat};
+use crate::{clock::ControllableClock, numbers::UnipolarFloat};
+use crate::{clock_bank::ClockIdx, waveforms};
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -81,20 +78,14 @@ impl Animation {
         }
     }
 
-    /// radial units/s, permitting a max internal clock rate of 1.5 Hz
-    /// the negative sign is here so that turning the animation speed knob
-    /// clockwise makes the animation appear to run around the beam in the same
-    /// direction
-    const CLOCK_RATE_SCALE: f64 = -1.5;
-
     /// Return the clock's current rate, scaled into a bipolar float.
     fn clock_speed(&self) -> BipolarFloat {
-        return BipolarFloat::new(self.internal_clock.rate / Self::CLOCK_RATE_SCALE);
+        return BipolarFloat::new(self.internal_clock.rate / ControllableClock::RATE_SCALE);
     }
 
     /// Set the clock's current rate, scaling by our scale factor.
     fn set_clock_speed(&mut self, speed: BipolarFloat) {
-        self.internal_clock.rate = speed.val() * Self::CLOCK_RATE_SCALE;
+        self.internal_clock.rate = speed.val() * ControllableClock::RATE_SCALE;
     }
 
     pub fn update_state(&mut self, delta_t: Duration) {

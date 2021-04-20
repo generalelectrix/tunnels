@@ -10,6 +10,7 @@ pub enum Device {
     AkaiApc40,
     AkaiApc20,
     TouchOsc,
+    BehringerCmdMM1,
 }
 
 impl fmt::Display for Device {
@@ -21,6 +22,7 @@ impl fmt::Display for Device {
                 Self::AkaiApc40 => "Akai APC40",
                 Self::AkaiApc20 => "Akai APC20",
                 Self::TouchOsc => "Touch OSC",
+                Self::BehringerCmdMM1 => "Behringer CMD MM-1",
             }
         )
     }
@@ -33,6 +35,7 @@ impl Device {
             Self::AkaiApc40 => init_apc_40(out),
             Self::AkaiApc20 => init_apc_20(out),
             Self::TouchOsc => Ok(()),
+            Self::BehringerCmdMM1 => Ok(()),
         }
     }
 }

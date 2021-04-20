@@ -1,38 +1,8 @@
 #![allow(unused)]
-use crate::numbers::UnipolarFloat;
+use crate::numbers::{BipolarFloat, UnipolarFloat};
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-
-/// how many globally-available clocks?
-pub const N_CLOCKS: usize = 4;
-
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct ClockIdx(pub usize);
-
-/// Maintain a indexable collection of clocks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClockBank([Clock; N_CLOCKS]);
-
-impl ClockBank {
-    pub fn new() -> Self {
-        Self(Default::default())
-    }
-
-    pub fn phase(&self, index: ClockIdx) -> Phase {
-        self.0[index.0].phase()
-    }
-
-    pub fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
-        self.0[index.0].submaster_level
-    }
-
-    pub fn update_state(&mut self, delta_t: Duration) {
-        for clock in self.0.iter_mut() {
-            clock.update_state(delta_t);
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
@@ -94,6 +64,7 @@ impl Clock {
     }
 }
 
+#[derive(Debug, Clone)]
 /// A clock with a complete set of controls.
 pub struct ControllableClock {
     clock: Clock,
@@ -103,7 +74,19 @@ pub struct ControllableClock {
     retrigger: bool,
 }
 
+impl Default for ControllableClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ControllableClock {
+    /// radial units/s, permitting a max internal clock rate of 1.5 Hz
+    /// the negative sign is here so that turning the animation speed knob
+    /// clockwise makes the animation appear to run around the beam in the same
+    /// direction
+    pub const RATE_SCALE: f64 = -1.5;
+
     pub fn new() -> Self {
         Self {
             clock: Clock::new(),
@@ -111,6 +94,14 @@ impl ControllableClock {
             tick_age: None,
             retrigger: false,
         }
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.clock.phase()
+    }
+
+    pub fn submaster_level(&self) -> UnipolarFloat {
+        self.clock.submaster_level
     }
 
     const TICK_DISPLAY_DURATION: Duration = Duration::from_millis(250);
@@ -162,6 +153,9 @@ impl ControllableClock {
                 } else {
                     if let Some(rate) = self.sync.tap() {
                         self.clock.rate = rate;
+                        emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
+                            self.clock.rate / ControllableClock::RATE_SCALE,
+                        )));
                     }
                 }
             }
@@ -171,6 +165,7 @@ impl ControllableClock {
     fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use StateChange::*;
         match sc {
+            Rate(v) => self.clock.rate = v.val() * ControllableClock::RATE_SCALE,
             Retrigger(v) => self.retrigger = v,
             OneShot(v) => self.clock.one_shot = v,
             SubmasterLevel(v) => self.clock.submaster_level = v,
@@ -181,6 +176,7 @@ impl ControllableClock {
 }
 
 pub enum StateChange {
+    Rate(BipolarFloat),
     Retrigger(bool),
     OneShot(bool),
     SubmasterLevel(UnipolarFloat),
@@ -197,13 +193,7 @@ pub trait EmitStateChange {
     fn emit_clock_state_change(&mut self, sc: StateChange);
 }
 
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_clock_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Clock(sc))
-    }
-}
-
+#[derive(Debug, Clone)]
 /// Estimate rate from a series of taps.
 struct TapSync {
     taps: Vec<Instant>,

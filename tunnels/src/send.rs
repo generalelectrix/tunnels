@@ -10,7 +10,7 @@ use std::thread;
 use tunnels_lib::{Snapshot, Timestamp};
 use zmq::{Context, Socket};
 
-use crate::{clock::ClockBank, mixer::Mixer};
+use crate::{clock_bank::ClockBank, mixer::Mixer};
 
 const PORT: u16 = 6000;
 

@@ -7,8 +7,8 @@ use std::{
 use tunnels_lib::Timestamp;
 
 use crate::{
-    animation, clock,
-    clock::ClockBank,
+    animation,
+    clock_bank::{self, ClockBank},
     device::Device,
     master_ui,
     master_ui::MasterUI,
@@ -109,7 +109,7 @@ impl Show {
     }
 
     fn update_state(&mut self, delta_t: Duration) {
-        self.clocks.update_state(delta_t);
+        self.clocks.update_state(delta_t, &mut self.dispatcher);
         self.mixer.update_state(delta_t);
     }
 
@@ -119,6 +119,7 @@ impl Show {
                 self.ui.handle_control_message(
                     control_message,
                     &mut self.mixer,
+                    &mut self.clocks,
                     &mut self.dispatcher,
                 )
             }
@@ -130,6 +131,7 @@ pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
     Animation(animation::ControlMessage),
     Mixer(mixer::ControlMessage),
+    Clock(clock_bank::ControlMessage),
     MasterUI(master_ui::ControlMessage),
 }
 
@@ -137,7 +139,7 @@ pub enum StateChange {
     Tunnel(tunnel::StateChange),
     Animation(animation::StateChange),
     Mixer(mixer::StateChange),
-    Clock(clock::StateChange),
+    Clock(clock_bank::StateChange),
     MasterUI(master_ui::StateChange),
 }
 

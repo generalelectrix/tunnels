@@ -3,7 +3,7 @@ use crate::{
     animation::StateChange,
     animation::Target as AnimationTarget,
     animation::Waveform as WaveformType,
-    clock::ClockIdx,
+    clock_bank::ClockIdx,
     device::Device,
     midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
     show::ControlMessage::Animation,

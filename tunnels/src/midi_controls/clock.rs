@@ -1,12 +1,14 @@
 #![allow(unused)]
 use crate::{
-    clock::ClockIdx,
-    clock::ControlMessage,
-    clock::StateChange,
-    clock::N_CLOCKS,
+    clock::ControlMessage as ClockControlMessage,
+    clock::StateChange as ClockStateChange,
+    clock_bank::ClockIdx,
+    clock_bank::ControlMessage,
+    clock_bank::StateChange,
+    clock_bank::N_CLOCKS,
     device::Device,
     midi::{cc, event, note_off, note_on, Manager, Mapping},
-    show::ControlMessage as ShowControlMessage,
+    show::ControlMessage::Clock,
 };
 
 use super::{
@@ -14,22 +16,43 @@ use super::{
     RadioButtons,
 };
 
+const RATE_CH_0: u8 = 6;
+const LEVEL_CH_0: u8 = 48;
+
 pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
-    use ControlMessage::*;
-    use StateChange::*;
+    use ClockControlMessage::*;
+    use ClockStateChange::*;
 
     let mut add = |mapping, creator| map.add(device, mapping, creator);
 
-    // TODO: revamp clock interface using new hardware
+    assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows.");
+    for i in 0..N_CLOCKS {
+        add(
+            cc(5, RATE_CH_0 + i as u8),
+            Box::new(move |v| {
+                Clock(ControlMessage {
+                    channel: ClockIdx(i),
+                    msg: Set(Rate(bipolar_from_midi(v))),
+                })
+            }),
+        );
+        add(
+            cc(5, LEVEL_CH_0 + i as u8),
+            Box::new(move |v| {
+                Clock(ControlMessage {
+                    channel: ClockIdx(i),
+                    msg: Set(SubmasterLevel(unipolar_from_midi(v))),
+                })
+            }),
+        );
+    }
 }
 
 /// Emit midi messages to update UIs given the provided state change.
 pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
-    use StateChange::*;
+    use ClockStateChange::*;
 
     let mut send = |event| {
-        manager.send(Device::TouchOsc, event);
+        manager.send(Device::BehringerCmdMM1, event);
     };
-
-    // TODO: revamp clock interface using new hardware
 }

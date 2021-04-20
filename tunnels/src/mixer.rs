@@ -1,6 +1,6 @@
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
-use crate::{beam::Beam, clock::ClockBank, look::Look, numbers::UnipolarFloat, tunnel::Tunnel};
+use crate::{beam::Beam, look::Look, numbers::UnipolarFloat, tunnel::Tunnel};
+use crate::{clock_bank::ClockBank, master_ui::EmitStateChange as EmitShowStateChange};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tunnels_lib::{ArcSegment, LayerCollection};

@@ -2,6 +2,7 @@ mod animation;
 mod beam;
 mod beam_store;
 mod clock;
+mod clock_bank;
 mod device;
 mod look;
 mod master_ui;
