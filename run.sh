@@ -1,1 +1,0 @@
-ipython -i run.py
