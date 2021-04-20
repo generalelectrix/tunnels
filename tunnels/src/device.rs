@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::midi::{Event, EventType, Mapping, Output};
 use log::debug;
 use midir::SendError;
@@ -8,6 +10,20 @@ pub enum Device {
     AkaiApc40,
     AkaiApc20,
     TouchOsc,
+}
+
+impl fmt::Display for Device {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::AkaiApc40 => "Akai APC40",
+                Self::AkaiApc20 => "Akai APC20",
+                Self::TouchOsc => "Touch OSC",
+            }
+        )
+    }
 }
 
 impl Device {

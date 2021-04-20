@@ -81,22 +81,20 @@ pub const fn event(mapping: Mapping, value: u8) -> Event {
 }
 
 #[allow(dead_code)]
-// Return the available ports as descriptive strings.
-pub fn list_ports() -> Result<(String, String), Box<dyn Error>> {
+// Return the available ports by name,
+pub fn list_ports() -> Result<(Vec<String>, Vec<String>), Box<dyn Error>> {
     let input = MidiInput::new("tunnels")?;
     let inputs = input
         .ports()
         .iter()
         .filter_map(|p| input.port_name(p).ok())
-        .collect::<Vec<String>>()
-        .join("\n");
+        .collect::<Vec<String>>();
     let output = MidiOutput::new("tunnels")?;
     let outputs = output
         .ports()
         .iter()
         .filter_map(|p| output.port_name(p).ok())
-        .collect::<Vec<String>>()
-        .join("\n");
+        .collect::<Vec<String>>();
     Ok((inputs, outputs))
 }
 
