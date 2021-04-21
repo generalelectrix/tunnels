@@ -159,6 +159,12 @@ impl ControllableClock {
                     }
                 }
             }
+            ToggleOneShot => {
+                self.handle_state_change(StateChange::OneShot(!self.clock.one_shot), emitter);
+            }
+            ToggleRetrigger => {
+                self.handle_state_change(StateChange::Retrigger(!self.retrigger), emitter);
+            }
         }
     }
 
@@ -187,6 +193,8 @@ pub enum StateChange {
 pub enum ControlMessage {
     Set(StateChange),
     Tap,
+    ToggleOneShot,
+    ToggleRetrigger,
 }
 
 pub trait EmitStateChange {
