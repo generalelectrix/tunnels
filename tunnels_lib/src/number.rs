@@ -1,6 +1,5 @@
 use std::{
     cmp::Ordering,
-    collections::btree_set::Union,
     ops::{Add, AddAssign, Div, Mul, Sub},
 };
 

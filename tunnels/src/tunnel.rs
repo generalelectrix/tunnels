@@ -294,7 +294,7 @@ impl Tunnel {
             Set(sc) => self.handle_state_change(sc, emitter),
             NudgeLeft => self.x_offset.set_target(self.x_offset.target() - X_NUDGE),
             NudgeRight => self.x_offset.set_target(self.x_offset.target() + X_NUDGE),
-            NudgeUp => self.y_offset.set_target(self.y_offset.target() - Y_NUDGE),
+            NudgeUp => self.y_offset.set_target(self.y_offset.target() + Y_NUDGE),
             NudgeDown => self.y_offset.set_target(self.y_offset.target() - Y_NUDGE),
             ResetPosition => {
                 self.x_offset.set_target(0.);
