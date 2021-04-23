@@ -6,9 +6,9 @@ use crate::{
         EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
-    numbers::{Phase, UnipolarFloat},
 };
 use serde::{Deserialize, Serialize};
+use tunnels_lib::number::{Phase, UnipolarFloat};
 use typed_index_derive::TypedIndex;
 
 /// how many globally-available clocks?
@@ -73,12 +73,6 @@ impl ClockBank {
 struct ChannelEmitter<'e, E: EmitStateChange> {
     channel: ClockIdx,
     emitter: &'e mut E,
-}
-
-impl<'e, E: EmitStateChange> ChannelEmitter<'e, E> {
-    pub fn new(channel: ClockIdx, emitter: &'e mut E) -> Self {
-        Self { channel, emitter }
-    }
 }
 
 impl<'e, E: EmitStateChange> EmitClockStateChange for ChannelEmitter<'e, E> {

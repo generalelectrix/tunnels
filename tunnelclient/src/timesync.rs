@@ -10,7 +10,7 @@ use std::error::Error;
 use std::mem;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use tunnels_lib::Timestamp;
+use tunnels_lib::{number::UnipolarFloat, Timestamp};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
@@ -141,8 +141,8 @@ pub struct Synchronizer {
     last: Timesync,
     /// Most up-to-date estimate of time on the host.
     current: Timesync,
-    /// Linear interpolation parameter on [0.0, 1.0].
-    alpha: f64,
+    /// Linear interpolation parameter.
+    alpha: UnipolarFloat,
 }
 
 impl Synchronizer {
@@ -151,7 +151,7 @@ impl Synchronizer {
         Synchronizer {
             last: sync.clone(),
             current: sync,
-            alpha: 1.0,
+            alpha: UnipolarFloat::ONE,
         }
     }
 
@@ -159,7 +159,7 @@ impl Synchronizer {
     pub fn update_current(&mut self, sync: Timesync) {
         mem::swap(&mut self.last, &mut self.current);
         self.current = sync;
-        self.alpha = 0.0;
+        self.alpha = UnipolarFloat::ZERO;
     }
 
     /// Update the interpolation parameter during state update.
@@ -167,9 +167,6 @@ impl Synchronizer {
     /// Smooth the host time update over one second by advancing alpha by dt and clamping to 1.0.
     pub fn update(&mut self, dt: f64) {
         self.alpha += dt;
-        if self.alpha >= 1.0 {
-            self.alpha = 1.0;
-        }
     }
 
     /// Get a (possibly interpolated) estimate of the time on the host.
@@ -179,7 +176,7 @@ impl Synchronizer {
             current
         } else {
             let old = self.last.now();
-            Timestamp(lerp(&old.0, &current.0, &self.alpha))
+            Timestamp(lerp(&old.0, &current.0, &self.alpha.val()))
         }
     }
 }

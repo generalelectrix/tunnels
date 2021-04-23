@@ -65,7 +65,7 @@ impl Interpolate for ArcSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::receive::arc_segment_for_test;
+    use crate::receive::test::arc_segment_for_test;
     use interpolation::lerp;
     use tunnels_lib::assert_almost_eq;
 

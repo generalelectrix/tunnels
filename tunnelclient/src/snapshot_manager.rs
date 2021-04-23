@@ -166,7 +166,7 @@ mod tests {
 
     use super::*;
     use crate::interpolate::Interpolate;
-    use crate::receive::arc_segment_for_test;
+    use crate::receive::test::arc_segment_for_test;
     use std::iter::Iterator;
     use std::sync::mpsc::{channel, Sender};
     use std::sync::Arc;

@@ -1,12 +1,14 @@
+use crate::master_ui::EmitStateChange;
 use crate::{
     animation::{Animation, StateChange as AnimationStateChange, Target, Waveform},
     beam::Beam,
     mixer::{Channel, Mixer, VideoChannel},
-    numbers::BipolarFloat,
     show::StateChange,
     tunnel::{StateChange as TunnelStateChange, Tunnel},
 };
-use crate::{master_ui::EmitStateChange, numbers::UnipolarFloat};
+use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
+
+pub type TestModeSetup = fn(usize, usize, &mut Channel);
 
 /// A basic test mode outputting a slowly moving tunnel on each channel.
 /// Each channel is given a slightly different color.

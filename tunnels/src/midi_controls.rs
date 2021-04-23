@@ -10,10 +10,11 @@ use crate::{
     device::Device,
     master_ui::EmitStateChange,
     midi::{Event, Manager, Mapping},
-    numbers::{BipolarFloat, UnipolarFloat},
     show::ControlMessage,
     show::StateChange,
 };
+
+use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
 use self::animation::{map_animation_controls, update_animation_control};
 use self::clock::{map_clock_controls, update_clock_control};

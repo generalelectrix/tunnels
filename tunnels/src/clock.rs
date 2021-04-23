@@ -1,8 +1,6 @@
-#![allow(unused)]
-use crate::numbers::{BipolarFloat, UnipolarFloat};
-use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
@@ -43,7 +41,6 @@ impl Clock {
     }
 
     pub fn update_state(&mut self, delta_t: Duration) {
-        use log::info;
         if self.reset_on_update {
             self.ticked = true;
             // Reset phase to zero or one, depending on sign of rate.

@@ -1,6 +1,7 @@
-use crate::{clock_bank::ClockBank, mixer::Channel, numbers::UnipolarFloat};
+use crate::{clock_bank::ClockBank, mixer::Channel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::ArcSegment;
 
 /// A look is a beam that is essentially the contents of an entire mixer.

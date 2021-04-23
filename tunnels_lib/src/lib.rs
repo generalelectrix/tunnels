@@ -1,5 +1,8 @@
 //! Code shared between the tunnels console and client.
 
+pub mod number;
+pub mod smooth;
+
 use derive_more::{Add, Display, Div, Mul, Sub};
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};

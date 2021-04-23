@@ -1,9 +1,10 @@
-use crate::{clock::Clock, clock_bank::ClockBank, numbers::BipolarFloat};
-use crate::{clock::ControllableClock, numbers::UnipolarFloat};
+use crate::clock::ControllableClock;
+use crate::master_ui::EmitStateChange as EmitShowStateChange;
+use crate::{clock::Clock, clock_bank::ClockBank};
 use crate::{clock_bank::ClockIdx, waveforms};
-use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub enum Waveform {

@@ -1,4 +1,3 @@
-use crate::numbers::{BipolarFloat, Phase, UnipolarFloat};
 use crate::{
     animation::{Animation, Target},
     clock_bank::ClockBank,
@@ -7,6 +6,8 @@ use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtoo
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
+use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
+use tunnels_lib::smooth::{SmoothMode, Smoother};
 use tunnels_lib::ArcSegment;
 use typed_index_derive::TypedIndex;
 
@@ -38,12 +39,14 @@ pub struct Tunnel {
     blacking: BipolarFloat,
     curr_rot_angle: Phase,
     curr_marquee_angle: Phase,
-    x_offset: f64,
-    y_offset: f64,
+    x_offset: Smoother<f64>,
+    y_offset: Smoother<f64>,
     anims: [Animation; N_ANIM],
 }
 
 impl Tunnel {
+    const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
+
     pub fn new() -> Self {
         Self {
             marquee_speed: BipolarFloat::ZERO,
@@ -59,8 +62,8 @@ impl Tunnel {
             blacking: BipolarFloat::new(0.15),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
-            x_offset: 0.0,
-            y_offset: 0.0,
+            x_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
+            y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
         }
     }
@@ -99,8 +102,11 @@ impl Tunnel {
     /// Update the state of this tunnel in preparation for drawing a frame.
     pub fn update_state(&mut self, delta_t: Duration) {
         // ensure we don't exceed the set bounds of the screen
-        self.x_offset = f64::min(f64::max(self.x_offset, -MAX_X_OFFSET), MAX_X_OFFSET);
-        self.y_offset = f64::min(f64::max(self.y_offset, -MAX_Y_OFFSET), MAX_Y_OFFSET);
+        // self.x_offset = f64::min(f64::max(self.x_offset, -MAX_X_OFFSET), MAX_X_OFFSET);
+        // self.y_offset = f64::min(f64::max(self.y_offset, -MAX_Y_OFFSET), MAX_Y_OFFSET);
+        // Update smoothers.
+        self.x_offset.update_state(delta_t);
+        self.y_offset.update_state(delta_t);
 
         // Update the state of the animations.
         for anim in &mut self.anims {
@@ -190,8 +196,8 @@ impl Tunnel {
             let thickness_allowance = self.thickness.val() * THICKNESS_SCALE / 2.;
 
             // geometry calculations
-            let x_center = self.x_offset + x_adjust;
-            let y_center = self.y_offset + y_adjust;
+            let x_center = self.x_offset.val() + x_adjust;
+            let y_center = self.y_offset.val() + y_adjust;
 
             // compute ellipse parameters
             let radius_x = ((self.size.val()
@@ -286,13 +292,13 @@ impl Tunnel {
         use ControlMessage::*;
         match msg {
             Set(sc) => self.handle_state_change(sc, emitter),
-            NudgeLeft => self.x_offset -= X_NUDGE,
-            NudgeRight => self.x_offset += X_NUDGE,
-            NudgeUp => self.y_offset += Y_NUDGE,
-            NudgeDown => self.y_offset -= Y_NUDGE,
+            NudgeLeft => self.x_offset.set_target(self.x_offset.target() - X_NUDGE),
+            NudgeRight => self.x_offset.set_target(self.x_offset.target() + X_NUDGE),
+            NudgeUp => self.y_offset.set_target(self.y_offset.target() + Y_NUDGE),
+            NudgeDown => self.y_offset.set_target(self.y_offset.target() - Y_NUDGE),
             ResetPosition => {
-                self.x_offset = 0.;
-                self.y_offset = 0.;
+                self.x_offset.set_target(0.);
+                self.y_offset.set_target(0.);
             }
             ResetRotation => {
                 self.rot_speed = BipolarFloat::ZERO;
@@ -349,13 +355,9 @@ const ROT_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; marquee rotated this many radial units/frame at 30fps
 const MARQUEE_SPEED_SCALE: f64 = 0.023;
 const COLOR_SPREAD_SCALE: f64 = 16.;
-/// maximum X offset as fraction of screen x-size
-const MAX_X_OFFSET: f64 = 0.5;
-/// maximum Y offset as fraction of screen y-size
-const MAX_Y_OFFSET: f64 = 0.5;
-/// X nudge increment as fraction of min half-screen
+/// X nudge increment
 const X_NUDGE: f64 = 0.025;
-/// Y nudge increment as fraction of min half-screen
+/// Y nudge increment
 const Y_NUDGE: f64 = 0.025;
 /// line thickness scale as fraction of min half-screen
 const THICKNESS_SCALE: f64 = 0.5;
