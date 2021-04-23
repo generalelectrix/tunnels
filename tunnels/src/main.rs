@@ -9,7 +9,6 @@ mod master_ui;
 mod midi;
 mod midi_controls;
 mod mixer;
-mod numbers;
 mod send;
 mod show;
 mod test_mode;

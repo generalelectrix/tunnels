@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
-    ops::{Add, AddAssign, Div, Mul},
+    collections::btree_set::Union,
+    ops::{Add, AddAssign, Div, Mul, Sub},
 };
 
 use derive_more::Display;
@@ -53,6 +54,27 @@ impl Mul<UnipolarFloat> for UnipolarFloat {
     fn mul(self, rhs: UnipolarFloat) -> Self::Output {
         // This cannot go out of range so no need to clamp.
         Self(self.0 * rhs.0)
+    }
+}
+
+impl Sub<UnipolarFloat> for UnipolarFloat {
+    type Output = UnipolarFloat;
+    fn sub(self, rhs: UnipolarFloat) -> Self::Output {
+        Self::new(self.0 - rhs.0)
+    }
+}
+
+impl AddAssign<UnipolarFloat> for UnipolarFloat {
+    // Add other to self and clamp.
+    fn add_assign(&mut self, rhs: UnipolarFloat) {
+        *self = Self::new(self.0 + rhs.0);
+    }
+}
+
+impl AddAssign<f64> for UnipolarFloat {
+    // Add other to self and clamp.
+    fn add_assign(&mut self, rhs: f64) {
+        *self = Self::new(self.0 + rhs);
     }
 }
 

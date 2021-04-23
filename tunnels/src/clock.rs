@@ -1,8 +1,7 @@
-#![allow(unused)]
-use crate::numbers::{BipolarFloat, UnipolarFloat};
-use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
+use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {

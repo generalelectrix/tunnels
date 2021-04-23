@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 
-use crate::numbers::{Phase, UnipolarFloat};
+use tunnels_lib::number::{Phase, UnipolarFloat};
 
 const TWO_PI: f64 = 2.0 * PI;
 const HALF_PI: f64 = PI / 2.0;

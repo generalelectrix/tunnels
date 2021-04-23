@@ -6,9 +6,9 @@ use crate::{
         EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
-    numbers::{Phase, UnipolarFloat},
 };
 use serde::{Deserialize, Serialize};
+use tunnels_lib::number::{Phase, UnipolarFloat};
 use typed_index_derive::TypedIndex;
 
 /// how many globally-available clocks?

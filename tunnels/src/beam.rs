@@ -1,6 +1,7 @@
-use crate::{clock_bank::ClockBank, look::Look, numbers::UnipolarFloat, tunnel::Tunnel};
+use crate::{clock_bank::ClockBank, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::ArcSegment;
 
 /// Union type for all of the kinds of beams we can have.

@@ -1,4 +1,3 @@
-use crate::numbers::{BipolarFloat, Phase, UnipolarFloat};
 use crate::{
     animation::{Animation, Target},
     clock_bank::ClockBank,
@@ -7,6 +6,7 @@ use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtoo
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
+use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::ArcSegment;
 use typed_index_derive::TypedIndex;
 
