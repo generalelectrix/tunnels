@@ -1,4 +1,5 @@
-#![allow(unused)]
+//! Midi control declarations for clocks.
+
 use crate::{
     clock::ControlMessage as ClockControlMessage,
     clock::StateChange as ClockStateChange,
@@ -7,14 +8,11 @@ use crate::{
     clock_bank::StateChange,
     clock_bank::N_CLOCKS,
     device::Device,
-    midi::{cc, event, note_off, note_on, Manager, Mapping},
+    midi::{cc, event, note_on, Manager},
     show::ControlMessage::Clock,
 };
 
-use super::{
-    bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap,
-    RadioButtons,
-};
+use super::{bipolar_from_midi, unipolar_from_midi, ControlMap};
 
 const RATE_CH_0: u8 = 6;
 const LEVEL_CH_0: u8 = 48;
