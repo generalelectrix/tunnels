@@ -64,10 +64,18 @@ impl Sub<UnipolarFloat> for UnipolarFloat {
     }
 }
 
+impl Add<UnipolarFloat> for UnipolarFloat {
+    type Output = UnipolarFloat;
+    // Add other to self and clamp.
+    fn add(self, rhs: UnipolarFloat) -> Self::Output {
+        Self::new(self.val() + rhs.val())
+    }
+}
+
 impl AddAssign<UnipolarFloat> for UnipolarFloat {
     // Add other to self and clamp.
     fn add_assign(&mut self, rhs: UnipolarFloat) {
-        *self = Self::new(self.0 + rhs.0);
+        *self += rhs.val();
     }
 }
 
