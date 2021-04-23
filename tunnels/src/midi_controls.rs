@@ -37,6 +37,34 @@ impl ControlMap {
             panic!("duplicate control definition: {:?} {:?}", device, mapping);
         }
     }
+
+    #[allow(unused)]
+    // Produce a report describing all controls bound to all devices.
+    pub fn report(&self) -> String {
+        let mut controls: HashMap<Device, Vec<Mapping>> = HashMap::new();
+        for ((device, mapping), _) in self.0.iter() {
+            match controls.get_mut(device) {
+                Some(mappings) => {
+                    mappings.push(*mapping);
+                }
+                None => {
+                    controls.insert(*device, vec![*mapping]);
+                }
+            }
+        }
+
+        let mut report = Vec::new();
+
+        // Sort the mappings and produce the report.
+        for (device, mappings) in controls.iter_mut() {
+            mappings.sort();
+            report.push(format!("{}", device));
+            for mapping in mappings {
+                report.push(format!("{}", mapping))
+            }
+        }
+        report.join("\n")
+    }
 }
 pub struct Dispatcher {
     map: ControlMap,

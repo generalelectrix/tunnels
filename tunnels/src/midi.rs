@@ -3,7 +3,9 @@ use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnec
 use serde::{Deserialize, Serialize};
 use simple_error::bail;
 use std::{
+    cmp::Ordering,
     error::Error,
+    fmt,
     sync::mpsc::{channel, Receiver, Sender},
     time::Duration,
 };
@@ -11,7 +13,7 @@ use std::{
 use crate::device::Device;
 
 /// Specification for what type of midi event.
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum EventType {
     NoteOn,
     NoteOff,
@@ -19,11 +21,39 @@ pub enum EventType {
 }
 
 /// A specification of a midi mapping.
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Ord, Serialize, Deserialize)]
 pub struct Mapping {
     pub event_type: EventType,
     pub channel: u8,
     pub control: u8,
+}
+
+impl fmt::Display for Mapping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} {}:{}",
+            match self.event_type {
+                EventType::NoteOn => "NoteOn ",
+                EventType::NoteOff => "NoteOff",
+                EventType::ControlChange => "CntChng",
+            },
+            self.channel,
+            self.control
+        )
+    }
+}
+
+impl PartialOrd<Mapping> for Mapping {
+    fn partial_cmp(&self, other: &Mapping) -> Option<Ordering> {
+        if self.channel != other.channel {
+            return self.channel.partial_cmp(&other.channel);
+        }
+        if self.event_type != other.event_type {
+            return self.event_type.partial_cmp(&other.event_type);
+        }
+        self.control.partial_cmp(&other.control)
+    }
 }
 
 /// Helper constructor for a note on mapping.

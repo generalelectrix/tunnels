@@ -284,6 +284,8 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat));
         emitter.emit_tunnel_state_change(Segments(self.segs));
         emitter.emit_tunnel_state_change(Blacking(self.blacking));
+        emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
+        emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
     }
 
     /// Handle a control event.
@@ -292,13 +294,25 @@ impl Tunnel {
         use ControlMessage::*;
         match msg {
             Set(sc) => self.handle_state_change(sc, emitter),
-            NudgeLeft => self.x_offset.set_target(self.x_offset.target() - X_NUDGE),
-            NudgeRight => self.x_offset.set_target(self.x_offset.target() + X_NUDGE),
-            NudgeUp => self.y_offset.set_target(self.y_offset.target() + Y_NUDGE),
-            NudgeDown => self.y_offset.set_target(self.y_offset.target() - Y_NUDGE),
+            NudgeLeft => self.handle_state_change(
+                StateChange::PositionX(self.x_offset.target() - X_NUDGE),
+                emitter,
+            ),
+            NudgeRight => self.handle_state_change(
+                StateChange::PositionX(self.x_offset.target() + X_NUDGE),
+                emitter,
+            ),
+            NudgeUp => self.handle_state_change(
+                StateChange::PositionY(self.y_offset.target() + Y_NUDGE),
+                emitter,
+            ),
+            NudgeDown => self.handle_state_change(
+                StateChange::PositionY(self.y_offset.target() - Y_NUDGE),
+                emitter,
+            ),
             ResetPosition => {
-                self.x_offset.set_target(0.);
-                self.y_offset.set_target(0.);
+                self.handle_state_change(StateChange::PositionX(0.), emitter);
+                self.handle_state_change(StateChange::PositionY(0.), emitter);
             }
             ResetRotation => {
                 self.rot_speed = BipolarFloat::ZERO;
@@ -327,6 +341,8 @@ impl Tunnel {
             ColorSaturation(v) => self.col_sat = v,
             Segments(v) => self.segs = v,
             Blacking(v) => self.blacking = v,
+            PositionX(v) => self.x_offset.set_target(v),
+            PositionY(v) => self.y_offset.set_target(v),
         };
         emitter.emit_tunnel_state_change(sc);
     }
@@ -375,6 +391,8 @@ pub enum StateChange {
     ColorSaturation(UnipolarFloat),
     Segments(u8), // FIXME integer knob
     Blacking(BipolarFloat),
+    PositionX(f64),
+    PositionY(f64),
 }
 pub enum ControlMessage {
     Set(StateChange),

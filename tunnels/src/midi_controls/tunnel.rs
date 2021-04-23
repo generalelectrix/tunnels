@@ -1,11 +1,12 @@
 use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap};
 use crate::{
     device::Device,
-    midi::{cc_ch0, event, note_on_ch0, Manager, Mapping},
+    midi::{cc, cc_ch0, event, note_on_ch0, Manager, Mapping},
     show::ControlMessage::Tunnel,
     tunnel::ControlMessage,
     tunnel::StateChange,
 };
+use tunnels_lib::number::BipolarFloat;
 
 // Knobs
 const THICKNESS: Mapping = cc_ch0(21);
@@ -28,6 +29,10 @@ const NUDGE_DOWN: Mapping = note_on_ch0(0x5E);
 const RESET_POSITION: Mapping = note_on_ch0(0x62);
 const RESET_ROTATION: Mapping = note_on_ch0(120);
 const RESET_MARQUEE: Mapping = note_on_ch0(121);
+
+// TouchOSC XY position pad.
+const POSITION_X: Mapping = cc(8, 1);
+const POSITION_Y: Mapping = cc(8, 0);
 
 pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     use ControlMessage::*;
@@ -83,6 +88,14 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     add(RESET_POSITION, Box::new(|_| Tunnel(ResetPosition)));
     add(RESET_ROTATION, Box::new(|_| Tunnel(ResetRotation)));
     add(RESET_MARQUEE, Box::new(|_| Tunnel(ResetMarquee)));
+    add(
+        POSITION_X,
+        Box::new(|v| Tunnel(Set(PositionX(bipolar_from_midi(v).val())))),
+    );
+    add(
+        POSITION_Y,
+        Box::new(|v| Tunnel(Set(PositionY(bipolar_from_midi(v).val())))),
+    );
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.
@@ -101,6 +114,9 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
         Blacking(v) => event(BLACKING, bipolar_to_midi(v)),
         MarqueeSpeed(v) => event(MARQUEE_SPEED, bipolar_to_midi(v)),
         RotationSpeed(v) => event(ROT_SPEED, bipolar_to_midi(v)),
+        // Clamp outgoing tunnel position messages to regular midi range.
+        PositionX(v) => event(POSITION_X, bipolar_to_midi(BipolarFloat::new(v))),
+        PositionY(v) => event(POSITION_Y, bipolar_to_midi(BipolarFloat::new(v))),
     };
     manager.send(Device::AkaiApc40, event);
     manager.send(Device::TouchOsc, event);
