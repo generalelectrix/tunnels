@@ -75,8 +75,8 @@ lazy_static! {
     };
     static ref CLOCK_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
-        mappings: (-1..8)
-            .map(|clock_id| note_on_ch1((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
+        mappings: (-1..N_CLOCKS as i32)
+            .map(|clock_id| note_on_ch0((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
             .collect(),
         off: 0,
         on: 1,

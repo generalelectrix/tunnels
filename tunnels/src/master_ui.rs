@@ -82,11 +82,17 @@ impl MasterUI {
     }
 
     /// Emit all controllable state.
-    pub fn emit_state<E: EmitStateChange>(&self, mixer: &mut Mixer, emitter: &mut E) {
+    pub fn emit_state<E: EmitStateChange>(
+        &self,
+        mixer: &mut Mixer,
+        clocks: &mut ClockBank,
+        emitter: &mut E,
+    ) {
         emitter.emit_master_ui_state_change(StateChange::Channel(self.current_channel));
         self.emit_beam_store_state(emitter);
         self.emit_current_channel_state(mixer, emitter);
         mixer.emit_state(emitter);
+        clocks.emit_state(emitter);
     }
 
     /// Emit state for the beam store.

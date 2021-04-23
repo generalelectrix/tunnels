@@ -66,7 +66,8 @@ impl Show {
         info!("Show is starting.");
 
         // Emit initial UI state.
-        self.ui.emit_state(&mut self.mixer, &mut self.dispatcher);
+        self.ui
+            .emit_state(&mut self.mixer, &mut self.clocks, &mut self.dispatcher);
 
         let mut frame_number = 0;
         let mut ctx = zmq::Context::new();

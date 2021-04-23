@@ -15,6 +15,8 @@ pub struct Clock {
     /// the clock runs for one cycle when triggered then waits for another
     /// trigger event
     one_shot: bool,
+    /// should this clock run?
+    run: bool,
     /// should this clock reset and tick on the next state update action?
     reset_on_update: bool,
     /// submaster level for this clock
@@ -35,27 +37,52 @@ impl Clock {
             ticked: true,
             one_shot: false,
             reset_on_update: false,
+            run: true,
             submaster_level: UnipolarFloat::new(1.0),
         }
     }
 
     pub fn update_state(&mut self, delta_t: Duration) {
+        use log::info;
         if self.reset_on_update {
             self.ticked = true;
-            self.phase = Phase::ZERO;
-            self.reset_on_update = false;
-        } else {
-            let new_angle = self.phase.val() + (self.rate * delta_t.as_secs_f64());
-
-            // if we're running in one-shot mode, clamp the angle at 1.0
-            if self.one_shot && new_angle >= 1.0 {
-                self.phase = Phase::ONE;
-                self.ticked = false;
+            // Reset phase to zero or one, depending on sign of rate.
+            self.phase = if self.rate >= 0.0 {
+                Phase::ZERO
             } else {
-                // if the phase just escaped our range, we ticked this frame
-                self.ticked = new_angle >= 1.0 || new_angle < 0.0;
-                self.phase = Phase::new(new_angle);
-            }
+                Phase::ONE
+            };
+            self.reset_on_update = false;
+            self.run = true;
+            return;
+        }
+
+        if !self.run {
+            return;
+        }
+
+        let new_angle = self.phase.val() + (self.rate * delta_t.as_secs_f64());
+
+        // if we're running in one-shot mode, clamp the angle at 1.0
+        if self.one_shot && new_angle >= 1.0 {
+            self.phase = Phase::ONE;
+            self.ticked = false;
+            self.run = false;
+        } else if self.one_shot && new_angle < 0.0 {
+            self.phase = Phase::ZERO;
+            self.ticked = false;
+            self.run = false;
+        } else {
+            // if the phase just escaped our range, we ticked this frame
+            self.ticked = new_angle >= 1.0 || new_angle < 0.0;
+            self.phase = Phase::new(new_angle);
+        }
+    }
+
+    fn set_one_shot(&mut self, one_shot: bool) {
+        self.one_shot = one_shot;
+        if !one_shot {
+            self.run = true;
         }
     }
 
@@ -173,7 +200,7 @@ impl ControllableClock {
         match sc {
             Rate(v) => self.clock.rate = v.val() * ControllableClock::RATE_SCALE,
             Retrigger(v) => self.retrigger = v,
-            OneShot(v) => self.clock.one_shot = v,
+            OneShot(v) => self.clock.set_one_shot(v),
             SubmasterLevel(v) => self.clock.submaster_level = v,
             Ticked(_) => (),
         };
@@ -256,9 +283,14 @@ impl TapSync {
 
                 // if this single estimate of tempo is within +-10% of current, use it
                 // otherwise, empty the buffer and start over
-                let fractional_difference = (period - dt).as_secs_f64() / period.as_secs_f64();
+                let abs_difference = if period > dt {
+                    period - dt
+                } else {
+                    dt - period
+                };
+                let fractional_difference = abs_difference.as_secs_f64() / period.as_secs_f64();
 
-                if fractional_difference.abs() > Self::RESET_THRESHOLD {
+                if fractional_difference > Self::RESET_THRESHOLD {
                     // outlier, empty the buffer
                     self.reset_buffer(tap);
                 } else {
