@@ -75,12 +75,6 @@ struct ChannelEmitter<'e, E: EmitStateChange> {
     emitter: &'e mut E,
 }
 
-impl<'e, E: EmitStateChange> ChannelEmitter<'e, E> {
-    pub fn new(channel: ClockIdx, emitter: &'e mut E) -> Self {
-        Self { channel, emitter }
-    }
-}
-
 impl<'e, E: EmitStateChange> EmitClockStateChange for ChannelEmitter<'e, E> {
     fn emit_clock_state_change(&mut self, sc: ClockStateChange) {
         self.emitter.emit_clock_bank_state_change(StateChange {

@@ -1,4 +1,3 @@
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
@@ -42,7 +41,6 @@ impl Clock {
     }
 
     pub fn update_state(&mut self, delta_t: Duration) {
-        use log::info;
         if self.reset_on_update {
             self.ticked = true;
             // Reset phase to zero or one, depending on sign of rate.

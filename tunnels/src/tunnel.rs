@@ -355,13 +355,9 @@ const ROT_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; marquee rotated this many radial units/frame at 30fps
 const MARQUEE_SPEED_SCALE: f64 = 0.023;
 const COLOR_SPREAD_SCALE: f64 = 16.;
-/// maximum X offset as fraction of screen x-size
-const MAX_X_OFFSET: f64 = 0.5;
-/// maximum Y offset as fraction of screen y-size
-const MAX_Y_OFFSET: f64 = 0.5;
-/// X nudge increment as fraction of min half-screen
+/// X nudge increment
 const X_NUDGE: f64 = 0.025;
-/// Y nudge increment as fraction of min half-screen
+/// Y nudge increment
 const Y_NUDGE: f64 = 0.025;
 /// line thickness scale as fraction of min half-screen
 const THICKNESS_SCALE: f64 = 0.5;

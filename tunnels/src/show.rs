@@ -15,8 +15,9 @@ use crate::{
     midi::{DeviceSpec, Manager},
     midi_controls::Dispatcher,
     mixer,
-    mixer::{Channel, Mixer},
+    mixer::Mixer,
     send::{start_render_service, Frame},
+    test_mode::TestModeSetup,
     timesync::TimesyncServer,
     tunnel,
 };
@@ -53,7 +54,7 @@ impl Show {
     }
 
     /// Set up the show in a test mode, defined by the provided setup function.
-    pub fn test_mode<T: Fn(usize, usize, &mut Channel)>(&mut self, setup: T) {
+    pub fn test_mode(&mut self, setup: TestModeSetup) {
         let channel_count = self.mixer.channels().count();
         self.mixer
             .channels()

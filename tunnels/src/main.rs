@@ -23,15 +23,15 @@ use show::Show;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::io;
 use std::{error::Error, time::Duration};
-use test_mode::all_video_outputs;
+use test_mode::{all_video_outputs, stress, TestModeSetup};
 
 fn main() -> Result<(), Box<dyn Error>> {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
     let (inputs, outputs) = list_ports()?;
 
-    let test_mode = prompt_bool("Output test mode?")?;
+    let test_mode = prompt_test_mode()?;
 
-    let devices = if test_mode {
+    let devices = if test_mode.is_some() {
         Vec::new()
     } else {
         prompt_midi(&inputs, &outputs)?
@@ -39,11 +39,27 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut show = Show::new(devices)?;
 
-    if test_mode {
-        show.test_mode(Box::new(all_video_outputs));
+    if let Some(setup_test) = test_mode {
+        show.test_mode(setup_test);
     }
 
     show.run(Duration::from_micros(16667))
+}
+
+/// Prompt the user to optionally configure a test mode.
+fn prompt_test_mode() -> Result<Option<TestModeSetup>, Box<dyn Error>> {
+    if !prompt_bool("Output test mode?")? {
+        return Ok(None);
+    }
+    Ok(loop {
+        print!("Select test mode ('video_outs', 'stress'): ");
+        io::stdout().flush()?;
+        match &read_string()?[..] {
+            "video_outs" => break Some(all_video_outputs),
+            "stress" => break Some(stress),
+            _ => (),
+        }
+    })
 }
 
 /// Prompt the user to configure midi devices.
@@ -131,5 +147,5 @@ fn prompt_bool(msg: &str) -> Result<bool, Box<dyn Error>> {
 fn read_string() -> Result<String, Box<dyn Error>> {
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
-    Ok(line)
+    Ok(line.trim().to_string())
 }

@@ -8,6 +8,8 @@ use crate::{
 };
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
+pub type TestModeSetup = fn(usize, usize, &mut Channel);
+
 /// A basic test mode outputting a slowly moving tunnel on each channel.
 /// Each channel is given a slightly different color.
 pub fn all_video_outputs(_: usize, i: usize, channel: &mut Channel) {
