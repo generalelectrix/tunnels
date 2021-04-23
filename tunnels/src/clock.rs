@@ -1,38 +1,8 @@
 #![allow(unused)]
-use crate::numbers::UnipolarFloat;
+use crate::numbers::{BipolarFloat, UnipolarFloat};
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, numbers::Phase};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-
-/// how many globally-available clocks?
-pub const N_CLOCKS: usize = 4;
-
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct ClockIdx(pub usize);
-
-/// Maintain a indexable collection of clocks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClockBank([Clock; N_CLOCKS]);
-
-impl ClockBank {
-    pub fn new() -> Self {
-        Self(Default::default())
-    }
-
-    pub fn phase(&self, index: ClockIdx) -> Phase {
-        self.0[index.0].phase()
-    }
-
-    pub fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
-        self.0[index.0].submaster_level
-    }
-
-    pub fn update_state(&mut self, delta_t: Duration) {
-        for clock in self.0.iter_mut() {
-            clock.update_state(delta_t);
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
@@ -45,6 +15,8 @@ pub struct Clock {
     /// the clock runs for one cycle when triggered then waits for another
     /// trigger event
     one_shot: bool,
+    /// should this clock run?
+    run: bool,
     /// should this clock reset and tick on the next state update action?
     reset_on_update: bool,
     /// submaster level for this clock
@@ -65,27 +37,52 @@ impl Clock {
             ticked: true,
             one_shot: false,
             reset_on_update: false,
+            run: true,
             submaster_level: UnipolarFloat::new(1.0),
         }
     }
 
     pub fn update_state(&mut self, delta_t: Duration) {
+        use log::info;
         if self.reset_on_update {
             self.ticked = true;
-            self.phase = Phase::ZERO;
-            self.reset_on_update = false;
-        } else {
-            let new_angle = self.phase.val() + (self.rate * delta_t.as_secs_f64());
-
-            // if we're running in one-shot mode, clamp the angle at 1.0
-            if self.one_shot && new_angle >= 1.0 {
-                self.phase = Phase::ONE;
-                self.ticked = false;
+            // Reset phase to zero or one, depending on sign of rate.
+            self.phase = if self.rate >= 0.0 {
+                Phase::ZERO
             } else {
-                // if the phase just escaped our range, we ticked this frame
-                self.ticked = new_angle >= 1.0 || new_angle < 0.0;
-                self.phase = Phase::new(new_angle);
-            }
+                Phase::ONE
+            };
+            self.reset_on_update = false;
+            self.run = true;
+            return;
+        }
+
+        if !self.run {
+            return;
+        }
+
+        let new_angle = self.phase.val() + (self.rate * delta_t.as_secs_f64());
+
+        // if we're running in one-shot mode, clamp the angle at 1.0
+        if self.one_shot && new_angle >= 1.0 {
+            self.phase = Phase::ONE;
+            self.ticked = false;
+            self.run = false;
+        } else if self.one_shot && new_angle < 0.0 {
+            self.phase = Phase::ZERO;
+            self.ticked = false;
+            self.run = false;
+        } else {
+            // if the phase just escaped our range, we ticked this frame
+            self.ticked = new_angle >= 1.0 || new_angle < 0.0;
+            self.phase = Phase::new(new_angle);
+        }
+    }
+
+    fn set_one_shot(&mut self, one_shot: bool) {
+        self.one_shot = one_shot;
+        if !one_shot {
+            self.run = true;
         }
     }
 
@@ -94,6 +91,7 @@ impl Clock {
     }
 }
 
+#[derive(Debug, Clone)]
 /// A clock with a complete set of controls.
 pub struct ControllableClock {
     clock: Clock,
@@ -103,7 +101,19 @@ pub struct ControllableClock {
     retrigger: bool,
 }
 
+impl Default for ControllableClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ControllableClock {
+    /// radial units/s, permitting a max internal clock rate of 1.5 Hz
+    /// the negative sign is here so that turning the animation speed knob
+    /// clockwise makes the animation appear to run around the beam in the same
+    /// direction
+    pub const RATE_SCALE: f64 = -1.5;
+
     pub fn new() -> Self {
         Self {
             clock: Clock::new(),
@@ -111,6 +121,14 @@ impl ControllableClock {
             tick_age: None,
             retrigger: false,
         }
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.clock.phase()
+    }
+
+    pub fn submaster_level(&self) -> UnipolarFloat {
+        self.clock.submaster_level
     }
 
     const TICK_DISPLAY_DURATION: Duration = Duration::from_millis(250);
@@ -162,8 +180,17 @@ impl ControllableClock {
                 } else {
                     if let Some(rate) = self.sync.tap() {
                         self.clock.rate = rate;
+                        emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
+                            self.clock.rate / ControllableClock::RATE_SCALE,
+                        )));
                     }
                 }
+            }
+            ToggleOneShot => {
+                self.handle_state_change(StateChange::OneShot(!self.clock.one_shot), emitter);
+            }
+            ToggleRetrigger => {
+                self.handle_state_change(StateChange::Retrigger(!self.retrigger), emitter);
             }
         }
     }
@@ -171,8 +198,9 @@ impl ControllableClock {
     fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use StateChange::*;
         match sc {
+            Rate(v) => self.clock.rate = v.val() * ControllableClock::RATE_SCALE,
             Retrigger(v) => self.retrigger = v,
-            OneShot(v) => self.clock.one_shot = v,
+            OneShot(v) => self.clock.set_one_shot(v),
             SubmasterLevel(v) => self.clock.submaster_level = v,
             Ticked(_) => (),
         };
@@ -181,6 +209,7 @@ impl ControllableClock {
 }
 
 pub enum StateChange {
+    Rate(BipolarFloat),
     Retrigger(bool),
     OneShot(bool),
     SubmasterLevel(UnipolarFloat),
@@ -191,19 +220,15 @@ pub enum StateChange {
 pub enum ControlMessage {
     Set(StateChange),
     Tap,
+    ToggleOneShot,
+    ToggleRetrigger,
 }
 
 pub trait EmitStateChange {
     fn emit_clock_state_change(&mut self, sc: StateChange);
 }
 
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_clock_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Clock(sc))
-    }
-}
-
+#[derive(Debug, Clone)]
 /// Estimate rate from a series of taps.
 struct TapSync {
     taps: Vec<Instant>,
@@ -258,9 +283,14 @@ impl TapSync {
 
                 // if this single estimate of tempo is within +-10% of current, use it
                 // otherwise, empty the buffer and start over
-                let fractional_difference = (period - dt).as_secs_f64() / period.as_secs_f64();
+                let abs_difference = if period > dt {
+                    period - dt
+                } else {
+                    dt - period
+                };
+                let fractional_difference = abs_difference.as_secs_f64() / period.as_secs_f64();
 
-                if fractional_difference.abs() > Self::RESET_THRESHOLD {
+                if fractional_difference > Self::RESET_THRESHOLD {
                     // outlier, empty the buffer
                     self.reset_buffer(tap);
                 } else {

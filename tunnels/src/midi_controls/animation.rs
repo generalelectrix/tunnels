@@ -3,7 +3,7 @@ use crate::{
     animation::StateChange,
     animation::Target as AnimationTarget,
     animation::Waveform as WaveformType,
-    clock::ClockIdx,
+    clock_bank::{ClockIdx, N_CLOCKS},
     device::Device,
     midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
     show::ControlMessage::Animation,
@@ -75,8 +75,8 @@ lazy_static! {
     };
     static ref CLOCK_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
-        mappings: (-1..8)
-            .map(|clock_id| note_on_ch1((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
+        mappings: (-1..N_CLOCKS as i32)
+            .map(|clock_id| note_on_ch0((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
             .collect(),
         off: 0,
         on: 1,
@@ -158,12 +158,12 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
 
     // clock select
     add(
-        note_on_ch1((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8),
+        note_on_ch0((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8),
         Box::new(|_| Animation(Set(ClockSource(None)))),
     );
-    for clock_num in 0..8 {
+    for clock_num in 0..N_CLOCKS as i32 {
         add(
-            note_on_ch1((CLOCK_SELECT_CONTROL_OFFSET + clock_num) as u8),
+            note_on_ch0((CLOCK_SELECT_CONTROL_OFFSET + clock_num) as u8),
             Box::new(move |_| Animation(Set(ClockSource(Some(ClockIdx(clock_num as usize)))))),
         );
     }
@@ -225,7 +225,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 None => -1,
             };
             CLOCK_SELECT_BUTTONS.select(
-                note_on_ch1((index + CLOCK_SELECT_CONTROL_OFFSET) as u8),
+                note_on_ch0((index as i32 + CLOCK_SELECT_CONTROL_OFFSET) as u8),
                 send,
             );
         }

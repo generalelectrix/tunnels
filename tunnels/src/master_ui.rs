@@ -2,6 +2,7 @@ use crate::{
     animation::Animation,
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
+    clock_bank::ClockBank,
     midi_controls::MIXER_CHANNELS_PER_PAGE,
     mixer::{ChannelIdx, Mixer},
     show::{ControlMessage as ShowControlMessage, StateChange as ShowStateChange},
@@ -57,6 +58,7 @@ impl MasterUI {
         &mut self,
         msg: ShowControlMessage,
         mixer: &mut Mixer,
+        clocks: &mut ClockBank,
         emitter: &mut E,
     ) {
         match msg {
@@ -72,16 +74,25 @@ impl MasterUI {
             ShowControlMessage::Mixer(mm) => {
                 mixer.control(mm, emitter);
             }
+            ShowControlMessage::Clock(cm) => {
+                clocks.control(cm, emitter);
+            }
             ShowControlMessage::MasterUI(uim) => self.control(uim, mixer, emitter),
         }
     }
 
     /// Emit all controllable state.
-    pub fn emit_state<E: EmitStateChange>(&self, mixer: &mut Mixer, emitter: &mut E) {
+    pub fn emit_state<E: EmitStateChange>(
+        &self,
+        mixer: &mut Mixer,
+        clocks: &mut ClockBank,
+        emitter: &mut E,
+    ) {
         emitter.emit_master_ui_state_change(StateChange::Channel(self.current_channel));
         self.emit_beam_store_state(emitter);
         self.emit_current_channel_state(mixer, emitter);
         mixer.emit_state(emitter);
+        clocks.emit_state(emitter);
     }
 
     /// Emit state for the beam store.

@@ -1,4 +1,4 @@
-use crate::{clock::ClockBank, mixer::Channel, numbers::UnipolarFloat};
+use crate::{clock_bank::ClockBank, mixer::Channel, numbers::UnipolarFloat};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tunnels_lib::ArcSegment;

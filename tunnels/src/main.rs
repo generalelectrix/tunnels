@@ -2,6 +2,7 @@ mod animation;
 mod beam;
 mod beam_store;
 mod clock;
+mod clock_bank;
 mod device;
 mod look;
 mod master_ui;
@@ -70,6 +71,7 @@ fn prompt_midi(
 
     add_device(Device::TouchOsc)?;
     add_device(Device::AkaiApc40)?;
+    add_device(Device::BehringerCmdMM1)?;
     add_device(Device::AkaiApc20)?;
 
     Ok(devices)

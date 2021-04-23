@@ -1,7 +1,7 @@
 use crate::numbers::{BipolarFloat, Phase, UnipolarFloat};
 use crate::{
     animation::{Animation, Target},
-    clock::ClockBank,
+    clock_bank::ClockBank,
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
