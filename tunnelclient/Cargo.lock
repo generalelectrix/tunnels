@@ -1210,6 +1210,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "number"
+version = "0.1.0"
+source = "git+https://github.com/generalelectrix/number?branch=main#8f68fc06a6c97c72d93b021e19a8a7d4123239af"
+dependencies = [
+ "derive_more",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2149,6 +2159,7 @@ version = "0.1.0"
 dependencies = [
  "derive_more",
  "num-traits",
+ "number",
  "ordered-float",
  "serde",
 ]
