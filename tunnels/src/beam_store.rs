@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct BeamStore {
     beams: Vec<Vec<Option<Beam>>>,
+    n_pages: usize,
 }
 
 impl BeamStore {
@@ -20,7 +21,10 @@ impl BeamStore {
 
         // Start off with the default tunnel in the bottom-right corner.
         rows[4][7] = Some(Beam::Tunnel(Tunnel::new()));
-        Self { beams: rows }
+        Self {
+            beams: rows,
+            n_pages,
+        }
     }
 
     pub fn put(&mut self, addr: BeamStoreAddr, beam: Option<Beam>) {
@@ -37,6 +41,10 @@ impl BeamStore {
                 .enumerate()
                 .map(move |(col, beam)| (BeamStoreAddr { row, col }, beam))
         })
+    }
+
+    pub fn n_pages(&self) -> usize {
+        self.n_pages
     }
 }
 

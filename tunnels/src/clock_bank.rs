@@ -21,7 +21,7 @@ pub const N_CLOCKS: usize = 4;
 pub struct ClockIdx(pub usize);
 
 /// Maintain a indexable collection of clocks.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockBank([ControllableClock; N_CLOCKS]);
 
 impl ClockBank {

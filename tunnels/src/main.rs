@@ -21,7 +21,7 @@ use io::Write;
 use midi::{list_ports, DeviceSpec};
 use show::Show;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
-use std::io;
+use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
 use std::{error::Error, time::Duration};
 use test_mode::{all_video_outputs, stress, TestModeSetup};
 
@@ -41,6 +41,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if let Some(setup_test) = test_mode {
         show.test_mode(setup_test);
+    } else {
+        let paths = prompt_load_save()?;
+        show.save_path = paths.save_path;
+        if let Some(load_path) = paths.load_path {
+            show.load(&load_path)?;
+        }
     }
 
     show.run(Duration::from_micros(16667))
@@ -125,6 +131,44 @@ fn prompt_indexed_value<T: Clone>(msg: &str, options: &Vec<T>) -> Result<T, Box<
             None => println!("Please enter a value less than {}.", options.len()),
         }
     })
+}
+
+struct LoadSaveConfig {
+    load_path: Option<PathBuf>,
+    save_path: Option<PathBuf>,
+}
+
+/// Save and load shows from this relative directory.
+const SHOW_DIR: &'static str = "saved_shows";
+
+/// Prompt the user for show load and/or save paths.
+fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
+    let mut cfg = LoadSaveConfig {
+        load_path: None,
+        save_path: None,
+    };
+    let save_dir = current_dir()?.join(SHOW_DIR);
+    if prompt_bool("Open saved show?")? {
+        let mut name = String::new();
+        while name.len() == 0 {
+            print!("Open this show: ");
+            io::stdout().flush()?;
+            name = read_string()?;
+        }
+        let path = save_dir.join(name);
+        cfg.load_path = Some(path.clone());
+        cfg.save_path = Some(path);
+    } else if prompt_bool("Creating new show; save?")? {
+        let mut name = String::new();
+        while name.len() == 0 {
+            print!("Name this show: ");
+            io::stdout().flush()?;
+            name = read_string()?;
+        }
+        cfg.save_path = Some(save_dir.join(name));
+        create_dir_all(save_dir)?;
+    }
+    Ok(cfg)
 }
 
 /// Prompt the user to answer a yes or no question.
