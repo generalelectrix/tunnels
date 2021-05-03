@@ -10,3 +10,6 @@ tunnels_lib/Cargo.lock
 
 # file system shit
 .DS_Store
+
+# saved shows
+saved_shows/

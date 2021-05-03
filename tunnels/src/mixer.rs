@@ -51,6 +51,10 @@ impl Mixer {
         self.channels.iter_mut()
     }
 
+    pub fn channel_count(&self) -> usize {
+        self.channels.len()
+    }
+
     /// Render the current state of the mixer.
     /// Each inner vector represents one virtual video channel.
     pub fn render(&self, external_clocks: &ClockBank) -> Vec<LayerCollection> {

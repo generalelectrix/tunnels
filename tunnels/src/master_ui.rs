@@ -39,6 +39,10 @@ impl MasterUI {
         }
     }
 
+    pub fn n_pages(&self) -> usize {
+        self.beam_store.n_pages()
+    }
+
     fn current_beam<'m>(&self, mixer: &'m mut Mixer) -> &'m mut Beam {
         mixer.beam(self.current_channel)
     }

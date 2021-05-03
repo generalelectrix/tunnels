@@ -1,7 +1,12 @@
-use log::{self, info};
+use log::{self, error, info};
+use rmp_serde::{Deserializer, Serializer};
+use serde::{Deserialize, Serialize};
 use simple_error::bail;
 use std::{
     error::Error,
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tunnels_lib::Timestamp;
@@ -22,11 +27,14 @@ use crate::{
     tunnel,
 };
 
+/// How often should we autosave the show?
+pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
+
 pub struct Show {
     dispatcher: Dispatcher,
-    ui: MasterUI,
-    mixer: Mixer,
-    clocks: ClockBank,
+    state: ShowState,
+    pub save_path: Option<PathBuf>,
+    last_save: Option<Instant>,
 }
 
 impl Show {
@@ -47,16 +55,73 @@ impl Show {
 
         Ok(Self {
             dispatcher: Dispatcher::new(midi_manager),
-            ui: MasterUI::new(n_pages),
-            mixer: Mixer::new(n_pages),
-            clocks: ClockBank::new(),
+            state: ShowState {
+                ui: MasterUI::new(n_pages),
+                mixer: Mixer::new(n_pages),
+                clocks: ClockBank::new(),
+            },
+            save_path: None,
+            last_save: None,
         })
+    }
+
+    /// Load the saved show at file into self.
+    /// Return an error if the dimensions of the loaded data don't match the
+    /// current show.
+    pub fn load(&mut self, path: &Path) -> Result<(), Box<dyn Error>> {
+        let file = File::open(path)?;
+        let loaded_state = ShowState::deserialize(&mut Deserializer::new(file))?;
+        if loaded_state.mixer.channel_count() != self.state.mixer.channel_count() {
+            bail!(
+                "Mixer size mismatch. Loaded: {}, show: {}.",
+                loaded_state.mixer.channel_count(),
+                self.state.mixer.channel_count()
+            );
+        }
+        if loaded_state.ui.n_pages() != self.state.ui.n_pages() {
+            bail!(
+                "UI page count mismatch. Loaded: {}, show: {}.",
+                loaded_state.ui.n_pages(),
+                self.state.ui.n_pages()
+            );
+        }
+        self.state = loaded_state;
+        Ok(())
+    }
+
+    /// Save the show into the provided file.
+    fn save(&self, path: &Path) -> Result<(), Box<dyn Error>> {
+        let mut file = File::create(path)?;
+        self.state
+            .serialize(&mut Serializer::new(BufWriter::new(&mut file)))?;
+        Ok(())
+    }
+
+    /// If a save path is set and we're due to save, save the show.
+    fn autosave(&mut self) -> Result<(), Box<dyn Error>> {
+        if let Some(path) = &self.save_path {
+            let now = Instant::now();
+            let should_save = match self.last_save {
+                Some(t) => (t + AUTOSAVE_INTERVAL) <= now,
+                None => true,
+            };
+            if should_save {
+                info!("Autosaving.");
+                let result = self.save(&path);
+                if result.is_ok() {
+                    self.last_save = Some(now);
+                }
+                return result;
+            }
+        }
+        Ok(())
     }
 
     /// Set up the show in a test mode, defined by the provided setup function.
     pub fn test_mode(&mut self, setup: TestModeSetup) {
-        let channel_count = self.mixer.channels().count();
-        self.mixer
+        let channel_count = self.state.mixer.channels().count();
+        self.state
+            .mixer
             .channels()
             .enumerate()
             .for_each(|(i, chan)| setup(channel_count, i, chan));
@@ -67,8 +132,11 @@ impl Show {
         info!("Show is starting.");
 
         // Emit initial UI state.
-        self.ui
-            .emit_state(&mut self.mixer, &mut self.clocks, &mut self.dispatcher);
+        self.state.ui.emit_state(
+            &mut self.state.mixer,
+            &mut self.state.clocks,
+            &mut self.dispatcher,
+        );
 
         let mut frame_number = 0;
         let mut ctx = zmq::Context::new();
@@ -89,12 +157,17 @@ impl Show {
                 if let Err(_) = frame_sender.send(Frame {
                     number: frame_number,
                     timestamp: timestamp,
-                    mixer: self.mixer.clone(),
-                    clocks: self.clocks.clone(),
+                    mixer: self.state.mixer.clone(),
+                    clocks: self.state.clocks.clone(),
                 }) {
                     bail!("Render server hung up.  Aborting show.");
                 }
                 frame_number += 1;
+            }
+
+            // Consider autosaving the show.
+            if let Err(e) = self.autosave() {
+                error!("Autosave error: {}.", e);
             }
 
             // Process a control event for a fraction of the time between now
@@ -111,17 +184,19 @@ impl Show {
     }
 
     fn update_state(&mut self, delta_t: Duration) {
-        self.clocks.update_state(delta_t, &mut self.dispatcher);
-        self.mixer.update_state(delta_t);
+        self.state
+            .clocks
+            .update_state(delta_t, &mut self.dispatcher);
+        self.state.mixer.update_state(delta_t);
     }
 
     fn service_control_event(&mut self, timeout: Duration) {
         if let Some(msg) = self.dispatcher.receive(timeout) {
             if let Some(control_message) = self.dispatcher.dispatch(msg.0, msg.1) {
-                self.ui.handle_control_message(
+                self.state.ui.handle_control_message(
                     control_message,
-                    &mut self.mixer,
-                    &mut self.clocks,
+                    &mut self.state.mixer,
+                    &mut self.state.clocks,
                     &mut self.dispatcher,
                 )
             }
@@ -143,6 +218,14 @@ pub enum StateChange {
     Mixer(mixer::StateChange),
     Clock(clock_bank::StateChange),
     MasterUI(master_ui::StateChange),
+}
+
+/// Proxy type for easily saving and loading show state.
+#[derive(Serialize, Deserialize)]
+pub struct ShowState {
+    pub ui: MasterUI,
+    pub mixer: Mixer,
+    pub clocks: ClockBank,
 }
 
 #[cfg(test)]
@@ -193,7 +276,7 @@ mod test {
 
     /// Render the state of the show, hash the layers, and compare to expectation.
     fn check_render(show: &Show, beam_hashes: Vec<u64>) {
-        let video_feeds = show.mixer.render(&show.clocks);
+        let video_feeds = show.state.mixer.render(&show.state.clocks);
 
         // Should have the expected number of video channels.
         assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());

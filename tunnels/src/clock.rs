@@ -88,7 +88,7 @@ impl Clock {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// A clock with a complete set of controls.
 pub struct ControllableClock {
     clock: Clock,
@@ -225,9 +225,10 @@ pub trait EmitStateChange {
     fn emit_clock_state_change(&mut self, sc: StateChange);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Estimate rate from a series of taps.
 struct TapSync {
+    #[serde(skip)]
     taps: Vec<Instant>,
     rate: Option<f64>,
     period: Option<Duration>,
