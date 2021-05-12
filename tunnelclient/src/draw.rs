@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::config::ClientConfig;
-use crate::constants::{PI, TWOPI};
+use crate::constants::TWOPI;
 use graphics::radians::Radians;
 use graphics::triangulation::stream_quad_tri_list;
 use graphics::types::Color;
