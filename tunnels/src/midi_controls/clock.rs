@@ -9,12 +9,13 @@ use crate::{
     clock_bank::N_CLOCKS,
     device::Device,
     midi::{cc, event, note_on, Manager, Mapping},
+    midi_controls::{bipolar_to_midi, unipolar_to_midi},
     show::ControlMessage::Clock,
 };
 
 use super::{bipolar_from_midi, unipolar_from_midi, ControlMap};
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Control {
     Rate,
     Level,
@@ -39,6 +40,23 @@ fn mapping_cmd_mm1(control: Control, channel: usize) -> Mapping {
     }
 }
 
+/// Return a control mapping for TouchOSC.
+fn mapping_touchosc(control: Control, channel: usize) -> Mapping {
+    use Control::*;
+
+    // lay out controls with same values, increment channels
+    // start at a high channel where we have no existing mappings
+    let channel = 9 + channel as u8;
+
+    match control {
+        Rate => cc(channel, 0),
+        Level => cc(channel, 1),
+        Tap => note_on(channel, 0),
+        OneShot => note_on(channel, 1),
+        Retrigger => note_on(channel, 2),
+    }
+}
+
 pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
     use ClockControlMessage::*;
     use ClockStateChange::*;
@@ -47,13 +65,14 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
 
     let get_mapping = match device {
         Device::BehringerCmdMM1 => mapping_cmd_mm1,
+        Device::TouchOsc => mapping_touchosc,
         _ => panic!("No clock control mappings for {}.", device),
     };
 
+    assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows.");
+
     for channel in 0..N_CLOCKS {
-        if device == Device::BehringerCmdMM1 {
-            assert!(channel < 4, "The CMD MM-1 only has 4 channel rows.");
-        }
+        if device == Device::BehringerCmdMM1 {}
         add(
             get_mapping(Control::Rate, channel),
             Box::new(move |v| {
@@ -111,12 +130,17 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
             Device::BehringerCmdMM1,
             event(mapping_cmd_mm1(control, sc.channel.0), value),
         );
+        manager.send(
+            Device::TouchOsc,
+            event(mapping_touchosc(control, sc.channel.0), value),
+        );
     };
 
     match sc.change {
         Retrigger(v) => send(Control::Retrigger, v as u8),
         OneShot(v) => send(Control::OneShot, v as u8),
         Ticked(v) => send(Control::Tap, v as u8),
-        Rate(_) | SubmasterLevel(_) => (),
+        Rate(v) => send(Control::Rate, bipolar_to_midi(v)),
+        SubmasterLevel(v) => send(Control::Level, unipolar_to_midi(v)),
     }
 }
