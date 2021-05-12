@@ -128,7 +128,7 @@ impl ControllableClock {
         self.clock.submaster_level
     }
 
-    const TICK_DISPLAY_DURATION: Duration = Duration::from_millis(250);
+    const TICK_DISPLAY_DURATION: Duration = Duration::from_millis(100);
 
     /// Update the state of this clock.
     /// The clock may need to emit state update messages.
