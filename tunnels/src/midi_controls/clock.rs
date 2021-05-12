@@ -8,24 +8,54 @@ use crate::{
     clock_bank::StateChange,
     clock_bank::N_CLOCKS,
     device::Device,
-    midi::{cc, event, note_on, Manager},
+    midi::{cc, event, note_on, Manager, Mapping},
+    midi_controls::{bipolar_to_midi, unipolar_to_midi},
     show::ControlMessage::Clock,
 };
 
 use super::{bipolar_from_midi, unipolar_from_midi, ControlMap};
 
-const RATE_CH_0: u8 = 6;
-const LEVEL_CH_0: u8 = 48;
-const MIDI_CHANNEL: u8 = 4;
-const TAP_CH_0: u8 = 48;
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Control {
+    Rate,
+    Level,
+    Tap,
+    OneShot,
+    Retrigger,
+}
 
-const ONESHOTS: [u8; N_CLOCKS] = [19, 23, 27, 31];
-const RETRIGGERS: [u8; N_CLOCKS] = [20, 24, 28, 32];
+/// Return a control mapping for the CMD-MM1.
+fn mapping_cmd_mm1(control: Control, channel: usize) -> Mapping {
+    use Control::*;
 
-const LED_OFF: u8 = 0;
-const LED_ON: u8 = 1;
-#[allow(unused)]
-const LED_BLINK: u8 = 2;
+    let channel = channel as u8;
+    let midi_channel = 4;
+
+    match control {
+        Rate => cc(midi_channel, 6 + channel),
+        Level => cc(midi_channel, 48 + channel),
+        Tap => note_on(midi_channel, 48 + channel),
+        OneShot => note_on(midi_channel, 19 + channel * 4),
+        Retrigger => note_on(midi_channel, 20 + channel * 4),
+    }
+}
+
+/// Return a control mapping for TouchOSC.
+fn mapping_touchosc(control: Control, channel: usize) -> Mapping {
+    use Control::*;
+
+    // lay out controls with same values, increment channels
+    // start at a high channel where we have no existing mappings
+    let channel = 9 + channel as u8;
+
+    match control {
+        Rate => cc(channel, 0),
+        Level => cc(channel, 1),
+        Tap => note_on(channel, 0),
+        OneShot => note_on(channel, 1),
+        Retrigger => note_on(channel, 2),
+    }
+}
 
 pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
     use ClockControlMessage::*;
@@ -33,49 +63,57 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
 
     let mut add = |mapping, creator| map.add(device, mapping, creator);
 
+    let get_mapping = match device {
+        Device::BehringerCmdMM1 => mapping_cmd_mm1,
+        Device::TouchOsc => mapping_touchosc,
+        _ => panic!("No clock control mappings for {}.", device),
+    };
+
     assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows.");
-    for i in 0..N_CLOCKS {
+
+    for channel in 0..N_CLOCKS {
+        if device == Device::BehringerCmdMM1 {}
         add(
-            cc(MIDI_CHANNEL, RATE_CH_0 + i as u8),
+            get_mapping(Control::Rate, channel),
             Box::new(move |v| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(i),
+                    channel: ClockIdx(channel),
                     msg: Set(Rate(bipolar_from_midi(v))),
                 })
             }),
         );
         add(
-            cc(MIDI_CHANNEL, LEVEL_CH_0 + i as u8),
+            get_mapping(Control::Level, channel),
             Box::new(move |v| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(i),
+                    channel: ClockIdx(channel),
                     msg: Set(SubmasterLevel(unipolar_from_midi(v))),
                 })
             }),
         );
         add(
-            note_on(MIDI_CHANNEL, TAP_CH_0 + i as u8),
+            get_mapping(Control::Tap, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(i),
+                    channel: ClockIdx(channel),
                     msg: Tap,
                 })
             }),
         );
         add(
-            note_on(MIDI_CHANNEL, ONESHOTS[i]),
+            get_mapping(Control::OneShot, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(i),
+                    channel: ClockIdx(channel),
                     msg: ToggleOneShot,
                 })
             }),
         );
         add(
-            note_on(MIDI_CHANNEL, RETRIGGERS[i]),
+            get_mapping(Control::Retrigger, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(i),
+                    channel: ClockIdx(channel),
                     msg: ToggleRetrigger,
                 })
             }),
@@ -87,23 +125,22 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
 pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
     use ClockStateChange::*;
 
-    let mut send = |event| {
-        manager.send(Device::BehringerCmdMM1, event);
+    let mut send = |control, value| {
+        manager.send(
+            Device::BehringerCmdMM1,
+            event(mapping_cmd_mm1(control, sc.channel.0), value),
+        );
+        manager.send(
+            Device::TouchOsc,
+            event(mapping_touchosc(control, sc.channel.0), value),
+        );
     };
 
     match sc.change {
-        Retrigger(v) => send(event(
-            note_on(MIDI_CHANNEL, RETRIGGERS[sc.channel.0]),
-            if v { LED_ON } else { LED_OFF },
-        )),
-        OneShot(v) => send(event(
-            note_on(MIDI_CHANNEL, ONESHOTS[sc.channel.0]),
-            if v { LED_ON } else { LED_OFF },
-        )),
-        Ticked(v) => send(event(
-            note_on(MIDI_CHANNEL, TAP_CH_0 + sc.channel.0 as u8),
-            if v { LED_ON } else { LED_OFF },
-        )),
-        Rate(_) | SubmasterLevel(_) => (),
+        Retrigger(v) => send(Control::Retrigger, v as u8),
+        OneShot(v) => send(Control::OneShot, v as u8),
+        Ticked(v) => send(Control::Tap, v as u8),
+        Rate(v) => send(Control::Rate, bipolar_to_midi(v)),
+        SubmasterLevel(v) => send(Control::Level, unipolar_to_midi(v)),
     }
 }

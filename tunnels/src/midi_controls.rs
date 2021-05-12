@@ -94,6 +94,7 @@ impl Dispatcher {
         // map_master_ui_controls(Device::TouchOsc, 1, &mut map);
 
         map_clock_controls(Device::BehringerCmdMM1, &mut map);
+        map_clock_controls(Device::TouchOsc, &mut map);
         Self { map, manager }
     }
 
