@@ -7,8 +7,8 @@ use crate::{
     clock_bank::ControlMessage,
     clock_bank::StateChange,
     clock_bank::N_CLOCKS,
-    device::Device,
     midi::{cc, event, note_on, Manager, Mapping},
+    midi_controls::Device,
     midi_controls::{bipolar_to_midi, unipolar_to_midi},
     show::ControlMessage::Clock,
 };

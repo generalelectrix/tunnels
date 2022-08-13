@@ -4,8 +4,8 @@ use crate::{
     animation::Target as AnimationTarget,
     animation::Waveform as WaveformType,
     clock_bank::{ClockIdx, N_CLOCKS},
-    device::Device,
     midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
+    midi_controls::Device,
     show::ControlMessage::Animation,
 };
 use lazy_static::lazy_static;

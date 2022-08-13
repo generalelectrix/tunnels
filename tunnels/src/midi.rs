@@ -2,15 +2,9 @@ use log::{error, warn};
 use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 use serde::{Deserialize, Serialize};
 use simple_error::bail;
-use std::{
-    cmp::Ordering,
-    error::Error,
-    fmt,
-    sync::mpsc::{channel, Receiver, Sender},
-    time::Duration,
-};
+use std::{cmp::Ordering, error::Error, fmt, sync::mpsc::Sender};
 
-use crate::device::Device;
+use crate::{control::ControlEvent, midi_controls::Device};
 
 /// Specification for what type of midi event.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -178,7 +172,7 @@ impl Input {
     pub fn new(
         name: String,
         device: Device,
-        sender: Sender<(Device, Event)>,
+        sender: Sender<ControlEvent>,
     ) -> Result<Self, Box<dyn Error>> {
         let input = MidiInput::new("tunnels")?;
         let port = get_named_port(&input, &name)?;
@@ -202,7 +196,7 @@ impl Input {
                 };
                 let channel = msg[0] & 15;
                 sender
-                    .send((
+                    .send(ControlEvent::Midi((
                         device,
                         Event {
                             mapping: Mapping {
@@ -212,7 +206,7 @@ impl Input {
                             },
                             value: msg[2],
                         },
-                    ))
+                    )))
                     .unwrap();
             },
             (),
@@ -222,29 +216,27 @@ impl Input {
 }
 
 /// Maintain midi inputs and outputs.
-/// Aggregate input messages on a channel.
 /// Provide synchronous dispatch for outgoing messages based on device type.
 pub struct Manager {
     inputs: Vec<Input>,
     outputs: Vec<Output>,
-    send: Sender<(Device, Event)>,
-    recv: Receiver<(Device, Event)>,
 }
 
 impl Manager {
     pub fn new() -> Self {
-        let (send, recv) = channel();
         Self {
             inputs: Vec::new(),
             outputs: Vec::new(),
-            send,
-            recv,
         }
     }
 
-    // Add a device to the manager given input and output port names.
-    pub fn add_device(&mut self, spec: DeviceSpec) -> Result<(), Box<dyn Error>> {
-        let input = Input::new(spec.input_port_name, spec.device, self.send.clone())?;
+    /// Add a device to the manager given input and output port names.
+    pub fn add_device(
+        &mut self,
+        spec: DeviceSpec,
+        send: Sender<ControlEvent>,
+    ) -> Result<(), Box<dyn Error>> {
+        let input = Input::new(spec.input_port_name, spec.device, send)?;
         let mut output = Output::new(spec.output_port_name, spec.device)?;
 
         // Send initialization commands to the device.
@@ -255,14 +247,8 @@ impl Manager {
         Ok(())
     }
 
-    // Return a message if there is one pending on the receiver.
-    // Wait at most timeout for the message to appear.
-    pub fn receive(&self, timeout: Duration) -> Option<(Device, Event)> {
-        self.recv.recv_timeout(timeout).ok()
-    }
-
-    // Send a message to the specified device type.
-    // Error conditions are logged rather than returned.
+    /// Send a message to the specified device type.
+    /// Error conditions are logged rather than returned.
     pub fn send(&mut self, device: Device, event: Event) {
         for output in &mut self.outputs {
             if output.device == device {

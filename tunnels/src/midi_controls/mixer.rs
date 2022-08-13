@@ -1,6 +1,6 @@
 use crate::{
-    device::Device,
     midi::{cc, event, note_off, note_on, Manager},
+    midi_controls::Device,
     mixer::ControlMessage,
     mixer::StateChange,
     mixer::{

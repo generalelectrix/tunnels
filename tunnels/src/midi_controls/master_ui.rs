@@ -1,11 +1,11 @@
 use super::{mixer::PAGE_SIZE, ControlMap, RadioButtons};
 use crate::{
     beam_store::{BeamStore, BeamStoreAddr},
-    device::Device,
     master_ui::ControlMessage,
     master_ui::StateChange,
     master_ui::{BeamButtonState, BeamStoreState as BeamStoreStatePayload},
     midi::{event, note_on, note_on_ch0, Manager, Mapping},
+    midi_controls::Device,
     mixer::ChannelIdx,
     show::ControlMessage::MasterUI,
     tunnel::{AnimationIdx, N_ANIM},

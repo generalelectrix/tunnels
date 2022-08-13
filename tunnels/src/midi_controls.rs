@@ -1,15 +1,21 @@
 mod animation;
 mod clock;
+mod device;
 mod master_ui;
 mod mixer;
 mod tunnel;
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    sync::mpsc::{channel, Receiver, Sender},
+    time::Duration,
+};
 
 use crate::{
-    device::Device,
+    control::ControlEvent,
     master_ui::EmitStateChange,
-    midi::{Event, Manager, Mapping},
+    midi::{DeviceSpec, Event, Manager, Mapping},
     show::ControlMessage,
     show::StateChange,
 };
@@ -23,19 +29,49 @@ use self::mixer::{map_mixer_controls, update_mixer_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
 pub use self::mixer::PAGE_SIZE as MIXER_CHANNELS_PER_PAGE;
+pub use crate::midi_controls::device::Device;
 
 type ControlMessageCreator = Box<dyn Fn(u8) -> ControlMessage>;
 
 pub struct ControlMap(pub HashMap<(Device, Mapping), ControlMessageCreator>);
 
 impl ControlMap {
+    // Initialize a new instance of the control map.
     fn new() -> Self {
-        Self(HashMap::new())
+        let mut map = Self(HashMap::new());
+        map_tunnel_controls(Device::AkaiApc40, &mut map);
+        map_tunnel_controls(Device::TouchOsc, &mut map);
+
+        map_animation_controls(Device::AkaiApc40, &mut map);
+        map_animation_controls(Device::TouchOsc, &mut map);
+
+        map_mixer_controls(Device::AkaiApc40, 0, &mut map);
+        map_mixer_controls(Device::AkaiApc20, 1, &mut map);
+        map_mixer_controls(Device::TouchOsc, 0, &mut map);
+        // FIXME: need to split out the video controls from the mixer controls
+        // map_mixer_controls(Device::TouchOsc, 1, &mut map);
+
+        map_master_ui_controls(Device::AkaiApc40, 0, &mut map);
+        map_master_ui_controls(Device::AkaiApc20, 1, &mut map);
+        map_master_ui_controls(Device::TouchOsc, 0, &mut map);
+        // FIXME: need to split out the pagewise controls from the non-pagewise controls
+        // map_master_ui_controls(Device::TouchOsc, 1, &mut map);
+
+        map_clock_controls(Device::BehringerCmdMM1, &mut map);
+        map_clock_controls(Device::TouchOsc, &mut map);
+        map
     }
+
     pub fn add(&mut self, device: Device, mapping: Mapping, creator: ControlMessageCreator) {
         if self.0.insert((device, mapping), creator).is_some() {
             panic!("duplicate control definition: {:?} {:?}", device, mapping);
         }
+    }
+
+    /// Map a midi source device and event into a tunnels control message.
+    /// Return None if no mapping is registered.
+    pub fn dispatch(&self, device: Device, event: Event) -> Option<ControlMessage> {
+        self.0.get(&(device, event.mapping)).map(|c| c(event.value))
     }
 
     #[allow(unused)]
@@ -66,49 +102,38 @@ impl ControlMap {
         report.join("\n")
     }
 }
+
 pub struct Dispatcher {
-    map: ControlMap,
-    pub manager: Manager,
+    midi_map: ControlMap,
+    midi_manager: Manager,
 }
 
 impl Dispatcher {
     /// Instantiate the master midi control dispatcher.
-    pub fn new(manager: Manager) -> Self {
-        let mut map = ControlMap::new();
-        map_tunnel_controls(Device::AkaiApc40, &mut map);
-        map_tunnel_controls(Device::TouchOsc, &mut map);
+    /// Create the midi control map and initialize midi inputs/outputs.
+    pub fn new(
+        midi_devices: Vec<DeviceSpec>,
+        send: Sender<ControlEvent>,
+    ) -> Result<Self, Box<dyn Error>> {
+        let midi_map = ControlMap::new();
 
-        map_animation_controls(Device::AkaiApc40, &mut map);
-        map_animation_controls(Device::TouchOsc, &mut map);
+        let mut midi_manager = Manager::new();
+        for device_spec in midi_devices.into_iter() {
+            midi_manager.add_device(device_spec, send.clone())?;
+        }
 
-        map_mixer_controls(Device::AkaiApc40, 0, &mut map);
-        map_mixer_controls(Device::AkaiApc20, 1, &mut map);
-        map_mixer_controls(Device::TouchOsc, 0, &mut map);
-        // FIXME: need to split out the video controls from the mixer controls
-        // map_mixer_controls(Device::TouchOsc, 1, &mut map);
-
-        map_master_ui_controls(Device::AkaiApc40, 0, &mut map);
-        map_master_ui_controls(Device::AkaiApc20, 1, &mut map);
-        map_master_ui_controls(Device::TouchOsc, 0, &mut map);
-        // FIXME: need to split out the pagewise controls from the non-pagewise controls
-        // map_master_ui_controls(Device::TouchOsc, 1, &mut map);
-
-        map_clock_controls(Device::BehringerCmdMM1, &mut map);
-        map_clock_controls(Device::TouchOsc, &mut map);
-        Self { map, manager }
+        Ok(Self {
+            midi_map,
+            midi_manager,
+        })
     }
 
-    pub fn receive(&self, timeout: Duration) -> Option<(Device, Event)> {
-        self.manager.receive(timeout)
-    }
-
-    /// Map a midi source device and event into a tunnels control message.
-    /// Return None if no mapping is registered.
-    pub fn dispatch(&self, device: Device, event: Event) -> Option<ControlMessage> {
-        self.map
-            .0
-            .get(&(device, event.mapping))
-            .map(|c| c(event.value))
+    pub fn map_event_to_show_control(
+        &self,
+        device: Device,
+        event: Event,
+    ) -> Option<ControlMessage> {
+        self.midi_map.dispatch(device, event)
     }
 }
 
@@ -116,14 +141,14 @@ impl EmitStateChange for Dispatcher {
     /// Map application state changes into UI update midi messages.
     fn emit(&mut self, sc: StateChange) {
         match sc {
-            StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.manager),
-            StateChange::Animation(sc) => update_animation_control(sc, &mut self.manager),
-            StateChange::Mixer(sc) => update_mixer_control(sc, &mut self.manager),
-            StateChange::Clock(sc) => update_clock_control(sc, &mut self.manager),
-            StateChange::ColorPalette(sc) => {
-                // TODO: emit color data to midi interface if we have some notion of this
+            StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.midi_manager),
+            StateChange::Animation(sc) => update_animation_control(sc, &mut self.midi_manager),
+            StateChange::Mixer(sc) => update_mixer_control(sc, &mut self.midi_manager),
+            StateChange::Clock(sc) => update_clock_control(sc, &mut self.midi_manager),
+            StateChange::ColorPalette(_) => {
+                // TODO: emit color data to interfaces if we build a color palette monitor
             }
-            StateChange::MasterUI(sc) => update_master_ui_control(sc, &mut self.manager),
+            StateChange::MasterUI(sc) => update_master_ui_control(sc, &mut self.midi_manager),
         }
     }
 }

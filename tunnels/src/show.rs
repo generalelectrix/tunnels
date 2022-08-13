@@ -14,11 +14,11 @@ use tunnels_lib::Timestamp;
 use crate::{
     animation,
     clock_bank::{self, ClockBank},
-    device::Device,
+    control::Dispatcher,
     master_ui,
     master_ui::MasterUI,
-    midi::{DeviceSpec, Manager},
-    midi_controls::Dispatcher,
+    midi::DeviceSpec,
+    midi_controls::Device,
     mixer,
     mixer::Mixer,
     palette::{self, ColorPalette},
@@ -48,14 +48,10 @@ impl Show {
 
         let n_pages = if use_wing { 2 } else { 1 };
 
-        // Initialize midi system.
-        let mut midi_manager = Manager::new();
-        for device_spec in midi_devices.into_iter() {
-            midi_manager.add_device(device_spec)?;
-        }
+        // Initialize show control system.
 
         Ok(Self {
-            dispatcher: Dispatcher::new(midi_manager),
+            dispatcher: Dispatcher::new(midi_devices)?,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
@@ -195,14 +191,12 @@ impl Show {
 
     fn service_control_event(&mut self, timeout: Duration) {
         if let Some(msg) = self.dispatcher.receive(timeout) {
-            if let Some(control_message) = self.dispatcher.dispatch(msg.0, msg.1) {
-                self.state.ui.handle_control_message(
-                    control_message,
-                    &mut self.state.mixer,
-                    &mut self.state.clocks,
-                    &mut self.dispatcher,
-                )
-            }
+            self.state.ui.handle_control_message(
+                msg,
+                &mut self.state.mixer,
+                &mut self.state.clocks,
+                &mut self.dispatcher,
+            )
         }
     }
 }

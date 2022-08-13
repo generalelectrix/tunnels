@@ -1,7 +1,7 @@
 use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap};
 use crate::{
-    device::Device,
     midi::{cc, cc_ch0, event, note_on_ch0, Manager, Mapping},
+    midi_controls::Device,
     midi_controls::RadioButtons,
     palette::ColorPaletteIdx,
     show::ControlMessage::Tunnel,
