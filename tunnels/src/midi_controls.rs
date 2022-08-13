@@ -5,12 +5,7 @@ mod master_ui;
 mod mixer;
 mod tunnel;
 
-use std::{
-    collections::HashMap,
-    error::Error,
-    sync::mpsc::{channel, Receiver, Sender},
-    time::Duration,
-};
+use std::{collections::HashMap, error::Error, sync::mpsc::Sender};
 
 use crate::{
     control::ControlEvent,
