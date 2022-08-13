@@ -37,7 +37,7 @@ const RESET_MARQUEE: Mapping = note_on_ch0(121);
 const POSITION_X: Mapping = cc(8, 1);
 const POSITION_Y: Mapping = cc(8, 0);
 
-const PALETTE_SELECT_CONTROL_OFFSET: i32 = 0x3B;
+const PALETTE_SELECT_CONTROL_OFFSET: i32 = 59;
 const N_PALETTE_SELECTS: i32 = 3;
 
 lazy_static! {
