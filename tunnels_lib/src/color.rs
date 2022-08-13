@@ -25,6 +25,14 @@ impl Hsv {
         sat: UnipolarFloat::ZERO,
         val: UnipolarFloat::ZERO,
     };
+
+    pub fn from_hue(hue: f64) -> Self {
+        Self {
+            hue: Phase::new(hue),
+            sat: UnipolarFloat::ONE,
+            val: UnipolarFloat::ONE,
+        }
+    }
 }
 
 /// A color in the RGB color space.
