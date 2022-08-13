@@ -34,3 +34,17 @@ pub struct Rgb {
     pub green: UnipolarFloat,
     pub blue: UnipolarFloat,
 }
+
+impl Rgb {
+    pub fn from_8bit(red: u8, green: u8, blue: u8) -> Self {
+        Self {
+            red: UnipolarFloat::new(red as f64 / 127.),
+            green: UnipolarFloat::new(green as f64 / 127.),
+            blue: UnipolarFloat::new(blue as f64 / 127.),
+        }
+    }
+
+    pub fn as_hsv(&self) -> Hsv {
+        unimplemented!("TODO RGB to HSV conversion.")
+    }
+}

@@ -9,6 +9,7 @@ mod master_ui;
 mod midi;
 mod midi_controls;
 mod mixer;
+mod osc;
 mod palette;
 mod send;
 mod show;
@@ -18,10 +19,17 @@ mod tunnel;
 mod waveforms;
 
 use io::Write;
-use midi::{list_ports, DeviceSpec};
-use midi_controls::Device;
+use midi::{list_ports, DeviceSpec as MidiDeviceSpec};
+use midi_controls::Device as MidiDevice;
+use osc::Device as OscDevice;
+use osc::DeviceSpec as OscDeviceSpec;
 use show::Show;
+use simple_error::SimpleError;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
+use std::fmt::Display;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
+use std::net::SocketAddr;
 use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
 use std::{error::Error, time::Duration};
 use test_mode::{all_video_outputs, stress, TestModeSetup};
@@ -32,13 +40,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let test_mode = prompt_test_mode()?;
 
-    let devices = if test_mode.is_some() {
+    let midi_devices = if test_mode.is_some() {
         Vec::new()
     } else {
         prompt_midi(&inputs, &outputs)?
     };
 
-    let mut show = Show::new(devices)?;
+    let osc_devices = if test_mode.is_some() {
+        Vec::new()
+    } else {
+        prompt_osc()?
+    };
+
+    let mut show = Show::new(midi_devices, osc_devices)?;
 
     if let Some(setup_test) = test_mode {
         show.test_mode(setup_test);
@@ -73,7 +87,7 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>, Box<dyn Error>> {
 fn prompt_midi(
     input_ports: &Vec<String>,
     output_ports: &Vec<String>,
-) -> Result<Vec<DeviceSpec>, Box<dyn Error>> {
+) -> Result<Vec<MidiDeviceSpec>, Box<dyn Error>> {
     let mut devices = Vec::new();
     println!("Available devices:");
     for (i, port) in input_ports.iter().enumerate() {
@@ -91,27 +105,42 @@ fn prompt_midi(
         Ok(())
     };
 
-    add_device(Device::TouchOsc)?;
-    add_device(Device::AkaiApc40)?;
-    add_device(Device::BehringerCmdMM1)?;
-    add_device(Device::AkaiApc20)?;
+    add_device(MidiDevice::TouchOsc)?;
+    add_device(MidiDevice::AkaiApc40)?;
+    add_device(MidiDevice::BehringerCmdMM1)?;
+    add_device(MidiDevice::AkaiApc20)?;
 
     Ok(devices)
 }
 
 /// Prompt the user to select input and output ports for a device.
 fn prompt_input_output(
-    device: Device,
+    device: MidiDevice,
     input_ports: &Vec<String>,
     output_ports: &Vec<String>,
-) -> Result<DeviceSpec, Box<dyn Error>> {
+) -> Result<MidiDeviceSpec, Box<dyn Error>> {
     let input_port_name = prompt_indexed_value("Input port:", input_ports)?;
     let output_port_name = prompt_indexed_value("Output port:", output_ports)?;
-    Ok(DeviceSpec {
+    Ok(MidiDeviceSpec {
         device,
         input_port_name,
         output_port_name,
     })
+}
+
+/// Prompt the user to configure OSC devices.
+fn prompt_osc() -> Result<Vec<OscDeviceSpec>, Box<dyn Error>> {
+    let mut devices = Vec::new();
+
+    if prompt_bool("Use OSC color palette source?")? {
+        let port = prompt_port()?;
+        devices.push(OscDeviceSpec {
+            device: OscDevice::PaletteController,
+            addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
+        })
+    }
+
+    Ok(devices)
 }
 
 /// Prompt the user for a unsigned numeric index.
@@ -174,15 +203,40 @@ fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
 
 /// Prompt the user to answer a yes or no question.
 fn prompt_bool(msg: &str) -> Result<bool, Box<dyn Error>> {
+    prompt_parse(format!("{} y/n", msg).as_str(), |input| {
+        input
+            .chars()
+            .nth(0)
+            .and_then(|first_char| match first_char {
+                'y' | 'Y' => Some(true),
+                'n' | 'N' => Some(false),
+                _ => None,
+            })
+            .ok_or(Box::new(SimpleError::new("Please enter yes or no.")))
+    })
+}
+
+/// Prompt the user to enter a network port.
+fn prompt_port() -> Result<u16, Box<dyn Error>> {
+    prompt_parse("Enter a port number", |port| {
+        let parsed = port.parse::<u16>()?;
+        Ok(parsed)
+    })
+}
+
+/// Prompt the user for input, then parse.
+fn prompt_parse<T, F>(msg: &str, parse: F) -> Result<T, Box<dyn Error>>
+where
+    F: Fn(&str) -> Result<T, Box<dyn Error>>,
+{
     Ok(loop {
-        print!("{} y/n: ", msg);
+        print!("{}: ", msg);
         io::stdout().flush()?;
         let input = read_string()?;
-        if let Some(first_char) = input.chars().nth(0) {
-            match first_char {
-                'y' | 'Y' => break true,
-                'n' | 'N' => break false,
-                _ => (),
+        match parse(&input) {
+            Ok(v) => break v,
+            Err(e) => {
+                println!("{}", e);
             }
         }
     })

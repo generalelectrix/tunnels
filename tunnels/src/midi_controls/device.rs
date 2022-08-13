@@ -4,7 +4,7 @@ use crate::midi::{Event, EventType, Mapping, Output};
 use log::debug;
 use midir::SendError;
 
-/// The input device types that tunnels can work with.
+/// The input MIDI device types that tunnels can work with.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Device {
     AkaiApc40,

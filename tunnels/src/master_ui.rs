@@ -5,11 +5,13 @@ use crate::{
     clock_bank::ClockBank,
     midi_controls::MIXER_CHANNELS_PER_PAGE,
     mixer::{ChannelIdx, Mixer},
+    palette::ColorPalette,
     show::{ControlMessage as ShowControlMessage, StateChange as ShowStateChange},
     tunnel::AnimationIdx,
 };
 
 use serde::{Deserialize, Serialize};
+use tunnels_lib::color;
 
 /// Manage stateful aspects of the UI.
 /// Mediate between the input systems and the show data.
@@ -63,25 +65,30 @@ impl MasterUI {
         msg: ShowControlMessage,
         mixer: &mut Mixer,
         clocks: &mut ClockBank,
+        color_palette: &mut ColorPalette,
         emitter: &mut E,
     ) {
+        use ShowControlMessage::*;
         match msg {
-            ShowControlMessage::Tunnel(tm) => match self.current_beam(mixer) {
+            Tunnel(tm) => match self.current_beam(mixer) {
                 Beam::Look(_) => (),
                 Beam::Tunnel(t) => t.control(tm, emitter),
             },
-            ShowControlMessage::Animation(am) => {
+            Animation(am) => {
                 if let Some(a) = self.current_animation(mixer) {
                     a.control(am, emitter);
                 }
             }
-            ShowControlMessage::Mixer(mm) => {
+            Mixer(mm) => {
                 mixer.control(mm, emitter);
             }
-            ShowControlMessage::Clock(cm) => {
+            Clock(cm) => {
                 clocks.control(cm, emitter);
             }
-            ShowControlMessage::MasterUI(uim) => self.control(uim, mixer, emitter),
+            ColorPalette(cm) => {
+                color_palette.control(cm, emitter);
+            }
+            MasterUI(uim) => self.control(uim, mixer, emitter),
         }
     }
 

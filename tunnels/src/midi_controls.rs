@@ -15,6 +15,7 @@ use crate::{
     show::StateChange,
 };
 
+use simple_error::{bail, SimpleError};
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
 use self::animation::{map_animation_controls, update_animation_control};
@@ -127,8 +128,16 @@ impl Dispatcher {
         &self,
         device: Device,
         event: Event,
-    ) -> Option<ControlMessage> {
-        self.midi_map.dispatch(device, event)
+    ) -> Result<ControlMessage, Box<dyn Error>> {
+        if let Some(msg) = self.midi_map.dispatch(device, event) {
+            Ok(msg)
+        } else {
+            bail!(
+                "No midi mapping registered for the device {} with mapping {}.",
+                device,
+                event.mapping
+            )
+        }
     }
 }
 

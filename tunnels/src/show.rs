@@ -1,4 +1,4 @@
-use log::{self, error, info};
+use log::{self, error, info, warn};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use simple_error::bail;
@@ -17,10 +17,11 @@ use crate::{
     control::Dispatcher,
     master_ui,
     master_ui::MasterUI,
-    midi::DeviceSpec,
+    midi::DeviceSpec as MidiDeviceSpec,
     midi_controls::Device,
     mixer,
     mixer::Mixer,
+    osc::DeviceSpec as OscDeviceSpec,
     palette::{self, ColorPalette},
     send::{start_render_service, Frame},
     test_mode::TestModeSetup,
@@ -40,7 +41,10 @@ pub struct Show {
 
 impl Show {
     /// Create a new show from the provided config.
-    pub fn new(midi_devices: Vec<DeviceSpec>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(
+        midi_devices: Vec<MidiDeviceSpec>,
+        osc_devices: Vec<OscDeviceSpec>,
+    ) -> Result<Self, Box<dyn Error>> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices
             .iter()
@@ -51,7 +55,7 @@ impl Show {
         // Initialize show control system.
 
         Ok(Self {
-            dispatcher: Dispatcher::new(midi_devices)?,
+            dispatcher: Dispatcher::new(midi_devices, osc_devices)?,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
@@ -190,13 +194,17 @@ impl Show {
     }
 
     fn service_control_event(&mut self, timeout: Duration) {
-        if let Some(msg) = self.dispatcher.receive(timeout) {
-            self.state.ui.handle_control_message(
+        match self.dispatcher.receive(timeout) {
+            Ok(msg) => self.state.ui.handle_control_message(
                 msg,
                 &mut self.state.mixer,
                 &mut self.state.clocks,
+                &mut self.state.color_palette,
                 &mut self.dispatcher,
-            )
+            ),
+            Err(e) => {
+                warn!("{}", e);
+            }
         }
     }
 }
@@ -206,6 +214,7 @@ pub enum ControlMessage {
     Animation(animation::ControlMessage),
     Mixer(mixer::ControlMessage),
     Clock(clock_bank::ControlMessage),
+    ColorPalette(palette::ControlMessage),
     MasterUI(master_ui::ControlMessage),
 }
 
@@ -247,7 +256,7 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<(), Box<dyn Error>> {
-        let mut show = Show::new(Vec::new())?;
+        let mut show = Show::new(Vec::new(), Vec::new())?;
 
         show.test_mode(stress);
 
