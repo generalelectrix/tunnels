@@ -137,6 +137,7 @@ impl Show {
         self.state.ui.emit_state(
             &mut self.state.mixer,
             &mut self.state.clocks,
+            &mut self.state.color_palette,
             &mut self.dispatcher,
         );
 

@@ -97,6 +97,7 @@ impl MasterUI {
         &self,
         mixer: &mut Mixer,
         clocks: &mut ClockBank,
+        color_palette: &mut ColorPalette,
         emitter: &mut E,
     ) {
         emitter.emit_master_ui_state_change(StateChange::Channel(self.current_channel));
@@ -104,6 +105,7 @@ impl MasterUI {
         self.emit_current_channel_state(mixer, emitter);
         mixer.emit_state(emitter);
         clocks.emit_state(emitter);
+        color_palette.emit_state(emitter);
     }
 
     /// Emit state for the beam store.
