@@ -2,10 +2,13 @@ use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_
 use crate::{
     device::Device,
     midi::{cc, cc_ch0, event, note_on_ch0, Manager, Mapping},
+    midi_controls::RadioButtons,
+    palette::ColorPaletteIdx,
     show::ControlMessage::Tunnel,
     tunnel::ControlMessage,
     tunnel::StateChange,
 };
+use lazy_static::lazy_static;
 use tunnels_lib::number::BipolarFloat;
 
 // Knobs
@@ -33,6 +36,20 @@ const RESET_MARQUEE: Mapping = note_on_ch0(121);
 // TouchOSC XY position pad.
 const POSITION_X: Mapping = cc(8, 1);
 const POSITION_Y: Mapping = cc(8, 0);
+
+const PALETTE_SELECT_CONTROL_OFFSET: i32 = 0x3B;
+const N_PALETTE_SELECTS: i32 = 3;
+
+lazy_static! {
+    static ref PALETTE_SELECT_BUTTONS: RadioButtons = RadioButtons {
+        // -1 corresponds to "internal", the rest as global clock IDs.
+        mappings: (-1..N_PALETTE_SELECTS as i32)
+            .map(|palette_id| note_on_ch0((palette_id + PALETTE_SELECT_CONTROL_OFFSET) as u8))
+            .collect(),
+        off: 0,
+        on: 1,
+    };
+}
 
 pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     use ControlMessage::*;
@@ -96,32 +113,57 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
         POSITION_Y,
         Box::new(|v| Tunnel(Set(PositionY(bipolar_from_midi(v).val())))),
     );
+
+    // palette select
+    add(
+        note_on_ch0((PALETTE_SELECT_CONTROL_OFFSET - 1) as u8),
+        Box::new(|_| Tunnel(Set(PaletteSelection(None)))),
+    );
+    for palette_num in 0..N_PALETTE_SELECTS {
+        add(
+            note_on_ch0((PALETTE_SELECT_CONTROL_OFFSET + palette_num) as u8),
+            Box::new(move |_| {
+                Tunnel(Set(PaletteSelection(Some(ColorPaletteIdx(
+                    palette_num as usize,
+                )))))
+            }),
+        );
+    }
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.
 pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
     use StateChange::*;
 
-    let event = match sc {
-        Thickness(v) => event(THICKNESS, unipolar_to_midi(v)),
-        Size(v) => event(SIZE, unipolar_to_midi(v)),
-        AspectRatio(v) => event(ASPECT_RATIO, unipolar_to_midi(v)),
-        ColorCenter(v) => event(COL_CENTER, unipolar_to_midi(v)),
-        ColorWidth(v) => event(COL_WIDTH, unipolar_to_midi(v)),
-        ColorSpread(v) => event(COL_SPREAD, unipolar_to_midi(v)),
-        ColorSaturation(v) => event(COL_SAT, unipolar_to_midi(v)),
-        PaletteSelection(v) => {
-            // TODO: implement basic palette selection control
-            return;
-        }
-        Segments(v) => event(SEGMENTS, v - 1),
-        Blacking(v) => event(BLACKING, bipolar_to_midi(v)),
-        MarqueeSpeed(v) => event(MARQUEE_SPEED, bipolar_to_midi(v)),
-        RotationSpeed(v) => event(ROT_SPEED, bipolar_to_midi(v)),
-        // Clamp outgoing tunnel position messages to regular midi range.
-        PositionX(v) => event(POSITION_X, bipolar_to_midi(BipolarFloat::new(v))),
-        PositionY(v) => event(POSITION_Y, bipolar_to_midi(BipolarFloat::new(v))),
+    let mut send = |event| {
+        manager.send(Device::AkaiApc40, event);
+        manager.send(Device::TouchOsc, event);
     };
-    manager.send(Device::AkaiApc40, event);
-    manager.send(Device::TouchOsc, event);
+
+    match sc {
+        Thickness(v) => send(event(THICKNESS, unipolar_to_midi(v))),
+        Size(v) => send(event(SIZE, unipolar_to_midi(v))),
+        AspectRatio(v) => send(event(ASPECT_RATIO, unipolar_to_midi(v))),
+        ColorCenter(v) => send(event(COL_CENTER, unipolar_to_midi(v))),
+        ColorWidth(v) => send(event(COL_WIDTH, unipolar_to_midi(v))),
+        ColorSpread(v) => send(event(COL_SPREAD, unipolar_to_midi(v))),
+        ColorSaturation(v) => send(event(COL_SAT, unipolar_to_midi(v))),
+        PaletteSelection(v) => {
+            let index = match v {
+                Some(source) => (source.0 as i32),
+                None => -1,
+            };
+            PALETTE_SELECT_BUTTONS.select(
+                note_on_ch0((index as i32 + PALETTE_SELECT_CONTROL_OFFSET) as u8),
+                send,
+            );
+        }
+        Segments(v) => send(event(SEGMENTS, v - 1)),
+        Blacking(v) => send(event(BLACKING, bipolar_to_midi(v))),
+        MarqueeSpeed(v) => send(event(MARQUEE_SPEED, bipolar_to_midi(v))),
+        RotationSpeed(v) => send(event(ROT_SPEED, bipolar_to_midi(v))),
+        // Clamp outgoing tunnel position messages to regular midi range.
+        PositionX(v) => send(event(POSITION_X, bipolar_to_midi(BipolarFloat::new(v)))),
+        PositionY(v) => send(event(POSITION_Y, bipolar_to_midi(BipolarFloat::new(v)))),
+    };
 }

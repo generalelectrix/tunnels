@@ -1,11 +1,16 @@
-use std::f64::MIN;
-
 use serde::{Deserialize, Serialize};
 use tunnels_lib::color::Hsv;
+use typed_index_derive::TypedIndex;
 
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 
 const MIN_PALETTE_SIZE: usize = 1;
+
+#[derive(
+    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
+)]
+#[typed_index(Hsv)]
+pub struct ColorPaletteIdx(pub usize);
 
 /// Store an array of colors that can be used by beams.
 #[derive(Serialize, Deserialize, Clone)]
@@ -17,8 +22,8 @@ impl ColorPalette {
     }
 
     /// Return the color in the palette from the requested index.
-    pub fn get(&self, index: usize) -> Option<Hsv> {
-        self.0.get(index).copied()
+    pub fn get(&self, index: ColorPaletteIdx) -> Option<Hsv> {
+        self.0.get(index.0).copied()
     }
 
     /// Emit the current value of all controllable palette state.

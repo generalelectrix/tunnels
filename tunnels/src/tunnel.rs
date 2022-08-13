@@ -1,18 +1,15 @@
 use crate::{
     animation::{Animation, Target},
     clock_bank::ClockBank,
-    palette::ColorPalette,
+    palette::{ColorPalette, ColorPaletteIdx},
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
+use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
 use tunnels_lib::ArcSegment;
-use tunnels_lib::{
-    color::Hsv,
-    number::{BipolarFloat, Phase, UnipolarFloat},
-};
 use typed_index_derive::TypedIndex;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -37,7 +34,7 @@ pub struct Tunnel {
     /// If None: ignore global color palette.
     /// If Some: use this index from the palette to pick the hue.
     /// At present, the saturation and value of the color are ignored.
-    palette_selection: Option<usize>,
+    palette_selection: Option<ColorPaletteIdx>,
     /// TODO: regularize segs interface into regular float knobs
     segs: u8,
     /// remove segments at this interval
@@ -411,7 +408,7 @@ pub enum StateChange {
     ColorWidth(UnipolarFloat),
     ColorSpread(UnipolarFloat),
     ColorSaturation(UnipolarFloat),
-    PaletteSelection(Option<usize>),
+    PaletteSelection(Option<ColorPaletteIdx>),
     Segments(u8), // FIXME integer knob
     Blacking(BipolarFloat),
     PositionX(f64),
