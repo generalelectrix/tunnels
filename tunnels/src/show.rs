@@ -196,13 +196,14 @@ impl Show {
 
     fn service_control_event(&mut self, timeout: Duration) {
         match self.dispatcher.receive(timeout) {
-            Ok(msg) => self.state.ui.handle_control_message(
+            Ok(Some(msg)) => self.state.ui.handle_control_message(
                 msg,
                 &mut self.state.mixer,
                 &mut self.state.clocks,
                 &mut self.state.color_palette,
                 &mut self.dispatcher,
             ),
+            Ok(None) => (),
             Err(e) => {
                 warn!("{}", e);
             }
