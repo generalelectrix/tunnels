@@ -15,7 +15,7 @@ use crate::{
     show::StateChange,
 };
 
-use simple_error::{bail, SimpleError};
+use simple_error::bail;
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
 use self::animation::{map_animation_controls, update_animation_control};

@@ -1,5 +1,5 @@
 use derive_more::Display;
-use log::{error, warn};
+use log::error;
 use rosc::{OscMessage, OscPacket, OscType};
 use simple_error::bail;
 use std::error::Error;
@@ -27,7 +27,7 @@ pub struct DeviceSpec {
 }
 
 pub struct Dispatcher {
-    inputs: Vec<Input>,
+    _inputs: Vec<Input>,
 }
 
 impl Dispatcher {
@@ -39,7 +39,7 @@ impl Dispatcher {
         for osc_device in osc_devices {
             inputs.push(Input::new(osc_device, send.clone())?);
         }
-        Ok(Self { inputs })
+        Ok(Self { _inputs: inputs })
     }
 
     pub fn map_event_to_show_control(
@@ -119,7 +119,7 @@ impl Input {
 fn forward_packet(packet: OscPacket, device: Device, send: &Sender<ControlEvent>) {
     match packet {
         OscPacket::Message(m) => {
-            send.send(ControlEvent::Osc((device, m)));
+            send.send(ControlEvent::Osc((device, m))).unwrap();
         }
         OscPacket::Bundle(msgs) => {
             for subpacket in msgs.content {

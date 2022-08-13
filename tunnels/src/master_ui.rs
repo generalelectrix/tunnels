@@ -11,7 +11,6 @@ use crate::{
 };
 
 use serde::{Deserialize, Serialize};
-use tunnels_lib::color;
 
 /// Manage stateful aspects of the UI.
 /// Mediate between the input systems and the show data.

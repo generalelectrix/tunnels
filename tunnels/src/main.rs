@@ -26,7 +26,6 @@ use osc::DeviceSpec as OscDeviceSpec;
 use show::Show;
 use simple_error::SimpleError;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
-use std::fmt::Display;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
