@@ -10,7 +10,7 @@ use std::thread;
 use tunnels_lib::{Snapshot, Timestamp};
 use zmq::{Context, Socket};
 
-use crate::{clock_bank::ClockBank, mixer::Mixer};
+use crate::{clock_bank::ClockBank, mixer::Mixer, palette::ColorPalette};
 
 const PORT: u16 = 6000;
 
@@ -38,7 +38,7 @@ pub fn start_render_service(ctx: &mut Context) -> Result<Sender<Frame>, Box<dyn 
                         warn!("Render server dropped {} frames.", dropped_frames);
                     }
 
-                    let video_outs = frame.mixer.render(&frame.clocks);
+                    let video_outs = frame.mixer.render(&frame.clocks, &frame.color_palette);
                     for (video_chan, draw_commands) in video_outs.into_iter().enumerate() {
                         let snapshot = Snapshot {
                             frame_number: frame.number,
@@ -115,4 +115,5 @@ pub struct Frame {
     pub timestamp: Timestamp,
     pub mixer: Mixer,
     pub clocks: ClockBank,
+    pub color_palette: ColorPalette,
 }

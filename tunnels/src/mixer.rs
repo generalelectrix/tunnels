@@ -1,4 +1,5 @@
 use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
+use crate::palette::ColorPalette;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use crate::{clock_bank::ClockBank, master_ui::EmitStateChange as EmitShowStateChange};
 use serde::{Deserialize, Serialize};
@@ -57,13 +58,18 @@ impl Mixer {
 
     /// Render the current state of the mixer.
     /// Each inner vector represents one virtual video channel.
-    pub fn render(&self, external_clocks: &ClockBank) -> Vec<LayerCollection> {
+    pub fn render(
+        &self,
+        external_clocks: &ClockBank,
+        color_palette: &ColorPalette,
+    ) -> Vec<LayerCollection> {
         let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
         for _ in 0..Self::N_VIDEO_CHANNELS {
             video_outs.push(Vec::new());
         }
         for channel in &self.channels {
-            let rendered_beam = channel.render(UnipolarFloat::ONE, false, external_clocks);
+            let rendered_beam =
+                channel.render(UnipolarFloat::ONE, false, external_clocks, color_palette);
             if rendered_beam.len() == 0 {
                 continue;
             }
@@ -191,6 +197,7 @@ impl Channel {
         level_scale: UnipolarFloat,
         mask: bool,
         external_clocks: &ClockBank,
+        color_palette: &ColorPalette,
     ) -> Vec<ArcSegment> {
         let mut level: UnipolarFloat = if self.bump {
             UnipolarFloat::ONE
@@ -202,7 +209,8 @@ impl Channel {
         if level == 0. {
             return Vec::new();
         }
-        self.beam.render(level, self.mask || mask, external_clocks)
+        self.beam
+            .render(level, self.mask || mask, external_clocks, color_palette)
     }
 }
 

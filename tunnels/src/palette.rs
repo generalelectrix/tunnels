@@ -8,7 +8,7 @@ use crate::master_ui::EmitStateChange as EmitShowStateChange;
 const MIN_PALETTE_SIZE: usize = 1;
 
 /// Store an array of colors that can be used by beams.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ColorPalette(Vec<Hsv>);
 
 impl ColorPalette {

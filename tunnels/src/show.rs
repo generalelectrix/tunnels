@@ -161,6 +161,7 @@ impl Show {
                     timestamp: timestamp,
                     mixer: self.state.mixer.clone(),
                     clocks: self.state.clocks.clone(),
+                    color_palette: self.state.color_palette.clone(),
                 }) {
                     bail!("Render server hung up.  Aborting show.");
                 }
@@ -280,7 +281,10 @@ mod test {
 
     /// Render the state of the show, hash the layers, and compare to expectation.
     fn check_render(show: &Show, beam_hashes: Vec<u64>) {
-        let video_feeds = show.state.mixer.render(&show.state.clocks);
+        let video_feeds = show
+            .state
+            .mixer
+            .render(&show.state.clocks, &show.state.color_palette);
 
         // Should have the expected number of video channels.
         assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());

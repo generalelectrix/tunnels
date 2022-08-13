@@ -1,14 +1,18 @@
 use crate::{
     animation::{Animation, Target},
     clock_bank::ClockBank,
+    palette::ColorPalette,
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::time::Duration;
-use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
 use tunnels_lib::ArcSegment;
+use tunnels_lib::{
+    color::Hsv,
+    number::{BipolarFloat, Phase, UnipolarFloat},
+};
 use typed_index_derive::TypedIndex;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -136,6 +140,7 @@ impl Tunnel {
         level_scale: UnipolarFloat,
         as_mask: bool,
         external_clocks: &ClockBank,
+        color_palette: &ColorPalette,
     ) -> Vec<ArcSegment> {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
         let segs = if self.segs > 40 && self.segs % 2 != 0 {
@@ -239,8 +244,19 @@ impl Tunnel {
                     rot_angle: rot_angle.val(),
                 }
             } else {
+                let base_hue = if let Some(palette_index) = self.palette_selection {
+                    // TODO: if the palette index is out of range, should we fall
+                    // back to something besides zero?
+                    color_palette
+                        .get(palette_index)
+                        .map(|color| color.hue)
+                        .unwrap_or(Phase::ZERO)
+                        .val()
+                } else {
+                    self.col_center.val()
+                };
                 let hue = Phase::new(
-                    (self.col_center.val() + col_center_adjust)
+                    (base_hue + col_center_adjust)
                         + (0.5
                             * (self.col_width.val() + col_width_adjust)
                             * sawtooth(
