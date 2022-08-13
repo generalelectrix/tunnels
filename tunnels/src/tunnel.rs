@@ -300,6 +300,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(ColorWidth(self.col_width));
         emitter.emit_tunnel_state_change(ColorSpread(self.col_spread));
         emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat));
+        emitter.emit_tunnel_state_change(PaletteSelection(self.palette_selection));
         emitter.emit_tunnel_state_change(Segments(self.segs));
         emitter.emit_tunnel_state_change(Blacking(self.blacking));
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
