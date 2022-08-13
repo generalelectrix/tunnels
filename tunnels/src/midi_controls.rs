@@ -120,6 +120,9 @@ impl EmitStateChange for Dispatcher {
             StateChange::Animation(sc) => update_animation_control(sc, &mut self.manager),
             StateChange::Mixer(sc) => update_mixer_control(sc, &mut self.manager),
             StateChange::Clock(sc) => update_clock_control(sc, &mut self.manager),
+            StateChange::ColorPalette(sc) => {
+                // TODO: emit color data to midi interface if we have some notion of this
+            }
             StateChange::MasterUI(sc) => update_master_ui_control(sc, &mut self.manager),
         }
     }

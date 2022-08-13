@@ -21,6 +21,7 @@ use crate::{
     midi_controls::Dispatcher,
     mixer,
     mixer::Mixer,
+    palette::{self, ColorPalette},
     send::{start_render_service, Frame},
     test_mode::TestModeSetup,
     timesync::TimesyncServer,
@@ -59,6 +60,7 @@ impl Show {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
                 clocks: ClockBank::new(),
+                color_palette: ColorPalette::new(),
             },
             save_path: None,
             last_save: None,
@@ -217,6 +219,7 @@ pub enum StateChange {
     Animation(animation::StateChange),
     Mixer(mixer::StateChange),
     Clock(clock_bank::StateChange),
+    ColorPalette(palette::StateChange),
     MasterUI(master_ui::StateChange),
 }
 
@@ -226,6 +229,7 @@ pub struct ShowState {
     pub ui: MasterUI,
     pub mixer: Mixer,
     pub clocks: ClockBank,
+    pub color_palette: ColorPalette,
 }
 
 #[cfg(test)]

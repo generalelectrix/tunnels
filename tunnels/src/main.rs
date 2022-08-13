@@ -9,6 +9,7 @@ mod master_ui;
 mod midi;
 mod midi_controls;
 mod mixer;
+mod palette;
 mod send;
 mod show;
 mod test_mode;

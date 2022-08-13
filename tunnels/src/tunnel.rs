@@ -30,6 +30,10 @@ pub struct Tunnel {
     col_width: UnipolarFloat,
     col_spread: UnipolarFloat,
     col_sat: UnipolarFloat,
+    /// If None: ignore global color palette.
+    /// If Some: use this index from the palette to pick the hue.
+    /// At present, the saturation and value of the color are ignored.
+    palette_selection: Option<usize>,
     /// TODO: regularize segs interface into regular float knobs
     segs: u8,
     /// remove segments at this interval
@@ -58,6 +62,7 @@ impl Tunnel {
             col_width: UnipolarFloat::ZERO,
             col_spread: UnipolarFloat::ZERO,
             col_sat: UnipolarFloat::ZERO,
+            palette_selection: None,
             segs: 126,
             blacking: BipolarFloat::new(0.15),
             curr_rot_angle: Phase::ZERO,
@@ -339,6 +344,7 @@ impl Tunnel {
             ColorWidth(v) => self.col_width = v,
             ColorSpread(v) => self.col_spread = v,
             ColorSaturation(v) => self.col_sat = v,
+            PaletteSelection(v) => self.palette_selection = v,
             Segments(v) => self.segs = v,
             Blacking(v) => self.blacking = v,
             PositionX(v) => self.x_offset.set_target(v),
@@ -389,6 +395,7 @@ pub enum StateChange {
     ColorWidth(UnipolarFloat),
     ColorSpread(UnipolarFloat),
     ColorSaturation(UnipolarFloat),
+    PaletteSelection(Option<usize>),
     Segments(u8), // FIXME integer knob
     Blacking(BipolarFloat),
     PositionX(f64),

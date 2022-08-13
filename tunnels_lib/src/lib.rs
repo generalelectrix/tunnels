@@ -1,5 +1,6 @@
 //! Code shared between the tunnels console and client.
 
+pub mod color;
 pub mod number;
 pub mod smooth;
 

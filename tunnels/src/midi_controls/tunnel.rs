@@ -110,6 +110,10 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
         ColorWidth(v) => event(COL_WIDTH, unipolar_to_midi(v)),
         ColorSpread(v) => event(COL_SPREAD, unipolar_to_midi(v)),
         ColorSaturation(v) => event(COL_SAT, unipolar_to_midi(v)),
+        PaletteSelection(v) => {
+            // TODO: implement basic palette selection control
+            return;
+        }
         Segments(v) => event(SEGMENTS, v - 1),
         Blacking(v) => event(BLACKING, bipolar_to_midi(v)),
         MarqueeSpeed(v) => event(MARQUEE_SPEED, bipolar_to_midi(v)),
