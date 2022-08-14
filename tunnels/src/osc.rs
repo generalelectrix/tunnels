@@ -1,5 +1,5 @@
 use derive_more::Display;
-use log::error;
+use log::{error, warn};
 use rosc::{OscMessage, OscPacket, OscType};
 use simple_error::bail;
 use std::error::Error;
@@ -7,6 +7,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::Sender;
 use std::thread;
 use tunnels_lib::color::Rgb;
+use tunnels_lib::number::UnipolarFloat;
 
 use crate::control::ControlEvent;
 use crate::master_ui::EmitStateChange;
@@ -62,20 +63,42 @@ impl Dispatcher {
 }
 
 /// Process a vector of OSC types that are expected to represent a color palette.
-/// Ignore the message and log
 fn handle_palette(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>> {
     // Scan the input vector, extracting colors and converting to HSV.
     let mut colors = Vec::new();
-    for (i, arg) in args.iter().enumerate() {
-        if let OscType::Color(color) = arg {
-            colors.push(Rgb::from_8bit(color.red, color.green, color.blue).as_hsv());
-        } else {
-            bail!("Unexpected OSC type in palette at index {}: {:?}.", i, arg);
+    for chunk in args.chunks(3) {
+        if chunk.len() < 3 {
+            warn!(
+                "OSC message had a trailing chunk with less than 3 components: {:?}",
+                chunk
+            );
+            continue;
         }
+        colors.push(
+            Rgb {
+                red: get_osc_float(&chunk[0])?,
+                green: get_osc_float(&chunk[1])?,
+                blue: get_osc_float(&chunk[0])?,
+            }
+            .as_hsv(),
+        )
     }
     Ok(ControlMessage::ColorPalette(PaletteControlMessage::Set(
         PaletteStateChange::Contents(colors),
     )))
+}
+
+fn get_osc_float(v: &OscType) -> Result<UnipolarFloat, Box<dyn Error>> {
+    match v {
+        OscType::Float(v) => Ok(UnipolarFloat::new(*v as f64)),
+        OscType::Double(v) => Ok(UnipolarFloat::new(*v)),
+        other => {
+            bail!(
+                "Unexpected OSC type in palette; expected a float or double, got {:?}.",
+                other
+            )
+        }
+    }
 }
 
 impl EmitStateChange for Dispatcher {
