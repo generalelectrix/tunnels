@@ -140,4 +140,28 @@ fn test_rgb_to_hsv() {
             val: UnipolarFloat::ONE,
         }
     );
+    assert_eq!(
+        Rgb::from_u8(255, 255, 0).as_hsv(),
+        Hsv {
+            hue: Phase::new(1. / 6.),
+            sat: UnipolarFloat::ONE,
+            val: UnipolarFloat::ONE,
+        }
+    );
+    assert_eq!(
+        Rgb::from_u8(0, 255, 255).as_hsv(),
+        Hsv {
+            hue: Phase::new(1. / 2.),
+            sat: UnipolarFloat::ONE,
+            val: UnipolarFloat::ONE,
+        }
+    );
+    assert_eq!(
+        Rgb::from_u8(255, 0, 255).as_hsv(),
+        Hsv {
+            hue: Phase::new(5. / 6.),
+            sat: UnipolarFloat::ONE,
+            val: UnipolarFloat::ONE,
+        }
+    );
 }

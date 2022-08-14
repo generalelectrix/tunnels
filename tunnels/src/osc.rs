@@ -78,7 +78,7 @@ fn handle_palette(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>> 
             Rgb {
                 red: get_osc_float(&chunk[0])?,
                 green: get_osc_float(&chunk[1])?,
-                blue: get_osc_float(&chunk[0])?,
+                blue: get_osc_float(&chunk[2])?,
             }
             .as_hsv(),
         )
