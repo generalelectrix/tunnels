@@ -138,6 +138,7 @@ impl Tunnel {
         as_mask: bool,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
         let segs = if self.segs > 40 && self.segs % 2 != 0 {
@@ -178,7 +179,7 @@ impl Tunnel {
             // accumulate animation adjustments based on targets
             use Target::*;
             for anim in &self.anims {
-                let anim_value = anim.get_value(rel_angle, external_clocks);
+                let anim_value = anim.get_value(rel_angle, external_clocks, audio_envelope);
 
                 match anim.target {
                     Rotation => rot_angle_adjust += anim_value,

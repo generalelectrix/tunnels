@@ -17,8 +17,6 @@ pub struct Clock {
     run: bool,
     /// should this clock reset and tick on the next state update action?
     reset_on_update: bool,
-    /// submaster level for this clock
-    pub submaster_level: UnipolarFloat,
 }
 
 impl Default for Clock {
@@ -36,7 +34,6 @@ impl Clock {
             one_shot: false,
             reset_on_update: false,
             run: true,
-            submaster_level: UnipolarFloat::new(1.0),
         }
     }
 
@@ -96,6 +93,8 @@ pub struct ControllableClock {
     tick_age: Option<Duration>,
     /// If true, reset the clock's phase to zero on every tap.
     retrigger: bool,
+    /// submaster level for this clock
+    submaster_level: UnipolarFloat,
 }
 
 impl Default for ControllableClock {
@@ -117,6 +116,7 @@ impl ControllableClock {
             sync: TapSync::new(),
             tick_age: None,
             retrigger: false,
+            submaster_level: UnipolarFloat::ONE,
         }
     }
 
@@ -125,7 +125,7 @@ impl ControllableClock {
     }
 
     pub fn submaster_level(&self) -> UnipolarFloat {
-        self.clock.submaster_level
+        self.submaster_level
     }
 
     const TICK_DISPLAY_DURATION: Duration = Duration::from_millis(100);
@@ -161,7 +161,7 @@ impl ControllableClock {
         use StateChange::*;
         emitter.emit_clock_state_change(Retrigger(self.retrigger));
         emitter.emit_clock_state_change(OneShot(self.clock.one_shot));
-        emitter.emit_clock_state_change(SubmasterLevel(self.clock.submaster_level));
+        emitter.emit_clock_state_change(SubmasterLevel(self.submaster_level));
         emitter.emit_clock_state_change(Ticked(self.tick_indicator_state()));
     }
 
@@ -198,7 +198,7 @@ impl ControllableClock {
             Rate(v) => self.clock.rate = v.val() * ControllableClock::RATE_SCALE,
             Retrigger(v) => self.retrigger = v,
             OneShot(v) => self.clock.set_one_shot(v),
-            SubmasterLevel(v) => self.clock.submaster_level = v,
+            SubmasterLevel(v) => self.submaster_level = v,
             Ticked(_) => (),
         };
         emitter.emit_clock_state_change(sc);

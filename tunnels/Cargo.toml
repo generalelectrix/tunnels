@@ -20,3 +20,10 @@ tunnels_lib = { path = "../tunnels_lib" }
 rmp-serde = "0.15"
 plotters = "^0.3.0"
 rosc = "~0.8"
+
+# Audio subsystem
+cpal = "0.14.0"
+augmented-dsp-filters = "1.1.0"
+audio-processor-analysis = "0.2.0"
+audio-processor-traits = "1.1.0"
+augmented-atomics = "0.1.1"

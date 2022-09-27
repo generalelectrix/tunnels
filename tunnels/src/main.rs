@@ -1,4 +1,5 @@
 mod animation;
+mod audio;
 mod beam;
 mod beam_store;
 mod clock;
@@ -18,13 +19,14 @@ mod timesync;
 mod tunnel;
 mod waveforms;
 
+use audio::AudioInput;
 use io::Write;
 use midi::{list_ports, DeviceSpec as MidiDeviceSpec};
 use midi_controls::Device as MidiDevice;
 use osc::Device as OscDevice;
 use osc::DeviceSpec as OscDeviceSpec;
 use show::Show;
-use simple_error::SimpleError;
+use simple_error::{bail, SimpleError};
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
@@ -51,7 +53,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         prompt_osc()?
     };
 
-    let mut show = Show::new(midi_devices, osc_devices)?;
+    let audio_input_device = if test_mode.is_some() {
+        None
+    } else {
+        prompt_audio()?
+    };
+
+    let mut show = Show::new(midi_devices, osc_devices, audio_input_device)?;
 
     if let Some(setup_test) = test_mode {
         show.test_mode(setup_test);
@@ -140,6 +148,22 @@ fn prompt_osc() -> Result<Vec<OscDeviceSpec>, Box<dyn Error>> {
     }
 
     Ok(devices)
+}
+
+/// Prompt the user to configure an audio input device.
+fn prompt_audio() -> Result<Option<String>, Box<dyn Error>> {
+    if !prompt_bool("Use audio input?")? {
+        return Ok(None);
+    }
+    let input_devices = AudioInput::devices()?;
+    if input_devices.len() == 0 {
+        bail!("No audio input devices found.");
+    }
+    println!("Available devices:");
+    for (i, port) in input_devices.iter().enumerate() {
+        println!("{}: {}", i, port);
+    }
+    prompt_indexed_value("Input audio device:", &input_devices).map(Some)
 }
 
 /// Prompt the user for a unsigned numeric index.

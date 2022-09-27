@@ -9,10 +9,11 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use tunnels_lib::Timestamp;
+use tunnels_lib::{number::UnipolarFloat, Timestamp};
 
 use crate::{
     animation,
+    audio::AudioInput,
     clock_bank::{self, ClockBank},
     control::Dispatcher,
     master_ui,
@@ -34,6 +35,7 @@ pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub struct Show {
     dispatcher: Dispatcher,
+    audio_input: AudioInput,
     state: ShowState,
     pub save_path: Option<PathBuf>,
     last_save: Option<Instant>,
@@ -44,6 +46,7 @@ impl Show {
     pub fn new(
         midi_devices: Vec<MidiDeviceSpec>,
         osc_devices: Vec<OscDeviceSpec>,
+        audio_input_device: Option<String>,
     ) -> Result<Self, Box<dyn Error>> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices
@@ -56,6 +59,7 @@ impl Show {
 
         Ok(Self {
             dispatcher: Dispatcher::new(midi_devices, osc_devices)?,
+            audio_input: AudioInput::new(audio_input_device)?,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
@@ -163,6 +167,7 @@ impl Show {
                     mixer: self.state.mixer.clone(),
                     clocks: self.state.clocks.clone(),
                     color_palette: self.state.color_palette.clone(),
+                    audio_envelope: self.audio_input.envelope(),
                 }) {
                     bail!("Render server hung up.  Aborting show.");
                 }
@@ -192,6 +197,7 @@ impl Show {
             .clocks
             .update_state(delta_t, &mut self.dispatcher);
         self.state.mixer.update_state(delta_t);
+        self.audio_input.update_state();
     }
 
     fn service_control_event(&mut self, timeout: Duration) {
@@ -240,6 +246,8 @@ pub struct ShowState {
 
 #[cfg(test)]
 mod test {
+    use tunnels_lib::number::UnipolarFloat;
+
     use super::*;
     use crate::test_mode::stress;
     use std::{
@@ -258,7 +266,7 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<(), Box<dyn Error>> {
-        let mut show = Show::new(Vec::new(), Vec::new())?;
+        let mut show = Show::new(Vec::new(), Vec::new(), None)?;
 
         show.test_mode(stress);
 
@@ -286,10 +294,11 @@ mod test {
 
     /// Render the state of the show, hash the layers, and compare to expectation.
     fn check_render(show: &Show, beam_hashes: Vec<u64>) {
-        let video_feeds = show
-            .state
-            .mixer
-            .render(&show.state.clocks, &show.state.color_palette);
+        let video_feeds = show.state.mixer.render(
+            &show.state.clocks,
+            &show.state.color_palette,
+            UnipolarFloat::ZERO,
+        );
 
         // Should have the expected number of video channels.
         assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());

@@ -29,10 +29,13 @@ impl Beam {
         mask: bool,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         match self {
-            Self::Tunnel(t) => t.render(level, mask, external_clocks, color_palette),
-            Self::Look(l) => l.render(level, mask, external_clocks, color_palette),
+            Self::Tunnel(t) => {
+                t.render(level, mask, external_clocks, color_palette, audio_envelope)
+            }
+            Self::Look(l) => l.render(level, mask, external_clocks, color_palette, audio_envelope),
         }
     }
 }

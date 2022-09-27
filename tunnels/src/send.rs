@@ -7,7 +7,7 @@ use log::{error, info, warn};
 use rmp_serde::Serializer;
 use serde::Serialize;
 use std::thread;
-use tunnels_lib::{Snapshot, Timestamp};
+use tunnels_lib::{number::UnipolarFloat, Snapshot, Timestamp};
 use zmq::{Context, Socket};
 
 use crate::{clock_bank::ClockBank, mixer::Mixer, palette::ColorPalette};
@@ -38,7 +38,11 @@ pub fn start_render_service(ctx: &mut Context) -> Result<Sender<Frame>, Box<dyn 
                         warn!("Render server dropped {} frames.", dropped_frames);
                     }
 
-                    let video_outs = frame.mixer.render(&frame.clocks, &frame.color_palette);
+                    let video_outs = frame.mixer.render(
+                        &frame.clocks,
+                        &frame.color_palette,
+                        frame.audio_envelope,
+                    );
                     for (video_chan, draw_commands) in video_outs.into_iter().enumerate() {
                         let snapshot = Snapshot {
                             frame_number: frame.number,
@@ -116,4 +120,5 @@ pub struct Frame {
     pub mixer: Mixer,
     pub clocks: ClockBank,
     pub color_palette: ColorPalette,
+    pub audio_envelope: UnipolarFloat,
 }

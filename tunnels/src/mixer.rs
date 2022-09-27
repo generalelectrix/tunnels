@@ -62,14 +62,20 @@ impl Mixer {
         &self,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        audio_envelope: UnipolarFloat,
     ) -> Vec<LayerCollection> {
         let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
         for _ in 0..Self::N_VIDEO_CHANNELS {
             video_outs.push(Vec::new());
         }
         for channel in &self.channels {
-            let rendered_beam =
-                channel.render(UnipolarFloat::ONE, false, external_clocks, color_palette);
+            let rendered_beam = channel.render(
+                UnipolarFloat::ONE,
+                false,
+                external_clocks,
+                color_palette,
+                audio_envelope,
+            );
             if rendered_beam.len() == 0 {
                 continue;
             }
@@ -198,6 +204,7 @@ impl Channel {
         mask: bool,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         let mut level: UnipolarFloat = if self.bump {
             UnipolarFloat::ONE
@@ -209,8 +216,13 @@ impl Channel {
         if level == 0. {
             return Vec::new();
         }
-        self.beam
-            .render(level, self.mask || mask, external_clocks, color_palette)
+        self.beam.render(
+            level,
+            self.mask || mask,
+            external_clocks,
+            color_palette,
+            audio_envelope,
+        )
     }
 }
 
