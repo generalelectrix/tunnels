@@ -277,7 +277,7 @@ where
     // Some defaults we might configure in advanced mode.
     let mut anti_alias = true;
     let mut timesync_interval = Duration::from_secs(60);
-    let mut render_delay = 0.040;
+    let mut render_delay = 0.015;
     let mut alpha_blend = true;
     let mut capture_mouse = true;
 
@@ -290,7 +290,7 @@ where
             parse_uint,
         );
         timesync_interval = Duration::from_secs(timesync_interval_secs);
-        render_delay = prompt("Client render delay in seconds (default 0.040)", parse_f64);
+        render_delay = prompt("Client render delay in seconds (default 0.015)", parse_f64);
     }
 
     ClientConfig::new(
