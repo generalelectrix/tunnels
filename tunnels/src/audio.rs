@@ -1,3 +1,5 @@
+use crate::master_ui::EmitStateChange as EmitShowStateChange;
+use crate::transient_indicator::TransientIndicator;
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
 use audio_processor_traits::{
     AtomicF32, AudioProcessor, AudioProcessorSettings, BufferProcessor, InterleavedAudioBuffer,
@@ -7,7 +9,7 @@ use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream};
 use log::{info, warn};
-use simple_error::{bail, simple_error};
+use simple_error::bail;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,16 +18,19 @@ use tunnels_lib::number::UnipolarFloat;
 pub struct AudioInput {
     _device: Option<Device>,
     _input_stream: Option<Stream>,
-    /// Handle to the atomic value written to by the audio thread.
-    /// We do not return this value directly, rather we update a local version
-    /// during state update to ensure that render calls see a consistent value
-    /// for all fetches during the render.
-    envelope_handle: Arc<AtomicF32>,
+    processor_handle: Arc<ProcessorHandle>,
     /// Locally-stored value of the envelope.
     envelope_value: UnipolarFloat,
+    /// Should we send monitor updates?
+    monitor: bool,
+    /// Envelope gain factor.
+    gain: f64,
+    /// Transient envelope clip indicator.
+    clip_indicator: TransientIndicator,
 }
 
 impl AudioInput {
+    const CLIP_INDICATOR_DURATION: Duration = Duration::from_millis(100);
     /// Get the names of all available input audio devices.
     pub fn devices() -> Result<Vec<String>, Box<dyn Error>> {
         let host = cpal::default_host();
@@ -39,8 +44,11 @@ impl AudioInput {
         Self {
             _device: None,
             _input_stream: None,
-            envelope_handle: Arc::new(AtomicF32::new(0.0)),
+            processor_handle: Arc::new(ProcessorHandle::default()),
             envelope_value: UnipolarFloat::ZERO,
+            monitor: false,
+            gain: 1.0,
+            clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
         }
     }
 
@@ -55,8 +63,6 @@ impl AudioInput {
         info!("Using audio input device {}.", device_name);
         let config: cpal::StreamConfig = device.default_input_config()?.into();
 
-        // TODO: one envelope per channel and average them together instead of
-        // just using 0th channel.
         let settings = AudioProcessorSettings {
             sample_rate: config.sample_rate.0 as f32,
             input_channels: config.channels as usize,
@@ -67,7 +73,7 @@ impl AudioInput {
         let mut processor = Processor::new();
         processor.s_prepare(settings);
 
-        let envelope_handle = processor.envelope_handle();
+        let handle = processor.handle();
 
         let mut buffer_proc = BufferProcessor(processor);
 
@@ -90,14 +96,97 @@ impl AudioInput {
         Ok(Self {
             _device: Some(device),
             _input_stream: Some(input_stream),
-            envelope_handle: envelope_handle,
+            processor_handle: handle,
             envelope_value: UnipolarFloat::ZERO,
+            monitor: false,
+            gain: 1.0,
+            clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
         })
     }
 
-    /// Update the state of the locally-stored value for the envelope.
-    pub fn update_state(&mut self) {
-        self.envelope_value = UnipolarFloat::new(self.envelope_handle.get() as f64);
+    /// Update the state of audio control.
+    /// The audio control system may need to emit state update.
+    pub fn update_state<E: EmitStateChange>(&mut self, delta_t: Duration, emitter: &mut E) {
+        let raw_envelope = self.processor_handle.envelope.get() as f64;
+        let scaled_envelope = raw_envelope * self.gain;
+        let clipping = scaled_envelope > 1.0;
+        self.envelope_value = UnipolarFloat::new(scaled_envelope);
+        if self.monitor {
+            emitter.emit_audio_state_change(StateChange::EnvelopeValue(self.envelope_value));
+            if let Some(clip_state) = self.clip_indicator.update_state(delta_t, clipping) {
+                emitter.emit_audio_state_change(StateChange::IsClipping(clip_state));
+            }
+        }
+    }
+
+    /// Emit the current value of all controllable state.
+    pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
+        use StateChange::*;
+        emitter.emit_audio_state_change(EnvelopeValue(self.envelope_value));
+        emitter.emit_audio_state_change(Monitor(self.monitor));
+        emitter.emit_audio_state_change(FilterCutoff(self.processor_handle.filter_cutoff.get()));
+        emitter.emit_audio_state_change(EnvelopeAttack(Duration::from_secs_f32(
+            self.processor_handle.envelope_attack.get(),
+        )));
+        emitter.emit_audio_state_change(EnvelopeRelease(Duration::from_secs_f32(
+            self.processor_handle.envelope_release.get(),
+        )));
+        emitter.emit_audio_state_change(Gain(self.gain));
+        emitter.emit_audio_state_change(IsClipping(self.clip_indicator.state()));
+    }
+
+    /// Handle a control event.
+    /// Emit any state changes that have happened as a result of handling.
+    pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
+        use ControlMessage::*;
+        match msg {
+            ToggleMonitor => {
+                self.monitor = !self.monitor;
+                emitter.emit_audio_state_change(StateChange::Monitor(self.monitor));
+                if !self.monitor {
+                    emitter
+                        .emit_audio_state_change(StateChange::EnvelopeValue(UnipolarFloat::ZERO));
+                    emitter.emit_audio_state_change(StateChange::IsClipping(false));
+                    self.clip_indicator.reset();
+                }
+            }
+            ResetParameters => {
+                self.processor_handle.reset_defaults();
+                self.gain = 1.0;
+                self.clip_indicator.reset();
+                self.emit_state(emitter);
+            }
+            Set(sc) => self.handle_state_change(sc, emitter),
+        }
+    }
+
+    fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
+        use StateChange::*;
+        match sc {
+            EnvelopeValue(_) => (), // output only, input ignored
+            Monitor(v) => self.monitor = v,
+            FilterCutoff(v) => {
+                if v <= 0. {
+                    warn!("Invalid filter cutoff frequency {} (<= 0).", v);
+                    return;
+                }
+                self.processor_handle.filter_cutoff.set(v);
+            }
+            EnvelopeAttack(v) => self.processor_handle.envelope_attack.set(v.as_secs_f32()),
+            EnvelopeRelease(v) => self.processor_handle.envelope_release.set(v.as_secs_f32()),
+            Gain(v) => {
+                if v < 0. {
+                    warn!("Invalid audio envelope gain {} (< 0).", v);
+                    return;
+                }
+                info!("Gain: {}", v);
+                self.gain = v;
+            }
+            IsClipping(_) => {
+                return; // output only
+            }
+        };
+        emitter.emit_audio_state_change(sc);
     }
 
     /// Return the current value of the audio envelope.
@@ -132,8 +221,42 @@ fn open_audio_input(name: &str) -> Result<Device, Box<dyn Error>> {
     bail!(err_msg);
 }
 
+#[derive(Clone)]
+struct ProcessorHandle {
+    envelope: AtomicF32,
+    filter_cutoff: AtomicF32,    // Hz
+    envelope_attack: AtomicF32,  // sec
+    envelope_release: AtomicF32, // sec
+}
+
+impl ProcessorHandle {
+    const DEFAULT_FILTER_CUTOFF: f32 = 200.;
+    const DEFAULT_ENVELOPE_ATTACK: f32 = 0.01;
+    const DEFAULT_ENVELOPE_RELEASE: f32 = 0.1;
+
+    fn reset_defaults(&self) {
+        self.filter_cutoff.set(Self::DEFAULT_FILTER_CUTOFF);
+        self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
+        self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
+    }
+}
+
+impl Default for ProcessorHandle {
+    fn default() -> Self {
+        Self {
+            envelope: AtomicF32::new(0.0),
+            filter_cutoff: AtomicF32::new(Self::DEFAULT_FILTER_CUTOFF),
+            envelope_attack: AtomicF32::new(Self::DEFAULT_ENVELOPE_ATTACK),
+            envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
+        }
+    }
+}
+
 struct Processor {
-    envelope_handle: Arc<AtomicF32>,
+    handle: Arc<ProcessorHandle>,
+    filter_cutoff: f32,
+    envelope_attack: f32,
+    envelope_release: f32,
     channel_count: usize,
     filters: Vec<FilterProcessor<f32>>,
     envelopes: Vec<EnvelopeFollowerProcessor>,
@@ -141,19 +264,52 @@ struct Processor {
 
 impl Processor {
     fn new() -> Self {
+        let handle = Arc::new(ProcessorHandle::default());
         Self {
-            envelope_handle: Arc::new(AtomicF32::new(0.0)),
+            filter_cutoff: handle.filter_cutoff.get(),
+            envelope_attack: handle.envelope_attack.get(),
+            envelope_release: handle.envelope_release.get(),
+            handle,
             channel_count: 0,
             filters: Vec::new(),
             envelopes: Vec::new(),
         }
     }
 
-    fn envelope_handle(&self) -> Arc<AtomicF32> {
-        self.envelope_handle.clone()
+    fn handle(&self) -> Arc<ProcessorHandle> {
+        self.handle.clone()
     }
 
-    // TODO: implement settings updates somehow
+    /// Load current parameters and update filters/envelopes if they have changed.
+    fn maybe_update_parameters(&mut self) {
+        let new_filter_cutoff = self.handle.filter_cutoff.get();
+        if new_filter_cutoff != self.filter_cutoff {
+            info!("Updating filter cutoff to {}", new_filter_cutoff);
+            self.filter_cutoff = new_filter_cutoff;
+            for filter in self.filters.iter_mut() {
+                filter.set_cutoff(new_filter_cutoff);
+            }
+        }
+        let new_envelope_attack = self.handle.envelope_attack.get();
+        let new_envelope_release = self.handle.envelope_release.get();
+        if new_envelope_attack != self.envelope_attack
+            || new_envelope_release != self.envelope_release
+        {
+            info!(
+                "Updating envelope parameters to {}, {}",
+                new_envelope_attack, new_envelope_release
+            );
+            self.envelope_attack = new_envelope_attack;
+            self.envelope_release = new_envelope_release;
+            let attack = Duration::from_secs_f32(new_envelope_attack);
+            let release = Duration::from_secs_f32(new_envelope_release);
+            for envelope in self.envelopes.iter_mut() {
+                let handle = envelope.handle();
+                handle.set_attack(attack);
+                handle.set_release(release);
+            }
+        }
+    }
 }
 
 impl SimpleAudioProcessor for Processor {
@@ -165,15 +321,16 @@ impl SimpleAudioProcessor for Processor {
         self.envelopes.clear();
         for _ in 0..settings.input_channels {
             let mut filter = FilterProcessor::new(FilterType::LowPass);
-            filter.set_cutoff(200.);
+            filter.set_cutoff(self.filter_cutoff);
             filter.s_prepare(settings);
             self.filters.push(filter);
 
             let mut envelope = EnvelopeFollowerProcessor::new(
-                Duration::from_millis(10),
-                Duration::from_millis(100),
+                Duration::from_secs_f32(self.envelope_attack),
+                Duration::from_secs_f32(self.envelope_release),
             );
             envelope.s_prepare(settings);
+
             self.envelopes.push(envelope);
         }
     }
@@ -191,6 +348,8 @@ impl SimpleAudioProcessor for Processor {
             );
         }
 
+        self.maybe_update_parameters();
+
         // Average the envelopes together.
         let mut envelope_sum = 0.0;
 
@@ -204,7 +363,8 @@ impl SimpleAudioProcessor for Processor {
             envelope_sum += envelope.handle().state();
         }
 
-        self.envelope_handle
+        self.handle
+            .envelope
             .set(envelope_sum / self.channel_count as f32);
     }
 }
@@ -213,4 +373,32 @@ fn err_fn(err: cpal::StreamError) {
     // TODO: if the device disconnected, or possibly if any error occurred,
     // kill the stream and start a new one.
     eprintln!("An audio input error occurred: {}", err);
+}
+
+#[derive(Debug)]
+pub enum StateChange {
+    Monitor(bool),
+    EnvelopeValue(UnipolarFloat),
+    FilterCutoff(f32),
+    EnvelopeAttack(Duration),
+    EnvelopeRelease(Duration),
+    Gain(f64),
+    IsClipping(bool),
+}
+
+pub enum ControlMessage {
+    Set(StateChange),
+    ToggleMonitor,
+    ResetParameters,
+}
+
+pub trait EmitStateChange {
+    fn emit_audio_state_change(&mut self, sc: StateChange);
+}
+
+impl<T: EmitShowStateChange> EmitStateChange for T {
+    fn emit_audio_state_change(&mut self, sc: StateChange) {
+        use crate::show::StateChange as ShowStateChange;
+        self.emit(ShowStateChange::Audio(sc))
+    }
 }

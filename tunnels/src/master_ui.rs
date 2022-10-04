@@ -1,5 +1,6 @@
 use crate::{
     animation::Animation,
+    audio::AudioInput,
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
     clock_bank::ClockBank,
@@ -65,6 +66,7 @@ impl MasterUI {
         mixer: &mut Mixer,
         clocks: &mut ClockBank,
         color_palette: &mut ColorPalette,
+        audio_input: &mut AudioInput,
         emitter: &mut E,
     ) {
         use ShowControlMessage::*;
@@ -87,6 +89,9 @@ impl MasterUI {
             ColorPalette(cm) => {
                 color_palette.control(cm, emitter);
             }
+            Audio(cm) => {
+                audio_input.control(cm, emitter);
+            }
             MasterUI(uim) => self.control(uim, mixer, emitter),
         }
     }
@@ -97,6 +102,7 @@ impl MasterUI {
         mixer: &mut Mixer,
         clocks: &mut ClockBank,
         color_palette: &mut ColorPalette,
+        audio_input: &mut AudioInput,
         emitter: &mut E,
     ) {
         emitter.emit_master_ui_state_change(StateChange::Channel(self.current_channel));
@@ -105,6 +111,7 @@ impl MasterUI {
         mixer.emit_state(emitter);
         clocks.emit_state(emitter);
         color_palette.emit_state(emitter);
+        audio_input.emit_state(emitter);
     }
 
     /// Emit state for the beam store.

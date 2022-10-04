@@ -1,10 +1,12 @@
 mod animation;
+mod audio;
 mod clock;
 mod device;
 mod master_ui;
 mod mixer;
 mod tunnel;
 
+use log::debug;
 use std::{collections::HashMap, error::Error, sync::mpsc::Sender};
 
 use crate::{
@@ -15,10 +17,11 @@ use crate::{
     show::StateChange,
 };
 
-use simple_error::bail;
+use simple_error::{bail, simple_error, SimpleError};
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
 use self::animation::{map_animation_controls, update_animation_control};
+use self::audio::{map_audio_controls, update_audio_control};
 use self::clock::{map_clock_controls, update_clock_control};
 use self::master_ui::{map_master_ui_controls, update_master_ui_control};
 use self::mixer::{map_mixer_controls, update_mixer_control};
@@ -55,6 +58,8 @@ impl ControlMap {
 
         map_clock_controls(Device::BehringerCmdMM1, &mut map);
         map_clock_controls(Device::TouchOsc, &mut map);
+
+        map_audio_controls(Device::TouchOsc, &mut map);
         map
     }
 
@@ -124,19 +129,22 @@ impl Dispatcher {
         })
     }
 
+    /// Map the provided midi event to a show control message.
+    /// Return None if the event does not map to a known control.
     pub fn map_event_to_show_control(
         &self,
         device: Device,
         event: Event,
-    ) -> Result<ControlMessage, Box<dyn Error>> {
-        if let Some(msg) = self.midi_map.dispatch(device, event) {
-            Ok(msg)
-        } else {
-            bail!(
-                "No midi mapping registered for the device {} with mapping {}.",
-                device,
-                event.mapping
-            )
+    ) -> Option<ControlMessage> {
+        match self.midi_map.dispatch(device, event) {
+            Some(cm) => Some(cm),
+            None => {
+                debug!(
+                    "Unknown midi command from device {} with mapping {}.",
+                    device, event.mapping
+                );
+                None
+            }
         }
     }
 }
@@ -153,6 +161,7 @@ impl EmitStateChange for Dispatcher {
                 // TODO: emit color data to interfaces if we build a color palette monitor
             }
             StateChange::MasterUI(sc) => update_master_ui_control(sc, &mut self.midi_manager),
+            StateChange::Audio(sc) => update_audio_control(sc, &mut self.midi_manager),
         }
     }
 }

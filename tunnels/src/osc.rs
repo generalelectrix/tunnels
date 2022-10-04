@@ -1,5 +1,5 @@
 use derive_more::Display;
-use log::{error, warn};
+use log::{debug, error, warn};
 use rosc::{OscMessage, OscPacket, OscType};
 use simple_error::bail;
 use std::error::Error;
@@ -43,20 +43,21 @@ impl Dispatcher {
         Ok(Self { _inputs: inputs })
     }
 
+    /// Map the provided OSC event to a show control message.
+    /// Return None if the event does not map to a known control.
     pub fn map_event_to_show_control(
         &self,
         device: Device,
         event: OscMessage,
-    ) -> Result<ControlMessage, Box<dyn Error>> {
+    ) -> Result<Option<ControlMessage>, Box<dyn Error>> {
         match event.addr.as_str() {
-            "/palette" => handle_palette(event.args),
+            "/palette" => handle_palette(event.args).map(Some),
             unknown => {
-                bail!(
+                debug!(
                     "Unknown OSC command from device {} with address {}: {:?}",
-                    device,
-                    unknown,
-                    event.args
-                )
+                    device, unknown, event.args
+                );
+                Ok(None)
             }
         }
     }

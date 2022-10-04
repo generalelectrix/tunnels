@@ -52,12 +52,11 @@ impl Dispatcher {
         };
         use ControlEvent::*;
         match event {
-            Midi((device, event)) => self
+            Midi((device, event)) => Ok(self
                 .midi_dispatcher
-                .map_event_to_show_control(device, event),
+                .map_event_to_show_control(device, event)),
             Osc((device, event)) => self.osc_dispatcher.map_event_to_show_control(device, event),
         }
-        .map(|msg| Some(msg))
     }
 }
 

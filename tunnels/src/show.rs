@@ -13,7 +13,7 @@ use tunnels_lib::{number::UnipolarFloat, Timestamp};
 
 use crate::{
     animation,
-    audio::AudioInput,
+    audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
     control::Dispatcher,
     master_ui,
@@ -142,6 +142,7 @@ impl Show {
             &mut self.state.mixer,
             &mut self.state.clocks,
             &mut self.state.color_palette,
+            &mut self.audio_input,
             &mut self.dispatcher,
         );
 
@@ -197,7 +198,7 @@ impl Show {
             .clocks
             .update_state(delta_t, &mut self.dispatcher);
         self.state.mixer.update_state(delta_t);
-        self.audio_input.update_state();
+        self.audio_input.update_state(delta_t, &mut self.dispatcher);
     }
 
     fn service_control_event(&mut self, timeout: Duration) {
@@ -207,6 +208,7 @@ impl Show {
                 &mut self.state.mixer,
                 &mut self.state.clocks,
                 &mut self.state.color_palette,
+                &mut self.audio_input,
                 &mut self.dispatcher,
             ),
             Ok(None) => (),
@@ -223,6 +225,7 @@ pub enum ControlMessage {
     Mixer(mixer::ControlMessage),
     Clock(clock_bank::ControlMessage),
     ColorPalette(palette::ControlMessage),
+    Audio(audio::ControlMessage),
     MasterUI(master_ui::ControlMessage),
 }
 
@@ -232,6 +235,7 @@ pub enum StateChange {
     Mixer(mixer::StateChange),
     Clock(clock_bank::StateChange),
     ColorPalette(palette::StateChange),
+    Audio(audio::StateChange),
     MasterUI(master_ui::StateChange),
 }
 

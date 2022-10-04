@@ -16,6 +16,7 @@ mod send;
 mod show;
 mod test_mode;
 mod timesync;
+mod transient_indicator;
 mod tunnel;
 mod waveforms;
 

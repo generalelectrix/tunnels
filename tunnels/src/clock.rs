@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 
+use crate::transient_indicator::TransientIndicator;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
     phase: Phase,
@@ -90,7 +92,7 @@ impl Clock {
 pub struct ControllableClock {
     clock: Clock,
     sync: TapSync,
-    tick_age: Option<Duration>,
+    tick_indicator: TransientIndicator,
     /// If true, reset the clock's phase to zero on every tap.
     retrigger: bool,
     /// submaster level for this clock
@@ -114,7 +116,7 @@ impl ControllableClock {
         Self {
             clock: Clock::new(),
             sync: TapSync::new(),
-            tick_age: None,
+            tick_indicator: TransientIndicator::new(Duration::from_millis(100)),
             retrigger: false,
             submaster_level: UnipolarFloat::ONE,
         }
@@ -128,31 +130,12 @@ impl ControllableClock {
         self.submaster_level
     }
 
-    const TICK_DISPLAY_DURATION: Duration = Duration::from_millis(100);
-
     /// Update the state of this clock.
     /// The clock may need to emit state update messages.
     pub fn update_state<E: EmitStateChange>(&mut self, delta_t: Duration, emitter: &mut E) {
         self.clock.update_state(delta_t);
-        if self.clock.ticked {
-            emitter.emit_clock_state_change(StateChange::Ticked(true));
-            self.tick_age = Some(Duration::new(0, 0));
-        } else if let Some(tick_age) = self.tick_age {
-            let new_tick_age = tick_age + delta_t;
-            if new_tick_age > Self::TICK_DISPLAY_DURATION {
-                self.tick_age = None;
-                emitter.emit_clock_state_change(StateChange::Ticked(false));
-            } else {
-                self.tick_age = Some(new_tick_age);
-            }
-        }
-    }
-
-    fn tick_indicator_state(&self) -> bool {
-        if let Some(age) = self.tick_age {
-            age < Self::TICK_DISPLAY_DURATION
-        } else {
-            false
+        if let Some(tick_state) = self.tick_indicator.update_state(delta_t, self.clock.ticked) {
+            emitter.emit_clock_state_change(StateChange::Ticked(tick_state));
         }
     }
 
@@ -162,7 +145,7 @@ impl ControllableClock {
         emitter.emit_clock_state_change(Retrigger(self.retrigger));
         emitter.emit_clock_state_change(OneShot(self.clock.one_shot));
         emitter.emit_clock_state_change(SubmasterLevel(self.submaster_level));
-        emitter.emit_clock_state_change(Ticked(self.tick_indicator_state()));
+        emitter.emit_clock_state_change(Ticked(self.tick_indicator.state()));
     }
 
     /// Handle a control event.
