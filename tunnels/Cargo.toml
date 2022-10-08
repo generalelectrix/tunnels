@@ -27,3 +27,6 @@ augmented-dsp-filters = "1.1.0"
 audio-processor-analysis = "0.2.0"
 audio-processor-traits = "1.1.0"
 augmented-atomics = "0.1.1"
+
+[patch.crates-io]
+cpal = { path = "../../cpal"}
