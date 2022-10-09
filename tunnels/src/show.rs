@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use tunnels_lib::{number::UnipolarFloat, Timestamp};
+use tunnels_lib::Timestamp;
 
 use crate::{
     animation,
