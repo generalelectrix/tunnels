@@ -194,11 +194,12 @@ impl Show {
     }
 
     fn update_state(&mut self, delta_t: Duration) {
+        self.audio_input.update_state(delta_t, &mut self.dispatcher);
+        let audio_envelope = self.audio_input.envelope();
         self.state
             .clocks
-            .update_state(delta_t, &mut self.dispatcher);
-        self.state.mixer.update_state(delta_t);
-        self.audio_input.update_state(delta_t, &mut self.dispatcher);
+            .update_state(delta_t, audio_envelope, &mut self.dispatcher);
+        self.state.mixer.update_state(delta_t, audio_envelope);
     }
 
     fn service_control_event(&mut self, timeout: Duration) {

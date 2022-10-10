@@ -45,7 +45,8 @@ const POSITIONY: Mapping = note_on_ch0(47);
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
 const INVERT: Mapping = note_on_ch1(1);
-const USE_AUDIO: Mapping = note_on_ch1(2);
+const USE_AUDIO_WEIGHT: Mapping = note_on_ch1(2);
+const USE_AUDIO_RATE: Mapping = note_on_ch1(3);
 
 const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
@@ -169,7 +170,11 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
         );
     }
 
-    add(USE_AUDIO, Box::new(|_| Animation(ToggleUseAudio)));
+    add(
+        USE_AUDIO_WEIGHT,
+        Box::new(|_| Animation(ToggleUseAudioWeight)),
+    );
+    add(USE_AUDIO_RATE, Box::new(|_| Animation(ToggleUseAudioRate)));
 }
 
 /// Emit midi messages to update UIs given the provided state change.
@@ -232,6 +237,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 send,
             );
         }
-        UseAudio(v) => send(event(USE_AUDIO, v as u8)),
+        UseAudioWeight(v) => send(event(USE_AUDIO_WEIGHT, v as u8)),
+        UseAudioRate(v) => send(event(USE_AUDIO_RATE, v as u8)),
     }
 }

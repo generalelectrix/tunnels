@@ -19,6 +19,8 @@ pub struct Clock {
     run: bool,
     /// should this clock reset and tick on the next state update action?
     reset_on_update: bool,
+    /// Should this clock scale its rate during update by the audio envelope?
+    pub use_audio: bool,
 }
 
 impl Default for Clock {
@@ -36,10 +38,11 @@ impl Clock {
             one_shot: false,
             reset_on_update: false,
             run: true,
+            use_audio: false,
         }
     }
 
-    pub fn update_state(&mut self, delta_t: Duration) {
+    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         if self.reset_on_update {
             self.ticked = true;
             // Reset phase to zero or one, depending on sign of rate.
@@ -57,7 +60,14 @@ impl Clock {
             return;
         }
 
-        let new_angle = self.phase.val() + (self.rate * delta_t.as_secs_f64());
+        let rate_modulation = if self.use_audio {
+            audio_envelope
+        } else {
+            UnipolarFloat::ONE
+        };
+
+        let new_angle =
+            self.phase.val() + (self.rate * rate_modulation.val() * delta_t.as_secs_f64());
 
         // if we're running in one-shot mode, clamp the angle at 1.0
         if self.one_shot && new_angle >= 1.0 {
@@ -132,8 +142,13 @@ impl ControllableClock {
 
     /// Update the state of this clock.
     /// The clock may need to emit state update messages.
-    pub fn update_state<E: EmitStateChange>(&mut self, delta_t: Duration, emitter: &mut E) {
-        self.clock.update_state(delta_t);
+    pub fn update_state<E: EmitStateChange>(
+        &mut self,
+        delta_t: Duration,
+        audio_envelope: UnipolarFloat,
+        emitter: &mut E,
+    ) {
+        self.clock.update_state(delta_t, audio_envelope);
         if let Some(tick_state) = self.tick_indicator.update_state(delta_t, self.clock.ticked) {
             emitter.emit_clock_state_change(StateChange::Ticked(tick_state));
         }

@@ -38,9 +38,9 @@ impl Mixer {
     }
 
     /// Update the state of all of the beams contained in this mixer.
-    pub fn update_state(&mut self, delta_t: Duration) {
+    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         for channel in &mut self.channels {
-            channel.update_state(delta_t);
+            channel.update_state(delta_t, audio_envelope);
         }
     }
 
@@ -193,8 +193,8 @@ impl Channel {
     }
 
     /// Update the state of the beam in this channel.
-    pub fn update_state(&mut self, delta_t: Duration) {
-        self.beam.update_state(delta_t);
+    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+        self.beam.update_state(delta_t, audio_envelope);
     }
 
     /// Render the beam in this channel.

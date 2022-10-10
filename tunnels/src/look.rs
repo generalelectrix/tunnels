@@ -17,9 +17,9 @@ impl Look {
         Self { channels }
     }
 
-    pub fn update_state(&mut self, delta_t: Duration) {
+    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         for channel in &mut self.channels {
-            channel.update_state(delta_t);
+            channel.update_state(delta_t, audio_envelope);
         }
     }
 

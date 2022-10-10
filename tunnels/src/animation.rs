@@ -43,7 +43,7 @@ pub struct Animation {
     smoothing: UnipolarFloat,
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
-    use_audio: bool,
+    use_audio_weight: bool,
 }
 
 impl Default for Animation {
@@ -65,7 +65,7 @@ impl Animation {
             smoothing: UnipolarFloat::new(0.25),
             internal_clock: Clock::new(),
             clock_source: None,
-            use_audio: false,
+            use_audio_weight: false,
         }
     }
 
@@ -91,9 +91,9 @@ impl Animation {
         self.internal_clock.rate = speed.val() * ControllableClock::RATE_SCALE;
     }
 
-    pub fn update_state(&mut self, delta_t: Duration) {
+    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         if self.active() {
-            self.internal_clock.update_state(delta_t);
+            self.internal_clock.update_state(delta_t, audio_envelope);
         }
     }
 
@@ -122,7 +122,7 @@ impl Animation {
             result *= external_clocks.submaster_level(id).val();
         }
         // scale this animation by audio envelope if set
-        if self.use_audio {
+        if self.use_audio_weight {
             result *= audio_envelope.val();
         }
         if self.invert {
@@ -145,7 +145,8 @@ impl Animation {
         emitter.emit_animation_state_change(DutyCycle(self.duty_cycle));
         emitter.emit_animation_state_change(Smoothing(self.smoothing));
         emitter.emit_animation_state_change(ClockSource(self.clock_source));
-        emitter.emit_animation_state_change(UseAudio(self.use_audio));
+        emitter.emit_animation_state_change(UseAudioWeight(self.use_audio_weight));
+        emitter.emit_animation_state_change(UseAudioRate(self.internal_clock.use_audio));
     }
 
     /// Handle a control event.
@@ -162,9 +163,17 @@ impl Animation {
                 self.invert = !self.invert;
                 emitter.emit_animation_state_change(StateChange::Invert(self.invert));
             }
-            ToggleUseAudio => {
-                self.use_audio = !self.use_audio;
-                emitter.emit_animation_state_change(StateChange::UseAudio(self.use_audio));
+            ToggleUseAudioWeight => {
+                self.use_audio_weight = !self.use_audio_weight;
+                emitter.emit_animation_state_change(StateChange::UseAudioWeight(
+                    self.use_audio_weight,
+                ));
+            }
+            ToggleUseAudioRate => {
+                self.internal_clock.use_audio = !self.internal_clock.use_audio;
+                emitter.emit_animation_state_change(StateChange::UseAudioRate(
+                    self.internal_clock.use_audio,
+                ));
             }
         }
     }
@@ -182,7 +191,8 @@ impl Animation {
             DutyCycle(v) => self.duty_cycle = v,
             Smoothing(v) => self.smoothing = v,
             ClockSource(v) => self.clock_source = v,
-            UseAudio(v) => self.use_audio = v,
+            UseAudioWeight(v) => self.use_audio_weight = v,
+            UseAudioRate(v) => self.internal_clock.use_audio = v,
         };
         emitter.emit_animation_state_change(sc);
     }
@@ -200,14 +210,16 @@ pub enum StateChange {
     DutyCycle(UnipolarFloat),
     Smoothing(UnipolarFloat),
     ClockSource(Option<ClockIdx>),
-    UseAudio(bool),
+    UseAudioWeight(bool),
+    UseAudioRate(bool),
 }
 
 pub enum ControlMessage {
     Set(StateChange),
     TogglePulse,
     ToggleInvert,
-    ToggleUseAudio,
+    ToggleUseAudioWeight,
+    ToggleUseAudioRate,
 }
 
 pub trait EmitStateChange {

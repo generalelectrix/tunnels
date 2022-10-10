@@ -16,10 +16,10 @@ pub enum Beam {
 }
 
 impl Beam {
-    pub fn update_state(&mut self, delta_t: Duration) {
+    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         match self {
-            Self::Tunnel(t) => t.update_state(delta_t),
-            Self::Look(l) => l.update_state(delta_t),
+            Self::Tunnel(t) => t.update_state(delta_t, audio_envelope),
+            Self::Look(l) => l.update_state(delta_t, audio_envelope),
         }
     }
 

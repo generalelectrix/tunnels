@@ -20,7 +20,6 @@ pub struct ReconnectingInput {
 
 impl ReconnectingInput {
     /// Create a new self-reconnecting input.
-    /// Returns an error if the input cannot be opened initially.
     /// Device disconnection is handled asynchronously and will attempt to
     /// reconnect the device until this struct is dropped.
     pub fn new(device_name: String, processor_settings: ProcessorSettings) -> Self {

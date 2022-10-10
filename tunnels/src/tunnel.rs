@@ -106,7 +106,7 @@ impl Tunnel {
     }
 
     /// Update the state of this tunnel in preparation for drawing a frame.
-    pub fn update_state(&mut self, delta_t: Duration) {
+    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         // ensure we don't exceed the set bounds of the screen
         // self.x_offset = f64::min(f64::max(self.x_offset, -MAX_X_OFFSET), MAX_X_OFFSET);
         // self.y_offset = f64::min(f64::max(self.y_offset, -MAX_Y_OFFSET), MAX_Y_OFFSET);
@@ -116,7 +116,7 @@ impl Tunnel {
 
         // Update the state of the animations.
         for anim in &mut self.anims {
-            anim.update_state(delta_t);
+            anim.update_state(delta_t, audio_envelope);
         }
         let timestep_secs = delta_t.as_secs_f64();
 

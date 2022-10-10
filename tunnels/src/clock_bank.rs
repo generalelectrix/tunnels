@@ -37,10 +37,16 @@ impl ClockBank {
         self.0[index].submaster_level()
     }
 
-    pub fn update_state<E: EmitStateChange>(&mut self, delta_t: Duration, emitter: &mut E) {
+    pub fn update_state<E: EmitStateChange>(
+        &mut self,
+        delta_t: Duration,
+        audio_envelope: UnipolarFloat,
+        emitter: &mut E,
+    ) {
         for (i, clock) in self.0.iter_mut().enumerate() {
             clock.update_state(
                 delta_t,
+                audio_envelope,
                 &mut ChannelEmitter {
                     channel: ClockIdx(i),
                     emitter,
