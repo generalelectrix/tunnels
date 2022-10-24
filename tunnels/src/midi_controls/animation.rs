@@ -37,10 +37,8 @@ const COLOR_SPREAD: Mapping = note_on_ch0(40);
 const COLOR_PERIODICITY: Mapping = note_on_ch0(41);
 const COLOR_SATURATION: Mapping = note_on_ch0(42);
 const MARQUEE: Mapping = note_on_ch0(43);
-const SEGMENTS: Mapping = note_on_ch0(44);
-const BLACKING: Mapping = note_on_ch0(45);
-const POSITIONX: Mapping = note_on_ch0(46);
-const POSITIONY: Mapping = note_on_ch0(47);
+const POSITIONX: Mapping = note_on_ch0(44);
+const POSITIONY: Mapping = note_on_ch0(45);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
@@ -68,8 +66,6 @@ lazy_static! {
             COLOR_PERIODICITY,
             COLOR_SATURATION,
             MARQUEE,
-            SEGMENTS,
-            BLACKING,
             POSITIONX,
             POSITIONY,
         ),
@@ -149,8 +145,6 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
         MARQUEE,
         Box::new(|_| Animation(Set(Target(MarqueeRotation)))),
     );
-    add(SEGMENTS, Box::new(|_| Animation(Set(Target(Segments)))));
-    add(BLACKING, Box::new(|_| Animation(Set(Target(Blacking)))));
     add(POSITIONX, Box::new(|_| Animation(Set(Target(PositionX)))));
     add(POSITIONY, Box::new(|_| Animation(Set(Target(PositionY)))));
 
@@ -217,8 +211,6 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                     ColorPeriodicity => COLOR_PERIODICITY,
                     ColorSaturation => COLOR_SATURATION,
                     MarqueeRotation => MARQUEE,
-                    Segments => SEGMENTS,
-                    Blacking => BLACKING,
                     PositionX => POSITIONX,
                     PositionY => POSITIONY,
                 },

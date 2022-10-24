@@ -25,8 +25,6 @@ pub enum Target {
     ColorPeriodicity,
     ColorSaturation,
     MarqueeRotation,
-    Segments,
-    Blacking,
     PositionX,
     PositionY,
 }

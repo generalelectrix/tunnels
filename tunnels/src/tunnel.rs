@@ -193,8 +193,6 @@ impl Tunnel {
                     ColorSaturation => col_sat_adjust += anim_value * 0.5, // limit adjustment
                     PositionX => x_adjust += anim_value,
                     PositionY => y_adjust += anim_value,
-                    Blacking => (), // TODO: figure out how this would even make sense
-                    Segments => (), // TODO: same here, probably have to lift this animator up to the whole beam level
                 }
             }
             // the abs() is there to prevent negative width setting when using multiple animations.
