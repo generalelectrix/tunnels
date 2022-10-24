@@ -36,12 +36,12 @@ pub struct Animation {
     invert: bool,
     n_periods: i32,
     pub target: Target,
-    weight: UnipolarFloat,
+    size: UnipolarFloat,
     duty_cycle: UnipolarFloat,
     smoothing: UnipolarFloat,
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
-    use_audio_weight: bool,
+    use_audio_size: bool,
 }
 
 impl Default for Animation {
@@ -58,24 +58,24 @@ impl Animation {
             invert: false,
             n_periods: 0,
             target: Target::Size,
-            weight: UnipolarFloat::ZERO,
+            size: UnipolarFloat::ZERO,
             duty_cycle: UnipolarFloat::ONE,
             smoothing: UnipolarFloat::new(0.25),
             internal_clock: Clock::new(),
             clock_source: None,
-            use_audio_weight: false,
+            use_audio_size: false,
         }
     }
 
-    /// Return true if this animation has nonzero weight.
+    /// Return true if this animation has nonzero size.
     fn active(&self) -> bool {
-        self.weight > 0.0
+        self.size > 0.0
     }
 
     fn phase(&self, external_clocks: &ClockBank) -> Phase {
         match self.clock_source {
             None => self.internal_clock.phase(),
-            Some(id) => external_clocks.phase(id),
+            Some(id) => external_clocks.get(id).phase(),
         }
     }
 
@@ -113,14 +113,17 @@ impl Animation {
             Waveform::Triangle => waveforms::triangle,
         };
         let mut result =
-            self.weight.val() * waveform_func(angle, self.smoothing, self.duty_cycle, self.pulse);
+            self.size.val() * waveform_func(angle, self.smoothing, self.duty_cycle, self.pulse);
 
         // scale this animation by submaster level if using external clock
+        let mut use_audio_size = self.use_audio_size;
         if let Some(id) = self.clock_source {
-            result *= external_clocks.submaster_level(id).val();
+            let clock = external_clocks.get(id);
+            result *= clock.submaster_level().val();
+            use_audio_size = use_audio_size || clock.use_audio_size();
         }
         // scale this animation by audio envelope if set
-        if self.use_audio_weight {
+        if use_audio_size {
             result *= audio_envelope.val();
         }
         if self.invert {
@@ -139,12 +142,12 @@ impl Animation {
         emitter.emit_animation_state_change(NPeriods(self.n_periods));
         emitter.emit_animation_state_change(Target(self.target));
         emitter.emit_animation_state_change(Speed(self.clock_speed()));
-        emitter.emit_animation_state_change(Weight(self.weight));
+        emitter.emit_animation_state_change(Size(self.size));
         emitter.emit_animation_state_change(DutyCycle(self.duty_cycle));
         emitter.emit_animation_state_change(Smoothing(self.smoothing));
         emitter.emit_animation_state_change(ClockSource(self.clock_source));
-        emitter.emit_animation_state_change(UseAudioWeight(self.use_audio_weight));
-        emitter.emit_animation_state_change(UseAudioRate(self.internal_clock.use_audio));
+        emitter.emit_animation_state_change(UseAudioSize(self.use_audio_size));
+        emitter.emit_animation_state_change(UseAudioSpeed(self.internal_clock.use_audio));
     }
 
     /// Handle a control event.
@@ -161,15 +164,13 @@ impl Animation {
                 self.invert = !self.invert;
                 emitter.emit_animation_state_change(StateChange::Invert(self.invert));
             }
-            ToggleUseAudioWeight => {
-                self.use_audio_weight = !self.use_audio_weight;
-                emitter.emit_animation_state_change(StateChange::UseAudioWeight(
-                    self.use_audio_weight,
-                ));
+            ToggleUseAudioSize => {
+                self.use_audio_size = !self.use_audio_size;
+                emitter.emit_animation_state_change(StateChange::UseAudioSize(self.use_audio_size));
             }
-            ToggleUseAudioRate => {
+            ToggleUseAudioSpeed => {
                 self.internal_clock.use_audio = !self.internal_clock.use_audio;
-                emitter.emit_animation_state_change(StateChange::UseAudioRate(
+                emitter.emit_animation_state_change(StateChange::UseAudioSpeed(
                     self.internal_clock.use_audio,
                 ));
             }
@@ -185,12 +186,12 @@ impl Animation {
             NPeriods(v) => self.n_periods = v,
             Target(v) => self.target = v,
             Speed(v) => self.set_clock_speed(v),
-            Weight(v) => self.weight = v,
+            Size(v) => self.size = v,
             DutyCycle(v) => self.duty_cycle = v,
             Smoothing(v) => self.smoothing = v,
             ClockSource(v) => self.clock_source = v,
-            UseAudioWeight(v) => self.use_audio_weight = v,
-            UseAudioRate(v) => self.internal_clock.use_audio = v,
+            UseAudioSize(v) => self.use_audio_size = v,
+            UseAudioSpeed(v) => self.internal_clock.use_audio = v,
         };
         emitter.emit_animation_state_change(sc);
     }
@@ -204,20 +205,20 @@ pub enum StateChange {
     NPeriods(i32),
     Target(Target),
     Speed(BipolarFloat),
-    Weight(UnipolarFloat),
+    Size(UnipolarFloat),
     DutyCycle(UnipolarFloat),
     Smoothing(UnipolarFloat),
     ClockSource(Option<ClockIdx>),
-    UseAudioWeight(bool),
-    UseAudioRate(bool),
+    UseAudioSize(bool),
+    UseAudioSpeed(bool),
 }
 
 pub enum ControlMessage {
     Set(StateChange),
     TogglePulse,
     ToggleInvert,
-    ToggleUseAudioWeight,
-    ToggleUseAudioRate,
+    ToggleUseAudioSize,
+    ToggleUseAudioSpeed,
 }
 
 pub trait EmitStateChange {

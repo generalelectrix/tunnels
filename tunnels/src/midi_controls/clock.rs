@@ -22,46 +22,55 @@ enum Control {
     Tap,
     OneShot,
     Retrigger,
+    AudioSize,
+    AudioSpeed,
 }
 
 /// Return a control mapping for the CMD-MM1.
-fn mapping_cmd_mm1(control: Control, channel: usize) -> Mapping {
+fn mapping_cmd_mm1(control: Control, channel: usize) -> Option<Mapping> {
     use Control::*;
 
     let channel = channel as u8;
     let midi_channel = 4;
 
     match control {
-        Rate => cc(midi_channel, 6 + channel),
-        Level => cc(midi_channel, 48 + channel),
-        Tap => note_on(midi_channel, 48 + channel),
-        OneShot => note_on(midi_channel, 19 + channel * 4),
-        Retrigger => note_on(midi_channel, 20 + channel * 4),
+        Rate => Some(cc(midi_channel, 6 + channel)),
+        Level => Some(cc(midi_channel, 48 + channel)),
+        Tap => Some(note_on(midi_channel, 48 + channel)),
+        OneShot => Some(note_on(midi_channel, 19 + channel * 4)),
+        Retrigger => Some(note_on(midi_channel, 20 + channel * 4)),
+        AudioSize | AudioSpeed => None, // FIXME: not enough physical buttons
     }
 }
 
 /// Return a control mapping for TouchOSC.
-fn mapping_touchosc(control: Control, channel: usize) -> Mapping {
+fn mapping_touchosc(control: Control, channel: usize) -> Option<Mapping> {
     use Control::*;
 
     // lay out controls with same values, increment channels
     // start at a high channel where we have no existing mappings
     let channel = 9 + channel as u8;
 
-    match control {
+    Some(match control {
         Rate => cc(channel, 0),
         Level => cc(channel, 1),
         Tap => note_on(channel, 0),
         OneShot => note_on(channel, 1),
         Retrigger => note_on(channel, 2),
-    }
+        AudioSize => note_on(channel, 3),
+        AudioSpeed => note_on(channel, 4),
+    })
 }
 
 pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
     use ClockControlMessage::*;
     use ClockStateChange::*;
 
-    let mut add = |mapping, creator| map.add(device, mapping, creator);
+    let mut add = |mapping: Option<Mapping>, creator| {
+        if let Some(mapping) = mapping {
+            map.add(device, mapping, creator)
+        }
+    };
 
     let get_mapping = match device {
         Device::BehringerCmdMM1 => mapping_cmd_mm1,
@@ -118,6 +127,24 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
                 })
             }),
         );
+        add(
+            get_mapping(Control::AudioSize, channel),
+            Box::new(move |_| {
+                Clock(ControlMessage {
+                    channel: ClockIdx(channel),
+                    msg: ToggleUseAudioSize,
+                })
+            }),
+        );
+        add(
+            get_mapping(Control::AudioSpeed, channel),
+            Box::new(move |_| {
+                Clock(ControlMessage {
+                    channel: ClockIdx(channel),
+                    msg: ToggleUseAudioSpeed,
+                })
+            }),
+        );
     }
 }
 
@@ -126,14 +153,12 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
     use ClockStateChange::*;
 
     let mut send = |control, value| {
-        manager.send(
-            Device::BehringerCmdMM1,
-            event(mapping_cmd_mm1(control, sc.channel.0), value),
-        );
-        manager.send(
-            Device::TouchOsc,
-            event(mapping_touchosc(control, sc.channel.0), value),
-        );
+        if let Some(mapping) = mapping_cmd_mm1(control, sc.channel.0) {
+            manager.send(Device::BehringerCmdMM1, event(mapping, value));
+        }
+        if let Some(mapping) = mapping_touchosc(control, sc.channel.0) {
+            manager.send(Device::TouchOsc, event(mapping, value));
+        }
     };
 
     match sc.change {
@@ -142,5 +167,7 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
         Ticked(v) => send(Control::Tap, v as u8),
         Rate(v) => send(Control::Rate, bipolar_to_midi(v)),
         SubmasterLevel(v) => send(Control::Level, unipolar_to_midi(v)),
+        UseAudioSize(v) => send(Control::AudioSize, v as u8),
+        UseAudioSpeed(v) => send(Control::AudioSpeed, v as u8),
     }
 }

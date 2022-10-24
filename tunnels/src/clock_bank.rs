@@ -8,7 +8,7 @@ use crate::{
     master_ui::EmitStateChange as EmitShowStateChange,
 };
 use serde::{Deserialize, Serialize};
-use tunnels_lib::number::{Phase, UnipolarFloat};
+use tunnels_lib::number::UnipolarFloat;
 use typed_index_derive::TypedIndex;
 
 /// how many globally-available clocks?
@@ -29,12 +29,9 @@ impl ClockBank {
         Self(Default::default())
     }
 
-    pub fn phase(&self, index: ClockIdx) -> Phase {
-        self.0[index].phase()
-    }
-
-    pub fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
-        self.0[index].submaster_level()
+    /// Return an immutable reference to the selected clock.
+    pub fn get(&self, index: ClockIdx) -> &ControllableClock {
+        &self.0[index]
     }
 
     pub fn update_state<E: EmitStateChange>(

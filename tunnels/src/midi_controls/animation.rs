@@ -17,7 +17,7 @@ use super::{
 
 // knobs
 const SPEED: Mapping = cc_ch0(48);
-const WEIGHT: Mapping = cc_ch0(49);
+const SIZE: Mapping = cc_ch0(49);
 const DUTY_CYCLE: Mapping = cc_ch0(50);
 const SMOOTHING: Mapping = cc_ch0(51);
 
@@ -28,23 +28,23 @@ const SQUARE: Mapping = note_on_ch0(26);
 const SAWTOOTH: Mapping = note_on_ch0(27);
 
 // target buttons
-const ROTATION: Mapping = note_on_ch0(35);
-const THICKNESS: Mapping = note_on_ch0(36);
-const SIZE: Mapping = note_on_ch0(37);
-const ASPECT_RATIO: Mapping = note_on_ch0(38);
-const COLOR: Mapping = note_on_ch0(39);
-const COLOR_SPREAD: Mapping = note_on_ch0(40);
-const COLOR_PERIODICITY: Mapping = note_on_ch0(41);
-const COLOR_SATURATION: Mapping = note_on_ch0(42);
-const MARQUEE: Mapping = note_on_ch0(43);
-const POSITIONX: Mapping = note_on_ch0(44);
-const POSITIONY: Mapping = note_on_ch0(45);
+const TARGET_ROTATION: Mapping = note_on_ch0(35);
+const TARGET_THICKNESS: Mapping = note_on_ch0(36);
+const TARGET_SIZE: Mapping = note_on_ch0(37);
+const TARGET_ASPECT_RATIO: Mapping = note_on_ch0(38);
+const TARGET_COLOR: Mapping = note_on_ch0(39);
+const TARGET_COLOR_SPREAD: Mapping = note_on_ch0(40);
+const TARGET_COLOR_PERIODICITY: Mapping = note_on_ch0(41);
+const TARGET_COLOR_SATURATION: Mapping = note_on_ch0(42);
+const TARGET_MARQUEE: Mapping = note_on_ch0(43);
+const TARGET_POSITIONX: Mapping = note_on_ch0(44);
+const TARGET_POSITIONY: Mapping = note_on_ch0(45);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
 const INVERT: Mapping = note_on_ch1(1);
-const USE_AUDIO_WEIGHT: Mapping = note_on_ch1(2);
-const USE_AUDIO_RATE: Mapping = note_on_ch1(3);
+const USE_AUDIO_SIZE: Mapping = note_on_ch1(2);
+const USE_AUDIO_SPEED: Mapping = note_on_ch1(3);
 
 const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
@@ -57,17 +57,17 @@ lazy_static! {
     };
     static ref TARGET_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: vec!(
-            ROTATION,
-            THICKNESS,
-            SIZE,
-            ASPECT_RATIO,
-            COLOR,
-            COLOR_SPREAD,
-            COLOR_PERIODICITY,
-            COLOR_SATURATION,
-            MARQUEE,
-            POSITIONX,
-            POSITIONY,
+            TARGET_ROTATION,
+            TARGET_THICKNESS,
+            TARGET_SIZE,
+            TARGET_ASPECT_RATIO,
+            TARGET_COLOR,
+            TARGET_COLOR_SPREAD,
+            TARGET_COLOR_PERIODICITY,
+            TARGET_COLOR_SATURATION,
+            TARGET_MARQUEE,
+            TARGET_POSITIONX,
+            TARGET_POSITIONY,
         ),
         off: 0, on: 1
     };
@@ -82,7 +82,6 @@ lazy_static! {
 }
 
 pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
-    use AnimationTarget::*;
     use ControlMessage::*;
     use StateChange::*;
     use WaveformType::*;
@@ -94,8 +93,8 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
         Box::new(|v| Animation(Set(Speed(bipolar_from_midi(v))))),
     );
     add(
-        WEIGHT,
-        Box::new(|v| Animation(Set(Weight(unipolar_from_midi(v))))),
+        SIZE,
+        Box::new(|v| Animation(Set(Size(unipolar_from_midi(v))))),
     );
     add(
         DUTY_CYCLE,
@@ -121,32 +120,50 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
     }
 
     // target select
-    add(ROTATION, Box::new(|_| Animation(Set(Target(Rotation)))));
-    add(THICKNESS, Box::new(|_| Animation(Set(Target(Thickness)))));
-    add(SIZE, Box::new(|_| Animation(Set(Target(Size)))));
     add(
-        ASPECT_RATIO,
-        Box::new(|_| Animation(Set(Target(AspectRatio)))),
-    );
-    add(COLOR, Box::new(|_| Animation(Set(Target(Color)))));
-    add(
-        COLOR_SPREAD,
-        Box::new(|_| Animation(Set(Target(ColorSpread)))),
+        TARGET_ROTATION,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::Rotation)))),
     );
     add(
-        COLOR_PERIODICITY,
-        Box::new(|_| Animation(Set(Target(ColorPeriodicity)))),
+        TARGET_THICKNESS,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::Thickness)))),
     );
     add(
-        COLOR_SATURATION,
-        Box::new(|_| Animation(Set(Target(ColorSaturation)))),
+        TARGET_SIZE,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::Size)))),
     );
     add(
-        MARQUEE,
-        Box::new(|_| Animation(Set(Target(MarqueeRotation)))),
+        TARGET_ASPECT_RATIO,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::AspectRatio)))),
     );
-    add(POSITIONX, Box::new(|_| Animation(Set(Target(PositionX)))));
-    add(POSITIONY, Box::new(|_| Animation(Set(Target(PositionY)))));
+    add(
+        TARGET_COLOR,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::Color)))),
+    );
+    add(
+        TARGET_COLOR_SPREAD,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::ColorSpread)))),
+    );
+    add(
+        TARGET_COLOR_PERIODICITY,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::ColorPeriodicity)))),
+    );
+    add(
+        TARGET_COLOR_SATURATION,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::ColorSaturation)))),
+    );
+    add(
+        TARGET_MARQUEE,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::MarqueeRotation)))),
+    );
+    add(
+        TARGET_POSITIONX,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::PositionX)))),
+    );
+    add(
+        TARGET_POSITIONY,
+        Box::new(|_| Animation(Set(Target(AnimationTarget::PositionY)))),
+    );
 
     // pulse/invert
     add(PULSE, Box::new(|_| Animation(TogglePulse)));
@@ -164,11 +181,11 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
         );
     }
 
+    add(USE_AUDIO_SIZE, Box::new(|_| Animation(ToggleUseAudioSize)));
     add(
-        USE_AUDIO_WEIGHT,
-        Box::new(|_| Animation(ToggleUseAudioWeight)),
+        USE_AUDIO_SPEED,
+        Box::new(|_| Animation(ToggleUseAudioSpeed)),
     );
-    add(USE_AUDIO_RATE, Box::new(|_| Animation(ToggleUseAudioRate)));
 }
 
 /// Emit midi messages to update UIs given the provided state change.
@@ -182,7 +199,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
 
     match sc {
         Speed(v) => send(event(SPEED, bipolar_to_midi(v))),
-        Weight(v) => send(event(WEIGHT, unipolar_to_midi(v))),
+        Size(v) => send(event(SIZE, unipolar_to_midi(v))),
         DutyCycle(v) => send(event(DUTY_CYCLE, unipolar_to_midi(v))),
         Smoothing(v) => send(event(SMOOTHING, unipolar_to_midi(v))),
         Waveform(v) => {
@@ -202,17 +219,17 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
             use AnimationTarget::*;
             TARGET_SELECT_BUTTONS.select(
                 match v {
-                    Rotation => ROTATION,
-                    Thickness => THICKNESS,
-                    Size => SIZE,
-                    AspectRatio => ASPECT_RATIO,
-                    Color => COLOR,
-                    ColorSpread => COLOR_SPREAD,
-                    ColorPeriodicity => COLOR_PERIODICITY,
-                    ColorSaturation => COLOR_SATURATION,
-                    MarqueeRotation => MARQUEE,
-                    PositionX => POSITIONX,
-                    PositionY => POSITIONY,
+                    Rotation => TARGET_ROTATION,
+                    Thickness => TARGET_THICKNESS,
+                    Size => TARGET_SIZE,
+                    AspectRatio => TARGET_ASPECT_RATIO,
+                    Color => TARGET_COLOR,
+                    ColorSpread => TARGET_COLOR_SPREAD,
+                    ColorPeriodicity => TARGET_COLOR_PERIODICITY,
+                    ColorSaturation => TARGET_COLOR_SATURATION,
+                    MarqueeRotation => TARGET_MARQUEE,
+                    PositionX => TARGET_POSITIONX,
+                    PositionY => TARGET_POSITIONY,
                 },
                 send,
             );
@@ -229,7 +246,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 send,
             );
         }
-        UseAudioWeight(v) => send(event(USE_AUDIO_WEIGHT, v as u8)),
-        UseAudioRate(v) => send(event(USE_AUDIO_RATE, v as u8)),
+        UseAudioSize(v) => send(event(USE_AUDIO_SIZE, v as u8)),
+        UseAudioSpeed(v) => send(event(USE_AUDIO_SPEED, v as u8)),
     }
 }

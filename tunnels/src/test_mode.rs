@@ -63,7 +63,7 @@ pub fn stress(channel_count: usize, i: usize, channel: &mut Channel) {
                 anim,
                 AnimationStateChange::Speed(BipolarFloat::new(i as f64 / 3.0)),
             );
-            set_animation_state(anim, AnimationStateChange::Weight(UnipolarFloat::new(0.5)));
+            set_animation_state(anim, AnimationStateChange::Size(UnipolarFloat::new(0.5)));
             set_animation_state(anim, AnimationStateChange::Target(Target::Thickness));
             set_animation_state(anim, AnimationStateChange::NPeriods(3));
         }

@@ -107,6 +107,8 @@ pub struct ControllableClock {
     retrigger: bool,
     /// submaster level for this clock
     submaster_level: UnipolarFloat,
+    /// If true, modulate the submaster level using audio envelope.
+    use_audio_size: bool,
 }
 
 impl Default for ControllableClock {
@@ -129,6 +131,7 @@ impl ControllableClock {
             tick_indicator: TransientIndicator::new(Duration::from_millis(100)),
             retrigger: false,
             submaster_level: UnipolarFloat::ONE,
+            use_audio_size: false,
         }
     }
 
@@ -136,8 +139,17 @@ impl ControllableClock {
         self.clock.phase()
     }
 
+    /// Return the current submaster level.
     pub fn submaster_level(&self) -> UnipolarFloat {
         self.submaster_level
+    }
+
+    /// Return true if we should use audio envelope to scale submaster level.
+    /// This is returned independently, rather than applied to the submaster
+    /// level directly, to allow clients of this submaster to avoid double-
+    /// modulating with audio envelope.
+    pub fn use_audio_size(&self) -> bool {
+        self.use_audio_size
     }
 
     /// Update the state of this clock.
@@ -161,6 +173,8 @@ impl ControllableClock {
         emitter.emit_clock_state_change(OneShot(self.clock.one_shot));
         emitter.emit_clock_state_change(SubmasterLevel(self.submaster_level));
         emitter.emit_clock_state_change(Ticked(self.tick_indicator.state()));
+        emitter.emit_clock_state_change(UseAudioSpeed(self.clock.use_audio));
+        emitter.emit_clock_state_change(UseAudioSize(self.use_audio_size));
     }
 
     /// Handle a control event.
@@ -187,6 +201,15 @@ impl ControllableClock {
             ToggleRetrigger => {
                 self.handle_state_change(StateChange::Retrigger(!self.retrigger), emitter);
             }
+            ToggleUseAudioSize => {
+                self.handle_state_change(StateChange::UseAudioSize(!self.use_audio_size), emitter);
+            }
+            ToggleUseAudioSpeed => {
+                self.handle_state_change(
+                    StateChange::UseAudioSpeed(!self.clock.use_audio),
+                    emitter,
+                );
+            }
         }
     }
 
@@ -197,6 +220,8 @@ impl ControllableClock {
             Retrigger(v) => self.retrigger = v,
             OneShot(v) => self.clock.set_one_shot(v),
             SubmasterLevel(v) => self.submaster_level = v,
+            UseAudioSpeed(v) => self.clock.use_audio = v,
+            UseAudioSize(v) => self.use_audio_size = v,
             Ticked(_) => (),
         };
         emitter.emit_clock_state_change(sc);
@@ -208,6 +233,8 @@ pub enum StateChange {
     Retrigger(bool),
     OneShot(bool),
     SubmasterLevel(UnipolarFloat),
+    UseAudioSize(bool),
+    UseAudioSpeed(bool),
     /// Outgoing only, no effect as control.
     Ticked(bool),
 }
@@ -217,6 +244,8 @@ pub enum ControlMessage {
     Tap,
     ToggleOneShot,
     ToggleRetrigger,
+    ToggleUseAudioSize,
+    ToggleUseAudioSpeed,
 }
 
 pub trait EmitStateChange {
