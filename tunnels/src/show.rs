@@ -37,7 +37,7 @@ pub struct Show {
     dispatcher: Dispatcher,
     audio_input: AudioInput,
     state: ShowState,
-    pub save_path: Option<PathBuf>,
+    save_path: Option<PathBuf>,
     last_save: Option<Instant>,
 }
 
@@ -47,6 +47,7 @@ impl Show {
         midi_devices: Vec<MidiDeviceSpec>,
         osc_devices: Vec<OscDeviceSpec>,
         audio_input_device: Option<String>,
+        save_path: Option<PathBuf>,
     ) -> Result<Self, Box<dyn Error>> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices
@@ -66,7 +67,7 @@ impl Show {
                 clocks: ClockBank::new(),
                 color_palette: ColorPalette::new(),
             },
-            save_path: None,
+            save_path,
             last_save: None,
         })
     }
@@ -271,7 +272,7 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<(), Box<dyn Error>> {
-        let mut show = Show::new(Vec::new(), Vec::new(), None)?;
+        let mut show = Show::new(Vec::new(), Vec::new(), None, None)?;
 
         show.test_mode(stress);
 

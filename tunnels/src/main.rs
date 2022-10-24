@@ -60,16 +60,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         prompt_audio()?
     };
 
-    let mut show = Show::new(midi_devices, osc_devices, audio_input_device)?;
+    let paths = if test_mode.is_some() {
+        LoadSaveConfig {
+            load_path: None,
+            save_path: None,
+        }
+    } else {
+        prompt_load_save()?
+    };
+
+    let mut show = Show::new(
+        midi_devices,
+        osc_devices,
+        audio_input_device,
+        paths.save_path,
+    )?;
 
     if let Some(setup_test) = test_mode {
         show.test_mode(setup_test);
-    } else {
-        let paths = prompt_load_save()?;
-        show.save_path = paths.save_path;
-        if let Some(load_path) = paths.load_path {
-            show.load(&load_path)?;
-        }
+    } else if let Some(load_path) = paths.load_path {
+        show.load(&load_path)?;
     }
 
     show.run(Duration::from_micros(16667))
