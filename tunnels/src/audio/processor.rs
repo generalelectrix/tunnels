@@ -13,6 +13,7 @@ pub struct ProcessorSettingsInner {
     pub filter_cutoff: AtomicF32,    // Hz
     pub envelope_attack: AtomicF32,  // sec
     pub envelope_release: AtomicF32, // sec
+    pub compression: AtomicF32,      // unit range
 }
 
 impl ProcessorSettingsInner {
@@ -34,6 +35,7 @@ impl Default for ProcessorSettingsInner {
             filter_cutoff: AtomicF32::new(Self::DEFAULT_FILTER_CUTOFF),
             envelope_attack: AtomicF32::new(Self::DEFAULT_ENVELOPE_ATTACK),
             envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
+            compression: AtomicF32::new(0.0),
         }
     }
 }
@@ -45,6 +47,7 @@ pub struct Processor {
     filter_cutoff: f32,
     envelope_attack: f32,
     envelope_release: f32,
+    compression_factor: f32,
     channel_count: usize,
     filters: Vec<FilterProcessor<f32>>,
     envelopes: Vec<EnvelopeFollowerProcessor>,
@@ -56,6 +59,7 @@ impl Processor {
             filter_cutoff: handle.filter_cutoff.get(),
             envelope_attack: handle.envelope_attack.get(),
             envelope_release: handle.envelope_release.get(),
+            compression_factor: handle.compression.get(),
             settings: handle,
             channel_count: 0,
             filters: Vec::new(),
@@ -67,7 +71,6 @@ impl Processor {
     fn maybe_update_parameters(&mut self) {
         let new_filter_cutoff = self.settings.filter_cutoff.get();
         if new_filter_cutoff != self.filter_cutoff {
-            info!("Updating filter cutoff to {}", new_filter_cutoff);
             self.filter_cutoff = new_filter_cutoff;
             for filter in self.filters.iter_mut() {
                 filter.set_cutoff(new_filter_cutoff);
@@ -78,10 +81,6 @@ impl Processor {
         if new_envelope_attack != self.envelope_attack
             || new_envelope_release != self.envelope_release
         {
-            info!(
-                "Updating envelope parameters to {}, {}",
-                new_envelope_attack, new_envelope_release
-            );
             self.envelope_attack = new_envelope_attack;
             self.envelope_release = new_envelope_release;
             let attack = Duration::from_secs_f32(new_envelope_attack);
@@ -92,6 +91,7 @@ impl Processor {
                 handle.set_release(release);
             }
         }
+        self.compression_factor = self.settings.compression.get();
     }
 }
 
@@ -146,8 +146,28 @@ impl SimpleAudioProcessor for Processor {
             envelope_sum += envelope.handle().state();
         }
 
-        self.settings
-            .envelope
-            .set(envelope_sum / self.channel_count as f32);
+        // Compute the average and apply compression.
+        let envelope_val = compress_envelope(
+            envelope_sum / self.channel_count as f32,
+            self.compression_factor,
+        );
+
+        self.settings.envelope.set(envelope_val);
     }
+}
+
+/// Provide direct functional compression of the audio envelope.
+/// This stands in for audio compression, as it effectively uses the existing
+/// envelope attack/release as the compressor attack/release.
+/// The resulting compression always maps 0 to 0 and 1 to 1, so it behaves
+/// roughly like a one-knob compressor with effective make-up gain of unity
+/// for full-range signals.  This would provide unappealing compression for
+/// the actual audio signal but should be useful for reactivity.
+///
+/// The compression curve is generated as a quadratic.
+fn compress_envelope(envelope: f32, compression_factor: f32) -> f32 {
+    if compression_factor == 0.0 {
+        return envelope;
+    }
+    unimplemented!();
 }

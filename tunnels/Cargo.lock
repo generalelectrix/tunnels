@@ -101,9 +101,9 @@ dependencies = [
 
 [[package]]
 name = "augmented-atomics"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec85baced6487991638ef0eb42ccfa28e57c6346d32eaece06a7323237aad79"
+checksum = "29d1a11afb9994191da60619a1471f355a3004a354bd4bab0317292baffaa886"
 dependencies = [
  "num-traits",
  "serde",
