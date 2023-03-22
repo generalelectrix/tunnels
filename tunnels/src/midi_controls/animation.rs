@@ -45,7 +45,7 @@ const PULSE: Mapping = note_on_ch1(0);
 const INVERT: Mapping = note_on_ch1(1);
 const USE_AUDIO_SIZE: Mapping = note_on_ch1(2);
 const USE_AUDIO_SPEED: Mapping = note_on_ch1(3);
-const STANDING: Mapping = note_on_ch1(4);
+const STANDING: Mapping = note_on_ch1(7);
 
 const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
