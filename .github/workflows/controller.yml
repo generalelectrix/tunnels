@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install alsa
-        run: apt-get install libasound2-dev
+        run: sudo apt-get install libasound2-dev
       - name: Build controller
         run: cargo build --verbose
         working-directory: tunnels
