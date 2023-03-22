@@ -252,20 +252,13 @@ pub struct ShowState {
 
 #[cfg(test)]
 mod test {
-    use tunnels_lib::number::UnipolarFloat;
+    use std::collections::HashSet;
+
+    use tunnels_lib::{number::UnipolarFloat, LayerCollection};
 
     use super::*;
     use crate::test_mode::stress;
-    use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
-    };
-
-    fn calculate_hash<T: Hash>(t: &T) -> u64 {
-        let mut s = DefaultHasher::new();
-        t.hash(&mut s);
-        s.finish()
-    }
+    use insta::assert_yaml_snapshot;
 
     /// Test show rendering against static test expectations.
     /// The purpose of this test is to catch accidental regressions in the
@@ -276,30 +269,20 @@ mod test {
 
         show.test_mode(stress);
 
-        // Before any evolution, all beams should have the same hash.
-        check_render(&show, vec![10192734706909399927; 8]);
+        assert_yaml_snapshot!("before_evolution", check_render(&show, 1));
 
         // Evolve by one timestep.
         show.update_state(Duration::from_micros(16667));
 
-        check_render(
-            &show,
-            vec![
-                11099297128101933385,
-                3353985019292787671,
-                5185332194001566062,
-                11932444950289299954,
-                8376301734077447906,
-                1310600794707049194,
-                3051887567039304307,
-                10270101680240701565,
-            ],
+        assert_yaml_snapshot!(
+            "after_evolution",
+            check_render(&show, show.state.mixer.channel_count())
         );
         Ok(())
     }
 
-    /// Render the state of the show, hash the layers, and compare to expectation.
-    fn check_render(show: &Show, beam_hashes: Vec<u64>) {
+    /// Render the state of the show with some assertions on structure.
+    fn check_render(show: &Show, unique_beam_count: usize) -> LayerCollection {
         let video_feeds = show.state.mixer.render(
             &show.state.clocks,
             &show.state.color_palette,
@@ -310,7 +293,6 @@ mod test {
         assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());
 
         // Channel 0 should contain data, but none of the others.
-        assert!(video_feeds[0].len() > 0);
         for (i, chan) in video_feeds.iter().enumerate() {
             if i == 0 {
                 assert!(chan.len() > 0);
@@ -319,10 +301,10 @@ mod test {
             }
         }
 
-        // Hash each beam and compare to our expectations.
-        assert_eq!(beam_hashes.len(), video_feeds[0].len());
-        for (beam_hash, channel) in beam_hashes.iter().zip(video_feeds[0].iter()) {
-            assert_eq!(*beam_hash, calculate_hash(channel));
-        }
+        let first_channel = video_feeds.into_iter().next().unwrap();
+
+        let beam_hashes: HashSet<_> = first_channel.iter().collect();
+        assert_eq!(beam_hashes.len(), unique_beam_count);
+        first_channel
     }
 }
