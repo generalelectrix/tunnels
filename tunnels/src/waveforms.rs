@@ -5,33 +5,99 @@ use tunnels_lib::number::{Phase, UnipolarFloat};
 const TWO_PI: f64 = 2.0 * PI;
 const HALF_PI: f64 = PI / 2.0;
 
-pub fn sine(
-    mut phase: Phase,
-    _smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    if phase > duty_cycle || duty_cycle == 0.0 {
+/// Common args passed to all waveform generating functions.
+/// Spaital and temporal phases are equivalent for travelling waves and will be
+/// summed.
+/// For standing waves, the temporal phase is used to compute the overall
+/// envelope modulation, while the spatial phase is used to determine the offset
+/// into the waveform.
+pub struct WaveformArgs {
+    pub phase_spatial: Phase,
+    pub phase_temporal: Phase,
+    pub smoothing: UnipolarFloat,
+    pub duty_cycle: UnipolarFloat,
+    pub pulse: bool,
+    pub standing: bool,
+}
+
+impl WaveformArgs {
+    /// Return a temporal scaling factor and processed waveform args.
+    /// This implements standing vs travelling wave behavior for all waveforms.
+    fn spatial_params(&self) -> (f64, WaveformArgsSpatial) {
+        if self.standing {
+            let mut amplitude = (TWO_PI * self.phase_temporal.val()).cos();
+            // In pulse mode, standing waves should still only take positive values.
+            if self.pulse {
+                amplitude = (amplitude + 1.0) / 2.0;
+            }
+            let spatial_args = WaveformArgsSpatial {
+                phase: self.phase_spatial,
+                smoothing: self.smoothing,
+                duty_cycle: self.duty_cycle,
+                pulse: self.pulse,
+            };
+            (amplitude, spatial_args)
+        } else {
+            (
+                1.0,
+                WaveformArgsSpatial {
+                    phase: self.phase_spatial + self.phase_temporal,
+                    smoothing: self.smoothing,
+                    duty_cycle: self.duty_cycle,
+                    pulse: self.pulse,
+                },
+            )
+        }
+    }
+}
+
+/// Common args passed to all spatial waveform generation functions.
+struct WaveformArgsSpatial {
+    pub phase: Phase,
+    pub smoothing: UnipolarFloat,
+    pub duty_cycle: UnipolarFloat,
+    pub pulse: bool,
+}
+
+impl WaveformArgsSpatial {
+    /// Return true if the value should be 0 due to set duty cycle.
+    fn outside_duty_cycle(&self) -> bool {
+        self.phase > self.duty_cycle || self.duty_cycle == 0.0
+    }
+
+    /// Return the phase scaled to the duty cycle.
+    fn duty_cycle_scaled_phase(&self) -> Phase {
+        self.phase / self.duty_cycle
+    }
+}
+
+pub fn sine(args: &WaveformArgs) -> f64 {
+    let (amplitude, args) = args.spatial_params();
+    amplitude * sine_spatial(&args)
+}
+
+fn sine_spatial(args: &WaveformArgsSpatial) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
+    let phase = args.duty_cycle_scaled_phase();
+    if args.pulse {
         return ((TWO_PI * phase.val() - HALF_PI).sin() + 1.0) / 2.0;
     }
     (TWO_PI * phase.val()).sin()
 }
 
-pub fn triangle(
-    mut phase: Phase,
-    _smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    if phase > duty_cycle || duty_cycle == 0.0 {
+pub fn triangle(args: &WaveformArgs) -> f64 {
+    let (amplitude, args) = args.spatial_params();
+    amplitude * triangle_spatial(&args)
+}
+
+fn triangle_spatial(args: &WaveformArgsSpatial) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
+    let phase = args.duty_cycle_scaled_phase();
+    if args.pulse {
         return if phase < 0.5 {
             2.0 * phase.val()
         } else {
@@ -48,27 +114,32 @@ pub fn triangle(
     }
 }
 
-pub fn square(
-    mut phase: Phase,
-    mut smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    // internal smoothing scale is 0 to 0.25.
-    smoothing = smoothing * UnipolarFloat::new(0.25);
+pub fn square(args: &WaveformArgs) -> f64 {
+    let (amplitude, mut args) = args.spatial_params();
+    // Fix bug where square pulse is 1 everywhere by compressing duty cycle.
+    if args.pulse {
+        args.duty_cycle = args.duty_cycle * UnipolarFloat::new(0.5);
+    }
+    amplitude * square_spatial(&args)
+}
 
-    if phase > duty_cycle || duty_cycle == 0.0 {
+fn square_spatial(args: &WaveformArgsSpatial) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
-        return square(
-            phase * UnipolarFloat::new(0.5),
-            smoothing,
-            UnipolarFloat::new(1.0),
-            false,
-        );
+
+    let phase = args.duty_cycle_scaled_phase();
+    if args.pulse {
+        return square_spatial(&WaveformArgsSpatial {
+            phase: phase * UnipolarFloat::new(0.5),
+            smoothing: args.smoothing,
+            duty_cycle: UnipolarFloat::new(1.0),
+            pulse: false,
+        });
     }
+    // internal smoothing scale is 0 to 0.25.
+    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
+
     if smoothing == 0.0 {
         return if phase < 0.5 { 1.0 } else { -1.0 };
     }
@@ -86,27 +157,27 @@ pub fn square(
     }
 }
 
-pub fn sawtooth(
-    mut phase: Phase,
-    mut smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    // internal smoothing scale is 0 to 0.25.
-    smoothing = smoothing * UnipolarFloat::new(0.25);
+pub fn sawtooth(args: &WaveformArgs) -> f64 {
+    let (amplitude, args) = args.spatial_params();
+    amplitude * sawtooth_spatial(&args)
+}
 
-    if phase > duty_cycle || duty_cycle == 0.0 {
+fn sawtooth_spatial(args: &WaveformArgsSpatial) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
-        return sawtooth(
-            phase * UnipolarFloat::new(0.5),
-            smoothing,
-            UnipolarFloat::new(1.0),
-            false,
-        );
+    let phase = args.duty_cycle_scaled_phase();
+
+    if args.pulse {
+        return sawtooth_spatial(&WaveformArgsSpatial {
+            phase: phase * UnipolarFloat::new(0.5),
+            smoothing: args.smoothing,
+            duty_cycle: UnipolarFloat::new(1.0),
+            pulse: false,
+        });
     }
+    // internal smoothing scale is 0 to 0.25.
+    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
     if smoothing == 0.0 {
         return if phase < 0.5 {
             2.0 * phase.val()
@@ -133,7 +204,7 @@ mod test {
 
     fn debug() -> Result<(), Box<dyn Error>> {
         use plotters::prelude::*;
-        let points = generate_span(sawtooth, 0.1, 0.5, true);
+        let points = generate_span(sawtooth_spatial, 0.1, 0.5, true);
 
         let root = BitMapBackend::new("waveform_test.png", (1600, 1200)).into_drawing_area();
         root.fill(&WHITE)?;
@@ -168,7 +239,7 @@ mod test {
     }
 
     fn generate_span(
-        f: fn(Phase, UnipolarFloat, UnipolarFloat, bool) -> f64,
+        f: fn(&WaveformArgsSpatial) -> f64,
         smoothing: f64,
         duty_cycle: f64,
         pulse: bool,
@@ -179,12 +250,12 @@ mod test {
             .map(|angle| {
                 (
                     angle.val(),
-                    f(
-                        angle,
-                        UnipolarFloat::new(smoothing),
-                        UnipolarFloat::new(duty_cycle),
+                    f(&WaveformArgsSpatial {
+                        phase: angle,
+                        smoothing: UnipolarFloat::new(smoothing),
+                        duty_cycle: UnipolarFloat::new(duty_cycle),
                         pulse,
-                    ),
+                    }),
                 )
             })
             .collect()

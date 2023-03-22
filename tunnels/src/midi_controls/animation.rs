@@ -45,6 +45,7 @@ const PULSE: Mapping = note_on_ch1(0);
 const INVERT: Mapping = note_on_ch1(1);
 const USE_AUDIO_SIZE: Mapping = note_on_ch1(2);
 const USE_AUDIO_SPEED: Mapping = note_on_ch1(3);
+const STANDING: Mapping = note_on_ch1(7);
 
 const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
@@ -165,9 +166,10 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
         Box::new(|_| Animation(Set(Target(AnimationTarget::PositionY)))),
     );
 
-    // pulse/invert
+    // pulse/invert/standing wave
     add(PULSE, Box::new(|_| Animation(TogglePulse)));
     add(INVERT, Box::new(|_| Animation(ToggleInvert)));
+    add(STANDING, Box::new(|_| Animation(ToggleStanding)));
 
     // clock select
     add(
@@ -235,6 +237,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
             );
         }
         Invert(v) => send(event(INVERT, v as u8)),
+        Standing(v) => send(event(STANDING, v as u8)),
         Pulse(v) => send(event(PULSE, v as u8)),
         ClockSource(v) => {
             let index = match v {

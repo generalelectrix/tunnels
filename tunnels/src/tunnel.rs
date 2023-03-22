@@ -2,6 +2,7 @@ use crate::{
     animation::{Animation, Target},
     clock_bank::ClockBank,
     palette::{ColorPalette, ColorPaletteIdx},
+    waveforms::WaveformArgs,
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
@@ -255,14 +256,16 @@ impl Tunnel {
                     (base_hue + col_center_adjust)
                         + (0.5
                             * (self.col_width.val() + col_width_adjust)
-                            * sawtooth(
-                                rel_angle
+                            * sawtooth(&WaveformArgs {
+                                phase_spatial: rel_angle
                                     * ((COLOR_SPREAD_SCALE * self.col_spread.val()).floor()
                                         + col_period_adjust),
-                                UnipolarFloat::ZERO,
-                                UnipolarFloat::ONE,
-                                false,
-                            )),
+                                phase_temporal: Phase::ZERO,
+                                smoothing: UnipolarFloat::ZERO,
+                                duty_cycle: UnipolarFloat::ONE,
+                                pulse: false,
+                                standing: false,
+                            })),
                 );
 
                 let sat = UnipolarFloat::new(self.col_sat.val() + col_sat_adjust);
