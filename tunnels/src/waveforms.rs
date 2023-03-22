@@ -25,7 +25,11 @@ impl WaveformArgs {
     /// This implements standing vs travelling wave behavior for all waveforms.
     fn spatial_params(&self) -> (f64, WaveformArgsSpatial) {
         if self.standing {
-            let amplitude = (TWO_PI * self.phase_temporal.val()).cos();
+            let mut amplitude = (TWO_PI * self.phase_temporal.val()).cos();
+            // In pulse mode, standing waves should still only take positive values.
+            if self.pulse {
+                amplitude = (amplitude + 1.0) / 2.0;
+            }
             let spatial_args = WaveformArgsSpatial {
                 phase: self.phase_spatial,
                 smoothing: self.smoothing,
