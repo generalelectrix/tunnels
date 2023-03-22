@@ -175,7 +175,7 @@ where
         }
     };
 
-    let input_stream = device.build_input_stream(&config, handle_buffer, handle_error)?;
+    let input_stream = device.build_input_stream(&config, handle_buffer, handle_error, None)?;
 
     input_stream.play()?;
     Ok(input_stream)
