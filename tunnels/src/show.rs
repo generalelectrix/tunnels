@@ -252,9 +252,9 @@ pub struct ShowState {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashSet;
+    use std::{collections::HashSet, sync::Arc};
 
-    use tunnels_lib::{number::UnipolarFloat, LayerCollection};
+    use tunnels_lib::{number::UnipolarFloat, ArcSegment, LayerCollection};
 
     use super::*;
     use crate::test_mode::stress;
@@ -301,10 +301,36 @@ mod test {
             }
         }
 
-        let first_channel = video_feeds.into_iter().next().unwrap();
+        let mut first_channel = video_feeds.into_iter().next().unwrap();
+
+        for mut beam in first_channel.iter_mut() {
+            for seg in Arc::get_mut(&mut beam).unwrap().iter_mut() {
+                trunc_arc_segment(seg);
+            }
+        }
 
         let beam_hashes: HashSet<_> = first_channel.iter().collect();
         assert_eq!(beam_hashes.len(), unique_beam_count);
         first_channel
+    }
+
+    /// Truncate the values in an arc segment to a reasonable precision.
+    /// This should avoid very minor platform-dependent floating point differences.
+    fn trunc_arc_segment(seg: &mut ArcSegment) {
+        seg.level = trunc_f64(seg.level);
+        seg.thickness = trunc_f64(seg.thickness);
+        seg.hue = trunc_f64(seg.hue);
+        seg.sat = trunc_f64(seg.sat);
+        seg.val = trunc_f64(seg.val);
+        seg.rad_x = trunc_f64(seg.rad_x);
+        seg.rad_y = trunc_f64(seg.rad_y);
+        seg.start = trunc_f64(seg.start);
+        seg.stop = trunc_f64(seg.stop);
+        seg.rot_angle = trunc_f64(seg.rot_angle);
+    }
+
+    /// Truncate a unit-float to 15 decimal places.
+    fn trunc_f64(v: f64) -> f64 {
+        (v * 1_000_000_000_000_000.).trunc() / 1_000_000_000_000_000.
     }
 }
