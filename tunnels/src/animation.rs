@@ -34,6 +34,7 @@ pub enum Target {
 pub struct Animation {
     pub waveform: Waveform,
     pulse: bool,
+    standing: bool,
     invert: bool,
     n_periods: i32,
     pub target: Target,
@@ -56,6 +57,7 @@ impl Animation {
         Self {
             waveform: Waveform::Sine,
             pulse: false,
+            standing: false,
             invert: false,
             n_periods: 0,
             target: Target::Size,
@@ -98,15 +100,13 @@ impl Animation {
 
     pub fn get_value(
         &self,
-        phase_offset: Phase,
+        spatial_phase_offset: Phase,
         external_clocks: &ClockBank,
         audio_envelope: UnipolarFloat,
     ) -> f64 {
         if !self.active() {
             return 0.;
         }
-
-        let angle = self.phase(external_clocks) + phase_offset * (self.n_periods as f64);
         let waveform_func = match self.waveform {
             Waveform::Sine => waveforms::sine,
             Waveform::Square => waveforms::square,
@@ -115,10 +115,12 @@ impl Animation {
         };
         let mut result = self.size.val()
             * waveform_func(&WaveformArgs {
-                phase: angle,
+                phase_spatial: spatial_phase_offset * (self.n_periods as f64),
+                phase_temporal: self.phase(external_clocks),
                 smoothing: self.smoothing,
                 duty_cycle: self.duty_cycle,
                 pulse: self.pulse,
+                standing: self.standing,
             });
 
         // scale this animation by submaster level if using external clock
@@ -144,6 +146,7 @@ impl Animation {
         use StateChange::*;
         emitter.emit_animation_state_change(Waveform(self.waveform));
         emitter.emit_animation_state_change(Pulse(self.pulse));
+        emitter.emit_animation_state_change(Standing(self.standing));
         emitter.emit_animation_state_change(Invert(self.invert));
         emitter.emit_animation_state_change(NPeriods(self.n_periods));
         emitter.emit_animation_state_change(Target(self.target));
@@ -165,6 +168,10 @@ impl Animation {
             TogglePulse => {
                 self.pulse = !self.pulse;
                 emitter.emit_animation_state_change(StateChange::Pulse(self.pulse));
+            }
+            ToggleStanding => {
+                self.standing = !self.standing;
+                emitter.emit_animation_state_change(StateChange::Standing(self.standing));
             }
             ToggleInvert => {
                 self.invert = !self.invert;
@@ -188,6 +195,7 @@ impl Animation {
         match sc {
             Waveform(v) => self.waveform = v,
             Pulse(v) => self.pulse = v,
+            Standing(v) => self.standing = v,
             Invert(v) => self.invert = v,
             NPeriods(v) => self.n_periods = v,
             Target(v) => self.target = v,
@@ -207,6 +215,7 @@ impl Animation {
 pub enum StateChange {
     Waveform(Waveform),
     Pulse(bool),
+    Standing(bool),
     Invert(bool),
     NPeriods(i32),
     Target(Target),
@@ -222,6 +231,7 @@ pub enum StateChange {
 pub enum ControlMessage {
     Set(StateChange),
     TogglePulse,
+    ToggleStanding,
     ToggleInvert,
     ToggleUseAudioSize,
     ToggleUseAudioSpeed,

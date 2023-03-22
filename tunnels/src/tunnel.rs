@@ -257,12 +257,14 @@ impl Tunnel {
                         + (0.5
                             * (self.col_width.val() + col_width_adjust)
                             * sawtooth(&WaveformArgs {
-                                phase: rel_angle
+                                phase_spatial: rel_angle
                                     * ((COLOR_SPREAD_SCALE * self.col_spread.val()).floor()
                                         + col_period_adjust),
+                                phase_temporal: Phase::ZERO,
                                 smoothing: UnipolarFloat::ZERO,
                                 duty_cycle: UnipolarFloat::ONE,
                                 pulse: false,
+                                standing: false,
                             })),
                 );
 
