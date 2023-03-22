@@ -2,7 +2,7 @@
 name = "zero_configure"
 version = "0.1.0"
 authors = ["Chris Macklin <chris.macklin@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 async-dnssd = "^0.4"
