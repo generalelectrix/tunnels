@@ -241,7 +241,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
         Pulse(v) => send(event(PULSE, v as u8)),
         ClockSource(v) => {
             let index = match v {
-                Some(source) => (source.0 as i32),
+                Some(source) => source.0 as i32,
                 None => -1,
             };
             CLOCK_SELECT_BUTTONS.select(
