@@ -1,5 +1,6 @@
 use crate::clock::ControllableClock;
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
+use crate::waveforms::WaveformArgs;
 use crate::{clock::Clock, clock_bank::ClockBank};
 use crate::{clock_bank::ClockIdx, waveforms};
 use serde::{Deserialize, Serialize};
@@ -112,8 +113,13 @@ impl Animation {
             Waveform::Sawtooth => waveforms::sawtooth,
             Waveform::Triangle => waveforms::triangle,
         };
-        let mut result =
-            self.size.val() * waveform_func(angle, self.smoothing, self.duty_cycle, self.pulse);
+        let mut result = self.size.val()
+            * waveform_func(&WaveformArgs {
+                phase: angle,
+                smoothing: self.smoothing,
+                duty_cycle: self.duty_cycle,
+                pulse: self.pulse,
+            });
 
         // scale this animation by submaster level if using external clock
         let mut use_audio_size = self.use_audio_size;

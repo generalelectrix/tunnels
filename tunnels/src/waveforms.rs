@@ -5,33 +5,43 @@ use tunnels_lib::number::{Phase, UnipolarFloat};
 const TWO_PI: f64 = 2.0 * PI;
 const HALF_PI: f64 = PI / 2.0;
 
-pub fn sine(
-    mut phase: Phase,
-    _smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    if phase > duty_cycle || duty_cycle == 0.0 {
+/// Common args passed to all waveform generating functions.
+pub struct WaveformArgs {
+    pub phase: Phase,
+    pub smoothing: UnipolarFloat,
+    pub duty_cycle: UnipolarFloat,
+    pub pulse: bool,
+}
+
+impl WaveformArgs {
+    /// Return true if the value should be 0 due to set duty cycle.
+    fn outside_duty_cycle(&self) -> bool {
+        self.phase > self.duty_cycle || self.duty_cycle == 0.0
+    }
+
+    /// Return the phase scaled to the duty cycle.
+    fn duty_cycle_scaled_phase(&self) -> Phase {
+        self.phase / self.duty_cycle
+    }
+}
+
+pub fn sine(args: &WaveformArgs) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
+    let phase = args.duty_cycle_scaled_phase();
+    if args.pulse {
         return ((TWO_PI * phase.val() - HALF_PI).sin() + 1.0) / 2.0;
     }
     (TWO_PI * phase.val()).sin()
 }
 
-pub fn triangle(
-    mut phase: Phase,
-    _smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    if phase > duty_cycle || duty_cycle == 0.0 {
+pub fn triangle(args: &WaveformArgs) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
+    let phase = args.duty_cycle_scaled_phase();
+    if args.pulse {
         return if phase < 0.5 {
             2.0 * phase.val()
         } else {
@@ -48,26 +58,22 @@ pub fn triangle(
     }
 }
 
-pub fn square(
-    mut phase: Phase,
-    mut smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    // internal smoothing scale is 0 to 0.25.
-    smoothing = smoothing * UnipolarFloat::new(0.25);
-
-    if phase > duty_cycle || duty_cycle == 0.0 {
+pub fn square(args: &WaveformArgs) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
-        return square(
-            phase * UnipolarFloat::new(0.5),
+
+    // internal smoothing scale is 0 to 0.25.
+    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
+
+    let phase = args.duty_cycle_scaled_phase();
+    if args.pulse {
+        return square(&WaveformArgs {
+            phase: phase * UnipolarFloat::new(0.5),
             smoothing,
-            UnipolarFloat::new(1.0),
-            false,
-        );
+            duty_cycle: UnipolarFloat::new(1.0),
+            pulse: false,
+        });
     }
     if smoothing == 0.0 {
         return if phase < 0.5 { 1.0 } else { -1.0 };
@@ -86,26 +92,21 @@ pub fn square(
     }
 }
 
-pub fn sawtooth(
-    mut phase: Phase,
-    mut smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    pulse: bool,
-) -> f64 {
-    // internal smoothing scale is 0 to 0.25.
-    smoothing = smoothing * UnipolarFloat::new(0.25);
-
-    if phase > duty_cycle || duty_cycle == 0.0 {
+pub fn sawtooth(args: &WaveformArgs) -> f64 {
+    if args.outside_duty_cycle() {
         return 0.0;
     }
-    phase = phase / duty_cycle;
-    if pulse {
-        return sawtooth(
-            phase * UnipolarFloat::new(0.5),
+    // internal smoothing scale is 0 to 0.25.
+    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
+    let phase = args.duty_cycle_scaled_phase();
+
+    if args.pulse {
+        return sawtooth(&WaveformArgs {
+            phase: phase * UnipolarFloat::new(0.5),
             smoothing,
-            UnipolarFloat::new(1.0),
-            false,
-        );
+            duty_cycle: UnipolarFloat::new(1.0),
+            pulse: false,
+        });
     }
     if smoothing == 0.0 {
         return if phase < 0.5 {
@@ -168,7 +169,7 @@ mod test {
     }
 
     fn generate_span(
-        f: fn(Phase, UnipolarFloat, UnipolarFloat, bool) -> f64,
+        f: fn(&WaveformArgs) -> f64,
         smoothing: f64,
         duty_cycle: f64,
         pulse: bool,
@@ -179,12 +180,12 @@ mod test {
             .map(|angle| {
                 (
                     angle.val(),
-                    f(
-                        angle,
-                        UnipolarFloat::new(smoothing),
-                        UnipolarFloat::new(duty_cycle),
+                    f(&WaveformArgs {
+                        phase: angle,
+                        smoothing: UnipolarFloat::new(smoothing),
+                        duty_cycle: UnipolarFloat::new(duty_cycle),
                         pulse,
-                    ),
+                    }),
                 )
             })
             .collect()
