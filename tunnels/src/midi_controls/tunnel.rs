@@ -150,7 +150,7 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
         ColorSaturation(v) => send(event(COL_SAT, unipolar_to_midi(v))),
         PaletteSelection(v) => {
             let index = match v {
-                Some(source) => (source.0 as i32),
+                Some(source) => source.0 as i32,
                 None => -1,
             };
             PALETTE_SELECT_BUTTONS.select(
