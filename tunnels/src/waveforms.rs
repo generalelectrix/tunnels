@@ -111,7 +111,11 @@ fn triangle_spatial(args: &WaveformArgsSpatial) -> f64 {
 }
 
 pub fn square(args: &WaveformArgs) -> f64 {
-    let (amplitude, args) = args.spatial_params();
+    let (amplitude, mut args) = args.spatial_params();
+    // Fix bug where square pulse is 1 everywhere by compressing duty cycle.
+    if args.pulse {
+        args.duty_cycle = args.duty_cycle * UnipolarFloat::new(0.5);
+    }
     amplitude * square_spatial(&args)
 }
 
