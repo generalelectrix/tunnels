@@ -128,18 +128,18 @@ fn square_spatial(args: &WaveformArgsSpatial) -> f64 {
         return 0.0;
     }
 
-    // internal smoothing scale is 0 to 0.25.
-    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
-
     let phase = args.duty_cycle_scaled_phase();
     if args.pulse {
         return square_spatial(&WaveformArgsSpatial {
             phase: phase * UnipolarFloat::new(0.5),
-            smoothing,
+            smoothing: args.smoothing,
             duty_cycle: UnipolarFloat::new(1.0),
             pulse: false,
         });
     }
+    // internal smoothing scale is 0 to 0.25.
+    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
+
     if smoothing == 0.0 {
         return if phase < 0.5 { 1.0 } else { -1.0 };
     }
@@ -166,18 +166,18 @@ fn sawtooth_spatial(args: &WaveformArgsSpatial) -> f64 {
     if args.outside_duty_cycle() {
         return 0.0;
     }
-    // internal smoothing scale is 0 to 0.25.
-    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
     let phase = args.duty_cycle_scaled_phase();
 
     if args.pulse {
         return sawtooth_spatial(&WaveformArgsSpatial {
             phase: phase * UnipolarFloat::new(0.5),
-            smoothing,
+            smoothing: args.smoothing,
             duty_cycle: UnipolarFloat::new(1.0),
             pulse: false,
         });
     }
+    // internal smoothing scale is 0 to 0.25.
+    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
     if smoothing == 0.0 {
         return if phase < 0.5 {
             2.0 * phase.val()
