@@ -5,16 +5,16 @@ version = "0.1.0"
 authors = [
     "Chris Macklin <chris.macklin@gmail.com>",
 ]
-edition = "2018"
+edition = "2021"
 
 [[bin]]
 name = "tunnelclient"
 
 [dependencies]
-piston_window = "0.118"
-piston2d-graphics = "0.39"
-pistoncore-glutin_window = "0.68"
-piston2d-opengl_graphics = "0.77"
+piston_window = "0.128.0"
+piston2d-graphics = "0.43.0"
+pistoncore-glutin_window = "0.71.0"
+piston2d-opengl_graphics = "0.82.0"
 interpolation = "0.2"
 yaml-rust = "0.4"
 rmp-serde = "1.1.1"
