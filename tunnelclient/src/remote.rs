@@ -125,7 +125,7 @@ pub struct Administrator {
 impl Administrator {
     pub fn new() -> Self {
         Administrator {
-            controller: Controller::new(SERVICE_NAME),
+            controller: Controller::new(SERVICE_NAME.to_string()),
         }
     }
 

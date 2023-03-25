@@ -1,7 +1,9 @@
 //! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
 //! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
 
-use async_dnssd::{browse, register_extended, BrowsedFlags, RegisterData, RegisterFlags};
+use async_dnssd::{
+    browse, register_extended, BrowsedFlags, RegisterData, RegisterFlags, ResolveResult,
+};
 use futures::{Future, Stream};
 use simple_error::bail;
 use tokio_core::reactor::{Core, Timeout};
@@ -103,65 +105,28 @@ impl Controller {
     /// For the moment, panic if anything goes wrong during initialization.
     /// This is acceptable as this action will run once during startup and there's nothing to do
     /// except bail completely if this process fails.
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: String) -> Self {
         let services = Arc::new(Mutex::new(HashMap::new()));
         let mut ctx = Context::new();
-        let registration_type = reg_type(name);
 
         let services_remote = services.clone();
         // Spawn a new thread to run the tokio event loop.
         // May want to refactor this in the future if we go whole hog on tokio for I/O.
         thread::spawn(move || {
-            let mut core = Core::new().unwrap();
-
-            let handle = core.handle();
-
-            let browse_result = browse(&registration_type, &handle)
-                .unwrap()
-                .filter_map(|event| {
-                    // If this service was added, continue processing.
-                    if event.flags.contains(BrowsedFlags::ADD) {
-                        Some(event)
-                    } else {
-                        // This service was dropped, remove it from the collection.
-                        services_remote.lock().unwrap().remove(&event.service_name);
-                        None
+            browse_forever(
+                &name,
+                |(service, name)| match req_socket(&service.host_target, service.port, &mut ctx) {
+                    Ok(socket) => {
+                        services_remote.lock().unwrap().insert(name, socket);
                     }
-                })
-                .and_then(|event| {
-                    let resolve_result = event.resolve(&handle);
-                    // Attach the service name to the resolve result so we can uniformly use it
-                    // to identify a particular client.
-                    resolve_result.map(move |res| (res, event.service_name))
-                })
-                .and_then(|(resolve_stream, service_name)| {
-                    // Create a stream that produces None after a timeout, select the two streams,
-                    // take items until we produce None due to timeout, then filter them.
-                    Ok(Timeout::new(Duration::from_secs(1), &handle)
-                        .expect("Couldn't create timeout future.")
-                        .into_stream()
-                        .map(|_| None)
-                        .select(resolve_stream.map(Some))
-                        .take_while(|item| Ok(item.is_some()))
-                        .filter_map(|x| x)
-                        // Tack on the service name.
-                        .map(move |resolved| (resolved, service_name.clone())))
-                })
-                .flatten()
-                .for_each(|(service, name)| {
-                    // Open a REQ socket to this service and add it to the collection.
-                    match req_socket(&service.host_target, service.port, &mut ctx) {
-                        Ok(socket) => {
-                            services_remote.lock().unwrap().insert(name, socket);
-                        }
-                        Err(e) => {
-                            println!("Could not connect to '{}':\n{}", service.host_target, e);
-                        }
+                    Err(e) => {
+                        println!("Could not connect to '{}':\n{}", service.host_target, e);
                     }
-                    Ok(())
-                });
-
-            core.run(browse_result).unwrap();
+                },
+                |name| {
+                    services_remote.lock().unwrap().remove(name);
+                },
+            );
         });
 
         Controller { services }
@@ -183,6 +148,58 @@ impl Controller {
         let response = socket.recv_bytes(0)?;
         Ok(response)
     }
+}
+
+/// Use the current thread to browse for services.
+/// Continues browsing forever.
+pub fn browse_forever<A, D>(name: &str, mut on_service_appear: A, mut on_service_drop: D)
+where
+    A: FnMut((ResolveResult, String)),
+    D: FnMut(&str),
+{
+    let registration_type = reg_type(name);
+    let mut core = Core::new().unwrap();
+
+    let handle = core.handle();
+
+    let browse_result = browse(&registration_type, &handle)
+        .unwrap()
+        .filter_map(|event| {
+            // If this service was added, continue processing.
+            if event.flags.contains(BrowsedFlags::ADD) {
+                Some(event)
+            } else {
+                // This service was dropped, remove it from the collection.
+                on_service_drop(&event.service_name);
+                None
+            }
+        })
+        .and_then(|event| {
+            let resolve_result = event.resolve(&handle);
+            // Attach the service name to the resolve result so we can uniformly use it
+            // to identify a particular client.
+            resolve_result.map(move |res| (res, event.service_name))
+        })
+        .and_then(|(resolve_stream, service_name)| {
+            // Create a stream that produces None after a timeout, select the two streams,
+            // take items until we produce None due to timeout, then filter them.
+            Ok(Timeout::new(Duration::from_secs(1), &handle)
+                .expect("Couldn't create timeout future.")
+                .into_stream()
+                .map(|_| None)
+                .select(resolve_stream.map(Some))
+                .take_while(|item| Ok(item.is_some()))
+                .filter_map(|x| x)
+                // Tack on the service name.
+                .map(move |resolved| (resolved, service_name.clone())))
+        })
+        .flatten()
+        .for_each(|result| {
+            on_service_appear(result);
+            Ok(())
+        });
+
+    core.run(browse_result).unwrap();
 }
 
 /// Try to connect a REQ socket at this host and port.
@@ -220,7 +237,7 @@ mod tests {
         let name = "test";
         let port = 10000;
 
-        let controller = Controller::new(name);
+        let controller = Controller::new(name.to_string());
 
         // Wait a moment, and assert that we can't see any services.
         sleep(500);
