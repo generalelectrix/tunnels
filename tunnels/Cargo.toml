@@ -4,6 +4,14 @@ version = "0.1.0"
 authors = ["general electrix <general.electrix@gmail.com>"]
 edition = "2021"
 
+[lib]
+name = "tunnels"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tunnels"
+path = "src/bin/bin.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
