@@ -20,7 +20,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
 use tunnels_lib::RunFlag;
-use zero_configure::{run_service_req_rep, Controller};
+use zero_configure::req_rep::{run_service_req_rep, Controller};
 use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelclient";
