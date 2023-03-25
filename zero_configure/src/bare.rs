@@ -6,10 +6,13 @@ use async_dnssd::{
 };
 use futures::{Future, Stream};
 
+use simple_error::bail;
 use tokio_core::reactor::{Core, Timeout};
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -57,6 +60,61 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn, Box<dyn Error>>
     Ok(Box::new(move || {
         send_stop.send(()).unwrap();
     }))
+}
+
+/// Maintain a collection of service instances we can remotely interact with.
+pub struct Browser<S: Send + Clone + 'static> {
+    services: Arc<Mutex<HashMap<String, S>>>,
+}
+
+impl<S: Send + Clone> Browser<S> {
+    /// Start up a new service controller at the given service name.
+    /// Asynchronously browse for new services, and remove them if they deregister.
+    /// For the moment, panic if anything goes wrong during initialization.
+    /// This is acceptable as this action will run once during startup and there's nothing to do
+    /// except bail completely if this process fails.
+    pub fn new<F>(name: String, open_service: F) -> Self
+    where
+        F: Fn(&ResolveResult) -> Result<S, Box<dyn Error>> + Send + 'static,
+    {
+        let services = Arc::new(Mutex::new(HashMap::new()));
+
+        let services_remote = services.clone();
+        // Spawn a new thread to run the tokio event loop.
+        // May want to refactor this in the future if we go whole hog on tokio for I/O.
+        thread::spawn(move || {
+            browse_forever(
+                &name,
+                |(service, name)| match open_service(&service) {
+                    Ok(service) => {
+                        services_remote.lock().unwrap().insert(name, service);
+                    }
+                    Err(e) => {
+                        println!("Could not connect to '{}':\n{}", service.host_target, e);
+                    }
+                },
+                |name| {
+                    services_remote.lock().unwrap().remove(name);
+                },
+            );
+        });
+
+        Browser { services }
+    }
+
+    /// List the services available on this controller.
+    pub fn list(&self) -> Vec<String> {
+        self.services.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// Borrow a service to perform an action.
+    pub fn use_service<A, R>(&mut self, name: &str, action: A) -> Option<R>
+    where
+        A: FnMut(&mut S) -> R,
+    {
+        let mut services = self.services.lock().unwrap();
+        services.get_mut(name).map(action)
+    }
 }
 
 /// Use the current thread to browse for services.

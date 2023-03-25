@@ -4,7 +4,7 @@ use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 use zmq::{Context, Socket};
 
-use crate::bare::{browse_forever, reg_type, register_service, StopFn};
+use crate::bare::{browse_forever, register_service, StopFn};
 
 /// Advertise a DNS-SD pub/sub service, sending a stream of T using msgpack.
 /// The service will be advertised until dropped.
@@ -41,4 +41,11 @@ impl<T: Serialize> Drop for PublisherService<T> {
     fn drop(&mut self) {
         self.stop.take().map(|stop| stop());
     }
+}
+
+pub struct SubscriberService<T> {
+    stop: Option<StopFn>,
+    socket: Socket,
+    send_buf: Vec<u8>,
+    _msg_type: PhantomData<T>,
 }
