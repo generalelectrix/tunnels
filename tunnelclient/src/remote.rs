@@ -20,7 +20,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
 use tunnels_lib::RunFlag;
-use zero_configure::{run_service, Controller};
+use zero_configure::{run_service_req_rep, Controller};
 use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelclient";
@@ -76,7 +76,7 @@ pub fn run_remote_service(ctx: Context, sender: Sender<(ClientConfig, RunFlag)>)
     // Run flag for currently-executing show, if there is one.
     let mut running_flag: Option<RunFlag> = None;
 
-    run_service(ctx, SERVICE_NAME, PORT, |request_buffer| {
+    run_service_req_rep(ctx, SERVICE_NAME, PORT, |request_buffer| {
         // Attempt to deserialize this request buffer as a client configuration.
         match deserialize_config(request_buffer) {
             Ok(config) => {

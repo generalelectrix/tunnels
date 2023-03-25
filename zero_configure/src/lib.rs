@@ -10,6 +10,7 @@ use zmq::{Context, Socket};
 
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,7 +23,7 @@ fn reg_type(name: &str) -> String {
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
 /// by the action callback back to the requester.
-pub fn run_service<F>(
+pub fn run_service_req_rep<F>(
     ctx: Context,
     name: &str,
     port: u16,
@@ -51,6 +52,44 @@ where
             }
         }
     }
+}
+
+/// Register a vanilla service over DNS-SD.
+/// Return a callback that will deregister the service.
+pub fn register_service(name: String, port: u16) -> Result<Box<dyn FnOnce()>, Box<dyn Error>> {
+    // FIXME: figure out how to better integrate tokio and deduplicate this code
+    let (send_stop, receive_stop) = channel();
+    let (send_success, receive_success) = channel();
+
+    thread::spawn(move || {
+        let core = match Core::new() {
+            Err(e) => {
+                send_success.send(Err(e)).unwrap();
+                return;
+            }
+            Ok(core) => core,
+        };
+
+        // Start advertising this service over DNS-SD.
+        let mut register_data = RegisterData::default();
+        register_data.flags = RegisterFlags::SHARED;
+
+        match register_extended(&reg_type(&name), port, register_data, &core.handle()) {
+            Err(e) => {
+                send_success.send(Err(e)).unwrap();
+            }
+            Ok(_registration) => {
+                send_success.send(Ok(())).unwrap();
+                receive_stop.recv().unwrap();
+            }
+        }
+    });
+
+    receive_success.recv().unwrap()?;
+
+    Ok(Box::new(move || {
+        send_stop.send(()).unwrap();
+    }))
 }
 
 /// Maintain a collection of service instances we can remotely interact with.
@@ -190,7 +229,7 @@ mod tests {
 
         // Start up the service; return DEADBEEF as a response.
         thread::spawn(move || {
-            run_service(Context::new(), name, port, |buffer| {
+            run_service_req_rep(Context::new(), name, port, |buffer| {
                 assert_eq!(testbytes(), buffer);
                 deadbeef()
             })
