@@ -30,15 +30,11 @@ pub struct Show {
 }
 
 impl Show {
-    pub fn new(
-        cfg: ClientConfig,
-        ctx: &mut Context,
-        run_flag: RunFlag,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(cfg: ClientConfig, ctx: Context, run_flag: RunFlag) -> Result<Self, Box<dyn Error>> {
         info!("Running on video channel {}.", cfg.video_channel);
 
         // Start up the timesync service.
-        let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx)?;
+        let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx.clone())?;
 
         // Synchronize timing with master host.
         info!(

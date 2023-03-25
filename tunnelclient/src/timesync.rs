@@ -27,7 +27,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new 0mq REQ connected to the provided socket addr.
-    pub fn new(host: &str, ctx: &mut Context) -> Result<Self, Box<dyn Error>> {
+    pub fn new(host: &str, ctx: Context) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::REQ)?;
         let addr = format!("tcp://{}:{}", host, PORT);
         socket.connect(&addr)?;
@@ -185,7 +185,7 @@ impl Synchronizer {
 #[test]
 #[ignore]
 fn test_synchronize() {
-    let mut client = Client::new("localhost", &mut Context::new()).unwrap();
+    let mut client = Client::new("localhost", Context::new()).unwrap();
     let sync = client.synchronize().expect("Test: synchronization failed");
     println!(
         "Ref time: {:?}, remote estimate: {}",

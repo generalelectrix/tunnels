@@ -22,12 +22,15 @@ fn reg_type(name: &str) -> String {
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
 /// by the action callback back to the requester.
-pub fn run_service<F>(name: &str, port: u16, mut action: F) -> Result<(), Box<dyn Error>>
+pub fn run_service<F>(
+    ctx: Context,
+    name: &str,
+    port: u16,
+    mut action: F,
+) -> Result<(), Box<dyn Error>>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
-    let ctx = Context::new();
-
     // Open the 0mq socket we'll use to service requests.
     let socket = ctx.socket(zmq::REP)?;
     let addr = format!("tcp://*:{}", port);
@@ -187,7 +190,7 @@ mod tests {
 
         // Start up the service; return DEADBEEF as a response.
         thread::spawn(move || {
-            run_service(name, port, |buffer| {
+            run_service(Context::new(), name, port, |buffer| {
                 assert_eq!(testbytes(), buffer);
                 deadbeef()
             })
