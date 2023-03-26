@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     clock::{
-        Clock, ClockState, ControlMessage as ClockControlMessage, ControllableClock,
+        Clock, ControlMessage as ClockControlMessage, ControllableClock,
         EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
@@ -10,14 +10,22 @@ use crate::{
 use log::error;
 use serde::{Deserialize, Serialize};
 use simple_error::{bail, SimpleError};
-use tunnels_lib::number::UnipolarFloat;
+use tunnels_lib::number::{Phase, UnipolarFloat};
 use typed_index_derive::TypedIndex;
 
-/// Read-only interface to a store of clocks, accessed via the ClockState trait.
+/// Read-only interface to the state of a collection of clocks.
 pub trait ClockStore {
-    /// Access a clock's state by index.
-    /// Return None if the index is out of bounds.
-    fn get(&self, index: ClockIdx) -> &dyn ClockState;
+    /// Return the current phase of this clock.
+    fn phase(&self, index: ClockIdx) -> Phase;
+
+    /// Return the current submaster level of this clock.
+    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat;
+
+    /// Return true if we should use audio envelope to scale submaster level.
+    /// This is returned independently, rather than applied to the submaster
+    /// level directly, to allow clients of the submaster to avoid double-
+    /// modulating with audio envelope.
+    fn use_audio_size(&self, index: ClockIdx) -> bool;
 }
 
 /// how many globally-available clocks?
@@ -28,7 +36,9 @@ pub const N_CLOCKS: usize = 4;
 )]
 #[typed_index(ControllableClock)]
 /// Index of a clock in the bank.
-/// Validated to always be in-range.
+/// Care should be taken to ensure that these values are always valid.
+/// External input should be accepted through ClockIdxExt and validated
+/// using from.
 pub struct ClockIdx(usize);
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -51,8 +61,16 @@ impl TryFrom<ClockIdxExt> for ClockIdx {
 pub struct ClockBank([ControllableClock; N_CLOCKS]);
 
 impl ClockStore for ClockBank {
-    fn get(&self, index: ClockIdx) -> &dyn ClockState {
-        &self.0[index] as &dyn ClockState
+    fn phase(&self, index: ClockIdx) -> Phase {
+        self.get(index).phase()
+    }
+
+    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
+        self.get(index).submaster_level()
+    }
+
+    fn use_audio_size(&self, index: ClockIdx) -> bool {
+        self.get(index).use_audio_size()
     }
 }
 
@@ -77,6 +95,10 @@ impl ClockBank {
                 },
             );
         }
+    }
+
+    pub fn get(&self, index: ClockIdx) -> &ControllableClock {
+        &self.0[index]
     }
 
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {

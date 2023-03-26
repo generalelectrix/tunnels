@@ -1,4 +1,4 @@
-use crate::clock::{ClockState, ControllableClock};
+use crate::clock::ControllableClock;
 use crate::clock_bank::{ClockIdxExt, ClockStore};
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms::WaveformArgs;
