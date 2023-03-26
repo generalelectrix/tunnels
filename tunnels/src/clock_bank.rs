@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     clock::{
-        ControlMessage as ClockControlMessage, ControllableClock,
+        ClockState, ControlMessage as ClockControlMessage, ControllableClock,
         EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
@@ -10,6 +10,13 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::UnipolarFloat;
 use typed_index_derive::TypedIndex;
+
+/// Read-only interface to a store of clocks, accessed via the ClockState trait.
+pub trait ClockStore {
+    /// Access a clock's state by index.
+    /// Return None if the index is out of bounds.
+    fn get(&self, index: ClockIdx) -> &dyn ClockState;
+}
 
 /// how many globally-available clocks?
 pub const N_CLOCKS: usize = 4;
@@ -24,14 +31,15 @@ pub struct ClockIdx(pub usize);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockBank([ControllableClock; N_CLOCKS]);
 
+impl ClockStore for ClockBank {
+    fn get(&self, index: ClockIdx) -> &dyn ClockState {
+        &self.0[index] as &dyn ClockState
+    }
+}
+
 impl ClockBank {
     pub fn new() -> Self {
         Self(Default::default())
-    }
-
-    /// Return an immutable reference to the selected clock.
-    pub fn get(&self, index: ClockIdx) -> &ControllableClock {
-        &self.0[index]
     }
 
     pub fn update_state<E: EmitStateChange>(
