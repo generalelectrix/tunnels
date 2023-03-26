@@ -2,12 +2,14 @@ use std::time::Duration;
 
 use crate::{
     clock::{
-        ClockState, ControlMessage as ClockControlMessage, ControllableClock,
+        Clock, ClockState, ControlMessage as ClockControlMessage, ControllableClock,
         EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
 };
+use log::error;
 use serde::{Deserialize, Serialize};
+use simple_error::{bail, SimpleError};
 use tunnels_lib::number::UnipolarFloat;
 use typed_index_derive::TypedIndex;
 
@@ -25,7 +27,24 @@ pub const N_CLOCKS: usize = 4;
     Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
 )]
 #[typed_index(ControllableClock)]
-pub struct ClockIdx(pub usize);
+/// Index of a clock in the bank.
+/// Validated to always be in-range.
+pub struct ClockIdx(usize);
+
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+/// Public-facing "request" for a clock index.
+/// Must be validated to become a proper ClockIdx.
+pub struct ClockIdxExt(pub usize);
+
+impl TryFrom<ClockIdxExt> for ClockIdx {
+    type Error = SimpleError;
+    fn try_from(value: ClockIdxExt) -> Result<Self, Self::Error> {
+        if value.0 >= N_CLOCKS {
+            bail!("clock index {} out of range", value.0);
+        }
+        Ok(ClockIdx(value.0))
+    }
+}
 
 /// Maintain a indexable collection of clocks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,13 +89,14 @@ impl ClockBank {
     }
 
     pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
-        self.0[msg.channel].control(
-            msg.msg,
-            &mut ChannelEmitter {
-                channel: msg.channel,
-                emitter,
-            },
-        )
+        let channel: ClockIdx = match msg.channel.try_into() {
+            Ok(id) => id,
+            Err(e) => {
+                error!("could not process clock control message {msg:?}: {e}");
+                return;
+            }
+        };
+        self.0[channel].control(msg.msg, &mut ChannelEmitter { channel, emitter })
     }
 }
 
@@ -95,8 +115,9 @@ impl<'e, E: EmitStateChange> EmitClockStateChange for ChannelEmitter<'e, E> {
     }
 }
 
+#[derive(Debug)]
 pub struct ControlMessage {
-    pub channel: ClockIdx,
+    pub channel: ClockIdxExt,
     pub msg: ClockControlMessage,
 }
 

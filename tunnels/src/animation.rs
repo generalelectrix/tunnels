@@ -1,9 +1,10 @@
 use crate::clock::{ClockState, ControllableClock};
-use crate::clock_bank::ClockStore;
+use crate::clock_bank::{ClockIdxExt, ClockStore};
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms::WaveformArgs;
 use crate::{clock::Clock, clock_bank::ClockBank};
 use crate::{clock_bank::ClockIdx, waveforms};
+use log::error;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
@@ -166,6 +167,19 @@ impl Animation {
         use ControlMessage::*;
         match msg {
             Set(sc) => self.handle_state_change(sc, emitter),
+            SetClockSource(source) => {
+                let source: Option<ClockIdx> = match source {
+                    Some(s) => match s.try_into() {
+                        Ok(s) => Some(s),
+                        Err(e) => {
+                            error!("could not process animation control message: {e}");
+                            return;
+                        }
+                    },
+                    None => None,
+                };
+                self.handle_state_change(StateChange::ClockSource(source), emitter);
+            }
             TogglePulse => {
                 self.pulse = !self.pulse;
                 emitter.emit_animation_state_change(StateChange::Pulse(self.pulse));
@@ -231,6 +245,11 @@ pub enum StateChange {
 
 pub enum ControlMessage {
     Set(StateChange),
+    /// Since clock IDs need to be validated, this path handles the fallible case.
+    /// FIXME: it would be nicer to validate this at control message creation time,
+    /// but at the moment control message creator functions are infallible and
+    /// that's more refactoring than I want to deal with right now.
+    SetClockSource(Option<ClockIdxExt>),
     TogglePulse,
     ToggleStanding,
     ToggleInvert,

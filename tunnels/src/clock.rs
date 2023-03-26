@@ -241,6 +241,7 @@ impl ControllableClock {
     }
 }
 
+#[derive(Debug)]
 pub enum StateChange {
     Rate(BipolarFloat),
     Retrigger(bool),
@@ -252,6 +253,7 @@ pub enum StateChange {
     Ticked(bool),
 }
 
+#[derive(Debug)]
 pub enum ControlMessage {
     Set(StateChange),
     Tap,
