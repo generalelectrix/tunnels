@@ -77,10 +77,10 @@ impl Animation {
         self.size > 0.0
     }
 
-    fn phase(&self, external_clocks: &ClockBank) -> Phase {
+    fn phase(&self, external_clocks: &impl ClockStore) -> Phase {
         match self.clock_source {
             None => self.internal_clock.phase(),
-            Some(id) => external_clocks.get(id).phase(),
+            Some(id) => external_clocks.phase(id),
         }
     }
 
@@ -103,7 +103,7 @@ impl Animation {
     pub fn get_value(
         &self,
         spatial_phase_offset: Phase,
-        external_clocks: &ClockBank,
+        external_clocks: &impl ClockStore,
         audio_envelope: UnipolarFloat,
     ) -> f64 {
         if !self.active() {
@@ -128,9 +128,8 @@ impl Animation {
         // scale this animation by submaster level if using external clock
         let mut use_audio_size = self.use_audio_size;
         if let Some(id) = self.clock_source {
-            let clock = external_clocks.get(id);
-            result *= clock.submaster_level().val();
-            use_audio_size = use_audio_size || clock.use_audio_size();
+            result *= external_clocks.submaster_level(id).val();
+            use_audio_size = use_audio_size || external_clocks.use_audio_size(id);
         }
         // scale this animation by audio envelope if set
         if use_audio_size {
