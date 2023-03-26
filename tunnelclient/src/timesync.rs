@@ -10,7 +10,7 @@ use std::mem;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tunnels_lib::{number::UnipolarFloat, Timestamp};
-use zero_configure::msgpack::Receive;
+use zero_configure::msgpack::{Receive, ReceiveResult};
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
@@ -48,7 +48,7 @@ impl Client {
     fn measure(&mut self) -> Result<Measurement, Box<dyn Error>> {
         let now = Instant::now();
         self.socket.send(&[][..], 0)?;
-        let buf = match self.receive_buffer(true) {
+        let buf = match self.receive_buffer(true)? {
             Some(buf) => buf,
             None => bail!("Unable to receive a response from timesync server."),
         };
@@ -103,12 +103,12 @@ impl Client {
 }
 
 impl Receive for Client {
-    fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
+    fn receive_buffer(&mut self, block: bool) -> ReceiveResult<Option<Vec<u8>>> {
         let flag = if block { 0 } else { DONTWAIT };
         if let Ok(b) = self.socket.recv_bytes(flag) {
-            Some(b)
+            Ok(Some(b))
         } else {
-            None
+            Ok(None)
         }
     }
 }

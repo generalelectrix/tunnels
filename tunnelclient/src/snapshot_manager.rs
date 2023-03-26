@@ -166,10 +166,10 @@ mod tests {
 
     use super::*;
     use crate::interpolate::Interpolate;
-    use crate::receive::test::arc_segment_for_test;
     use std::iter::Iterator;
     use std::sync::mpsc::{channel, Sender};
     use std::sync::Arc;
+    use tunnels_lib::arc_segment_for_test;
 
     fn mksnapshot(n: u64, time: Timestamp) -> Snapshot {
         Snapshot {

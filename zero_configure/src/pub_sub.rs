@@ -2,9 +2,13 @@ use std::{error::Error, marker::PhantomData};
 
 use rmp_serde::Serializer;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use zmq::{Context, Socket};
+use simple_error::bail;
+use zmq::{Context, Socket, DONTWAIT};
 
-use crate::bare::{browse_forever, register_service, Browser, StopFn};
+use crate::{
+    bare::{browse_forever, register_service, Browser, StopFn},
+    msgpack::{Receive, ReceiveResult},
+};
 
 /// Advertise a DNS-SD pub/sub service, sending a stream of T using msgpack.
 /// The service will be advertised until dropped.
@@ -84,11 +88,65 @@ impl<T: DeserializeOwned> SubscriberService<T> {
 /// A strongly-typed 0mq SUB socket.
 pub struct Receiver<T: DeserializeOwned> {
     socket: Socket,
+    topic: Option<Vec<u8>>,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> Receiver<T> {
-    fn new(ctx: &Context, cfg: SubConfig) -> Result<Self, Box<dyn Error>> {
-        unimplemented!()
+    /// Create a new 0mq SUB connected to the provided socket addr.
+    /// Expect a multipart message if a topic is provided.
+    pub fn new(
+        ctx: &Context,
+        host: &str,
+        port: u64,
+        topic: Option<Vec<u8>>,
+    ) -> Result<Self, Box<dyn Error>> {
+        let socket = ctx.socket(zmq::SUB)?;
+        let addr = format!("tcp://{}:{}", host, port);
+        socket.connect(&addr)?;
+        if let Some(ref topic) = topic {
+            socket.set_subscribe(topic)?;
+        }
+
+        Ok(Self {
+            socket,
+            topic,
+            _msg_type: PhantomData,
+        })
+    }
+
+    pub fn receive_msg(&mut self, block: bool) -> ReceiveResult<Option<T>> {
+        self.receive(block)
+    }
+}
+
+impl<T: DeserializeOwned> Receive for Receiver<T> {
+    fn receive_buffer(&mut self, block: bool) -> ReceiveResult<Option<Vec<u8>>> {
+        let flag = if block { 0 } else { DONTWAIT };
+
+        if self.topic.is_some() {
+            // The frame messages are two parts; the first part is the video channel, used as a 0mq
+            // topic filter.  Discard the topic filter, leaving just the msgpacked frame data as the
+            // second part of the message.
+            match self.socket.recv_multipart(flag) {
+                Ok(mut parts) => {
+                    if parts.len() != 2 {
+                        bail!("buffer receieve error, expected a 2-part message but got {} parts: {:?}", parts.len(), parts);
+                    }
+                    Ok(parts.pop())
+                }
+                Err(zmq::Error::EAGAIN) => {
+                    // No message was available.
+                    Ok(None)
+                }
+                Err(other_err) => bail!("buffer receieve error: {other_err}"),
+            }
+        } else {
+            match self.socket.recv_bytes(flag) {
+                Ok(msg) => Ok(Some(msg)),
+                Err(zmq::Error::EAGAIN) => Ok(None),
+                Err(other_err) => bail!("buffer receieve error: {other_err}"),
+            }
+        }
     }
 }
