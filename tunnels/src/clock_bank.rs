@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{
     clock::{
         Clock, ControlMessage as ClockControlMessage, ControllableClock,
-        EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange,
+        EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange, StaticClock,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
 };
@@ -99,6 +99,18 @@ impl ClockBank {
 
     pub fn get(&self, index: ClockIdx) -> &ControllableClock {
         &self.0[index]
+    }
+
+    /// Return a static snapshot of the state of this clock bank.
+    pub fn as_static(&self) -> [StaticClock; N_CLOCKS] {
+        // FIXME: need this method to avoid having to write this out explicitly
+        // https://doc.rust-lang.org/std/primitive.array.html#method.each_ref
+        [
+            self.0[0].as_static(),
+            self.0[1].as_static(),
+            self.0[2].as_static(),
+            self.0[3].as_static(),
+        ]
     }
 
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {

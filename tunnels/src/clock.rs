@@ -97,6 +97,14 @@ impl Clock {
     }
 }
 
+/// A static snapshot of externally-visible ControllableClock state.
+#[derive(Default)]
+pub struct StaticClock {
+    pub phase: Phase,
+    pub submaster_level: UnipolarFloat,
+    pub use_audio_size: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// A clock with a complete set of controls.
 pub struct ControllableClock {
@@ -151,6 +159,15 @@ impl ControllableClock {
     /// modulating with audio envelope.
     pub fn use_audio_size(&self) -> bool {
         self.use_audio_size
+    }
+
+    /// Get all clock state bundled into a struct.
+    pub fn as_static(&self) -> StaticClock {
+        StaticClock {
+            phase: self.phase(),
+            submaster_level: self.submaster_level(),
+            use_audio_size: self.use_audio_size(),
+        }
     }
 
     /// Update the state of this clock.

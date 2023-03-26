@@ -5,7 +5,10 @@
 use tunnels_lib::number::{Phase, UnipolarFloat};
 use zero_configure::pub_sub::PublisherService;
 
-use crate::clock_bank::{ClockBank, ClockIdx, ClockStore, N_CLOCKS};
+use crate::{
+    clock::StaticClock,
+    clock_bank::{ClockBank, ClockIdx, ClockStore, N_CLOCKS},
+};
 
 pub type ClockPublisher = PublisherService<ClockBank>;
 
@@ -27,14 +30,11 @@ impl ClockStore for StaticClockBank {
 }
 
 impl StaticClockBank {
+    fn from_clock_bank(bank: &ClockBank) -> Self {
+        Self(bank.as_static())
+    }
+
     fn get(&self, index: ClockIdx) -> &StaticClock {
         &self.0[usize::from(index)]
     }
-}
-
-/// A static snapshot of clock state.
-pub struct StaticClock {
-    phase: Phase,
-    submaster_level: UnipolarFloat,
-    use_audio_size: bool,
 }
