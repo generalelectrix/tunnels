@@ -18,21 +18,21 @@ const SERVICE_NAME: &'static str = "global_show_clocks";
 const PORT: u16 = 9090;
 
 /// Launch clock publisher service.
-pub fn publisher(ctx: Context) -> Result<ClockPublisher, Box<dyn Error>> {
+pub fn clock_publisher(ctx: &Context) -> Result<ClockPublisher, Box<dyn Error>> {
     PublisherService::new(ctx, SERVICE_NAME, PORT)
 }
 
 /// Launch clock subscriber service.
-pub fn subscriber(ctx: Context) -> ClockSubscriber {
+pub fn clock_subscriber(ctx: Context) -> ClockSubscriber {
     SubscriberService::new(ctx, SERVICE_NAME.to_string())
 }
 
-type ClockPublisher = PublisherService<StaticClockBank>;
-type ClockSubscriber = SubscriberService<StaticClockBank>;
+pub type ClockPublisher = PublisherService<StaticClockBank>;
+pub type ClockSubscriber = SubscriberService<StaticClockBank>;
 
 /// A collection of static clock state data, rendered from a ClockBank.
 #[derive(Serialize, Deserialize)]
-pub struct StaticClockBank([StaticClock; N_CLOCKS]);
+pub struct StaticClockBank(pub [StaticClock; N_CLOCKS]);
 
 impl ClockStore for StaticClockBank {
     fn phase(&self, index: ClockIdx) -> Phase {

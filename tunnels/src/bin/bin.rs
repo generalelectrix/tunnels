@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         midi_devices,
         osc_devices,
         audio_input_device,
+        prompt_bool("Run clock publisher service?")?,
         paths.save_path,
     )?;
 

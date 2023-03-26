@@ -15,6 +15,7 @@ use crate::{
     animation,
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
+    clock_server::{clock_publisher, ClockPublisher},
     control::Dispatcher,
     master_ui,
     master_ui::MasterUI,
@@ -36,6 +37,7 @@ pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
 pub struct Show {
     dispatcher: Dispatcher,
     audio_input: AudioInput,
+    run_clock_service: bool,
     state: ShowState,
     save_path: Option<PathBuf>,
     last_save: Option<Instant>,
@@ -47,6 +49,7 @@ impl Show {
         midi_devices: Vec<MidiDeviceSpec>,
         osc_devices: Vec<OscDeviceSpec>,
         audio_input_device: Option<String>,
+        run_clock_service: bool,
         save_path: Option<PathBuf>,
     ) -> Result<Self, Box<dyn Error>> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
@@ -56,11 +59,10 @@ impl Show {
 
         let n_pages = if use_wing { 2 } else { 1 };
 
-        // Initialize show control system.
-
         Ok(Self {
             dispatcher: Dispatcher::new(midi_devices, osc_devices)?,
             audio_input: AudioInput::new(audio_input_device)?,
+            run_clock_service,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
@@ -148,11 +150,11 @@ impl Show {
         );
 
         let mut frame_number = 0;
-        let mut ctx = zmq::Context::new();
+        let ctx = zmq::Context::new();
         let start = Instant::now();
 
-        let _timesync = TimesyncServer::start(&mut ctx, start)?;
-        let frame_sender = start_render_service(&mut ctx)?;
+        let _timesync = TimesyncServer::start(&ctx, start)?;
+        let frame_sender = start_render_service(&ctx, self.run_clock_service)?;
 
         let mut last_update = start;
         let mut timestamp = Timestamp(0);
@@ -265,7 +267,7 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<(), Box<dyn Error>> {
-        let mut show = Show::new(Vec::new(), Vec::new(), None, None)?;
+        let mut show = Show::new(Vec::new(), Vec::new(), None, false, None)?;
 
         show.test_mode(stress);
 

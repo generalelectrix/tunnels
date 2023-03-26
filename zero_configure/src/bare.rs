@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-pub type StopFn = Box<dyn FnOnce()>;
+pub type StopFn = Box<dyn FnOnce() + Send>;
 
 /// Format a service name into a DNS-SD TCP registration type.
 pub fn reg_type(name: &str) -> String {

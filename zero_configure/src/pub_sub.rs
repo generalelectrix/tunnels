@@ -20,7 +20,7 @@ pub struct PublisherService<T: Serialize> {
 }
 
 impl<T: Serialize> PublisherService<T> {
-    pub fn new(ctx: Context, name: &str, port: u16) -> Result<Self, Box<dyn Error>> {
+    pub fn new(ctx: &Context, name: &str, port: u16) -> Result<Self, Box<dyn Error>> {
         let stop = register_service(&name, port)?;
         let socket = ctx.socket(zmq::PUB)?;
         let addr = format!("tcp://*:{}", port);

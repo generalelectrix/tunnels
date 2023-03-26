@@ -10,17 +10,31 @@ use std::thread;
 use tunnels_lib::{number::UnipolarFloat, Snapshot, Timestamp};
 use zmq::{Context, Socket};
 
-use crate::{clock_bank::ClockBank, mixer::Mixer, palette::ColorPalette};
+use crate::{
+    clock_bank::ClockBank,
+    clock_server::{clock_publisher, StaticClockBank},
+    mixer::Mixer,
+    palette::ColorPalette,
+};
 
 const PORT: u16 = 6000;
 
 /// Renders the show state and sends it to all connected clients.
 /// Returns a channel for sending frames to be rendered.
 /// The service runs until the channel is dropped.
-pub fn start_render_service(ctx: &mut Context) -> Result<Sender<Frame>, Box<dyn Error>> {
+pub fn start_render_service(
+    ctx: &Context,
+    run_clock_service: bool,
+) -> Result<Sender<Frame>, Box<dyn Error>> {
     let socket = ctx.socket(zmq::PUB)?;
     let addr = format!("tcp://*:{}", PORT);
     socket.bind(&addr)?;
+
+    let mut clock_service = if run_clock_service {
+        Some(clock_publisher(ctx)?)
+    } else {
+        None
+    };
 
     let (send, mut recv) = channel();
 
@@ -50,6 +64,17 @@ pub fn start_render_service(ctx: &mut Context) -> Result<Sender<Frame>, Box<dyn 
                             layers: draw_commands,
                         };
                         send_snapshot(&mut send_buf, &socket, video_chan, snapshot);
+                    }
+
+                    if let Some(ref mut clock_service) = clock_service {
+                        if let Err(e) =
+                            clock_service.send(&StaticClockBank(frame.clocks.as_static()))
+                        {
+                            error!(
+                                "failed to send clock snapshot for frame {}: {}",
+                                frame.number, e
+                            );
+                        }
                     }
                 }
             }
