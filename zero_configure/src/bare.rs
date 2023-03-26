@@ -5,7 +5,6 @@ use async_dnssd::{
 };
 use futures::{Future, Stream};
 
-use simple_error::bail;
 use tokio_core::reactor::{Core, Timeout};
 
 use std::collections::HashMap;

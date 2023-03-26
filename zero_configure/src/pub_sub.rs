@@ -1,12 +1,12 @@
 use std::{error::Error, marker::PhantomData};
 
 use rmp_serde::Serializer;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use simple_error::bail;
 use zmq::{Context, Socket, DONTWAIT};
 
 use crate::{
-    bare::{browse_forever, register_service, Browser, StopFn},
+    bare::{register_service, Browser, StopFn},
     msgpack::{Receive, ReceiveResult},
 };
 
@@ -94,7 +94,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
     }
 }
 
-/// A strongly-typed 0mq SUB socket.
+/// A strongly-typed 0mq SUB socket that expects messages to be encoded using msgpack.
 pub struct Receiver<T: DeserializeOwned> {
     socket: Socket,
     topic: Option<Vec<u8>>,

@@ -8,7 +8,6 @@ use std::error::Error;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 use zero_configure::pub_sub::Receiver as SubReceiver;
-use zmq;
 
 /// Spawn a thread and pass SUB messages onto a channel.
 /// This will run until the returned channel is dropped.
