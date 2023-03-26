@@ -2,7 +2,6 @@
 //! Using this simple technique:
 //! http://www.mine-control.com/zack/timesync/timesync.html
 
-use crate::receive::Receive;
 use interpolation::lerp;
 use simple_error::bail;
 use stats::{mean, stddev};
@@ -11,6 +10,7 @@ use std::mem;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tunnels_lib::{number::UnipolarFloat, Timestamp};
+use zero_configure::msgpack::Receive;
 use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 

@@ -7,12 +7,9 @@ use tokio_core::reactor::Core;
 
 use zmq::{Context, Socket};
 
-use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
-use std::thread;
 
-use crate::bare::{browse_forever, reg_type};
+use crate::bare::{reg_type, Browser};
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
@@ -49,9 +46,8 @@ where
 }
 
 /// Maintain a collection of service instances we can remotely interact with.
-pub struct Controller {
-    services: Arc<Mutex<HashMap<String, Socket>>>,
-}
+/// Communication is performed via 0mq REQ/REP pairs.
+pub struct Controller(Browser<Socket>);
 
 impl Controller {
     /// Start up a new service controller at the given service name.
@@ -59,53 +55,31 @@ impl Controller {
     /// For the moment, panic if anything goes wrong during initialization.
     /// This is acceptable as this action will run once during startup and there's nothing to do
     /// except bail completely if this process fails.
-    pub fn new(name: String) -> Self {
-        let services = Arc::new(Mutex::new(HashMap::new()));
-        let mut ctx = Context::new();
-
-        let services_remote = services.clone();
-        // Spawn a new thread to run the tokio event loop.
-        // May want to refactor this in the future if we go whole hog on tokio for I/O.
-        thread::spawn(move || {
-            browse_forever(
-                &name,
-                |(service, name)| match req_socket(&service.host_target, service.port, &mut ctx) {
-                    Ok(socket) => {
-                        services_remote.lock().unwrap().insert(name, socket);
-                    }
-                    Err(e) => {
-                        println!("Could not connect to '{}':\n{}", service.host_target, e);
-                    }
-                },
-                |name| {
-                    services_remote.lock().unwrap().remove(name);
-                },
-            );
-        });
-
-        Controller { services }
+    pub fn new(ctx: Context, name: String) -> Self {
+        Self(Browser::new(name, move |service| {
+            req_socket(&service.host_target, service.port, &ctx)
+        }))
     }
 
-    /// List the services available on this controller.
+    /// List the services currently available.
     pub fn list(&self) -> Vec<String> {
-        self.services.lock().unwrap().keys().cloned().collect()
+        self.0.list()
     }
 
     /// Send a message to one of the services on this controller, returning the response.
     pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-        let services = self.services.lock().unwrap();
-        let socket = match services.get(name) {
-            None => bail!(format!("No service named '{}' available.", name)),
-            Some(socket) => socket,
-        };
-        socket.send(msg, 0)?;
-        let response = socket.recv_bytes(0)?;
-        Ok(response)
+        self.0
+            .use_service(name, |socket| {
+                socket.send(msg, 0)?;
+                let response = socket.recv_bytes(0)?;
+                Ok(response)
+            })
+            .unwrap_or_else(|| bail!(format!("No service named '{}' available.", name)))
     }
 }
 
 /// Try to connect a REQ socket at this host and port.
-fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<dyn Error>> {
+fn req_socket(host: &str, port: u16, ctx: &Context) -> Result<Socket, Box<dyn Error>> {
     let addr = format!("tcp://{}:{}", host, port);
 
     // Connect a REQ socket.
@@ -117,7 +91,7 @@ fn req_socket(host: &str, port: u16, ctx: &mut Context) -> Result<Socket, Box<dy
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::{thread, time::Duration};
 
     /// Return a byte vector containing DEADBEEF.
     fn deadbeef() -> Vec<u8> {
@@ -139,7 +113,7 @@ mod tests {
         let name = "test";
         let port = 10000;
 
-        let controller = Controller::new(name.to_string());
+        let controller = Controller::new(Context::new(), name.to_string());
 
         // Wait a moment, and assert that we can't see any services.
         sleep(500);

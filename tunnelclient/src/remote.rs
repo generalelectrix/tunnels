@@ -123,9 +123,9 @@ pub struct Administrator {
 }
 
 impl Administrator {
-    pub fn new() -> Self {
+    pub fn new(ctx: Context) -> Self {
         Administrator {
-            controller: Controller::new(SERVICE_NAME.to_string()),
+            controller: Controller::new(ctx, SERVICE_NAME.to_string()),
         }
     }
 
@@ -315,7 +315,7 @@ pub fn administrate() {
         .into_string()
         .unwrap();
     println!("Starting administrator...");
-    let admin = Administrator::new();
+    let admin = Administrator::new(Context::new());
 
     // Wait a couple seconds for dns-sd to do its business.
     thread::sleep(Duration::from_secs(2));

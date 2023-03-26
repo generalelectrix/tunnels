@@ -4,6 +4,7 @@ mod beam;
 mod beam_store;
 pub mod clock;
 pub mod clock_bank;
+pub mod clock_server;
 mod control;
 mod look;
 mod master_ui;

@@ -2,5 +2,6 @@
 //! Use 0mq for transport.
 
 mod bare;
+pub mod msgpack;
 pub mod pub_sub;
 pub mod req_rep;

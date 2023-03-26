@@ -1,5 +1,4 @@
 //! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
-//! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
 
 use async_dnssd::{
     browse, register_extended, BrowsedFlags, RegisterData, RegisterFlags, ResolveResult,
@@ -63,11 +62,13 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn, Box<dyn Error>>
 }
 
 /// Maintain a collection of service instances we can remotely interact with.
-pub struct Browser<S: Send + Clone + 'static> {
+/// FIXME: there's currently no way to stop the browse thread, it will run until
+/// the process terminates even if we drop this struct.
+pub struct Browser<S: Send + 'static> {
     services: Arc<Mutex<HashMap<String, S>>>,
 }
 
-impl<S: Send + Clone> Browser<S> {
+impl<S: Send> Browser<S> {
     /// Start up a new service controller at the given service name.
     /// Asynchronously browse for new services, and remove them if they deregister.
     /// For the moment, panic if anything goes wrong during initialization.
@@ -102,18 +103,18 @@ impl<S: Send + Clone> Browser<S> {
         Browser { services }
     }
 
-    /// List the services available on this controller.
+    /// List the services currently available.
     pub fn list(&self) -> Vec<String> {
         self.services.lock().unwrap().keys().cloned().collect()
     }
 
     /// Borrow a service to perform an action.
-    pub fn use_service<A, R>(&mut self, name: &str, action: A) -> Option<R>
+    pub fn use_service<A, R>(&self, name: &str, action: A) -> Option<R>
     where
-        A: FnMut(&mut S) -> R,
+        A: FnMut(&S) -> R,
     {
-        let mut services = self.services.lock().unwrap();
-        services.get_mut(name).map(action)
+        let services = self.services.lock().unwrap();
+        services.get(name).map(action)
     }
 }
 

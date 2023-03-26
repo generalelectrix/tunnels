@@ -1,10 +1,10 @@
 use std::{error::Error, marker::PhantomData};
 
 use rmp_serde::Serializer;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use zmq::{Context, Socket};
 
-use crate::bare::{browse_forever, register_service, StopFn};
+use crate::bare::{browse_forever, register_service, Browser, StopFn};
 
 /// Advertise a DNS-SD pub/sub service, sending a stream of T using msgpack.
 /// The service will be advertised until dropped.
@@ -43,9 +43,52 @@ impl<T: Serialize> Drop for PublisherService<T> {
     }
 }
 
-pub struct SubscriberService<T> {
-    stop: Option<StopFn>,
-    socket: Socket,
-    send_buf: Vec<u8>,
+struct SubConfig {
+    hostname: String,
+    port: u16,
+}
+
+pub struct SubscriberService<T: DeserializeOwned> {
+    browser: Browser<SubConfig>,
+    ctx: Context,
     _msg_type: PhantomData<T>,
+}
+
+impl<T: DeserializeOwned> SubscriberService<T> {
+    /// Browse for publishers of the named service.
+    /// Connect SUB sockets upon request.
+    pub fn new(ctx: Context, name: String) -> Self {
+        Self {
+            browser: Browser::new(name, |service| {
+                Ok(SubConfig {
+                    hostname: service.host_target.clone(),
+                    port: service.port,
+                })
+            }),
+            ctx,
+            _msg_type: PhantomData,
+        }
+    }
+
+    /// List the services currently available.
+    pub fn list(&self) -> Vec<String> {
+        self.browser.list()
+    }
+
+    /// Connect a SUB socket to a service.
+    pub fn subscribe(name: &str) -> Result<Receiver<T>, Box<dyn Error>> {
+        unimplemented!()
+    }
+}
+
+/// A strongly-typed 0mq SUB socket.
+pub struct Receiver<T: DeserializeOwned> {
+    socket: Socket,
+    _msg_type: PhantomData<T>,
+}
+
+impl<T: DeserializeOwned> Receiver<T> {
+    fn new(ctx: &Context, cfg: SubConfig) -> Result<Self, Box<dyn Error>> {
+        unimplemented!()
+    }
 }
