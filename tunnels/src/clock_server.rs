@@ -2,17 +2,36 @@
 //! Provide a strongly-typed receiver.
 //! FIXME: would be nice to clean up deserialization to avoid so many allocations.
 
+use std::error::Error;
+
+use serde::{Deserialize, Serialize};
 use tunnels_lib::number::{Phase, UnipolarFloat};
-use zero_configure::pub_sub::PublisherService;
+use zero_configure::pub_sub::{PublisherService, SubscriberService};
+use zmq::Context;
 
 use crate::{
     clock::StaticClock,
     clock_bank::{ClockBank, ClockIdx, ClockStore, N_CLOCKS},
 };
 
-pub type ClockPublisher = PublisherService<ClockBank>;
+const SERVICE_NAME: &'static str = "global_show_clocks";
+const PORT: u16 = 9090;
+
+/// Launch clock publisher service.
+pub fn publisher(ctx: Context) -> Result<ClockPublisher, Box<dyn Error>> {
+    PublisherService::new(ctx, SERVICE_NAME, PORT)
+}
+
+/// Launch clock subscriber service.
+pub fn subscriber(ctx: Context) -> ClockSubscriber {
+    SubscriberService::new(ctx, SERVICE_NAME.to_string())
+}
+
+type ClockPublisher = PublisherService<StaticClockBank>;
+type ClockSubscriber = SubscriberService<StaticClockBank>;
 
 /// A collection of static clock state data, rendered from a ClockBank.
+#[derive(Serialize, Deserialize)]
 pub struct StaticClockBank([StaticClock; N_CLOCKS]);
 
 impl ClockStore for StaticClockBank {
