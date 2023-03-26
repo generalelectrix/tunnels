@@ -4,6 +4,22 @@ use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 
 use crate::transient_indicator::TransientIndicator;
 
+/// Define the methods for retrieving the state of a clock.
+/// This includes "controllable clock" features.
+pub trait ClockState {
+    /// Return the current phase of this clock.
+    fn phase(&self) -> Phase;
+
+    /// Return the current submaster level.
+    fn submaster_level(&self) -> UnipolarFloat;
+
+    /// Return true if we should use audio envelope to scale submaster level.
+    /// This is returned independently, rather than applied to the submaster
+    /// level directly, to allow clients of this submaster to avoid double-
+    /// modulating with audio envelope.
+    fn use_audio_size(&self) -> bool;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
     phase: Phase,
@@ -117,6 +133,20 @@ impl Default for ControllableClock {
     }
 }
 
+impl ClockState for ControllableClock {
+    fn phase(&self) -> Phase {
+        self.clock.phase()
+    }
+
+    fn submaster_level(&self) -> UnipolarFloat {
+        self.submaster_level
+    }
+
+    fn use_audio_size(&self) -> bool {
+        self.use_audio_size
+    }
+}
+
 impl ControllableClock {
     /// radial units/s, permitting a max internal clock rate of 1.5 Hz
     /// the negative sign is here so that turning the animation speed knob
@@ -133,23 +163,6 @@ impl ControllableClock {
             submaster_level: UnipolarFloat::ONE,
             use_audio_size: false,
         }
-    }
-
-    pub fn phase(&self) -> Phase {
-        self.clock.phase()
-    }
-
-    /// Return the current submaster level.
-    pub fn submaster_level(&self) -> UnipolarFloat {
-        self.submaster_level
-    }
-
-    /// Return true if we should use audio envelope to scale submaster level.
-    /// This is returned independently, rather than applied to the submaster
-    /// level directly, to allow clients of this submaster to avoid double-
-    /// modulating with audio envelope.
-    pub fn use_audio_size(&self) -> bool {
-        self.use_audio_size
     }
 
     /// Update the state of this clock.
