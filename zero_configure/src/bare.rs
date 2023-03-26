@@ -65,6 +65,7 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn, Box<dyn Error>>
 /// FIXME: there's currently no way to stop the browse thread, it will run until
 /// the process terminates even if we drop this struct.
 pub struct Browser<S: Send + 'static> {
+    service_name: String,
     services: Arc<Mutex<HashMap<String, S>>>,
 }
 
@@ -81,11 +82,12 @@ impl<S: Send> Browser<S> {
         let services = Arc::new(Mutex::new(HashMap::new()));
 
         let services_remote = services.clone();
+        let service_name = name.clone();
         // Spawn a new thread to run the tokio event loop.
         // May want to refactor this in the future if we go whole hog on tokio for I/O.
         thread::spawn(move || {
             browse_forever(
-                &name,
+                &service_name,
                 |(service, name)| match open_service(&service) {
                     Ok(service) => {
                         services_remote.lock().unwrap().insert(name, service);
@@ -100,18 +102,26 @@ impl<S: Send> Browser<S> {
             );
         });
 
-        Browser { services }
+        Browser {
+            services,
+            service_name: name,
+        }
     }
 
-    /// List the services currently available.
+    /// List the service instances currently available.
     pub fn list(&self) -> Vec<String> {
         self.services.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// Get the name of the service we are browsing.
+    pub fn name(&self) -> &str {
+        &self.service_name
     }
 
     /// Borrow a service to perform an action.
     pub fn use_service<A, R>(&self, name: &str, action: A) -> Option<R>
     where
-        A: FnMut(&S) -> R,
+        A: FnOnce(&S) -> R,
     {
         let services = self.services.lock().unwrap();
         services.get(name).map(action)

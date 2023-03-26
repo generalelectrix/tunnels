@@ -80,8 +80,17 @@ impl<T: DeserializeOwned> SubscriberService<T> {
     }
 
     /// Connect a SUB socket to a service.
-    pub fn subscribe(name: &str) -> Result<Receiver<T>, Box<dyn Error>> {
-        unimplemented!()
+    /// Optionally filter to the provided topic.
+    pub fn subscribe(
+        &self,
+        name: &str,
+        topic: Option<Vec<u8>>,
+    ) -> Result<Receiver<T>, Box<dyn Error>> {
+        self.browser
+            .use_service(name, move |cfg| {
+                Receiver::new(&self.ctx, &cfg.hostname, cfg.port, topic)
+            })
+            .unwrap_or_else(|| bail!("no instance of service {} found", self.browser.name()))
     }
 }
 
@@ -98,7 +107,7 @@ impl<T: DeserializeOwned> Receiver<T> {
     pub fn new(
         ctx: &Context,
         host: &str,
-        port: u64,
+        port: u16,
         topic: Option<Vec<u8>>,
     ) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::SUB)?;
