@@ -20,7 +20,7 @@ impl BeamStore {
         }
 
         // Start off with the default tunnel in the bottom-right corner.
-        rows[4][7] = Some(Beam::Tunnel(Tunnel::new()));
+        rows[4][7] = Some(Beam::Tunnel(Tunnel::default()));
         Self {
             beams: rows,
             n_pages,
@@ -32,7 +32,7 @@ impl BeamStore {
     }
 
     pub fn get(&mut self, addr: BeamStoreAddr) -> Option<Beam> {
-        return self.beams[addr.row][addr.col].clone();
+        self.beams[addr.row][addr.col].clone()
     }
 
     pub fn items(&self) -> impl Iterator<Item = (BeamStoreAddr, &Option<Beam>)> {

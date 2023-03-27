@@ -80,7 +80,7 @@ impl Clock {
             self.run = false;
         } else {
             // if the phase just escaped our range, we ticked this frame
-            self.ticked = new_angle >= 1.0 || new_angle < 0.0;
+            self.ticked = !(0.0..1.0).contains(&new_angle);
             self.phase = Phase::new(new_angle);
         }
     }
@@ -204,13 +204,11 @@ impl ControllableClock {
             Tap => {
                 if self.retrigger {
                     self.clock.reset_on_update = true;
-                } else {
-                    if let Some(rate) = self.sync.tap() {
-                        self.clock.rate = rate;
-                        emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
-                            self.clock.rate / ControllableClock::RATE_SCALE,
-                        )));
-                    }
+                } else if let Some(rate) = self.sync.tap() {
+                    self.clock.rate = rate;
+                    emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
+                        self.clock.rate / ControllableClock::RATE_SCALE,
+                    )));
                 }
             }
             ToggleOneShot => {
@@ -307,13 +305,10 @@ impl TapSync {
             return;
         }
         // compute rate if we have at least two taps
-        match (self.taps.first(), self.taps.last()) {
-            (Some(first), Some(last)) => {
-                let period = (*last - *first) / (self.taps.len() as u32 - 1);
-                self.period = Some(period);
-                self.rate = Some(1.0 / period.as_secs_f64());
-            }
-            _ => (),
+        if let (Some(first), Some(last)) = (self.taps.first(), self.taps.last()) {
+            let period = (*last - *first) / (self.taps.len() as u32 - 1);
+            self.period = Some(period);
+            self.rate = Some(1.0 / period.as_secs_f64());
         }
     }
 

@@ -10,6 +10,7 @@ use tunnels_lib::ArcSegment;
 /// instead of having to either treat beams as trait objects or store them in
 /// disparate collections.
 #[derive(Clone, Serialize, Deserialize, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Beam {
     Tunnel(Tunnel),
     Look(Look),

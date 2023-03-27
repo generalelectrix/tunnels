@@ -32,8 +32,10 @@ where
     let core = Core::new()?;
 
     // Start advertising this service over DNS-SD.
-    let mut register_data = RegisterData::default();
-    register_data.flags = RegisterFlags::SHARED;
+    let register_data = RegisterData {
+        flags: RegisterFlags::SHARED,
+        ..Default::default()
+    };
     let _registration = register_extended(&reg_type(name), port, register_data, &core.handle())?;
 
     loop {

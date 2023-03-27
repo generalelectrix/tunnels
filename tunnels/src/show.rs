@@ -15,7 +15,6 @@ use crate::{
     animation,
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
-    clock_server::{clock_publisher, ClockPublisher},
     control::Dispatcher,
     master_ui,
     master_ui::MasterUI,
@@ -66,7 +65,7 @@ impl Show {
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
-                clocks: ClockBank::new(),
+                clocks: ClockBank::default(),
                 color_palette: ColorPalette::new(),
             },
             save_path,
@@ -116,7 +115,7 @@ impl Show {
             };
             if should_save {
                 info!("Autosaving.");
-                let result = self.save(&path);
+                let result = self.save(path);
                 if result.is_ok() {
                     self.last_save = Some(now);
                 }
@@ -165,14 +164,17 @@ impl Show {
                 last_update += update_interval;
                 timestamp.step(update_interval);
 
-                if let Err(_) = frame_sender.send(Frame {
-                    number: frame_number,
-                    timestamp: timestamp,
-                    mixer: self.state.mixer.clone(),
-                    clocks: self.state.clocks.clone(),
-                    color_palette: self.state.color_palette.clone(),
-                    audio_envelope: self.audio_input.envelope(),
-                }) {
+                if frame_sender
+                    .send(Frame {
+                        number: frame_number,
+                        timestamp,
+                        mixer: self.state.mixer.clone(),
+                        clocks: self.state.clocks.clone(),
+                        color_palette: self.state.color_palette.clone(),
+                        audio_envelope: self.audio_input.envelope(),
+                    })
+                    .is_err()
+                {
                     bail!("Render server hung up.  Aborting show.");
                 }
                 frame_number += 1;
@@ -297,7 +299,7 @@ mod test {
         // Channel 0 should contain data, but none of the others.
         for (i, chan) in video_feeds.iter().enumerate() {
             if i == 0 {
-                assert!(chan.len() > 0);
+                assert!(!chan.is_empty());
             } else {
                 assert_eq!(0, chan.len());
             }
@@ -305,8 +307,8 @@ mod test {
 
         let mut first_channel = video_feeds.into_iter().next().unwrap();
 
-        for mut beam in first_channel.iter_mut() {
-            for seg in Arc::get_mut(&mut beam).unwrap().iter_mut() {
+        for beam in first_channel.iter_mut() {
+            for seg in Arc::get_mut(beam).unwrap().iter_mut() {
                 trunc_arc_segment(seg);
             }
         }

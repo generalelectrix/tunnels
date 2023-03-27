@@ -21,7 +21,7 @@ impl Mixer {
         let n_channels = n_pages * MIXER_CHANNELS_PER_PAGE;
         Self {
             channels: (0..n_channels)
-                .map(|_| Channel::new(Beam::Tunnel(Tunnel::new())))
+                .map(|_| Channel::new(Beam::Tunnel(Tunnel::default())))
                 .collect(),
         }
     }
@@ -76,7 +76,7 @@ impl Mixer {
                 color_palette,
                 audio_envelope,
             );
-            if rendered_beam.len() == 0 {
+            if rendered_beam.is_empty() {
                 continue;
             }
             let rendered_ptr = Arc::new(rendered_beam);
@@ -99,10 +99,10 @@ impl Mixer {
             emit(ChannelStateChange::Level(channel.level));
             emit(ChannelStateChange::Bump(channel.bump));
             emit(ChannelStateChange::Mask(channel.mask));
-            emit(ChannelStateChange::ContainsLook(match channel.beam {
-                Beam::Look(_) => true,
-                _ => false,
-            }));
+            emit(ChannelStateChange::ContainsLook(matches!(
+                channel.beam,
+                Beam::Look(_)
+            )));
             for video_chan in 0..Self::N_VIDEO_CHANNELS {
                 let vc = VideoChannel(video_chan);
                 emit(ChannelStateChange::VideoChannel((
@@ -211,7 +211,7 @@ impl Channel {
         } else {
             self.level
         };
-        level = level * level_scale;
+        level *= level_scale;
         // if this channel is off, don't render at all
         if level == 0. {
             return Vec::new();
@@ -232,12 +232,6 @@ impl Channel {
 )]
 #[typed_index(Channel)]
 pub struct ChannelIdx(pub usize);
-
-impl Default for ChannelIdx {
-    fn default() -> Self {
-        ChannelIdx(0)
-    }
-}
 
 /// Index into a particular virtual video channel.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]

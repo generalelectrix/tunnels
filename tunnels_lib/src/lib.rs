@@ -57,7 +57,7 @@ impl Timestamp {
 
 impl num_traits::cast::ToPrimitive for Timestamp {
     fn to_i64(&self) -> Option<i64> {
-        return Some(self.0);
+        Some(self.0)
     }
 
     fn to_u64(&self) -> Option<u64> {
@@ -73,12 +73,13 @@ impl num_traits::cast::ToPrimitive for Timestamp {
 #[derive(Debug, Clone)]
 pub struct RunFlag(Arc<AtomicBool>);
 
-impl RunFlag {
-    /// Create a flag set to run.
-    pub fn new() -> Self {
+impl Default for RunFlag {
+    fn default() -> Self {
         RunFlag(Arc::new(AtomicBool::new(true)))
     }
+}
 
+impl RunFlag {
     /// Return true if the program should continue.
     pub fn should_run(&self) -> bool {
         self.0.load(Ordering::Relaxed)

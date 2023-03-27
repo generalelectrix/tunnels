@@ -1,8 +1,8 @@
+use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock_bank::{ClockIdxExt, ClockStore};
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms::WaveformArgs;
-use crate::{clock::Clock, clock_bank::ClockBank};
 use crate::{clock_bank::ClockIdx, waveforms};
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ impl Animation {
 
     /// Return the clock's current rate, scaled into a bipolar float.
     fn clock_speed(&self) -> BipolarFloat {
-        return BipolarFloat::new(self.internal_clock.rate / ControllableClock::RATE_SCALE);
+        BipolarFloat::new(self.internal_clock.rate / ControllableClock::RATE_SCALE)
     }
 
     /// Set the clock's current rate, scaling by our scale factor.

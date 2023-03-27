@@ -118,7 +118,7 @@ pub fn square(args: &WaveformArgs) -> f64 {
     let (amplitude, mut args) = args.spatial_params();
     // Fix bug where square pulse is 1 everywhere by compressing duty cycle.
     if args.pulse {
-        args.duty_cycle = args.duty_cycle * UnipolarFloat::new(0.5);
+        args.duty_cycle *= UnipolarFloat::new(0.5);
     }
     amplitude * square_spatial(&args)
 }
@@ -222,18 +222,17 @@ mod test {
                 2,
                 &RED,
                 &|c, s, st| {
-                    return EmptyElement::at(c)    // We want to construct a composed element on-the-fly
-                + Circle::new((0,0),s,st.filled()) // At this point, the new pixel coordinate is established
-               ;
+                    EmptyElement::at(c)    // We want to construct a composed element on-the-fly
+                    + Circle::new((0,0),s,st.filled()) // At this point, the new pixel coordinate is established
                 },
             ))?
             .label("waveform")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
 
         chart
             .configure_series_labels()
-            .background_style(&WHITE.mix(0.8))
-            .border_style(&BLACK)
+            .background_style(WHITE.mix(0.8))
+            .border_style(BLACK)
             .draw()?;
         Ok(())
     }

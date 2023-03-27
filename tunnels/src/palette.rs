@@ -53,6 +53,12 @@ impl ColorPalette {
     }
 }
 
+impl Default for ColorPalette {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub enum ControlMessage {
     Set(StateChange),
 }

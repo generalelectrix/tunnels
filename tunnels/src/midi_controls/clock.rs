@@ -78,7 +78,9 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
         _ => panic!("No clock control mappings for {}.", device),
     };
 
-    assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows.");
+    // This is to catch a future change to N_CLOCKS.
+    #[allow(clippy::assertions_on_constants)]
+    (assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows."));
 
     for channel in 0..N_CLOCKS {
         if device == Device::BehringerCmdMM1 {}

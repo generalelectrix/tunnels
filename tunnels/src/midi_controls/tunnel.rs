@@ -43,7 +43,7 @@ const N_PALETTE_SELECTS: i32 = 3;
 lazy_static! {
     static ref PALETTE_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
-        mappings: (-1..N_PALETTE_SELECTS as i32)
+        mappings: (-1..N_PALETTE_SELECTS)
             .map(|palette_id| note_on_ch0((palette_id + PALETTE_SELECT_CONTROL_OFFSET) as u8))
             .collect(),
         off: 0,
@@ -154,7 +154,7 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
                 None => -1,
             };
             PALETTE_SELECT_BUTTONS.select(
-                note_on_ch0((index as i32 + PALETTE_SELECT_CONTROL_OFFSET) as u8),
+                note_on_ch0((index + PALETTE_SELECT_CONTROL_OFFSET) as u8),
                 send,
             );
         }

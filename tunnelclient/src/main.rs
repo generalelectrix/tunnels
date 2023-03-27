@@ -32,7 +32,7 @@ fn main() {
 
     if first_arg == "remote" {
         init_logger(LevelFilter::Info);
-        run_remote(ctx.clone());
+        run_remote(ctx);
     } else if first_arg == "admin" {
         init_logger(LevelFilter::Info);
         administrate();
@@ -50,8 +50,7 @@ fn main() {
             LevelFilter::Info
         });
 
-        let mut show =
-            Show::new(cfg, ctx.clone(), RunFlag::new()).expect("Failed to initialize show");
+        let mut show = Show::new(cfg, ctx, RunFlag::default()).expect("Failed to initialize show");
 
         show.run();
     }

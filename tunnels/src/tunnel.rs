@@ -50,10 +50,8 @@ pub struct Tunnel {
     anims: [Animation; N_ANIM],
 }
 
-impl Tunnel {
-    const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
-
-    pub fn new() -> Self {
+impl Default for Tunnel {
+    fn default() -> Self {
         Self {
             marquee_speed: BipolarFloat::ZERO,
             rot_speed: BipolarFloat::ZERO,
@@ -74,7 +72,10 @@ impl Tunnel {
             anims: Default::default(),
         }
     }
+}
 
+impl Tunnel {
+    const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
     /// Return the blacking parameter, scaled to be an int on [-16, 16].
     ///
     /// If -1, return 1 (-1 implies all segments are black)

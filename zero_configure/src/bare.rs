@@ -39,8 +39,10 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn, Box<dyn Error>>
         };
 
         // Start advertising this service over DNS-SD.
-        let mut register_data = RegisterData::default();
-        register_data.flags = RegisterFlags::SHARED;
+        let register_data = RegisterData {
+            flags: RegisterFlags::SHARED,
+            ..Default::default()
+        };
 
         match register_extended(&full_name, port, register_data, &core.handle()) {
             Err(e) => {

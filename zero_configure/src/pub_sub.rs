@@ -21,7 +21,7 @@ pub struct PublisherService<T: Serialize> {
 
 impl<T: Serialize> PublisherService<T> {
     pub fn new(ctx: &Context, name: &str, port: u16) -> Result<Self, Box<dyn Error>> {
-        let stop = register_service(&name, port)?;
+        let stop = register_service(name, port)?;
         let socket = ctx.socket(zmq::PUB)?;
         let addr = format!("tcp://*:{}", port);
         socket.bind(&addr)?;
@@ -43,7 +43,9 @@ impl<T: Serialize> PublisherService<T> {
 
 impl<T: Serialize> Drop for PublisherService<T> {
     fn drop(&mut self) {
-        self.stop.take().map(|stop| stop());
+        if let Some(stop) = self.stop.take() {
+            stop()
+        }
     }
 }
 

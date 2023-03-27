@@ -5,7 +5,7 @@ use std::{error::Error, time::Instant};
 use rmp_serde::Serializer;
 use serde::Serialize;
 use tunnels_lib::{RunFlag, Timestamp};
-use zmq;
+
 use zmq::Context;
 
 const PORT: u64 = 8989;
@@ -23,7 +23,7 @@ impl TimesyncServer {
         socket.bind(&addr)?;
         // time out once per second
         socket.set_rcvtimeo(1000)?;
-        let run = RunFlag::new();
+        let run = RunFlag::default();
         let run_local = run.clone();
 
         // start up the service in a new thread

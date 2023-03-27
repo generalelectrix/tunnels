@@ -146,7 +146,7 @@ fn prompt_audio() -> Result<Option<String>, Box<dyn Error>> {
         return Ok(None);
     }
     let input_devices = AudioInput::devices()?;
-    if input_devices.len() == 0 {
+    if input_devices.is_empty() {
         bail!("No audio input devices found.");
     }
     println!("Available devices:");
@@ -182,7 +182,7 @@ struct LoadSaveConfig {
 }
 
 /// Save and load shows from this relative directory.
-const SHOW_DIR: &'static str = "saved_shows";
+const SHOW_DIR: &str = "saved_shows";
 
 /// Prompt the user for show load and/or save paths.
 fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
@@ -193,7 +193,7 @@ fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
     let save_dir = current_dir()?.join(SHOW_DIR);
     if prompt_bool("Open saved show?")? {
         let mut name = String::new();
-        while name.len() == 0 {
+        while name.is_empty() {
             print!("Open this show: ");
             io::stdout().flush()?;
             name = read_string()?;
@@ -203,7 +203,7 @@ fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
         cfg.save_path = Some(path);
     } else if prompt_bool("Creating new show; save?")? {
         let mut name = String::new();
-        while name.len() == 0 {
+        while name.is_empty() {
             print!("Name this show: ");
             io::stdout().flush()?;
             name = read_string()?;
@@ -219,7 +219,7 @@ fn prompt_bool(msg: &str) -> Result<bool, Box<dyn Error>> {
     prompt_parse(format!("{} y/n", msg).as_str(), |input| {
         input
             .chars()
-            .nth(0)
+            .next()
             .and_then(|first_char| match first_char {
                 'y' | 'Y' => Some(true),
                 'n' | 'N' => Some(false),

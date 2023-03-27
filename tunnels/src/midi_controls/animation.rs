@@ -245,7 +245,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
                 None => -1,
             };
             CLOCK_SELECT_BUTTONS.select(
-                note_on_ch0((index as i32 + CLOCK_SELECT_CONTROL_OFFSET) as u8),
+                note_on_ch0((index + CLOCK_SELECT_CONTROL_OFFSET) as u8),
                 send,
             );
         }

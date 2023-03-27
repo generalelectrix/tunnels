@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     clock::{
-        Clock, ControlMessage as ClockControlMessage, ControllableClock,
+        ControlMessage as ClockControlMessage, ControllableClock,
         EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange, StaticClock,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
@@ -57,7 +57,7 @@ impl TryFrom<ClockIdxExt> for ClockIdx {
 }
 
 /// Maintain a indexable collection of clocks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClockBank([ControllableClock; N_CLOCKS]);
 
 impl ClockStore for ClockBank {
@@ -75,10 +75,6 @@ impl ClockStore for ClockBank {
 }
 
 impl ClockBank {
-    pub fn new() -> Self {
-        Self(Default::default())
-    }
-
     pub fn update_state<E: EmitStateChange>(
         &mut self,
         delta_t: Duration,

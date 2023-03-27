@@ -11,10 +11,10 @@ use zmq::Context;
 
 use crate::{
     clock::StaticClock,
-    clock_bank::{ClockBank, ClockIdx, ClockStore, N_CLOCKS},
+    clock_bank::{ClockIdx, ClockStore, N_CLOCKS},
 };
 
-const SERVICE_NAME: &'static str = "global_show_clocks";
+const SERVICE_NAME: &str = "global_show_clocks";
 const PORT: u16 = 9090;
 
 /// Launch clock publisher service.
@@ -49,10 +49,6 @@ impl ClockStore for StaticClockBank {
 }
 
 impl StaticClockBank {
-    fn from_clock_bank(bank: &ClockBank) -> Self {
-        Self(bank.as_static())
-    }
-
     fn get(&self, index: ClockIdx) -> &StaticClock {
         &self.0[usize::from(index)]
     }

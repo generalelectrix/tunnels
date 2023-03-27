@@ -2,7 +2,7 @@ use log::{error, warn};
 use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 use serde::{Deserialize, Serialize};
 use simple_error::bail;
-use std::{cmp::Ordering, error::Error, fmt, sync::mpsc::Sender};
+use std::{error::Error, fmt, sync::mpsc::Sender};
 
 use crate::{control::ControlEvent, midi_controls::Device};
 
@@ -15,7 +15,7 @@ pub enum EventType {
 }
 
 /// A specification of a midi mapping.
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, Ord, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Mapping {
     pub event_type: EventType,
     pub channel: u8,
@@ -35,18 +35,6 @@ impl fmt::Display for Mapping {
             self.channel,
             self.control
         )
-    }
-}
-
-impl PartialOrd<Mapping> for Mapping {
-    fn partial_cmp(&self, other: &Mapping) -> Option<Ordering> {
-        if self.channel != other.channel {
-            return self.channel.partial_cmp(&other.channel);
-        }
-        if self.event_type != other.event_type {
-            return self.event_type.partial_cmp(&other.event_type);
-        }
-        self.control.partial_cmp(&other.control)
     }
 }
 
@@ -217,19 +205,13 @@ impl Input {
 
 /// Maintain midi inputs and outputs.
 /// Provide synchronous dispatch for outgoing messages based on device type.
+#[derive(Default)]
 pub struct Manager {
     inputs: Vec<Input>,
     outputs: Vec<Output>,
 }
 
 impl Manager {
-    pub fn new() -> Self {
-        Self {
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-        }
-    }
-
     /// Add a device to the manager given input and output port names.
     pub fn add_device(
         &mut self,

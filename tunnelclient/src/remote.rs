@@ -8,7 +8,6 @@
 use crate::config::{ClientConfig, Resolution};
 use crate::draw::{Transform, TransformDirection};
 use crate::show::Show;
-use hostname;
 use lazy_static::lazy_static;
 use log::{error, info};
 use regex::Regex;
@@ -89,7 +88,7 @@ pub fn run_remote_service(ctx: Context, sender: Sender<(ClientConfig, RunFlag)>)
                 };
 
                 // Create a new run control for the show we're about to start.
-                let new_run_flag = RunFlag::new();
+                let new_run_flag = RunFlag::default();
                 running_flag = Some(new_run_flag.clone());
 
                 // Send the config and flag back to the show thread.
@@ -345,7 +344,7 @@ quit    Quit.";
                 println!("Available clients:\n{}\n", admin.clients().join("\n"));
             }
             "conf" | "c" => {
-                let client_name = prompt("Enter client name", &parse_client_name);
+                let client_name = prompt("Enter client name", parse_client_name);
                 let config = configure_one(host.clone());
                 match admin.run_with_config(&client_name, config) {
                     Ok(msg) => {

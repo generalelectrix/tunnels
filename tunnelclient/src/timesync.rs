@@ -11,7 +11,6 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tunnels_lib::{number::UnipolarFloat, Timestamp};
 use zero_configure::msgpack::{Receive, ReceiveResult};
-use zmq;
 use zmq::{Context, Socket, DONTWAIT};
 
 const PORT: u64 = 8989;
@@ -73,7 +72,7 @@ impl Client {
 
         // Sort the measurements by round-trip time and remove outliers.
         measurements.sort_by_key(|m| m.round_trip);
-        let median_delay = measurements[(self.n_meas / 2) as usize].round_trip;
+        let median_delay = measurements[self.n_meas / 2].round_trip;
         let stddev = Duration::from_secs_f64(stddev(
             measurements.iter().map(|m| m.round_trip.as_secs_f64()),
         ));

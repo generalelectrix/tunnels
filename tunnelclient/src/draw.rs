@@ -95,7 +95,7 @@ pub fn draw_circle_arc_improved<R: Into<Rectangle>, G>(
     G: Graphics,
 {
     let rectangle = rectangle.into();
-    g.tri_list(&draw_state, &ca.color, |f| {
+    g.tri_list(draw_state, &ca.color, |f| {
         improved_with_arc_tri_list(
             ca.start,
             ca.end,

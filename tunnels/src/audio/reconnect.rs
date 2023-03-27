@@ -31,11 +31,13 @@ impl ReconnectingInput {
 
 impl Drop for ReconnectingInput {
     fn drop(&mut self) {
-        self.stop.take().map(|stop| stop());
+        if let Some(stop) = self.stop.take() {
+            stop()
+        }
     }
 }
 
-type StopReconnect = Box<dyn FnOnce() -> ()>;
+type StopReconnect = Box<dyn FnOnce()>;
 
 /// Try to reconnect a disconnected audio input this often.
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
@@ -120,7 +122,7 @@ fn open_audio_device(name: &str) -> Result<Device, Box<dyn Error>> {
         }
     }
     let mut err_msg = format!("audio input {} not found", name);
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         err_msg = format!(
             "{}; some device errors occurred: {}",
             err_msg,
@@ -137,7 +139,7 @@ fn create_input_stream<F>(
     mut on_disconnect: F,
 ) -> Result<Stream, Box<dyn Error>>
 where
-    F: FnMut() -> () + Send + 'static,
+    F: FnMut() + Send + 'static,
 {
     let device = open_audio_device(device_name)?;
     let config: cpal::StreamConfig = device.default_input_config()?.into();
