@@ -35,7 +35,7 @@ impl Dispatcher {
 
         Ok(Self {
             midi_dispatcher: MidiDispatcher::new(midi_devices, send.clone())?,
-            osc_dispatcher: OscDispatcher::new(osc_devices, send.clone())?,
+            osc_dispatcher: OscDispatcher::new(osc_devices, send)?,
             recv,
         })
     }

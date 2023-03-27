@@ -57,7 +57,7 @@ impl Timestamp {
 
 impl num_traits::cast::ToPrimitive for Timestamp {
     fn to_i64(&self) -> Option<i64> {
-        return Some(self.0);
+        Some(self.0)
     }
 
     fn to_u64(&self) -> Option<u64> {
@@ -73,12 +73,13 @@ impl num_traits::cast::ToPrimitive for Timestamp {
 #[derive(Debug, Clone)]
 pub struct RunFlag(Arc<AtomicBool>);
 
-impl RunFlag {
-    /// Create a flag set to run.
-    pub fn new() -> Self {
+impl Default for RunFlag {
+    fn default() -> Self {
         RunFlag(Arc::new(AtomicBool::new(true)))
     }
+}
 
+impl RunFlag {
     /// Return true if the program should continue.
     pub fn should_run(&self) -> bool {
         self.0.load(Ordering::Relaxed)
@@ -188,4 +189,35 @@ pub fn angle_almost_eq(a: f64, b: f64) -> bool {
 /// Panic if a and b are not almost equal.
 pub fn assert_almost_eq(a: f64, b: f64) {
     assert!(almost_eq(a, b), "{} != {}", a, b);
+}
+
+pub fn arc_segment_for_test(linear: f64, radial: f64) -> ArcSegment {
+    ArcSegment {
+        level: linear,
+        thickness: linear,
+        sat: linear,
+        val: linear,
+        x: linear,
+        y: linear,
+        rad_x: linear,
+        rad_y: linear,
+        // radial items
+        hue: radial,
+        start: radial,
+        stop: radial,
+        rot_angle: radial,
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use crate::arc_segment_for_test;
+
+    #[test]
+    fn test_arc_eq() {
+        let a = arc_segment_for_test(1.0, 0.5);
+        let b = arc_segment_for_test(0.4, 0.5);
+        assert_eq!(a, a);
+        assert_ne!(a, b);
+    }
 }

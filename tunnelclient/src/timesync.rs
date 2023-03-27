@@ -2,7 +2,6 @@
 //! Using this simple technique:
 //! http://www.mine-control.com/zack/timesync/timesync.html
 
-use crate::receive::Receive;
 use interpolation::lerp;
 use simple_error::bail;
 use stats::{mean, stddev};
@@ -11,7 +10,7 @@ use std::mem;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tunnels_lib::{number::UnipolarFloat, Timestamp};
-use zmq;
+use zero_configure::msgpack::{Receive, ReceiveResult};
 use zmq::{Context, Socket, DONTWAIT};
 
 const PORT: u64 = 8989;
@@ -27,7 +26,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new 0mq REQ connected to the provided socket addr.
-    pub fn new(host: &str, ctx: &mut Context) -> Result<Self, Box<dyn Error>> {
+    pub fn new(host: &str, ctx: Context) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::REQ)?;
         let addr = format!("tcp://{}:{}", host, PORT);
         socket.connect(&addr)?;
@@ -48,7 +47,7 @@ impl Client {
     fn measure(&mut self) -> Result<Measurement, Box<dyn Error>> {
         let now = Instant::now();
         self.socket.send(&[][..], 0)?;
-        let buf = match self.receive_buffer(true) {
+        let buf = match self.receive_buffer(true)? {
             Some(buf) => buf,
             None => bail!("Unable to receive a response from timesync server."),
         };
@@ -73,7 +72,7 @@ impl Client {
 
         // Sort the measurements by round-trip time and remove outliers.
         measurements.sort_by_key(|m| m.round_trip);
-        let median_delay = measurements[(self.n_meas / 2) as usize].round_trip;
+        let median_delay = measurements[self.n_meas / 2].round_trip;
         let stddev = Duration::from_secs_f64(stddev(
             measurements.iter().map(|m| m.round_trip.as_secs_f64()),
         ));
@@ -103,12 +102,12 @@ impl Client {
 }
 
 impl Receive for Client {
-    fn receive_buffer(&mut self, block: bool) -> Option<Vec<u8>> {
+    fn receive_buffer(&mut self, block: bool) -> ReceiveResult<Option<Vec<u8>>> {
         let flag = if block { 0 } else { DONTWAIT };
         if let Ok(b) = self.socket.recv_bytes(flag) {
-            Some(b)
+            Ok(Some(b))
         } else {
-            None
+            Ok(None)
         }
     }
 }
@@ -185,7 +184,7 @@ impl Synchronizer {
 #[test]
 #[ignore]
 fn test_synchronize() {
-    let mut client = Client::new("localhost", &mut Context::new()).unwrap();
+    let mut client = Client::new("localhost", Context::new()).unwrap();
     let sync = client.synchronize().expect("Test: synchronization failed");
     println!(
         "Ref time: {:?}, remote estimate: {}",

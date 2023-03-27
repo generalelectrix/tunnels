@@ -4,6 +4,14 @@ version = "0.1.0"
 authors = ["general electrix <general.electrix@gmail.com>"]
 edition = "2021"
 
+[lib]
+name = "tunnels"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tunnels"
+path = "src/bin/bin.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -19,6 +27,8 @@ zmq = "0.10.0"
 tunnels_lib = { path = "../tunnels_lib" }
 rmp-serde = "1.1.1"
 rosc = "0.9.1"
+
+zero_configure = { path = "../zero_configure" }
 
 # Audio subsystem
 cpal = "0.15.1"

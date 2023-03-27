@@ -30,7 +30,7 @@ pub struct MasterUI {
 impl MasterUI {
     pub fn new(n_mixer_pages: usize) -> Self {
         Self {
-            current_channel: Default::default(),
+            current_channel: ChannelIdx(0),
             current_animation_for_channel: vec![
                 AnimationIdx(0);
                 n_mixer_pages * MIXER_CHANNELS_PER_PAGE

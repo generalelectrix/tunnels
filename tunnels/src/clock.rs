@@ -80,7 +80,7 @@ impl Clock {
             self.run = false;
         } else {
             // if the phase just escaped our range, we ticked this frame
-            self.ticked = new_angle >= 1.0 || new_angle < 0.0;
+            self.ticked = !(0.0..1.0).contains(&new_angle);
             self.phase = Phase::new(new_angle);
         }
     }
@@ -95,6 +95,14 @@ impl Clock {
     pub fn phase(&self) -> Phase {
         self.phase
     }
+}
+
+/// A static snapshot of externally-visible ControllableClock state.
+#[derive(Default, Serialize, Deserialize)]
+pub struct StaticClock {
+    pub phase: Phase,
+    pub submaster_level: UnipolarFloat,
+    pub use_audio_size: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +143,7 @@ impl ControllableClock {
         }
     }
 
+    /// Return the current phase of this clock.
     pub fn phase(&self) -> Phase {
         self.clock.phase()
     }
@@ -150,6 +159,15 @@ impl ControllableClock {
     /// modulating with audio envelope.
     pub fn use_audio_size(&self) -> bool {
         self.use_audio_size
+    }
+
+    /// Get all clock state bundled into a struct.
+    pub fn as_static(&self) -> StaticClock {
+        StaticClock {
+            phase: self.phase(),
+            submaster_level: self.submaster_level(),
+            use_audio_size: self.use_audio_size(),
+        }
     }
 
     /// Update the state of this clock.
@@ -186,13 +204,11 @@ impl ControllableClock {
             Tap => {
                 if self.retrigger {
                     self.clock.reset_on_update = true;
-                } else {
-                    if let Some(rate) = self.sync.tap() {
-                        self.clock.rate = rate;
-                        emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
-                            self.clock.rate / ControllableClock::RATE_SCALE,
-                        )));
-                    }
+                } else if let Some(rate) = self.sync.tap() {
+                    self.clock.rate = rate;
+                    emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
+                        self.clock.rate / ControllableClock::RATE_SCALE,
+                    )));
                 }
             }
             ToggleOneShot => {
@@ -228,6 +244,7 @@ impl ControllableClock {
     }
 }
 
+#[derive(Debug)]
 pub enum StateChange {
     Rate(BipolarFloat),
     Retrigger(bool),
@@ -239,6 +256,7 @@ pub enum StateChange {
     Ticked(bool),
 }
 
+#[derive(Debug)]
 pub enum ControlMessage {
     Set(StateChange),
     Tap,
@@ -287,13 +305,10 @@ impl TapSync {
             return;
         }
         // compute rate if we have at least two taps
-        match (self.taps.first(), self.taps.last()) {
-            (Some(first), Some(last)) => {
-                let period = (*last - *first) / (self.taps.len() as u32 - 1);
-                self.period = Some(period);
-                self.rate = Some(1.0 / period.as_secs_f64());
-            }
-            _ => (),
+        if let (Some(first), Some(last)) = (self.taps.first(), self.taps.last()) {
+            let period = (*last - *first) / (self.taps.len() as u32 - 1);
+            self.period = Some(period);
+            self.rate = Some(1.0 / period.as_secs_f64());
         }
     }
 

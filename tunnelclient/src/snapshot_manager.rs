@@ -95,11 +95,8 @@ impl SnapshotManager {
     /// Drop stale snapshots from the collection.
     fn drop_stale_snapshots(&mut self) {
         loop {
-            let do_pop = match self.snapshots.back() {
-                Some(b) if b.time < self.oldest_relevant_snapshot_time => true,
-                _ => false,
-            };
-            if do_pop {
+            if matches!(self.snapshots.back(), Some(b) if b.time < self.oldest_relevant_snapshot_time)
+            {
                 self.snapshots.pop_back();
             } else {
                 break;
@@ -166,10 +163,10 @@ mod tests {
 
     use super::*;
     use crate::interpolate::Interpolate;
-    use crate::receive::test::arc_segment_for_test;
     use std::iter::Iterator;
     use std::sync::mpsc::{channel, Sender};
     use std::sync::Arc;
+    use tunnels_lib::arc_segment_for_test;
 
     fn mksnapshot(n: u64, time: Timestamp) -> Snapshot {
         Snapshot {
@@ -216,7 +213,7 @@ mod tests {
         zip_assert_same(sm.snapshots.iter(), snapshots_ordered.iter().rev());
 
         let unordered_snapshot = mksnapshot(3, Timestamp(15000));
-        sm.insert_snapshot(unordered_snapshot.clone());
+        sm.insert_snapshot(unordered_snapshot);
 
         let correct_ordering = [30000, 20000, 15000, 10000];
 

@@ -3,7 +3,7 @@
 use crate::{
     clock::ControlMessage as ClockControlMessage,
     clock::StateChange as ClockStateChange,
-    clock_bank::ClockIdx,
+    clock_bank::ClockIdxExt,
     clock_bank::ControlMessage,
     clock_bank::StateChange,
     clock_bank::N_CLOCKS,
@@ -78,7 +78,9 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
         _ => panic!("No clock control mappings for {}.", device),
     };
 
-    assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows.");
+    // This is to catch a future change to N_CLOCKS.
+    #[allow(clippy::assertions_on_constants)]
+    (assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows."));
 
     for channel in 0..N_CLOCKS {
         if device == Device::BehringerCmdMM1 {}
@@ -86,7 +88,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             get_mapping(Control::Rate, channel),
             Box::new(move |v| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(channel),
+                    channel: ClockIdxExt(channel),
                     msg: Set(Rate(bipolar_from_midi(v))),
                 })
             }),
@@ -95,7 +97,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             get_mapping(Control::Level, channel),
             Box::new(move |v| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(channel),
+                    channel: ClockIdxExt(channel),
                     msg: Set(SubmasterLevel(unipolar_from_midi(v))),
                 })
             }),
@@ -104,7 +106,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             get_mapping(Control::Tap, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(channel),
+                    channel: ClockIdxExt(channel),
                     msg: Tap,
                 })
             }),
@@ -113,7 +115,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             get_mapping(Control::OneShot, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(channel),
+                    channel: ClockIdxExt(channel),
                     msg: ToggleOneShot,
                 })
             }),
@@ -122,7 +124,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             get_mapping(Control::Retrigger, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(channel),
+                    channel: ClockIdxExt(channel),
                     msg: ToggleRetrigger,
                 })
             }),
@@ -131,7 +133,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             get_mapping(Control::AudioSize, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(channel),
+                    channel: ClockIdxExt(channel),
                     msg: ToggleUseAudioSize,
                 })
             }),
@@ -140,7 +142,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             get_mapping(Control::AudioSpeed, channel),
             Box::new(move |_| {
                 Clock(ControlMessage {
-                    channel: ClockIdx(channel),
+                    channel: ClockIdxExt(channel),
                     msg: ToggleUseAudioSpeed,
                 })
             }),
@@ -153,10 +155,10 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
     use ClockStateChange::*;
 
     let mut send = |control, value| {
-        if let Some(mapping) = mapping_cmd_mm1(control, sc.channel.0) {
+        if let Some(mapping) = mapping_cmd_mm1(control, sc.channel.into()) {
             manager.send(Device::BehringerCmdMM1, event(mapping, value));
         }
-        if let Some(mapping) = mapping_touchosc(control, sc.channel.0) {
+        if let Some(mapping) = mapping_touchosc(control, sc.channel.into()) {
             manager.send(Device::TouchOsc, event(mapping, value));
         }
     };

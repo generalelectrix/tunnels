@@ -3,7 +3,7 @@ use crate::{
     animation::StateChange,
     animation::Target as AnimationTarget,
     animation::Waveform as WaveformType,
-    clock_bank::{ClockIdx, N_CLOCKS},
+    clock_bank::{ClockIdxExt, N_CLOCKS},
     midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
     midi_controls::Device,
     show::ControlMessage::Animation,
@@ -179,7 +179,7 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
     for clock_num in 0..N_CLOCKS as i32 {
         add(
             note_on_ch0((CLOCK_SELECT_CONTROL_OFFSET + clock_num) as u8),
-            Box::new(move |_| Animation(Set(ClockSource(Some(ClockIdx(clock_num as usize)))))),
+            Box::new(move |_| Animation(SetClockSource(Some(ClockIdxExt(clock_num as usize))))),
         );
     }
 
@@ -241,11 +241,11 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
         Pulse(v) => send(event(PULSE, v as u8)),
         ClockSource(v) => {
             let index = match v {
-                Some(source) => source.0 as i32,
+                Some(source) => usize::from(source) as i32,
                 None => -1,
             };
             CLOCK_SELECT_BUTTONS.select(
-                note_on_ch0((index as i32 + CLOCK_SELECT_CONTROL_OFFSET) as u8),
+                note_on_ch0((index + CLOCK_SELECT_CONTROL_OFFSET) as u8),
                 send,
             );
         }

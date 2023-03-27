@@ -117,7 +117,7 @@ impl Dispatcher {
     ) -> Result<Self, Box<dyn Error>> {
         let midi_map = ControlMap::new();
 
-        let mut midi_manager = Manager::new();
+        let mut midi_manager = Manager::default();
         for device_spec in midi_devices.into_iter() {
             midi_manager.add_device(device_spec, send.clone())?;
         }

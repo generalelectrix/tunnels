@@ -36,6 +36,7 @@ pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
 pub struct Show {
     dispatcher: Dispatcher,
     audio_input: AudioInput,
+    run_clock_service: bool,
     state: ShowState,
     save_path: Option<PathBuf>,
     last_save: Option<Instant>,
@@ -47,6 +48,7 @@ impl Show {
         midi_devices: Vec<MidiDeviceSpec>,
         osc_devices: Vec<OscDeviceSpec>,
         audio_input_device: Option<String>,
+        run_clock_service: bool,
         save_path: Option<PathBuf>,
     ) -> Result<Self, Box<dyn Error>> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
@@ -56,15 +58,14 @@ impl Show {
 
         let n_pages = if use_wing { 2 } else { 1 };
 
-        // Initialize show control system.
-
         Ok(Self {
             dispatcher: Dispatcher::new(midi_devices, osc_devices)?,
             audio_input: AudioInput::new(audio_input_device)?,
+            run_clock_service,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
-                clocks: ClockBank::new(),
+                clocks: ClockBank::default(),
                 color_palette: ColorPalette::new(),
             },
             save_path,
@@ -114,7 +115,7 @@ impl Show {
             };
             if should_save {
                 info!("Autosaving.");
-                let result = self.save(&path);
+                let result = self.save(path);
                 if result.is_ok() {
                     self.last_save = Some(now);
                 }
@@ -148,11 +149,11 @@ impl Show {
         );
 
         let mut frame_number = 0;
-        let mut ctx = zmq::Context::new();
+        let ctx = zmq::Context::new();
         let start = Instant::now();
 
-        let _timesync = TimesyncServer::start(&mut ctx, start)?;
-        let frame_sender = start_render_service(&mut ctx)?;
+        let _timesync = TimesyncServer::start(&ctx, start)?;
+        let frame_sender = start_render_service(&ctx, self.run_clock_service)?;
 
         let mut last_update = start;
         let mut timestamp = Timestamp(0);
@@ -163,14 +164,17 @@ impl Show {
                 last_update += update_interval;
                 timestamp.step(update_interval);
 
-                if let Err(_) = frame_sender.send(Frame {
-                    number: frame_number,
-                    timestamp: timestamp,
-                    mixer: self.state.mixer.clone(),
-                    clocks: self.state.clocks.clone(),
-                    color_palette: self.state.color_palette.clone(),
-                    audio_envelope: self.audio_input.envelope(),
-                }) {
+                if frame_sender
+                    .send(Frame {
+                        number: frame_number,
+                        timestamp,
+                        mixer: self.state.mixer.clone(),
+                        clocks: self.state.clocks.clone(),
+                        color_palette: self.state.color_palette.clone(),
+                        audio_envelope: self.audio_input.envelope(),
+                    })
+                    .is_err()
+                {
                     bail!("Render server hung up.  Aborting show.");
                 }
                 frame_number += 1;
@@ -265,7 +269,7 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<(), Box<dyn Error>> {
-        let mut show = Show::new(Vec::new(), Vec::new(), None, None)?;
+        let mut show = Show::new(Vec::new(), Vec::new(), None, false, None)?;
 
         show.test_mode(stress);
 
@@ -295,7 +299,7 @@ mod test {
         // Channel 0 should contain data, but none of the others.
         for (i, chan) in video_feeds.iter().enumerate() {
             if i == 0 {
-                assert!(chan.len() > 0);
+                assert!(!chan.is_empty());
             } else {
                 assert_eq!(0, chan.len());
             }
@@ -303,8 +307,8 @@ mod test {
 
         let mut first_channel = video_feeds.into_iter().next().unwrap();
 
-        for mut beam in first_channel.iter_mut() {
-            for seg in Arc::get_mut(&mut beam).unwrap().iter_mut() {
+        for beam in first_channel.iter_mut() {
+            for seg in Arc::get_mut(beam).unwrap().iter_mut() {
                 trunc_arc_segment(seg);
             }
         }

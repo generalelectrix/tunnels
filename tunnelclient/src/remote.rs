@@ -8,7 +8,6 @@
 use crate::config::{ClientConfig, Resolution};
 use crate::draw::{Transform, TransformDirection};
 use crate::show::Show;
-use hostname;
 use lazy_static::lazy_static;
 use log::{error, info};
 use regex::Regex;
@@ -20,7 +19,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
 use tunnels_lib::RunFlag;
-use zero_configure::{run_service, Controller};
+use zero_configure::req_rep::{run_service_req_rep, Controller};
 use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelclient";
@@ -34,16 +33,16 @@ const PORT: u16 = 15000;
 /// Spawn a second thread to run the remote service, passing configurations to run back across a
 /// channel.
 /// Panics if the remote service thread fails to spawn.
-pub fn run_remote(ctx: &mut Context) {
+pub fn run_remote(ctx: Context) {
     // Create a channel to wait on config requests.
     let (send, recv) = channel();
 
     // Spawn a thread to receive config requests.
+    let ctx_remote = ctx.clone();
     thread::Builder::new()
         .name("remote_service".to_string())
-        .spawn(|| {
-            let mut ctx = Context::new();
-            run_remote_service(&mut ctx, send);
+        .spawn(move || {
+            run_remote_service(ctx_remote, send);
         })
         .expect("Failed to spawn remote service thread");
 
@@ -54,7 +53,7 @@ pub fn run_remote(ctx: &mut Context) {
 
         info!("Starting a new show with configuration: {:?}", config);
         // Start up a fresh show.
-        match Show::new(config, ctx, run_flag) {
+        match Show::new(config, ctx.clone(), run_flag) {
             Ok(mut show) => {
                 info!("Show initialized, starting event loop.");
                 // Run the show until the remote thread tells us to quit.
@@ -72,11 +71,11 @@ pub fn run_remote(ctx: &mut Context) {
 /// Run the remote discovery and configuration service, passing config states and cancellation
 /// flags back to the main thread.
 /// Panics if the service completes with an error.
-pub fn run_remote_service(_ctx: &mut Context, sender: Sender<(ClientConfig, RunFlag)>) {
+pub fn run_remote_service(ctx: Context, sender: Sender<(ClientConfig, RunFlag)>) {
     // Run flag for currently-executing show, if there is one.
     let mut running_flag: Option<RunFlag> = None;
 
-    run_service(SERVICE_NAME, PORT, |request_buffer| {
+    run_service_req_rep(ctx, SERVICE_NAME, PORT, |request_buffer| {
         // Attempt to deserialize this request buffer as a client configuration.
         match deserialize_config(request_buffer) {
             Ok(config) => {
@@ -89,7 +88,7 @@ pub fn run_remote_service(_ctx: &mut Context, sender: Sender<(ClientConfig, RunF
                 };
 
                 // Create a new run control for the show we're about to start.
-                let new_run_flag = RunFlag::new();
+                let new_run_flag = RunFlag::default();
                 running_flag = Some(new_run_flag.clone());
 
                 // Send the config and flag back to the show thread.
@@ -123,9 +122,9 @@ pub struct Administrator {
 }
 
 impl Administrator {
-    pub fn new() -> Self {
+    pub fn new(ctx: Context) -> Self {
         Administrator {
-            controller: Controller::new(SERVICE_NAME),
+            controller: Controller::new(ctx, SERVICE_NAME.to_string()),
         }
     }
 
@@ -315,7 +314,7 @@ pub fn administrate() {
         .into_string()
         .unwrap();
     println!("Starting administrator...");
-    let admin = Administrator::new();
+    let admin = Administrator::new(Context::new());
 
     // Wait a couple seconds for dns-sd to do its business.
     thread::sleep(Duration::from_secs(2));
@@ -345,7 +344,7 @@ quit    Quit.";
                 println!("Available clients:\n{}\n", admin.clients().join("\n"));
             }
             "conf" | "c" => {
-                let client_name = prompt("Enter client name", &parse_client_name);
+                let client_name = prompt("Enter client name", parse_client_name);
                 let config = configure_one(host.clone());
                 match admin.run_with_config(&client_name, config) {
                     Ok(msg) => {

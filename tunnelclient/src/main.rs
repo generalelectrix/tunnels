@@ -28,11 +28,11 @@ fn main() {
          or the integer virtual video channel to listen to.",
     );
 
-    let mut ctx = Context::new();
+    let ctx = Context::new();
 
     if first_arg == "remote" {
         init_logger(LevelFilter::Info);
-        run_remote(&mut ctx);
+        run_remote(ctx);
     } else if first_arg == "admin" {
         init_logger(LevelFilter::Info);
         administrate();
@@ -50,7 +50,7 @@ fn main() {
             LevelFilter::Info
         });
 
-        let mut show = Show::new(cfg, &mut ctx, RunFlag::new()).expect("Failed to initialize show");
+        let mut show = Show::new(cfg, ctx, RunFlag::default()).expect("Failed to initialize show");
 
         show.run();
     }

@@ -43,6 +43,7 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
+    #[allow(clippy::too_many_arguments)]
     /// Create a configuration from minimal data.
     pub fn new(
         video_channel: u64,

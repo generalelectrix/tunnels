@@ -10,3 +10,5 @@ tokio-core = "^0.1"
 futures = "^0.1"
 simple-error = "0.3.0"
 zmq = "0.10.0"
+serde = { version = "1", features = ["derive"] }
+rmp-serde = "1.1.1"

@@ -3,13 +3,30 @@ use std::time::Duration;
 use crate::{
     clock::{
         ControlMessage as ClockControlMessage, ControllableClock,
-        EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange,
+        EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange, StaticClock,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
 };
+use log::error;
 use serde::{Deserialize, Serialize};
-use tunnels_lib::number::UnipolarFloat;
+use simple_error::{bail, SimpleError};
+use tunnels_lib::number::{Phase, UnipolarFloat};
 use typed_index_derive::TypedIndex;
+
+/// Read-only interface to the state of a collection of clocks.
+pub trait ClockStore {
+    /// Return the current phase of this clock.
+    fn phase(&self, index: ClockIdx) -> Phase;
+
+    /// Return the current submaster level of this clock.
+    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat;
+
+    /// Return true if we should use audio envelope to scale submaster level.
+    /// This is returned independently, rather than applied to the submaster
+    /// level directly, to allow clients of the submaster to avoid double-
+    /// modulating with audio envelope.
+    fn use_audio_size(&self, index: ClockIdx) -> bool;
+}
 
 /// how many globally-available clocks?
 pub const N_CLOCKS: usize = 4;
@@ -18,22 +35,46 @@ pub const N_CLOCKS: usize = 4;
     Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
 )]
 #[typed_index(ControllableClock)]
-pub struct ClockIdx(pub usize);
+/// Index of a clock in the bank.
+/// Care should be taken to ensure that these values are always valid.
+/// External input should be accepted through ClockIdxExt and validated
+/// using from.
+pub struct ClockIdx(usize);
+
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
+/// Public-facing "request" for a clock index.
+/// Must be validated to become a proper ClockIdx.
+pub struct ClockIdxExt(pub usize);
+
+impl TryFrom<ClockIdxExt> for ClockIdx {
+    type Error = SimpleError;
+    fn try_from(value: ClockIdxExt) -> Result<Self, Self::Error> {
+        if value.0 >= N_CLOCKS {
+            bail!("clock index {} out of range", value.0);
+        }
+        Ok(ClockIdx(value.0))
+    }
+}
 
 /// Maintain a indexable collection of clocks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClockBank([ControllableClock; N_CLOCKS]);
 
+impl ClockStore for ClockBank {
+    fn phase(&self, index: ClockIdx) -> Phase {
+        self.get(index).phase()
+    }
+
+    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
+        self.get(index).submaster_level()
+    }
+
+    fn use_audio_size(&self, index: ClockIdx) -> bool {
+        self.get(index).use_audio_size()
+    }
+}
+
 impl ClockBank {
-    pub fn new() -> Self {
-        Self(Default::default())
-    }
-
-    /// Return an immutable reference to the selected clock.
-    pub fn get(&self, index: ClockIdx) -> &ControllableClock {
-        &self.0[index]
-    }
-
     pub fn update_state<E: EmitStateChange>(
         &mut self,
         delta_t: Duration,
@@ -52,6 +93,22 @@ impl ClockBank {
         }
     }
 
+    pub fn get(&self, index: ClockIdx) -> &ControllableClock {
+        &self.0[index]
+    }
+
+    /// Return a static snapshot of the state of this clock bank.
+    pub fn as_static(&self) -> [StaticClock; N_CLOCKS] {
+        // FIXME: need this method to avoid having to write this out explicitly
+        // https://doc.rust-lang.org/std/primitive.array.html#method.each_ref
+        [
+            self.0[0].as_static(),
+            self.0[1].as_static(),
+            self.0[2].as_static(),
+            self.0[3].as_static(),
+        ]
+    }
+
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
         for (i, clock) in self.0.iter().enumerate() {
             clock.emit_state(&mut ChannelEmitter {
@@ -62,13 +119,14 @@ impl ClockBank {
     }
 
     pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
-        self.0[msg.channel].control(
-            msg.msg,
-            &mut ChannelEmitter {
-                channel: msg.channel,
-                emitter,
-            },
-        )
+        let channel: ClockIdx = match msg.channel.try_into() {
+            Ok(id) => id,
+            Err(e) => {
+                error!("could not process clock control message {msg:?}: {e}");
+                return;
+            }
+        };
+        self.0[channel].control(msg.msg, &mut ChannelEmitter { channel, emitter })
     }
 }
 
@@ -87,8 +145,9 @@ impl<'e, E: EmitStateChange> EmitClockStateChange for ChannelEmitter<'e, E> {
     }
 }
 
+#[derive(Debug)]
 pub struct ControlMessage {
-    pub channel: ClockIdx,
+    pub channel: ClockIdxExt,
     pub msg: ClockControlMessage,
 }
 

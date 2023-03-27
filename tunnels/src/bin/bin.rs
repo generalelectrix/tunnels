@@ -1,32 +1,4 @@
-mod animation;
-mod audio;
-mod beam;
-mod beam_store;
-mod clock;
-mod clock_bank;
-mod control;
-mod look;
-mod master_ui;
-mod midi;
-mod midi_controls;
-mod mixer;
-mod osc;
-mod palette;
-mod send;
-mod show;
-mod test_mode;
-mod timesync;
-mod transient_indicator;
-mod tunnel;
-mod waveforms;
-
-use audio::AudioInput;
 use io::Write;
-use midi::{list_ports, DeviceSpec as MidiDeviceSpec};
-use midi_controls::Device as MidiDevice;
-use osc::Device as OscDevice;
-use osc::DeviceSpec as OscDeviceSpec;
-use show::Show;
 use simple_error::{bail, SimpleError};
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::net::IpAddr;
@@ -34,7 +6,13 @@ use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
 use std::{error::Error, time::Duration};
-use test_mode::{all_video_outputs, stress, TestModeSetup};
+use tunnels::audio::AudioInput;
+use tunnels::midi::{list_ports, DeviceSpec as MidiDeviceSpec};
+use tunnels::midi_controls::Device as MidiDevice;
+use tunnels::osc::Device as OscDevice;
+use tunnels::osc::DeviceSpec as OscDeviceSpec;
+use tunnels::show::Show;
+use tunnels::test_mode::{all_video_outputs, stress, TestModeSetup};
 
 fn main() -> Result<(), Box<dyn Error>> {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
@@ -73,6 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         midi_devices,
         osc_devices,
         audio_input_device,
+        prompt_bool("Run clock publisher service?")?,
         paths.save_path,
     )?;
 
@@ -167,7 +146,7 @@ fn prompt_audio() -> Result<Option<String>, Box<dyn Error>> {
         return Ok(None);
     }
     let input_devices = AudioInput::devices()?;
-    if input_devices.len() == 0 {
+    if input_devices.is_empty() {
         bail!("No audio input devices found.");
     }
     println!("Available devices:");
@@ -203,7 +182,7 @@ struct LoadSaveConfig {
 }
 
 /// Save and load shows from this relative directory.
-const SHOW_DIR: &'static str = "saved_shows";
+const SHOW_DIR: &str = "saved_shows";
 
 /// Prompt the user for show load and/or save paths.
 fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
@@ -214,7 +193,7 @@ fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
     let save_dir = current_dir()?.join(SHOW_DIR);
     if prompt_bool("Open saved show?")? {
         let mut name = String::new();
-        while name.len() == 0 {
+        while name.is_empty() {
             print!("Open this show: ");
             io::stdout().flush()?;
             name = read_string()?;
@@ -224,7 +203,7 @@ fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
         cfg.save_path = Some(path);
     } else if prompt_bool("Creating new show; save?")? {
         let mut name = String::new();
-        while name.len() == 0 {
+        while name.is_empty() {
             print!("Name this show: ");
             io::stdout().flush()?;
             name = read_string()?;
@@ -240,7 +219,7 @@ fn prompt_bool(msg: &str) -> Result<bool, Box<dyn Error>> {
     prompt_parse(format!("{} y/n", msg).as_str(), |input| {
         input
             .chars()
-            .nth(0)
+            .next()
             .and_then(|first_char| match first_char {
                 'y' | 'Y' => Some(true),
                 'n' | 'N' => Some(false),

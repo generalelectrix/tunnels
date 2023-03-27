@@ -1,6 +1,6 @@
 use crate::config::ClientConfig;
 use crate::draw::Draw;
-use crate::receive::SubReceiver;
+use crate::receive::receive_async;
 use crate::snapshot_manager::InterpResult::*;
 use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
@@ -16,6 +16,8 @@ use std::thread;
 use std::time::Duration;
 use tunnels_lib::RunFlag;
 use tunnels_lib::{Snapshot, Timestamp};
+// FIXME: we should import a strong type pair to link the type used to send and receieve snapshots.
+use zero_configure::pub_sub::Receiver as SubReceiver;
 use zmq::Context;
 
 /// Top-level structure that owns all of the show data.
@@ -30,15 +32,11 @@ pub struct Show {
 }
 
 impl Show {
-    pub fn new(
-        cfg: ClientConfig,
-        ctx: &mut Context,
-        run_flag: RunFlag,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(cfg: ClientConfig, ctx: Context, run_flag: RunFlag) -> Result<Self, Box<dyn Error>> {
         info!("Running on video channel {}.", cfg.video_channel);
 
         // Start up the timesync service.
-        let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx)?;
+        let mut timesync_client = TimesyncClient::new(&cfg.server_hostname, ctx.clone())?;
 
         // Synchronize timing with master host.
         info!(
@@ -85,9 +83,12 @@ impl Show {
             .map_err(|e| format!("Timesync service thread failed to spawn: {}", e))?;
 
         // Set up snapshot reception and management.
-        let snapshot_queue: Receiver<Snapshot> =
-            SubReceiver::new(&cfg.server_hostname, 6000, &[cfg.video_channel as u8], ctx)?
-                .run_async()?;
+        let snapshot_queue: Receiver<Snapshot> = receive_async(SubReceiver::new(
+            &ctx,
+            &cfg.server_hostname,
+            6000,
+            Some(vec![cfg.video_channel as u8]),
+        )?)?;
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);
 

@@ -5,7 +5,7 @@ use std::{error::Error, time::Instant};
 use rmp_serde::Serializer;
 use serde::Serialize;
 use tunnels_lib::{RunFlag, Timestamp};
-use zmq;
+
 use zmq::Context;
 
 const PORT: u64 = 8989;
@@ -17,13 +17,13 @@ pub struct TimesyncServer {
 impl TimesyncServer {
     /// Start the timesync server.
     /// The server will run until it is dropped.
-    pub fn start(ctx: &mut Context, start: Instant) -> Result<Self, Box<dyn Error>> {
+    pub fn start(ctx: &Context, start: Instant) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::REP)?;
         let addr = format!("tcp://*:{}", PORT);
         socket.bind(&addr)?;
         // time out once per second
         socket.set_rcvtimeo(1000)?;
-        let run = RunFlag::new();
+        let run = RunFlag::default();
         let run_local = run.clone();
 
         // start up the service in a new thread
