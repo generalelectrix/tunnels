@@ -13,6 +13,7 @@ use tunnels_lib::Timestamp;
 
 use crate::{
     animation,
+    animation_target::AnimationTarget,
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
     control::Dispatcher,
@@ -227,6 +228,7 @@ impl Show {
 
 pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
+    AnimationTarget(AnimationTarget),
     Animation(animation::ControlMessage),
     Mixer(mixer::ControlMessage),
     Clock(clock_bank::ControlMessage),
@@ -238,6 +240,7 @@ pub enum ControlMessage {
 pub enum StateChange {
     Tunnel(tunnel::StateChange),
     Animation(animation::StateChange),
+    AnimationTarget(AnimationTarget),
     Mixer(mixer::StateChange),
     Clock(clock_bank::StateChange),
     ColorPalette(palette::StateChange),

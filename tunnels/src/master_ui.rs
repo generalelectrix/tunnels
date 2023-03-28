@@ -1,5 +1,4 @@
 use crate::{
-    animation::Animation,
     audio::AudioInput,
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
@@ -8,7 +7,7 @@ use crate::{
     mixer::{ChannelIdx, Mixer},
     palette::ColorPalette,
     show::{ControlMessage as ShowControlMessage, StateChange as ShowStateChange},
-    tunnel::AnimationIdx,
+    tunnel::{AnimationIdx, TargetedAnimation},
 };
 
 use serde::{Deserialize, Serialize};
@@ -22,7 +21,7 @@ pub struct MasterUI {
     /// associated index.
     /// Enables stable animation selection when jumping between beams.
     current_animation_for_channel: Vec<AnimationIdx>,
-    animation_clipboard: Animation,
+    animation_clipboard: TargetedAnimation,
     beam_store: BeamStore,
     beam_store_state: BeamStoreState,
 }
@@ -35,7 +34,7 @@ impl MasterUI {
                 AnimationIdx(0);
                 n_mixer_pages * MIXER_CHANNELS_PER_PAGE
             ],
-            animation_clipboard: Animation::new(),
+            animation_clipboard: TargetedAnimation::default(),
             beam_store: BeamStore::new(n_mixer_pages),
             beam_store_state: BeamStoreState::Idle,
         }
@@ -49,7 +48,7 @@ impl MasterUI {
         mixer.beam(self.current_channel)
     }
 
-    fn current_animation<'m>(&self, mixer: &'m mut Mixer) -> Option<&'m mut Animation> {
+    fn current_animation<'m>(&self, mixer: &'m mut Mixer) -> Option<&'m mut TargetedAnimation> {
         match self.current_beam(mixer) {
             Beam::Look(_) => None,
             Beam::Tunnel(t) => Some(t.animation(self.current_animation_idx())),
@@ -77,7 +76,13 @@ impl MasterUI {
             },
             Animation(am) => {
                 if let Some(a) = self.current_animation(mixer) {
-                    a.control(am, emitter);
+                    a.animation.control(am, emitter);
+                }
+            }
+            AnimationTarget(at) => {
+                if let Some(a) = self.current_animation(mixer) {
+                    a.target = at;
+                    emitter.emit(ShowStateChange::AnimationTarget(at));
                 }
             }
             Mixer(mm) => {
@@ -127,7 +132,8 @@ impl MasterUI {
     /// Emit state for the active animator.
     fn emit_animator_state<E: EmitStateChange>(&self, mixer: &mut Mixer, emitter: &mut E) {
         if let Some(a) = self.current_animation(mixer) {
-            a.emit_state(emitter);
+            a.animation.emit_state(emitter);
+            emitter.emit(ShowStateChange::AnimationTarget(a.target));
         }
         emitter.emit_master_ui_state_change(StateChange::Animation(self.current_animation_idx()));
     }

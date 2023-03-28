@@ -17,21 +17,6 @@ pub enum Waveform {
     Sawtooth,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
-pub enum Target {
-    Rotation,
-    Thickness,
-    Size,
-    AspectRatio,
-    Color,
-    ColorSpread,
-    ColorPeriodicity,
-    ColorSaturation,
-    MarqueeRotation,
-    PositionX,
-    PositionY,
-}
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Animation {
     pub waveform: Waveform,
@@ -39,7 +24,6 @@ pub struct Animation {
     standing: bool,
     invert: bool,
     n_periods: i32,
-    pub target: Target,
     size: UnipolarFloat,
     duty_cycle: UnipolarFloat,
     smoothing: UnipolarFloat,
@@ -62,7 +46,6 @@ impl Animation {
             standing: false,
             invert: false,
             n_periods: 0,
-            target: Target::Size,
             size: UnipolarFloat::ZERO,
             duty_cycle: UnipolarFloat::ONE,
             smoothing: UnipolarFloat::new(0.25),
@@ -150,7 +133,6 @@ impl Animation {
         emitter.emit_animation_state_change(Standing(self.standing));
         emitter.emit_animation_state_change(Invert(self.invert));
         emitter.emit_animation_state_change(NPeriods(self.n_periods));
-        emitter.emit_animation_state_change(Target(self.target));
         emitter.emit_animation_state_change(Speed(self.clock_speed()));
         emitter.emit_animation_state_change(Size(self.size));
         emitter.emit_animation_state_change(DutyCycle(self.duty_cycle));
@@ -212,7 +194,6 @@ impl Animation {
             Standing(v) => self.standing = v,
             Invert(v) => self.invert = v,
             NPeriods(v) => self.n_periods = v,
-            Target(v) => self.target = v,
             Speed(v) => self.set_clock_speed(v),
             Size(v) => self.size = v,
             DutyCycle(v) => self.duty_cycle = v,
@@ -232,7 +213,6 @@ pub enum StateChange {
     Standing(bool),
     Invert(bool),
     NPeriods(i32),
-    Target(Target),
     Speed(BipolarFloat),
     Size(UnipolarFloat),
     DutyCycle(UnipolarFloat),

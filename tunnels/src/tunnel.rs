@@ -1,5 +1,6 @@
 use crate::{
-    animation::{Animation, Target},
+    animation::Animation,
+    animation_target::AnimationTarget,
     clock_bank::ClockBank,
     palette::{ColorPalette, ColorPaletteIdx},
     waveforms::WaveformArgs,
@@ -47,7 +48,7 @@ pub struct Tunnel {
     curr_marquee_angle: Phase,
     x_offset: Smoother<f64>,
     y_offset: Smoother<f64>,
-    anims: [Animation; N_ANIM],
+    anims: [TargetedAnimation; N_ANIM],
 }
 
 impl Default for Tunnel {
@@ -93,17 +94,17 @@ impl Tunnel {
     }
 
     /// Borrow an animation as a mutable reference.
-    pub fn animation(&mut self, anim_num: AnimationIdx) -> &mut Animation {
+    pub fn animation(&mut self, anim_num: AnimationIdx) -> &mut TargetedAnimation {
         &mut self.anims[anim_num]
     }
 
     /// Replace an animation with another.
-    pub fn replace_animation(&mut self, anim_num: AnimationIdx, new_anim: Animation) {
+    pub fn replace_animation(&mut self, anim_num: AnimationIdx, new_anim: TargetedAnimation) {
         self.anims[anim_num] = new_anim;
     }
 
     /// Get an iterator over animations.
-    pub fn animations(&mut self) -> impl Iterator<Item = &mut Animation> {
+    pub fn animations(&mut self) -> impl Iterator<Item = &mut TargetedAnimation> {
         self.anims.iter_mut()
     }
 
@@ -118,7 +119,7 @@ impl Tunnel {
 
         // Update the state of the animations.
         for anim in &mut self.anims {
-            anim.update_state(delta_t, audio_envelope);
+            anim.animation.update_state(delta_t, audio_envelope);
         }
         let timestep_secs = delta_t.as_secs_f64();
 
@@ -179,10 +180,12 @@ impl Tunnel {
             let mut rot_angle_adjust = 0.;
             let mut marquee_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
-            use Target::*;
             for anim in &self.anims {
-                let anim_value = anim.get_value(rel_angle, external_clocks, audio_envelope);
+                let anim_value =
+                    anim.animation
+                        .get_value(rel_angle, external_clocks, audio_envelope);
 
+                use AnimationTarget::*;
                 match anim.target {
                     Rotation => rot_angle_adjust += anim_value,
                     MarqueeRotation => marquee_angle_adjust += anim_value,
@@ -384,8 +387,15 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
 #[derive(
     Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
 )]
-#[typed_index(Animation)]
+#[typed_index(TargetedAnimation)]
 pub struct AnimationIdx(pub usize);
+
+/// Combination of an animation and a tunnel parameter target for that animation.
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+pub struct TargetedAnimation {
+    pub animation: Animation,
+    pub target: AnimationTarget,
+}
 
 // TODO: move some of these into associated constants
 pub const N_ANIM: usize = 4;
