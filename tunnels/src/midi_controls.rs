@@ -1,4 +1,5 @@
 mod animation;
+mod animation_target;
 mod audio;
 mod clock;
 mod device;
@@ -20,6 +21,7 @@ use crate::{
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
 use self::animation::{map_animation_controls, update_animation_control};
+use self::animation_target::{map_animation_target_controls, update_animation_target_control};
 use self::audio::{map_audio_controls, update_audio_control};
 use self::clock::{map_clock_controls, update_clock_control};
 use self::master_ui::{map_master_ui_controls, update_master_ui_control};
@@ -42,6 +44,8 @@ impl ControlMap {
 
         map_animation_controls(Device::AkaiApc40, &mut map);
         map_animation_controls(Device::TouchOsc, &mut map);
+
+        map_animation_target_controls(Device::TouchOsc, &mut map);
 
         map_mixer_controls(Device::AkaiApc40, 0, &mut map);
         map_mixer_controls(Device::AkaiApc20, 1, &mut map);
@@ -154,6 +158,9 @@ impl EmitStateChange for Dispatcher {
         match sc {
             StateChange::Tunnel(sc) => update_tunnel_control(sc, &mut self.midi_manager),
             StateChange::Animation(sc) => update_animation_control(sc, &mut self.midi_manager),
+            StateChange::AnimationTarget(sc) => {
+                update_animation_target_control(sc, &mut self.midi_manager)
+            }
             StateChange::Mixer(sc) => update_mixer_control(sc, &mut self.midi_manager),
             StateChange::Clock(sc) => update_clock_control(sc, &mut self.midi_manager),
             StateChange::ColorPalette(_) => {

@@ -1,4 +1,5 @@
 pub mod animation;
+mod animation_target;
 pub mod audio;
 mod beam;
 mod beam_store;

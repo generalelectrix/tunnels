@@ -1,6 +1,7 @@
+use crate::animation_target::AnimationTarget;
 use crate::master_ui::EmitStateChange;
 use crate::{
-    animation::{Animation, StateChange as AnimationStateChange, Target, Waveform},
+    animation::{Animation, StateChange as AnimationStateChange, Waveform},
     beam::Beam,
     mixer::{Channel, Mixer, VideoChannel},
     show::StateChange,
@@ -51,7 +52,7 @@ pub fn stress(channel_count: usize, i: usize, channel: &mut Channel) {
 
         for (i, anim) in tunnel.animations().enumerate() {
             set_animation_state(
-                anim,
+                &mut anim.animation,
                 AnimationStateChange::Waveform(match i % 4 {
                     0 => Waveform::Sine,
                     1 => Waveform::Triangle,
@@ -60,12 +61,15 @@ pub fn stress(channel_count: usize, i: usize, channel: &mut Channel) {
                 }),
             );
             set_animation_state(
-                anim,
+                &mut anim.animation,
                 AnimationStateChange::Speed(BipolarFloat::new(i as f64 / 3.0)),
             );
-            set_animation_state(anim, AnimationStateChange::Size(UnipolarFloat::new(0.5)));
-            set_animation_state(anim, AnimationStateChange::Target(Target::Thickness));
-            set_animation_state(anim, AnimationStateChange::NPeriods(3));
+            set_animation_state(
+                &mut anim.animation,
+                AnimationStateChange::Size(UnipolarFloat::new(0.5)),
+            );
+            anim.target = AnimationTarget::Thickness;
+            set_animation_state(&mut anim.animation, AnimationStateChange::NPeriods(3));
         }
     }
 }

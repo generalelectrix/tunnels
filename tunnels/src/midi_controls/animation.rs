@@ -1,7 +1,6 @@
 use crate::{
     animation::ControlMessage,
     animation::StateChange,
-    animation::Target as AnimationTarget,
     animation::Waveform as WaveformType,
     clock_bank::{ClockIdxExt, N_CLOCKS},
     midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
@@ -56,22 +55,6 @@ lazy_static! {
     static ref N_PERIODS_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..15).map(note_on_ch0).collect(), off: 0, on: 1,
     };
-    static ref TARGET_SELECT_BUTTONS: RadioButtons = RadioButtons {
-        mappings: vec!(
-            TARGET_ROTATION,
-            TARGET_THICKNESS,
-            TARGET_SIZE,
-            TARGET_ASPECT_RATIO,
-            TARGET_COLOR,
-            TARGET_COLOR_SPREAD,
-            TARGET_COLOR_PERIODICITY,
-            TARGET_COLOR_SATURATION,
-            TARGET_MARQUEE,
-            TARGET_POSITIONX,
-            TARGET_POSITIONY,
-        ),
-        off: 0, on: 1
-    };
     static ref CLOCK_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
         mappings: (-1..N_CLOCKS as i32)
@@ -119,52 +102,6 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
             Box::new(move |_| Animation(Set(NPeriods(n_periods)))),
         );
     }
-
-    // target select
-    add(
-        TARGET_ROTATION,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::Rotation)))),
-    );
-    add(
-        TARGET_THICKNESS,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::Thickness)))),
-    );
-    add(
-        TARGET_SIZE,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::Size)))),
-    );
-    add(
-        TARGET_ASPECT_RATIO,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::AspectRatio)))),
-    );
-    add(
-        TARGET_COLOR,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::Color)))),
-    );
-    add(
-        TARGET_COLOR_SPREAD,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::ColorSpread)))),
-    );
-    add(
-        TARGET_COLOR_PERIODICITY,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::ColorPeriodicity)))),
-    );
-    add(
-        TARGET_COLOR_SATURATION,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::ColorSaturation)))),
-    );
-    add(
-        TARGET_MARQUEE,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::MarqueeRotation)))),
-    );
-    add(
-        TARGET_POSITIONX,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::PositionX)))),
-    );
-    add(
-        TARGET_POSITIONY,
-        Box::new(|_| Animation(Set(Target(AnimationTarget::PositionY)))),
-    );
 
     // pulse/invert/standing wave
     add(PULSE, Box::new(|_| Animation(TogglePulse)));
@@ -217,25 +154,6 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
             );
         }
         NPeriods(v) => N_PERIODS_SELECT_BUTTONS.select(note_on_ch0(v as u8), send),
-        Target(v) => {
-            use AnimationTarget::*;
-            TARGET_SELECT_BUTTONS.select(
-                match v {
-                    Rotation => TARGET_ROTATION,
-                    Thickness => TARGET_THICKNESS,
-                    Size => TARGET_SIZE,
-                    AspectRatio => TARGET_ASPECT_RATIO,
-                    Color => TARGET_COLOR,
-                    ColorSpread => TARGET_COLOR_SPREAD,
-                    ColorPeriodicity => TARGET_COLOR_PERIODICITY,
-                    ColorSaturation => TARGET_COLOR_SATURATION,
-                    MarqueeRotation => TARGET_MARQUEE,
-                    PositionX => TARGET_POSITIONX,
-                    PositionY => TARGET_POSITIONY,
-                },
-                send,
-            );
-        }
         Invert(v) => send(event(INVERT, v as u8)),
         Standing(v) => send(event(STANDING, v as u8)),
         Pulse(v) => send(event(PULSE, v as u8)),
