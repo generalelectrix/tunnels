@@ -26,19 +26,6 @@ const TRIANGLE: Mapping = note_on_ch0(25);
 const SQUARE: Mapping = note_on_ch0(26);
 const SAWTOOTH: Mapping = note_on_ch0(27);
 
-// target buttons
-const TARGET_ROTATION: Mapping = note_on_ch0(35);
-const TARGET_THICKNESS: Mapping = note_on_ch0(36);
-const TARGET_SIZE: Mapping = note_on_ch0(37);
-const TARGET_ASPECT_RATIO: Mapping = note_on_ch0(38);
-const TARGET_COLOR: Mapping = note_on_ch0(39);
-const TARGET_COLOR_SPREAD: Mapping = note_on_ch0(40);
-const TARGET_COLOR_PERIODICITY: Mapping = note_on_ch0(41);
-const TARGET_COLOR_SATURATION: Mapping = note_on_ch0(42);
-const TARGET_MARQUEE: Mapping = note_on_ch0(43);
-const TARGET_POSITIONX: Mapping = note_on_ch0(44);
-const TARGET_POSITIONY: Mapping = note_on_ch0(45);
-
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
 const INVERT: Mapping = note_on_ch1(1);
