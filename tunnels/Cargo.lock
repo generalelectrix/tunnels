@@ -2333,6 +2333,7 @@ dependencies = [
  "number",
  "ordered-float",
  "serde",
+ "simple-error",
 ]
 
 [[package]]

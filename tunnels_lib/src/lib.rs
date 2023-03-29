@@ -2,6 +2,7 @@
 
 pub mod color;
 pub mod number;
+pub mod prompt;
 pub mod smooth;
 
 use derive_more::{Add, Display, Div, Mul, Sub};
