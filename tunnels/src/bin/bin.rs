@@ -1,5 +1,5 @@
 use io::Write;
-use simple_error::{bail, SimpleError};
+use simple_error::bail;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
@@ -41,6 +41,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         prompt_audio()?
     };
 
+    let run_clock_service = if test_mode.is_some() {
+        false
+    } else {
+        prompt_bool("Run clock publisher service?")?
+    };
+
     let paths = if test_mode.is_some() {
         LoadSaveConfig {
             load_path: None,
@@ -54,7 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         midi_devices,
         osc_devices,
         audio_input_device,
-        prompt_bool("Run clock publisher service?")?,
+        run_clock_service,
         paths.save_path,
     )?;
 

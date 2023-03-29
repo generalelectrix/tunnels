@@ -86,7 +86,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
     pub fn subscribe(
         &self,
         name: &str,
-        topic: Option<Vec<u8>>,
+        topic: Option<&[u8]>,
     ) -> Result<Receiver<T>, Box<dyn Error>> {
         self.browser
             .use_service(name, move |cfg| {
@@ -99,7 +99,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
 /// A strongly-typed 0mq SUB socket that expects messages to be encoded using msgpack.
 pub struct Receiver<T: DeserializeOwned> {
     socket: Socket,
-    topic: Option<Vec<u8>>,
+    has_topic: bool,
     _msg_type: PhantomData<T>,
 }
 
@@ -110,18 +110,16 @@ impl<T: DeserializeOwned> Receiver<T> {
         ctx: &Context,
         host: &str,
         port: u16,
-        topic: Option<Vec<u8>>,
+        topic: Option<&[u8]>,
     ) -> Result<Self, Box<dyn Error>> {
         let socket = ctx.socket(zmq::SUB)?;
         let addr = format!("tcp://{}:{}", host, port);
         socket.connect(&addr)?;
-        if let Some(ref topic) = topic {
-            socket.set_subscribe(topic)?;
-        }
+        socket.set_subscribe(topic.unwrap_or(&[]))?;
 
         Ok(Self {
             socket,
-            topic,
+            has_topic: topic.is_some(),
             _msg_type: PhantomData,
         })
     }
@@ -135,9 +133,9 @@ impl<T: DeserializeOwned> Receive for Receiver<T> {
     fn receive_buffer(&mut self, block: bool) -> ReceiveResult<Option<Vec<u8>>> {
         let flag = if block { 0 } else { DONTWAIT };
 
-        if self.topic.is_some() {
-            // The frame messages are two parts; the first part is the video channel, used as a 0mq
-            // topic filter.  Discard the topic filter, leaving just the msgpacked frame data as the
+        if self.has_topic {
+            // The frame messages are two parts; the first part is the topic filter.
+            // Discard the topic filter, leaving just the msgpacked data as the
             // second part of the message.
             match self.socket.recv_multipart(flag) {
                 Ok(mut parts) => {

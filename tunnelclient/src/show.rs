@@ -87,7 +87,7 @@ impl Show {
             &ctx,
             &cfg.server_hostname,
             6000,
-            Some(vec![cfg.video_channel as u8]),
+            Some(&[cfg.video_channel as u8]),
         )?)?;
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);
