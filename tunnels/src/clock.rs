@@ -98,7 +98,7 @@ impl Clock {
 }
 
 /// A static snapshot of externally-visible ControllableClock state.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Debug)]
 pub struct StaticClock {
     pub phase: Phase,
     pub submaster_level: UnipolarFloat,
