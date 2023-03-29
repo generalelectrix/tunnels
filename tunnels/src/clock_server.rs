@@ -31,7 +31,7 @@ pub type ClockPublisher = PublisherService<StaticClockBank>;
 pub type ClockSubscriber = SubscriberService<StaticClockBank>;
 
 /// A collection of static clock state data, rendered from a ClockBank.
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct StaticClockBank(pub [StaticClock; N_CLOCKS]);
 
 impl ClockStore for StaticClockBank {
