@@ -206,7 +206,7 @@ impl Animation {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StateChange {
     Waveform(Waveform),
     Pulse(bool),
@@ -222,6 +222,7 @@ pub enum StateChange {
     UseAudioSpeed(bool),
 }
 
+#[derive(Debug, Clone)]
 pub enum ControlMessage {
     Set(StateChange),
     /// Since clock IDs need to be validated, this path handles the fallible case.
