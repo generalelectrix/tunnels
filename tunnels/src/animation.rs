@@ -23,7 +23,7 @@ pub struct Animation {
     pulse: bool,
     standing: bool,
     invert: bool,
-    n_periods: i32,
+    n_periods: usize,
     size: UnipolarFloat,
     duty_cycle: UnipolarFloat,
     smoothing: UnipolarFloat,
@@ -206,13 +206,13 @@ impl Animation {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StateChange {
     Waveform(Waveform),
     Pulse(bool),
     Standing(bool),
     Invert(bool),
-    NPeriods(i32),
+    NPeriods(usize),
     Speed(BipolarFloat),
     Size(UnipolarFloat),
     DutyCycle(UnipolarFloat),
@@ -222,6 +222,7 @@ pub enum StateChange {
     UseAudioSpeed(bool),
 }
 
+#[derive(Debug, Clone)]
 pub enum ControlMessage {
     Set(StateChange),
     /// Since clock IDs need to be validated, this path handles the fallible case.
