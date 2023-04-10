@@ -1,4 +1,5 @@
 use crate::palette::ColorPalette;
+use crate::position_bank::PositionBank;
 use crate::{clock_bank::ClockBank, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -30,13 +31,26 @@ impl Beam {
         mask: bool,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        positions: &PositionBank,
         audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         match self {
-            Self::Tunnel(t) => {
-                t.render(level, mask, external_clocks, color_palette, audio_envelope)
-            }
-            Self::Look(l) => l.render(level, mask, external_clocks, color_palette, audio_envelope),
+            Self::Tunnel(t) => t.render(
+                level,
+                mask,
+                external_clocks,
+                color_palette,
+                positions,
+                audio_envelope,
+            ),
+            Self::Look(l) => l.render(
+                level,
+                mask,
+                external_clocks,
+                color_palette,
+                positions,
+                audio_envelope,
+            ),
         }
     }
 }

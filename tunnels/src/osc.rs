@@ -12,12 +12,14 @@ use tunnels_lib::number::UnipolarFloat;
 use crate::control::ControlEvent;
 use crate::master_ui::EmitStateChange;
 use crate::palette::{ControlMessage as PaletteControlMessage, StateChange as PaletteStateChange};
+use crate::position_bank::Position;
 use crate::show::{ControlMessage, StateChange};
 
 /// The OSC device types that tunnels can work with.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Display)]
 pub enum Device {
     PaletteController,
+    PositionController,
 }
 
 /// Wrapper struct for the data needed to describe a device to connect to.
@@ -52,6 +54,7 @@ impl Dispatcher {
     ) -> Result<Option<ControlMessage>, Box<dyn Error>> {
         match event.addr.as_str() {
             "/palette" => handle_palette(event.args).map(Some),
+            "/position" => handle_position(event.args).map(Some),
             unknown => {
                 debug!(
                     "Unknown OSC command from device {} with address {}: {:?}",
@@ -66,36 +69,60 @@ impl Dispatcher {
 /// Process a vector of OSC types that are expected to represent a color palette.
 fn handle_palette(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>> {
     // Scan the input vector, extracting colors and converting to HSV.
-    let mut colors = Vec::new();
-    for chunk in args.chunks(3) {
-        if chunk.len() < 3 {
-            warn!(
-                "OSC message had a trailing chunk with less than 3 components: {:?}",
-                chunk
-            );
-            continue;
+    let colors = handle_osc_vec_chunks(args, 3, |chunk| {
+        Ok(Rgb {
+            red: get_osc_unipolar(&chunk[0])?,
+            green: get_osc_unipolar(&chunk[1])?,
+            blue: get_osc_unipolar(&chunk[2])?,
         }
-        colors.push(
-            Rgb {
-                red: get_osc_float(&chunk[0])?,
-                green: get_osc_float(&chunk[1])?,
-                blue: get_osc_float(&chunk[2])?,
-            }
-            .as_hsv(),
-        )
-    }
+        .as_hsv())
+    })?;
     Ok(ControlMessage::ColorPalette(PaletteControlMessage::Set(
         PaletteStateChange::Contents(colors),
     )))
 }
 
-fn get_osc_float(v: &OscType) -> Result<UnipolarFloat, Box<dyn Error>> {
+/// Process a vector of OSC types that are expected to represent a X/Y position.
+fn handle_position(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>> {
+    Ok(ControlMessage::Position(handle_osc_vec_chunks(
+        args,
+        2,
+        |chunk| {
+            Ok(Position {
+                x: get_osc_float(&chunk[0])?,
+                y: get_osc_float(&chunk[1])?,
+            })
+        },
+    )?))
+}
+
+/// Process a vector of OSC types as a series of chunks.
+fn handle_osc_vec_chunks<T>(
+    args: Vec<OscType>,
+    chunk_size: usize,
+    chunk_proc: impl FnMut(&[OscType]) -> Result<T, Box<dyn Error>>,
+) -> Result<Vec<T>, Box<dyn Error>> {
+    args.chunks(chunk_size).filter(|chunk| {
+        if chunk.len() < chunk_size {
+            warn!("OSC message had a trailing chunk with less than {chunk_size} components: {chunk:?}");
+            false
+        } else {
+            true
+        }
+    }).map(chunk_proc).collect()
+}
+
+fn get_osc_unipolar(v: &OscType) -> Result<UnipolarFloat, Box<dyn Error>> {
+    get_osc_float(v).map(UnipolarFloat::new)
+}
+
+fn get_osc_float(v: &OscType) -> Result<f64, Box<dyn Error>> {
     match v {
-        OscType::Float(v) => Ok(UnipolarFloat::new(*v as f64)),
-        OscType::Double(v) => Ok(UnipolarFloat::new(*v)),
+        OscType::Float(v) => Ok(*v as f64),
+        OscType::Double(v) => Ok(*v),
         other => {
             bail!(
-                "Unexpected OSC type in palette; expected a float or double, got {:?}.",
+                "Unexpected OSC type; expected a float or double, got {:?}.",
                 other
             )
         }

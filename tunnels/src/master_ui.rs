@@ -6,6 +6,7 @@ use crate::{
     midi_controls::MIXER_CHANNELS_PER_PAGE,
     mixer::{ChannelIdx, Mixer},
     palette::ColorPalette,
+    position_bank::PositionBank,
     show::{ControlMessage as ShowControlMessage, StateChange as ShowStateChange},
     tunnel::{AnimationIdx, TargetedAnimation},
 };
@@ -59,12 +60,15 @@ impl MasterUI {
         self.current_animation_for_channel[self.current_channel.0]
     }
 
+    // FIXME: refactor to make this a method of the whole show state
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_control_message<E: EmitStateChange>(
         &mut self,
         msg: ShowControlMessage,
         mixer: &mut Mixer,
         clocks: &mut ClockBank,
         color_palette: &mut ColorPalette,
+        positions: &mut PositionBank,
         audio_input: &mut AudioInput,
         emitter: &mut E,
     ) {
@@ -93,6 +97,9 @@ impl MasterUI {
             }
             ColorPalette(cm) => {
                 color_palette.control(cm, emitter);
+            }
+            Position(cm) => {
+                positions.control(cm);
             }
             Audio(cm) => {
                 audio_input.control(cm, emitter);

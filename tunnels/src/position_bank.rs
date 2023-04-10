@@ -5,8 +5,8 @@ const MIN_POSITION_COUNT: usize = 1;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Default)]
 pub struct Position {
-    x: f64,
-    y: f64,
+    pub x: f64,
+    pub y: f64,
 }
 
 pub type Positions = Vec<Position>;
@@ -39,3 +39,5 @@ impl Default for PositionBank {
         PositionBank(vec![Position::default(); MIN_POSITION_COUNT])
     }
 }
+
+pub type ControlMessage = Positions;
