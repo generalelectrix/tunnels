@@ -9,15 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7de8ce5e0f9f8d88245311066a578d72b7af3e7088f32783804676302df237e4"
 
 [[package]]
-name = "arrayvec"
-version = "0.4.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8d73f9beda665eaa98ab9e4f7442bd4e7de6652587de55b2525e52e29c1b0ba"
-dependencies = [
- "nodrop",
-]
-
-[[package]]
 name = "async-dnssd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -133,12 +124,13 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-deque"
-version = "0.7.1"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b18cd2e169ad86297e6bc0ad9aa679aee9daa4f19e8163860faf7c164e4f5a71"
+checksum = "c20ff29ded3204c5106278a81a38f4b482636ed4fa1e6cfbeef193291beb29ed"
 dependencies = [
- "crossbeam-epoch 0.7.2",
- "crossbeam-utils 0.6.6",
+ "crossbeam-epoch 0.8.2",
+ "crossbeam-utils 0.7.2",
+ "maybe-uninit",
 ]
 
 [[package]]
@@ -154,14 +146,15 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.7.2"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fedcd6772e37f3da2a9af9bf12ebe046c0dfe657992377b4df982a2b54cd37a9"
+checksum = "058ed274caafc1f60c4997b5fc07bf7dc7cca454af7c6e81edffe5f33f70dace"
 dependencies = [
- "arrayvec",
+ "autocfg 1.1.0",
  "cfg-if 0.1.10",
- "crossbeam-utils 0.6.6",
+ "crossbeam-utils 0.7.2",
  "lazy_static",
+ "maybe-uninit",
  "memoffset 0.5.1",
  "scopeguard 1.1.0",
 ]
@@ -204,6 +197,17 @@ version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04973fa96e96579258a5091af6003abde64af786b860f18622b82e026cca60e6"
 dependencies = [
+ "cfg-if 0.1.10",
+ "lazy_static",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3c7c73a2d1e9fc0886a08b93e98eb643461230d5f1925e4036204d5f2e261a8"
+dependencies = [
+ "autocfg 1.1.0",
  "cfg-if 0.1.10",
  "lazy_static",
 ]
@@ -354,6 +358,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "maybe-uninit"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
+
+[[package]]
 name = "memoffset"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -422,12 +432,6 @@ dependencies = [
  "libc",
  "winapi 0.3.8",
 ]
-
-[[package]]
-name = "nodrop"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f9667ddcc6cc8a43afc9b7917599d7216aa09c463919ea32c59ed6cac8bc945"
 
 [[package]]
 name = "num-traits"
@@ -932,7 +936,7 @@ version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ca01319dea1e376a001e8dc192d42ebde6dd532532a5bad988ac37db365b19"
 dependencies = [
- "crossbeam-deque 0.7.1",
+ "crossbeam-deque 0.7.4",
  "crossbeam-queue 0.1.2",
  "crossbeam-utils 0.6.6",
  "futures",
