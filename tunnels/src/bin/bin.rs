@@ -1,11 +1,11 @@
+use anyhow::{bail, Result};
 use io::Write;
-use simple_error::bail;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
+use std::time::Duration;
 use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
-use std::{error::Error, time::Duration};
 use tunnels::audio::AudioInput;
 use tunnels::midi::{list_ports, DeviceSpec as MidiDeviceSpec};
 use tunnels::midi_controls::Device as MidiDevice;
@@ -17,7 +17,7 @@ use tunnels_lib::prompt::prompt_bool;
 use tunnels_lib::prompt::prompt_port;
 use tunnels_lib::prompt::read_string;
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
     let (inputs, outputs) = list_ports()?;
 
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Prompt the user to optionally configure a test mode.
-fn prompt_test_mode() -> Result<Option<TestModeSetup>, Box<dyn Error>> {
+fn prompt_test_mode() -> Result<Option<TestModeSetup>> {
     if !prompt_bool("Output test mode?")? {
         return Ok(None);
     }
@@ -93,7 +93,7 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>, Box<dyn Error>> {
 fn prompt_midi(
     input_ports: &Vec<String>,
     output_ports: &Vec<String>,
-) -> Result<Vec<MidiDeviceSpec>, Box<dyn Error>> {
+) -> Result<Vec<MidiDeviceSpec>> {
     let mut devices = Vec::new();
     println!("Available devices:");
     for (i, port) in input_ports.iter().enumerate() {
@@ -104,7 +104,7 @@ fn prompt_midi(
     }
     println!();
 
-    let mut add_device = |device| -> Result<(), Box<dyn Error>> {
+    let mut add_device = |device| -> Result<()> {
         if prompt_bool(&format!("Use {}?", device))? {
             devices.push(prompt_input_output(device, input_ports, output_ports)?);
         }
@@ -124,7 +124,7 @@ fn prompt_input_output(
     device: MidiDevice,
     input_ports: &Vec<String>,
     output_ports: &Vec<String>,
-) -> Result<MidiDeviceSpec, Box<dyn Error>> {
+) -> Result<MidiDeviceSpec> {
     let input_port_name = prompt_indexed_value("Input port:", input_ports)?;
     let output_port_name = prompt_indexed_value("Output port:", output_ports)?;
     Ok(MidiDeviceSpec {
@@ -135,7 +135,7 @@ fn prompt_input_output(
 }
 
 /// Prompt the user to configure OSC devices.
-fn prompt_osc() -> Result<Vec<OscDeviceSpec>, Box<dyn Error>> {
+fn prompt_osc() -> Result<Vec<OscDeviceSpec>> {
     let mut devices = Vec::new();
 
     if prompt_bool("Use OSC color palette source?")? {
@@ -158,7 +158,7 @@ fn prompt_osc() -> Result<Vec<OscDeviceSpec>, Box<dyn Error>> {
 }
 
 /// Prompt the user to configure an audio input device.
-fn prompt_audio() -> Result<Option<String>, Box<dyn Error>> {
+fn prompt_audio() -> Result<Option<String>> {
     if !prompt_bool("Use audio input?")? {
         return Ok(None);
     }
@@ -174,7 +174,7 @@ fn prompt_audio() -> Result<Option<String>, Box<dyn Error>> {
 }
 
 /// Prompt the user for a unsigned numeric index.
-fn prompt_indexed_value<T: Clone>(msg: &str, options: &Vec<T>) -> Result<T, Box<dyn Error>> {
+fn prompt_indexed_value<T: Clone>(msg: &str, options: &Vec<T>) -> Result<T> {
     Ok(loop {
         print!("{} ", msg);
         io::stdout().flush()?;
@@ -202,7 +202,7 @@ struct LoadSaveConfig {
 const SHOW_DIR: &str = "saved_shows";
 
 /// Prompt the user for show load and/or save paths.
-fn prompt_load_save() -> Result<LoadSaveConfig, Box<dyn Error>> {
+fn prompt_load_save() -> Result<LoadSaveConfig> {
     let mut cfg = LoadSaveConfig {
         load_path: None,
         save_path: None,

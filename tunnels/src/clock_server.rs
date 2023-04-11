@@ -2,7 +2,7 @@
 //! Provide a strongly-typed receiver.
 //! FIXME: would be nice to clean up deserialization to avoid so many allocations.
 
-use std::error::Error;
+use anyhow::Result;
 
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::{Phase, UnipolarFloat};
@@ -18,7 +18,7 @@ const SERVICE_NAME: &str = "global_show_clocks";
 const PORT: u16 = 9090;
 
 /// Launch clock publisher service.
-pub fn clock_publisher(ctx: &Context) -> Result<ClockPublisher, Box<dyn Error>> {
+pub fn clock_publisher(ctx: &Context) -> Result<ClockPublisher> {
     PublisherService::new(ctx, SERVICE_NAME, PORT)
 }
 

@@ -8,7 +8,7 @@ mod mixer;
 mod tunnel;
 
 use log::debug;
-use std::{collections::HashMap, error::Error, sync::mpsc::Sender};
+use std::{collections::HashMap, sync::mpsc::Sender};
 
 use crate::{
     control::ControlEvent,
@@ -17,6 +17,7 @@ use crate::{
     show::ControlMessage,
     show::StateChange,
 };
+use anyhow::Result;
 
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
@@ -115,10 +116,7 @@ pub struct Dispatcher {
 impl Dispatcher {
     /// Instantiate the master midi control dispatcher.
     /// Create the midi control map and initialize midi inputs/outputs.
-    pub fn new(
-        midi_devices: Vec<DeviceSpec>,
-        send: Sender<ControlEvent>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(midi_devices: Vec<DeviceSpec>, send: Sender<ControlEvent>) -> Result<Self> {
         let midi_map = ControlMap::new();
 
         let mut midi_manager = Manager::default();

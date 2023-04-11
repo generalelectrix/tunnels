@@ -7,8 +7,8 @@ use futures::{Future, Stream};
 
 use tokio_core::reactor::{Core, Timeout};
 
+use anyhow::Result;
 use std::collections::HashMap;
-use std::error::Error;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -23,7 +23,7 @@ pub fn reg_type(name: &str) -> String {
 
 /// Register a vanilla service over DNS-SD.
 /// Return a callback that will deregister the service.
-pub fn register_service(name: &str, port: u16) -> Result<StopFn, Box<dyn Error>> {
+pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
     // FIXME: figure out how to better integrate tokio and deduplicate this code
     let (send_stop, receive_stop) = channel();
     let (send_success, receive_success) = channel();
@@ -78,7 +78,7 @@ impl<S: Send> Browser<S> {
     /// except bail completely if this process fails.
     pub fn new<F>(name: String, open_service: F) -> Self
     where
-        F: Fn(&ResolveResult) -> Result<S, Box<dyn Error>> + Send + 'static,
+        F: Fn(&ResolveResult) -> Result<S> + Send + 'static,
     {
         let services = Arc::new(Mutex::new(HashMap::new()));
 

@@ -1,6 +1,7 @@
+use anyhow::Result;
 use log::{error, info};
 use std::thread;
-use std::{error::Error, time::Instant};
+use std::time::Instant;
 
 use rmp_serde::Serializer;
 use serde::Serialize;
@@ -17,7 +18,7 @@ pub struct TimesyncServer {
 impl TimesyncServer {
     /// Start the timesync server.
     /// The server will run until it is dropped.
-    pub fn start(ctx: &Context, start: Instant) -> Result<Self, Box<dyn Error>> {
+    pub fn start(ctx: &Context, start: Instant) -> Result<Self> {
         let socket = ctx.socket(zmq::REP)?;
         let addr = format!("tcp://*:{}", PORT);
         socket.bind(&addr)?;

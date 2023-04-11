@@ -1,12 +1,12 @@
 //! Helper trait for working with msgpack.
 
+use anyhow::Result;
 use rmp_serde::Deserializer;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use std::error::Error;
 use std::io::Cursor;
 
-pub type ReceiveResult<T> = Result<T, Box<dyn Error>>;
+pub type ReceiveResult<T> = Result<T>;
 
 pub trait Receive {
     /// Return the raw message buffer if one was available.

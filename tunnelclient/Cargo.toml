@@ -20,7 +20,6 @@ yaml-rust = "0.4"
 rmp-serde = "1.1.1"
 serde = { version = "1", features = ["derive"] }
 streaming-stats = "0.2"
-simple-error = "0.3.0"
 zmq = "0.10.0"
 zero_configure = { path = "../zero_configure" }
 tunnels_lib = { path = "../tunnels_lib" }
@@ -30,6 +29,7 @@ hostname = "0.3"
 derive_more = "0.99"
 log = "0.4"
 simplelog = "0.12.0"
+anyhow = "1.0.70"
 
 [dependencies.pistoncore-sdl2_window]
 git = "https://github.com/PistonDevelopers/sdl2_window"

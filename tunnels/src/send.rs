@@ -1,11 +1,8 @@
-use std::{
-    error::Error,
-    sync::mpsc::{channel, Receiver, Sender, TryRecvError},
-};
-
+use anyhow::Result;
 use log::{error, info, warn};
 use rmp_serde::Serializer;
 use serde::Serialize;
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
 use tunnels_lib::{number::UnipolarFloat, Snapshot, Timestamp};
 use zmq::{Context, Socket};
@@ -23,10 +20,7 @@ const PORT: u16 = 6000;
 /// Renders the show state and sends it to all connected clients.
 /// Returns a channel for sending frames to be rendered.
 /// The service runs until the channel is dropped.
-pub fn start_render_service(
-    ctx: &Context,
-    run_clock_service: bool,
-) -> Result<Sender<Frame>, Box<dyn Error>> {
+pub fn start_render_service(ctx: &Context, run_clock_service: bool) -> Result<Sender<Frame>> {
     let socket = ctx.socket(zmq::PUB)?;
     let addr = format!("tcp://*:{}", PORT);
     socket.bind(&addr)?;
