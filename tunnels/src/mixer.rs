@@ -1,5 +1,6 @@
 use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
 use crate::palette::ColorPalette;
+use crate::position_bank::PositionBank;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use crate::{clock_bank::ClockBank, master_ui::EmitStateChange as EmitShowStateChange};
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,7 @@ impl Mixer {
         &self,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        positions: &PositionBank,
         audio_envelope: UnipolarFloat,
     ) -> Vec<LayerCollection> {
         let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
@@ -74,6 +76,7 @@ impl Mixer {
                 false,
                 external_clocks,
                 color_palette,
+                positions,
                 audio_envelope,
             );
             if rendered_beam.is_empty() {
@@ -204,6 +207,7 @@ impl Channel {
         mask: bool,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        positions: &PositionBank,
         audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         let mut level: UnipolarFloat = if self.bump {
@@ -221,6 +225,7 @@ impl Channel {
             self.mask || mask,
             external_clocks,
             color_palette,
+            positions,
             audio_envelope,
         )
     }

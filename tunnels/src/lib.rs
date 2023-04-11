@@ -14,6 +14,7 @@ pub mod midi_controls;
 mod mixer;
 pub mod osc;
 mod palette;
+mod position_bank;
 mod send;
 pub mod show;
 pub mod test_mode;

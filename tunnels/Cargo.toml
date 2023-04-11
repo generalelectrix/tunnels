@@ -36,6 +36,7 @@ augmented-dsp-filters = "1.3.1"
 audio-processor-analysis = "0.4.0"
 audio-processor-traits = "2.2.0"
 augmented-atomics = "0.1.1"
+itertools = "0.10.5"
 
 [dev-dependencies]
 insta = { version = "1.28.0", features = ["yaml"] }

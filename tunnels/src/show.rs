@@ -25,6 +25,7 @@ use crate::{
     mixer::Mixer,
     osc::DeviceSpec as OscDeviceSpec,
     palette::{self, ColorPalette},
+    position_bank::{self, PositionBank},
     send::{start_render_service, Frame},
     test_mode::TestModeSetup,
     timesync::TimesyncServer,
@@ -67,6 +68,7 @@ impl Show {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
                 clocks: ClockBank::default(),
+                positions: PositionBank::default(),
                 color_palette: ColorPalette::new(),
             },
             save_path,
@@ -172,6 +174,7 @@ impl Show {
                         mixer: self.state.mixer.clone(),
                         clocks: self.state.clocks.clone(),
                         color_palette: self.state.color_palette.clone(),
+                        positions: self.state.positions.clone(),
                         audio_envelope: self.audio_input.envelope(),
                     })
                     .is_err()
@@ -215,6 +218,7 @@ impl Show {
                 &mut self.state.mixer,
                 &mut self.state.clocks,
                 &mut self.state.color_palette,
+                &mut self.state.positions,
                 &mut self.audio_input,
                 &mut self.dispatcher,
             ),
@@ -233,6 +237,7 @@ pub enum ControlMessage {
     Mixer(mixer::ControlMessage),
     Clock(clock_bank::ControlMessage),
     ColorPalette(palette::ControlMessage),
+    Position(position_bank::ControlMessage),
     Audio(audio::ControlMessage),
     MasterUI(master_ui::ControlMessage),
 }
@@ -254,6 +259,7 @@ pub struct ShowState {
     pub ui: MasterUI,
     pub mixer: Mixer,
     pub clocks: ClockBank,
+    pub positions: PositionBank,
     pub color_palette: ColorPalette,
 }
 
@@ -293,6 +299,7 @@ mod test {
         let video_feeds = show.state.mixer.render(
             &show.state.clocks,
             &show.state.color_palette,
+            &show.state.positions,
             UnipolarFloat::ZERO,
         );
 

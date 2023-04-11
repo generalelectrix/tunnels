@@ -3,6 +3,7 @@ use crate::{
     animation_target::AnimationTarget,
     clock_bank::ClockBank,
     palette::{ColorPalette, ColorPaletteIdx},
+    position_bank::{PositionBank, PositionIdx},
     waveforms::WaveformArgs,
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
@@ -37,6 +38,9 @@ pub struct Tunnel {
     /// If Some: use this index from the palette to pick the hue.
     /// At present, the saturation and value of the color are ignored.
     palette_selection: Option<ColorPaletteIdx>,
+    /// If None: ignore global position.
+    /// If Some: use this index from the positions.
+    position_selection: Option<PositionIdx>,
     /// TODO: regularize segs interface into regular float knobs
     segs: u8,
     /// remove segments at this interval
@@ -64,6 +68,7 @@ impl Default for Tunnel {
             col_spread: UnipolarFloat::ZERO,
             col_sat: UnipolarFloat::ZERO,
             palette_selection: None,
+            position_selection: None,
             segs: 126,
             blacking: BipolarFloat::new(0.15),
             curr_rot_angle: Phase::ZERO,
@@ -141,6 +146,7 @@ impl Tunnel {
         as_mask: bool,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        positions: &PositionBank,
         audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
@@ -154,6 +160,27 @@ impl Tunnel {
         let mut arcs = Vec::new();
 
         let marquee_interval = 1.0 / segs as f64;
+
+        let (x_offset, y_offset) = if let Some(position_idx) = self.position_selection {
+            // TODO: if the position index is out of range, should we fall back
+            // to something besides zero?
+            let position = positions.get(position_idx).unwrap_or_default();
+            (position.x, position.y)
+        } else {
+            (self.x_offset.val(), self.y_offset.val())
+        };
+
+        let base_hue = if let Some(palette_idx) = self.palette_selection {
+            // TODO: if the palette index is out of range, should we fall
+            // back to something besides zero?
+            color_palette
+                .get(palette_idx)
+                .map(|color| color.hue)
+                .unwrap_or(Phase::ZERO)
+                .val()
+        } else {
+            self.col_center.val()
+        };
 
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
@@ -207,8 +234,8 @@ impl Tunnel {
             let thickness_allowance = self.thickness.val() * THICKNESS_SCALE / 2.;
 
             // geometry calculations
-            let x_center = self.x_offset.val() + x_adjust;
-            let y_center = self.y_offset.val() + y_adjust;
+            let x_center = x_offset + x_adjust;
+            let y_center = y_offset + y_adjust;
 
             // compute ellipse parameters
             let radius_x = ((self.size.val()
@@ -245,17 +272,6 @@ impl Tunnel {
                     rot_angle: rot_angle.val(),
                 }
             } else {
-                let base_hue = if let Some(palette_index) = self.palette_selection {
-                    // TODO: if the palette index is out of range, should we fall
-                    // back to something besides zero?
-                    color_palette
-                        .get(palette_index)
-                        .map(|color| color.hue)
-                        .unwrap_or(Phase::ZERO)
-                        .val()
-                } else {
-                    self.col_center.val()
-                };
                 let hue = Phase::new(
                     (base_hue + col_center_adjust)
                         + (0.5

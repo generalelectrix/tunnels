@@ -15,6 +15,7 @@ use crate::{
     clock_server::{clock_publisher, StaticClockBank},
     mixer::Mixer,
     palette::ColorPalette,
+    position_bank::PositionBank,
 };
 
 const PORT: u16 = 6000;
@@ -55,6 +56,7 @@ pub fn start_render_service(
                     let video_outs = frame.mixer.render(
                         &frame.clocks,
                         &frame.color_palette,
+                        &frame.positions,
                         frame.audio_envelope,
                     );
                     for (video_chan, draw_commands) in video_outs.into_iter().enumerate() {
@@ -145,5 +147,6 @@ pub struct Frame {
     pub mixer: Mixer,
     pub clocks: ClockBank,
     pub color_palette: ColorPalette,
+    pub positions: PositionBank,
     pub audio_envelope: UnipolarFloat,
 }

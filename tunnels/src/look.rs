@@ -1,4 +1,5 @@
 use crate::palette::ColorPalette;
+use crate::position_bank::PositionBank;
 use crate::{clock_bank::ClockBank, mixer::Channel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -33,12 +34,19 @@ impl Look {
         mask: bool,
         external_clocks: &ClockBank,
         color_palette: &ColorPalette,
+        positions: &PositionBank,
         audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         let mut arcs = Vec::new();
         for channel in &self.channels {
-            let mut rendered =
-                channel.render(level, mask, external_clocks, color_palette, audio_envelope);
+            let mut rendered = channel.render(
+                level,
+                mask,
+                external_clocks,
+                color_palette,
+                positions,
+                audio_envelope,
+            );
             arcs.append(&mut rendered);
         }
         arcs
