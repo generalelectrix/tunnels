@@ -1,8 +1,8 @@
 //! Loading and parsing client configurations.
 use crate::draw::{Transform, TransformDirection};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::cmp;
-use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::time::Duration;
@@ -83,27 +83,31 @@ impl ClientConfig {
     /// Loads, parses, and returns a config from path.
     /// This method panics if anything is wrong and is only appropriate for use during one-time
     /// initialization.
-    pub fn load(video_channel: u64, config_path: &str) -> Result<ClientConfig, Box<dyn Error>> {
+    pub fn load(video_channel: u64, config_path: &str) -> Result<ClientConfig> {
         let mut config_file = File::open(config_path)?;
         let mut config_file_string = String::new();
         config_file.read_to_string(&mut config_file_string)?;
         let docs = YamlLoader::load_from_str(&config_file_string)?;
         let cfg = &docs[0];
-        let x_resolution = cfg["x_resolution"].as_i64().ok_or("Bad x resolution.")? as u32;
-        let y_resolution = cfg["y_resolution"].as_i64().ok_or("Bad y resolution.")? as u32;
+        let x_resolution = cfg["x_resolution"]
+            .as_i64()
+            .ok_or(anyhow!("Bad x resolution."))? as u32;
+        let y_resolution = cfg["y_resolution"]
+            .as_i64()
+            .ok_or(anyhow!("Bad y resolution."))? as u32;
         let host = cfg["server_hostname"]
             .as_str()
-            .ok_or("Hostname missing.")?
+            .ok_or(anyhow!("Hostname missing."))?
             .trim()
             .to_string();
         let timesync_interval = Duration::from_millis(
             cfg["timesync_interval"]
                 .as_i64()
-                .ok_or("Bad timesync_interval.")? as u64,
+                .ok_or(anyhow!("Bad timesync_interval."))? as u64,
         );
 
-        let flag = |name: &str, missing: &'static str| -> Result<bool, &'static str> {
-            cfg[name].as_bool().ok_or(missing)
+        let flag = |name: &str, missing: &'static str| -> Result<bool> {
+            cfg[name].as_bool().ok_or(anyhow!(missing))
         };
 
         let transformation = if flag("flip_horizontal", "Bad horizontal flip flag.")? {
@@ -117,7 +121,11 @@ impl ClientConfig {
             host,
             (x_resolution, y_resolution),
             timesync_interval,
-            Duration::from_secs_f64(cfg["render_delay"].as_f64().ok_or("Bad render delay.")?),
+            Duration::from_secs_f64(
+                cfg["render_delay"]
+                    .as_f64()
+                    .ok_or(anyhow!("Bad render delay."))?,
+            ),
             flag("anti_alias", "Bad anti-alias flag.")?,
             flag("fullscreen", "Bad fullscreen flag.")?,
             flag("alpha_blend", "Bad alpha blend flag.")?,

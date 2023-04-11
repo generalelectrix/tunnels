@@ -3,7 +3,7 @@
 use log::error;
 use serde::de::DeserializeOwned;
 
-use std::error::Error;
+use anyhow::Result;
 
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
@@ -11,7 +11,7 @@ use zero_configure::pub_sub::Receiver as SubReceiver;
 
 /// Spawn a thread and pass SUB messages onto a channel.
 /// This will run until the returned channel is dropped.
-pub fn receive_async<T>(mut receiver: SubReceiver<T>) -> Result<Receiver<T>, Box<dyn Error>>
+pub fn receive_async<T>(mut receiver: SubReceiver<T>) -> Result<Receiver<T>>
 where
     T: DeserializeOwned + Send + 'static,
 {

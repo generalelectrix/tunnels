@@ -7,9 +7,9 @@ use crate::{
     },
     master_ui::EmitStateChange as EmitShowStateChange,
 };
+use anyhow::{bail, Error, Result};
 use log::error;
 use serde::{Deserialize, Serialize};
-use simple_error::{bail, SimpleError};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 use typed_index_derive::TypedIndex;
 
@@ -47,8 +47,8 @@ pub struct ClockIdx(usize);
 pub struct ClockIdxExt(pub usize);
 
 impl TryFrom<ClockIdxExt> for ClockIdx {
-    type Error = SimpleError;
-    fn try_from(value: ClockIdxExt) -> Result<Self, Self::Error> {
+    type Error = Error;
+    fn try_from(value: ClockIdxExt) -> Result<Self> {
         if value.0 >= N_CLOCKS {
             bail!("clock index {} out of range", value.0);
         }

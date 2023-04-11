@@ -1,8 +1,8 @@
-use std::{error::Error, marker::PhantomData};
+use std::marker::PhantomData;
 
+use anyhow::{bail, Result};
 use rmp_serde::Serializer;
 use serde::{de::DeserializeOwned, Serialize};
-use simple_error::bail;
 use zmq::{Context, Socket, DONTWAIT};
 
 use crate::{
@@ -20,7 +20,7 @@ pub struct PublisherService<T: Serialize> {
 }
 
 impl<T: Serialize> PublisherService<T> {
-    pub fn new(ctx: &Context, name: &str, port: u16) -> Result<Self, Box<dyn Error>> {
+    pub fn new(ctx: &Context, name: &str, port: u16) -> Result<Self> {
         let stop = register_service(name, port)?;
         let socket = ctx.socket(zmq::PUB)?;
         let addr = format!("tcp://*:{}", port);
@@ -33,7 +33,7 @@ impl<T: Serialize> PublisherService<T> {
         })
     }
 
-    pub fn send(&mut self, val: &T) -> Result<(), Box<dyn Error>> {
+    pub fn send(&mut self, val: &T) -> Result<()> {
         self.send_buf.clear();
         val.serialize(&mut Serializer::new(&mut self.send_buf))?;
         self.socket.send(&self.send_buf, 0)?;
@@ -83,11 +83,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
 
     /// Connect a SUB socket to a service.
     /// Optionally filter to the provided topic.
-    pub fn subscribe(
-        &self,
-        name: &str,
-        topic: Option<&[u8]>,
-    ) -> Result<Receiver<T>, Box<dyn Error>> {
+    pub fn subscribe(&self, name: &str, topic: Option<&[u8]>) -> Result<Receiver<T>> {
         self.browser
             .use_service(name, move |cfg| {
                 Receiver::new(&self.ctx, &cfg.hostname, cfg.port, topic)
@@ -106,12 +102,7 @@ pub struct Receiver<T: DeserializeOwned> {
 impl<T: DeserializeOwned> Receiver<T> {
     /// Create a new 0mq SUB connected to the provided socket addr.
     /// Expect a multipart message if a topic is provided.
-    pub fn new(
-        ctx: &Context,
-        host: &str,
-        port: u16,
-        topic: Option<&[u8]>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(ctx: &Context, host: &str, port: u16, topic: Option<&[u8]>) -> Result<Self> {
         let socket = ctx.socket(zmq::SUB)?;
         let addr = format!("tcp://{}:{}", host, port);
         socket.connect(&addr)?;

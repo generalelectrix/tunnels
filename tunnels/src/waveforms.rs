@@ -198,11 +198,11 @@ fn sawtooth_spatial(args: &WaveformArgsSpatial) -> f64 {
 #[cfg(test)]
 #[allow(unused)]
 mod test {
-    use std::error::Error;
+    use anyhow::Result;
 
     use super::*;
 
-    fn debug() -> Result<(), Box<dyn Error>> {
+    fn debug() -> Result<()> {
         use plotters::prelude::*;
         let points = generate_span(sawtooth_spatial, 0.1, 0.5, true);
 

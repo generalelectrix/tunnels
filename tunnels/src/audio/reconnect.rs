@@ -1,4 +1,6 @@
 //! Provide an audio input stream that automatically reconnects when disconnected.
+use anyhow::bail;
+use anyhow::Result;
 use audio_processor_traits::{
     AudioProcessor, AudioProcessorSettings, BufferProcessor, InterleavedAudioBuffer,
     SimpleAudioProcessor,
@@ -6,8 +8,6 @@ use audio_processor_traits::{
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamError};
 use log::{info, warn};
-use simple_error::bail;
-use std::error::Error;
 use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
@@ -107,7 +107,7 @@ fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> Stop
     })
 }
 
-fn open_audio_device(name: &str) -> Result<Device, Box<dyn Error>> {
+fn open_audio_device(name: &str) -> Result<Device> {
     let mut errors: Vec<String> = Vec::new();
     let host = cpal::default_host();
     for input in host.input_devices()? {
@@ -137,7 +137,7 @@ fn create_input_stream<F>(
     device_name: &str,
     processor_settings: ProcessorSettings,
     mut on_disconnect: F,
-) -> Result<Stream, Box<dyn Error>>
+) -> Result<Stream>
 where
     F: FnMut() + Send + 'static,
 {

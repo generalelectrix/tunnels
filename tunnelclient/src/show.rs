@@ -4,12 +4,12 @@ use crate::receive::receive_async;
 use crate::snapshot_manager::InterpResult::*;
 use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
+use anyhow::{anyhow, Context as ErrorContext, Result};
 use graphics::clear;
 use log::{debug, error, info, max_level, warn, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::*;
 use sdl2_window::Sdl2Window;
-use std::error::Error;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -32,7 +32,7 @@ pub struct Show {
 }
 
 impl Show {
-    pub fn new(cfg: ClientConfig, ctx: Context, run_flag: RunFlag) -> Result<Self, Box<dyn Error>> {
+    pub fn new(cfg: ClientConfig, ctx: Context, run_flag: RunFlag) -> Result<Self> {
         info!("Running on video channel {}.", cfg.video_channel);
 
         // Start up the timesync service.
@@ -80,7 +80,7 @@ impl Show {
                 }
                 info!("Timesync service shutting down.");
             })
-            .map_err(|e| format!("Timesync service thread failed to spawn: {}", e))?;
+            .context("timesync service thread failed to spawn")?;
 
         // Set up snapshot reception and management.
         let snapshot_queue: Receiver<Snapshot> = receive_async(SubReceiver::new(
@@ -107,7 +107,8 @@ impl Show {
         .vsync(true)
         .samples(if cfg.anti_alias { 4 } else { 0 })
         .fullscreen(cfg.fullscreen)
-        .build()?;
+        .build()
+        .map_err(|err| anyhow!("{err}"))?;
 
         window.set_capture_cursor(cfg.capture_mouse);
         window.set_max_fps(120);

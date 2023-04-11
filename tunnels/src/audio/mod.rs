@@ -1,8 +1,8 @@
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::transient_indicator::TransientIndicator;
+use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{info, warn};
-use std::error::Error;
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
 
@@ -28,7 +28,7 @@ pub struct AudioInput {
 impl AudioInput {
     const CLIP_INDICATOR_DURATION: Duration = Duration::from_millis(100);
     /// Get the names of all available input audio devices.
-    pub fn devices() -> Result<Vec<String>, Box<dyn Error>> {
+    pub fn devices() -> Result<Vec<String>> {
         let host = cpal::default_host();
         let devices = host.input_devices()?;
 
@@ -47,7 +47,7 @@ impl AudioInput {
         }
     }
 
-    pub fn new(device_name: Option<String>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(device_name: Option<String>) -> Result<Self> {
         let device_name = match device_name {
             None => {
                 return Ok(Self::offline());

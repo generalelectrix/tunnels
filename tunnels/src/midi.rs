@@ -1,8 +1,8 @@
+use anyhow::{anyhow, bail, Result};
 use log::{error, warn};
 use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 use serde::{Deserialize, Serialize};
-use simple_error::bail;
-use std::{error::Error, fmt, sync::mpsc::Sender};
+use std::{fmt, sync::mpsc::Sender};
 
 use crate::{control::ControlEvent, midi_controls::Device};
 
@@ -94,7 +94,7 @@ pub const fn event(mapping: Mapping, value: u8) -> Event {
 
 #[allow(dead_code)]
 // Return the available ports by name,
-pub fn list_ports() -> Result<(Vec<String>, Vec<String>), Box<dyn Error>> {
+pub fn list_ports() -> Result<(Vec<String>, Vec<String>)> {
     let input = MidiInput::new("tunnels")?;
     let inputs = input
         .ports()
@@ -110,7 +110,7 @@ pub fn list_ports() -> Result<(Vec<String>, Vec<String>), Box<dyn Error>> {
     Ok((inputs, outputs))
 }
 
-fn get_named_port<T: MidiIO>(source: &T, name: &str) -> Result<T::Port, Box<dyn Error>> {
+fn get_named_port<T: MidiIO>(source: &T, name: &str) -> Result<T::Port> {
     for port in source.ports() {
         if let Ok(this_name) = source.port_name(&port) {
             if this_name == name {
@@ -128,10 +128,12 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn new(name: String, device: Device) -> Result<Self, Box<dyn Error>> {
+    pub fn new(name: String, device: Device) -> Result<Self> {
         let output = MidiOutput::new("tunnels")?;
         let port = get_named_port(&output, &name)?;
-        let conn = output.connect(&port, &name)?;
+        let conn = output
+            .connect(&port, &name)
+            .map_err(|err| anyhow!("failed to connect to midi output: {err}"))?;
         Ok(Self { name, conn, device })
     }
 
@@ -157,48 +159,46 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn new(
-        name: String,
-        device: Device,
-        sender: Sender<ControlEvent>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(name: String, device: Device, sender: Sender<ControlEvent>) -> Result<Self> {
         let input = MidiInput::new("tunnels")?;
         let port = get_named_port(&input, &name)?;
         let handler_name = name.clone();
 
-        let conn = input.connect(
-            &port,
-            &name,
-            move |_, msg: &[u8], _| {
-                let event_type = match msg[0] >> 4 {
-                    8 => EventType::NoteOff,
-                    9 => EventType::NoteOn,
-                    11 => EventType::ControlChange,
-                    other => {
-                        warn!(
-                            "Ignoring midi input event on {} of unimplemented type {}.",
-                            handler_name, other
-                        );
-                        return;
-                    }
-                };
-                let channel = msg[0] & 15;
-                sender
-                    .send(ControlEvent::Midi((
-                        device,
-                        Event {
-                            mapping: Mapping {
-                                event_type,
-                                channel,
-                                control: msg[1],
+        let conn = input
+            .connect(
+                &port,
+                &name,
+                move |_, msg: &[u8], _| {
+                    let event_type = match msg[0] >> 4 {
+                        8 => EventType::NoteOff,
+                        9 => EventType::NoteOn,
+                        11 => EventType::ControlChange,
+                        other => {
+                            warn!(
+                                "Ignoring midi input event on {} of unimplemented type {}.",
+                                handler_name, other
+                            );
+                            return;
+                        }
+                    };
+                    let channel = msg[0] & 15;
+                    sender
+                        .send(ControlEvent::Midi((
+                            device,
+                            Event {
+                                mapping: Mapping {
+                                    event_type,
+                                    channel,
+                                    control: msg[1],
+                                },
+                                value: msg[2],
                             },
-                            value: msg[2],
-                        },
-                    )))
-                    .unwrap();
-            },
-            (),
-        )?;
+                        )))
+                        .unwrap();
+                },
+                (),
+            )
+            .map_err(|err| anyhow!("failed to connect to midi input: {err}"))?;
         Ok(Input { _conn: conn })
     }
 }
@@ -213,11 +213,7 @@ pub struct Manager {
 
 impl Manager {
     /// Add a device to the manager given input and output port names.
-    pub fn add_device(
-        &mut self,
-        spec: DeviceSpec,
-        send: Sender<ControlEvent>,
-    ) -> Result<(), Box<dyn Error>> {
+    pub fn add_device(&mut self, spec: DeviceSpec, send: Sender<ControlEvent>) -> Result<()> {
         let input = Input::new(spec.input_port_name, spec.device, send)?;
         let mut output = Output::new(spec.output_port_name, spec.device)?;
 

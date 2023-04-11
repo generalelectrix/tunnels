@@ -2,10 +2,10 @@
 //! Using this simple technique:
 //! http://www.mine-control.com/zack/timesync/timesync.html
 
+use anyhow::bail;
+use anyhow::Result;
 use interpolation::lerp;
-use simple_error::bail;
 use stats::{mean, stddev};
-use std::error::Error;
 use std::mem;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -26,7 +26,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new 0mq REQ connected to the provided socket addr.
-    pub fn new(host: &str, ctx: Context) -> Result<Self, Box<dyn Error>> {
+    pub fn new(host: &str, ctx: Context) -> Result<Self> {
         let socket = ctx.socket(zmq::REQ)?;
         let addr = format!("tcp://{}:{}", host, PORT);
         socket.connect(&addr)?;
@@ -44,7 +44,7 @@ impl Client {
     }
 
     /// Take a time delay measurement.
-    fn measure(&mut self) -> Result<Measurement, Box<dyn Error>> {
+    fn measure(&mut self) -> Result<Measurement> {
         let now = Instant::now();
         self.socket.send(&[][..], 0)?;
         let buf = match self.receive_buffer(true)? {
@@ -61,7 +61,7 @@ impl Client {
     }
 
     /// Get the offset between this machine's system clock and the host's.
-    pub fn synchronize(&mut self) -> Result<Timesync, Box<dyn Error>> {
+    pub fn synchronize(&mut self) -> Result<Timesync> {
         let reference_time = Instant::now();
         // Take a bunch of measurements, sleeping in between.
         let mut measurements = Vec::with_capacity(self.n_meas);

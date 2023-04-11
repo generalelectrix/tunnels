@@ -1,4 +1,4 @@
-use std::error::Error;
+use anyhow::Result;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
@@ -10,8 +10,8 @@ use crate::{
     midi_controls::Device as MidiDevice,
     osc::{Device as OscDevice, DeviceSpec as OscDeviceSpec, Dispatcher as OscDispatcher},
 };
+use anyhow::bail;
 use rosc::OscMessage;
-use simple_error::bail;
 
 /// Top-level enum for the types of control messages the show can receive.
 pub enum ControlEvent {
@@ -27,10 +27,7 @@ pub struct Dispatcher {
 
 impl Dispatcher {
     /// Instantiate the master control dispatcher.
-    pub fn new(
-        midi_devices: Vec<MidiDeviceSpec>,
-        osc_devices: Vec<OscDeviceSpec>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(midi_devices: Vec<MidiDeviceSpec>, osc_devices: Vec<OscDeviceSpec>) -> Result<Self> {
         let (send, recv) = channel();
 
         Ok(Self {
@@ -40,7 +37,7 @@ impl Dispatcher {
         })
     }
 
-    pub fn receive(&self, timeout: Duration) -> Result<Option<ControlMessage>, Box<dyn Error>> {
+    pub fn receive(&self, timeout: Duration) -> Result<Option<ControlMessage>> {
         let event = match self.recv.recv_timeout(timeout) {
             Ok(e) => e,
             Err(RecvTimeoutError::Timeout) => {

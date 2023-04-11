@@ -1,25 +1,20 @@
 //! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
 //! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
 
+use anyhow::bail;
 use async_dnssd::{register_extended, RegisterData, RegisterFlags};
-use simple_error::bail;
 use tokio_core::reactor::Core;
 
 use zmq::{Context, Socket};
 
-use std::error::Error;
+use anyhow::Result;
 
 use crate::bare::{reg_type, Browser};
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
 /// by the action callback back to the requester.
-pub fn run_service_req_rep<F>(
-    ctx: Context,
-    name: &str,
-    port: u16,
-    mut action: F,
-) -> Result<(), Box<dyn Error>>
+pub fn run_service_req_rep<F>(ctx: Context, name: &str, port: u16, mut action: F) -> Result<()>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
@@ -69,7 +64,7 @@ impl Controller {
     }
 
     /// Send a message to one of the services on this controller, returning the response.
-    pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>> {
         self.0
             .use_service(name, |socket| {
                 socket.send(msg, 0)?;
@@ -81,7 +76,7 @@ impl Controller {
 }
 
 /// Try to connect a REQ socket at this host and port.
-fn req_socket(host: &str, port: u16, ctx: &Context) -> Result<Socket, Box<dyn Error>> {
+fn req_socket(host: &str, port: u16, ctx: &Context) -> Result<Socket> {
     let addr = format!("tcp://{}:{}", host, port);
 
     // Connect a REQ socket.

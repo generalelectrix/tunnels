@@ -20,7 +20,6 @@ log = "^0.4"
 simplelog = "0.12.0"
 derive_more = "^0.99"
 midir = "0.9.1"
-simple-error = "0.3.0"
 lazy_static = "^1"
 typed_index_derive = "0.1.4"
 zmq = "0.10.0"
@@ -37,6 +36,7 @@ audio-processor-analysis = "0.4.0"
 audio-processor-traits = "2.2.0"
 augmented-atomics = "0.1.1"
 itertools = "0.10.5"
+anyhow = "1.0.70"
 
 [dev-dependencies]
 insta = { version = "1.28.0", features = ["yaml"] }

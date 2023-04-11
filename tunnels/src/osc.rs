@@ -1,8 +1,8 @@
+use anyhow::bail;
+use anyhow::Result;
 use derive_more::Display;
 use log::{debug, error, warn};
 use rosc::{OscMessage, OscPacket, OscType};
-use simple_error::bail;
-use std::error::Error;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -34,10 +34,7 @@ pub struct Dispatcher {
 }
 
 impl Dispatcher {
-    pub fn new(
-        osc_devices: Vec<DeviceSpec>,
-        send: Sender<ControlEvent>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(osc_devices: Vec<DeviceSpec>, send: Sender<ControlEvent>) -> Result<Self> {
         let mut inputs = Vec::new();
         for osc_device in osc_devices {
             inputs.push(Input::new(osc_device, send.clone())?);
@@ -51,7 +48,7 @@ impl Dispatcher {
         &self,
         device: Device,
         event: OscMessage,
-    ) -> Result<Option<ControlMessage>, Box<dyn Error>> {
+    ) -> Result<Option<ControlMessage>> {
         match event.addr.as_str() {
             "/palette" => handle_palette(event.args).map(Some),
             "/position" => handle_position(event.args).map(Some),
@@ -67,7 +64,7 @@ impl Dispatcher {
 }
 
 /// Process a vector of OSC types that are expected to represent a color palette.
-fn handle_palette(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>> {
+fn handle_palette(args: Vec<OscType>) -> Result<ControlMessage> {
     // Scan the input vector, extracting colors and converting to HSV.
     let colors = handle_osc_vec_chunks(args, 3, |chunk| {
         Ok(Rgb {
@@ -83,7 +80,7 @@ fn handle_palette(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>> 
 }
 
 /// Process a vector of OSC types that are expected to represent a X/Y position.
-fn handle_position(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>> {
+fn handle_position(args: Vec<OscType>) -> Result<ControlMessage> {
     Ok(ControlMessage::Position(handle_osc_vec_chunks(
         args,
         2,
@@ -100,8 +97,8 @@ fn handle_position(args: Vec<OscType>) -> Result<ControlMessage, Box<dyn Error>>
 fn handle_osc_vec_chunks<T>(
     args: Vec<OscType>,
     chunk_size: usize,
-    chunk_proc: impl FnMut(&[OscType]) -> Result<T, Box<dyn Error>>,
-) -> Result<Vec<T>, Box<dyn Error>> {
+    chunk_proc: impl FnMut(&[OscType]) -> Result<T>,
+) -> Result<Vec<T>> {
     args.chunks(chunk_size).filter(|chunk| {
         if chunk.len() < chunk_size {
             warn!("OSC message had a trailing chunk with less than {chunk_size} components: {chunk:?}");
@@ -112,11 +109,11 @@ fn handle_osc_vec_chunks<T>(
     }).map(chunk_proc).collect()
 }
 
-fn get_osc_unipolar(v: &OscType) -> Result<UnipolarFloat, Box<dyn Error>> {
+fn get_osc_unipolar(v: &OscType) -> Result<UnipolarFloat> {
     get_osc_float(v).map(UnipolarFloat::new)
 }
 
-fn get_osc_float(v: &OscType) -> Result<f64, Box<dyn Error>> {
+fn get_osc_float(v: &OscType) -> Result<f64> {
     match v {
         OscType::Float(v) => Ok(*v as f64),
         OscType::Double(v) => Ok(*v),
@@ -141,12 +138,12 @@ impl EmitStateChange for Dispatcher {
 struct Input(DeviceSpec);
 
 impl Input {
-    pub fn new(spec: DeviceSpec, send: Sender<ControlEvent>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(spec: DeviceSpec, send: Sender<ControlEvent>) -> Result<Self> {
         let socket = UdpSocket::bind(spec.addr)?;
 
         let mut buf = [0u8; rosc::decoder::MTU];
 
-        let mut recv = move || -> Result<OscPacket, Box<dyn Error>> {
+        let mut recv = move || -> Result<OscPacket> {
             let size = socket.recv(&mut buf)?;
             let (_, packet) = rosc::decoder::decode_udp(&buf[..size])?;
             Ok(packet)

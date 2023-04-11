@@ -1,9 +1,8 @@
+use anyhow::{bail, Result};
 use log::{self, error, info, warn};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
-use simple_error::bail;
 use std::{
-    error::Error,
     fs::File,
     io::BufWriter,
     path::{Path, PathBuf},
@@ -52,7 +51,7 @@ impl Show {
         audio_input_device: Option<String>,
         run_clock_service: bool,
         save_path: Option<PathBuf>,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> Result<Self> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices
             .iter()
@@ -79,7 +78,7 @@ impl Show {
     /// Load the saved show at file into self.
     /// Return an error if the dimensions of the loaded data don't match the
     /// current show.
-    pub fn load(&mut self, path: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn load(&mut self, path: &Path) -> Result<()> {
         let file = File::open(path)?;
         let loaded_state = ShowState::deserialize(&mut Deserializer::new(file))?;
         if loaded_state.mixer.channel_count() != self.state.mixer.channel_count() {
@@ -101,7 +100,7 @@ impl Show {
     }
 
     /// Save the show into the provided file.
-    fn save(&self, path: &Path) -> Result<(), Box<dyn Error>> {
+    fn save(&self, path: &Path) -> Result<()> {
         let mut file = File::create(path)?;
         self.state
             .serialize(&mut Serializer::new(BufWriter::new(&mut file)))?;
@@ -109,7 +108,7 @@ impl Show {
     }
 
     /// If a save path is set and we're due to save, save the show.
-    fn autosave(&mut self) -> Result<(), Box<dyn Error>> {
+    fn autosave(&mut self) -> Result<()> {
         if let Some(path) = &self.save_path {
             let now = Instant::now();
             let should_save = match self.last_save {
@@ -139,7 +138,7 @@ impl Show {
     }
 
     /// Run the show in the current thread.
-    pub fn run(&mut self, update_interval: Duration) -> Result<(), Box<dyn Error>> {
+    pub fn run(&mut self, update_interval: Duration) -> Result<()> {
         info!("Show is starting.");
 
         // Emit initial UI state.
@@ -277,7 +276,7 @@ mod test {
     /// The purpose of this test is to catch accidental regressions in the
     /// tunnel state or rendering algorithm.
     #[test]
-    fn test_render() -> Result<(), Box<dyn Error>> {
+    fn test_render() -> Result<()> {
         let mut show = Show::new(Vec::new(), Vec::new(), None, false, None)?;
 
         show.test_mode(stress);

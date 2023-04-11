@@ -8,12 +8,12 @@
 use crate::config::{ClientConfig, Resolution};
 use crate::draw::{Transform, TransformDirection};
 use crate::show::Show;
+use anyhow::Result;
 use lazy_static::lazy_static;
 use log::{error, info};
 use regex::Regex;
 use rmp_serde::decode::from_read;
 use rmp_serde::encode::write;
-use std::error::Error;
 use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
@@ -136,11 +136,7 @@ impl Administrator {
     /// Command a particular client to run using the provided configuration.
     /// If the client is available, returns the string response from sending the config.
     /// Returns Err if the specified client doesn't exist.
-    pub fn run_with_config(
-        &self,
-        client: &str,
-        config: ClientConfig,
-    ) -> Result<String, Box<dyn Error>> {
+    pub fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String> {
         // Serialize the config.
         let mut serialized = Vec::new();
         write(&mut serialized, &config)?;

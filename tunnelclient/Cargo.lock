@@ -58,6 +58,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7eb209b1518d6bb87b283c20095f5228ecda460da70b44f0802523dea6da04"
 
 [[package]]
+name = "anyhow"
+version = "1.0.70"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7de8ce5e0f9f8d88245311066a578d72b7af3e7088f32783804676302df237e4"
+
+[[package]]
 name = "arrayref"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1810,12 +1816,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "238abfbb77c1915110ad968465608b68e869e0772622c9656714e73e5a1a522f"
 
 [[package]]
-name = "simple-error"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8542b68b8800c3cda649d2c72d688b6907b30f1580043135d61669d4aad1c175"
-
-[[package]]
 name = "simplelog"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2270,6 +2270,7 @@ checksum = "0609f771ad9c6155384897e1df4d948e692667cc0588548b68eb44d052b27633"
 name = "tunnelclient"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "derive_more",
  "hostname",
  "interpolation",
@@ -2283,7 +2284,6 @@ dependencies = [
  "regex",
  "rmp-serde",
  "serde",
- "simple-error",
  "simplelog",
  "streaming-stats",
  "tunnels_lib",
@@ -2296,12 +2296,12 @@ dependencies = [
 name = "tunnels_lib"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "derive_more",
  "num-traits",
  "number",
  "ordered-float",
  "serde",
- "simple-error",
 ]
 
 [[package]]
@@ -2717,11 +2717,11 @@ dependencies = [
 name = "zero_configure"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-dnssd",
  "futures",
  "rmp-serde",
  "serde",
- "simple-error",
  "tokio-core",
  "zmq",
 ]
