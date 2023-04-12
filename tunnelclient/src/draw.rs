@@ -2,11 +2,8 @@ use std::sync::Arc;
 
 use crate::config::ClientConfig;
 use crate::constants::TWOPI;
-use graphics::radians::Radians;
-use graphics::triangulation::stream_quad_tri_list;
 use graphics::types::Color;
-use graphics::types::{Matrix2d, Radius, Rectangle, Resolution, Scalar};
-use graphics::{rectangle, CircleArc, DrawState, Graphics, Transformed};
+use graphics::{rectangle, CircleArc, Graphics, Transformed};
 use piston_window::Context;
 use serde::{Deserialize, Serialize};
 use tunnels_lib::ArcSegment;
@@ -84,83 +81,6 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     }
 }
 
-/// Draws circle arc using triangulation.
-pub fn draw_circle_arc_improved<R: Into<Rectangle>, G>(
-    ca: &CircleArc,
-    rectangle: R,
-    draw_state: &DrawState,
-    transform: Matrix2d,
-    g: &mut G,
-) where
-    G: Graphics,
-{
-    let rectangle = rectangle.into();
-    g.tri_list(draw_state, &ca.color, |f| {
-        improved_with_arc_tri_list(
-            ca.start,
-            ca.end,
-            ca.resolution,
-            transform,
-            rectangle,
-            ca.radius,
-            |vertices| f(vertices),
-        )
-    });
-}
-
-/// Streams an arc between the two radian boundaries.
-#[inline(always)]
-fn improved_with_arc_tri_list<F>(
-    start_radians: Scalar,
-    end_radians: Scalar,
-    resolution: Resolution,
-    m: Matrix2d,
-    rect: Rectangle,
-    border_radius: Radius,
-    f: F,
-) where
-    F: FnMut(&[[f32; 2]]),
-{
-    let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
-    let (cw, ch) = (0.5 * w, 0.5 * h);
-    let (cw1, ch1) = (cw + border_radius, ch + border_radius);
-    let (cw2, ch2) = (cw - border_radius, ch - border_radius);
-    let (cx, cy) = (x + cw, y + ch);
-    let mut i = 0;
-
-    let twopi = <Scalar as Radians>::_360();
-    let max_seg_size = twopi / resolution as Scalar;
-
-    // Take true modulus by 2pi.
-    let delta = (((end_radians - start_radians) % twopi) + twopi) % twopi;
-
-    // Taking ceiling here implies that the resolution parameter provides a
-    // lower bound on the drawn resolution.
-    let n_quads = (delta / max_seg_size).ceil() as u64;
-
-    // n_quads * seg_size exactly spans the included angle.
-    let seg_size = delta / n_quads as Scalar;
-    stream_quad_tri_list(
-        m,
-        || {
-            if i > n_quads {
-                return None;
-            }
-
-            let angle = start_radians + (i as Scalar * seg_size);
-
-            let cos = angle.cos();
-            let sin = angle.sin();
-            i += 1;
-            Some((
-                [cx + cos * cw1, cy + sin * ch1],
-                [cx + cos * cw2, cy + sin * ch2],
-            ))
-        },
-        f,
-    );
-}
-
 impl<G: Graphics> Draw<G> for ArcSegment {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
@@ -201,9 +121,12 @@ impl<G: Graphics> Draw<G> for ArcSegment {
         let start = self.start * TWOPI;
         let stop = self.stop * TWOPI;
 
-        let ca = CircleArc::new(color, thickness, start, stop);
-        //ca.draw(bound, &Default::default(), transform, gl);
-        draw_circle_arc_improved(&ca, bound, &Default::default(), transform, gl);
+        CircleArc::new(color, thickness, start, stop).draw(
+            bound,
+            &Default::default(),
+            transform,
+            gl,
+        );
     }
 }
 
