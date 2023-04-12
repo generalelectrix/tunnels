@@ -1,8 +1,9 @@
 use crate::config::ClientConfig;
 use crate::draw::Draw;
-use crate::receive::receive_async;
-use crate::snapshot_manager::InterpResult::*;
-use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
+use crate::snapshot_manager::SnapshotFetchResult::*;
+use crate::snapshot_manager::SnapshotManager;
+use crate::snapshot_manager::SnapshotManagerHandle;
+use crate::timesync::SynchronizerHandle;
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
 use anyhow::{anyhow, Context as ErrorContext, Result};
 use graphics::clear;
@@ -10,21 +11,20 @@ use log::{debug, error, info, max_level, warn, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::*;
 use sdl2_window::Sdl2Window;
-use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tunnels_lib::RunFlag;
-use tunnels_lib::{Snapshot, Timestamp};
-// FIXME: we should import a strong type pair to link the type used to send and receieve snapshots.
-use zero_configure::pub_sub::Receiver as SubReceiver;
+use tunnels_lib::Snapshot;
+use tunnels_lib::Timestamp;
+use zero_configure::pub_sub::Receiver;
 use zmq::Context;
 
 /// Top-level structure that owns all of the show data.
 pub struct Show {
     gl: GlGraphics, // OpenGL drawing backend.
-    snapshot_manager: SnapshotManager,
-    timesync: Arc<Mutex<Synchronizer>>,
+    snapshot_manager: SnapshotManagerHandle,
+    timesync: SynchronizerHandle,
     cfg: ClientConfig,
     run_flag: RunFlag,
     window: PistonWindow<Sdl2Window>,
@@ -44,53 +44,28 @@ impl Show {
             timesync_client.synchronization_duration().as_secs()
         );
 
-        let synchronizer = Synchronizer::new(timesync_client.synchronize()?);
-
+        let synchronizer = Arc::new(Mutex::new(Synchronizer::new(
+            timesync_client.synchronize()?,
+        )));
         info!("Synchronized.");
 
         // Spin off another thread to periodically update our host time synchronization.
-        let timesync_period = cfg.timesync_interval;
-        let timesync = Arc::new(Mutex::new(synchronizer));
-        let timesync_remote = timesync.clone();
-        let timesync_run_flag = run_flag.clone();
-
-        thread::Builder::new()
-            .name("timesync".to_string())
-            .spawn(move || {
-                // FIXME: rather than sleep/flag polling we should use a select
-                // mechanism to ensure prompt quit.
-                while timesync_run_flag.should_run() {
-                    thread::sleep(timesync_period);
-                    match timesync_client.synchronize() {
-                        Ok(sync) => {
-                            let new_estimate = sync.now();
-                            let mut synchronizer =
-                                timesync_remote.lock().expect("Timesync mutex poisoned.");
-                            let old_estimate = synchronizer.now();
-                            info!(
-                                "Updating time sync.  Change from previous estimate: {}",
-                                new_estimate - old_estimate
-                            );
-                            synchronizer.update_current(sync);
-                        }
-                        Err(e) => {
-                            warn!("{}", e);
-                        }
-                    }
-                }
-                info!("Timesync service shutting down.");
-            })
-            .context("timesync service thread failed to spawn")?;
+        update_timesync(
+            cfg.timesync_interval,
+            timesync_client,
+            synchronizer.clone(),
+            run_flag.clone(),
+        )?;
 
         // Set up snapshot reception and management.
-        let snapshot_queue: Receiver<Snapshot> = receive_async(SubReceiver::new(
+        let snapshot_manager = Arc::new(Mutex::new(SnapshotManager::default()));
+        receive_snapshots(
             &ctx,
-            &cfg.server_hostname,
-            6000,
-            Some(&[cfg.video_channel as u8]),
-        )?)?;
-
-        let snapshot_manager = SnapshotManager::new(snapshot_queue);
+            &cfg,
+            snapshot_manager.clone(),
+            synchronizer.clone(),
+            run_flag.clone(),
+        )?;
 
         let opengl = OpenGL::V3_2;
 
@@ -116,7 +91,7 @@ impl Show {
         Ok(Show {
             gl: GlGraphics::new(opengl),
             snapshot_manager,
-            timesync,
+            timesync: synchronizer,
             cfg,
             run_flag,
             window,
@@ -150,7 +125,7 @@ impl Show {
 
     /// Render a frame to the window.
     fn render(&mut self, args: &RenderArgs) {
-        // Get frame interpolation from the snapshot service.
+        // Get frame from the snapshot service.
 
         let delayed_time = match self.timesync.lock() {
             Err(_) => {
@@ -162,7 +137,7 @@ impl Show {
             Ok(ref mut ts) => ts.now() - Timestamp::from_duration(self.cfg.render_delay),
         };
 
-        let maybe_frame = match self.snapshot_manager.get_interpolated(delayed_time) {
+        let maybe_frame = match self.snapshot_manager.lock().unwrap().get(delayed_time) {
             NoData => {
                 self.render_logger
                     .log(delayed_time, "No data available from snapshot service.");
@@ -205,13 +180,7 @@ impl Show {
     /// Perform a timestep update of all of the state of the show.
     fn update(&mut self, dt: f64) {
         // Update the state of the snapshot manager.
-        let update_result = self.snapshot_manager.update();
-        if let Err(e) = update_result {
-            let msg = match e {
-                SnapshotUpdateError::Disconnected => "disconnected",
-            };
-            println!("An error occurred during snapshot update: {:?}", msg);
-        }
+        self.snapshot_manager.lock().unwrap().update();
         // Update the interpolation parameter on our time synchronization.
         self.timesync
             .lock()
@@ -256,4 +225,82 @@ impl RenderIssueLogger {
             self.missed = 0;
         }
     }
+}
+
+/// Spawn a thread to receive snapshots.
+/// Inject them into the provided manager.
+/// The thread runs until the run flag is tripped.
+fn receive_snapshots(
+    ctx: &Context,
+    cfg: &ClientConfig,
+    snapshot_manager: SnapshotManagerHandle,
+    timesync: SynchronizerHandle,
+    run_flag: RunFlag,
+) -> Result<()> {
+    let mut receiver: Receiver<Snapshot> = Receiver::new(
+        ctx,
+        &cfg.server_hostname,
+        6000,
+        Some(&[cfg.video_channel as u8]),
+    )?;
+    thread::Builder::new()
+        .name("snapshot_receiver".to_string())
+        .spawn(move || {
+            loop {
+                if !run_flag.should_run() {
+                    info!("Snapshot receiver shutting down.");
+                    break;
+                }
+                match receiver.receive_msg(true) {
+                    Ok(Some(msg)) => {
+                        let timestamp = msg.time;
+                        snapshot_manager.lock().unwrap().insert_snapshot(msg);
+                        println!(
+                            "received snapshot with delay {}",
+                            timesync.lock().unwrap().now() - timestamp
+                        );
+                    }
+                    Ok(None) => continue, // Odd case, given that we should have blocked.
+                    Err(e) => error!("receive error: {e}"),
+                }
+            }
+        })?;
+    Ok(())
+}
+
+/// Spawn a thread to periodically update timesync.
+fn update_timesync(
+    period: Duration,
+    mut client: TimesyncClient,
+    synchronizer: SynchronizerHandle,
+    run_flag: RunFlag,
+) -> Result<()> {
+    thread::Builder::new()
+        .name("timesync".to_string())
+        .spawn(move || {
+            // FIXME: rather than sleep/flag polling we should use a select
+            // mechanism to ensure prompt quit.
+            while run_flag.should_run() {
+                thread::sleep(period);
+                match client.synchronize() {
+                    Ok(sync) => {
+                        let new_estimate = sync.now();
+                        let mut synchronizer =
+                            synchronizer.lock().expect("Timesync mutex poisoned.");
+                        let old_estimate = synchronizer.now();
+                        info!(
+                            "Updating time sync.  Change from previous estimate: {}",
+                            new_estimate - old_estimate
+                        );
+                        synchronizer.update_current(sync);
+                    }
+                    Err(e) => {
+                        warn!("{}", e);
+                    }
+                }
+            }
+            info!("Timesync service shutting down.");
+        })
+        .context("timesync service thread failed to spawn")?;
+    Ok(())
 }

@@ -7,6 +7,8 @@ use anyhow::Result;
 use interpolation::lerp;
 use stats::{mean, stddev};
 use std::mem;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tunnels_lib::{number::UnipolarFloat, Timestamp};
@@ -131,6 +133,8 @@ impl Timesync {
         self.host_ref_time + Timestamp::from_duration(self.ref_time.elapsed())
     }
 }
+
+pub type SynchronizerHandle = Arc<Mutex<Synchronizer>>;
 
 /// Provide smoothed estimates of the current time on the host.
 /// Ensures that we don't suddenly draw a jerk when we update our estimate of the host time offset.

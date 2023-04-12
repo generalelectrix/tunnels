@@ -38,6 +38,7 @@ use std::{
     Div,
     Ord,
     PartialOrd,
+    Default,
 )]
 pub struct Timestamp(pub i64);
 
