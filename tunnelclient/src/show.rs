@@ -253,12 +253,7 @@ fn receive_snapshots(
                 }
                 match receiver.receive_msg(true) {
                     Ok(Some(msg)) => {
-                        let timestamp = msg.time;
                         snapshot_manager.lock().unwrap().insert_snapshot(msg);
-                        println!(
-                            "received snapshot with delay {}",
-                            timesync.lock().unwrap().now() - timestamp
-                        );
                     }
                     Ok(None) => continue, // Odd case, given that we should have blocked.
                     Err(e) => error!("receive error: {e}"),
