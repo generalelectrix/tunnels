@@ -5,6 +5,7 @@ use crate::snapshot_manager::InterpResult::*;
 use crate::snapshot_manager::{SnapshotManager, SnapshotUpdateError};
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
 use anyhow::{anyhow, Context as ErrorContext, Result};
+use fps_counter::FPSCounter;
 use graphics::clear;
 use log::{debug, error, info, max_level, warn, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
@@ -13,7 +14,7 @@ use sdl2_window::Sdl2Window;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tunnels_lib::RunFlag;
 use tunnels_lib::{Snapshot, Timestamp};
 // FIXME: we should import a strong type pair to link the type used to send and receieve snapshots.
@@ -83,12 +84,15 @@ impl Show {
             .context("timesync service thread failed to spawn")?;
 
         // Set up snapshot reception and management.
-        let snapshot_queue: Receiver<Snapshot> = receive_async(SubReceiver::new(
-            &ctx,
-            &cfg.server_hostname,
-            6000,
-            Some(&[cfg.video_channel as u8]),
-        )?)?;
+        let snapshot_queue: Receiver<Snapshot> = receive_async(
+            SubReceiver::new(
+                &ctx,
+                &cfg.server_hostname,
+                6000,
+                Some(&[cfg.video_channel as u8]),
+            )?,
+            timesync.clone(),
+        )?;
 
         let snapshot_manager = SnapshotManager::new(snapshot_queue);
 
@@ -104,7 +108,7 @@ impl Show {
         )
         .graphics_api(opengl)
         .exit_on_esc(true)
-        .vsync(true)
+        // .vsync(true)
         .samples(if cfg.anti_alias { 4 } else { 0 })
         .fullscreen(cfg.fullscreen)
         .build()
@@ -126,18 +130,30 @@ impl Show {
 
     /// Run the show's event loop.
     pub fn run(&mut self) {
+        let mut fpsc = FPSCounter::default();
         // Run the event loop.
+        let mut last_update = Instant::now();
         while let Some(e) = self.window.next() {
+            println!("event: {:?}", e);
             if !self.run_flag.should_run() {
                 info!("Quit flag tripped, ending show.");
                 break;
             }
 
             if let Some(update_args) = e.update_args() {
+                let now = Instant::now();
+                println!(
+                    "time since last update: {}; dt: {}",
+                    (now - last_update).as_micros(),
+                    update_args.dt * 1_000_000.,
+                );
+                last_update = now;
                 self.update(update_args.dt);
             }
 
             if let Some(r) = e.render_args() {
+                let fps = fpsc.tick();
+                println!("{fps}");
                 self.render(&r);
             }
         }
@@ -204,19 +220,20 @@ impl Show {
 
     /// Perform a timestep update of all of the state of the show.
     fn update(&mut self, dt: f64) {
+        // Update the interpolation parameter on our time synchronization.
+        let current_time = {
+            let mut ts = self.timesync.lock().expect("Timesync mutex poisoned");
+            ts.update(dt);
+            ts.now()
+        };
         // Update the state of the snapshot manager.
-        let update_result = self.snapshot_manager.update();
+        let update_result = self.snapshot_manager.update(current_time);
         if let Err(e) = update_result {
             let msg = match e {
                 SnapshotUpdateError::Disconnected => "disconnected",
             };
             println!("An error occurred during snapshot update: {:?}", msg);
         }
-        // Update the interpolation parameter on our time synchronization.
-        self.timesync
-            .lock()
-            .expect("Timesync mutex poisoned")
-            .update(dt);
     }
 }
 

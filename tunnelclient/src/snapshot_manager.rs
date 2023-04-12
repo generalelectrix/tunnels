@@ -57,6 +57,7 @@ impl SnapshotManager {
                 self.snapshots.push_front(snapshot);
             }
             InsertStrategy::Insert => {
+                println!("insert");
                 let mut insert_index = 0;
                 // iterate backwards and find the right spot to insert
                 for (index, older_snapshot) in self.snapshots.iter().enumerate() {
@@ -80,13 +81,18 @@ impl SnapshotManager {
     }
 
     /// Drain the snapshot queue and store all the results.
-    fn drain_queue(&mut self) -> Result<(), SnapshotUpdateError> {
+    /// Return the number of snapshots drained.
+    fn drain_queue(&mut self) -> Result<(usize, Option<Timestamp>), SnapshotUpdateError> {
+        let mut count = 0;
+        let mut newest_time = None;
         loop {
             match self.get_from_queue() {
                 Ok(Some(snapshot)) => {
+                    newest_time = Some(snapshot.time);
                     self.insert_snapshot(snapshot);
+                    count += 1;
                 }
-                Ok(None) => return Ok(()),
+                Ok(None) => return Ok((count, newest_time)),
                 Err(e) => return Err(e),
             }
         }
@@ -106,17 +112,18 @@ impl SnapshotManager {
 
     /// Drain the snapshot queue of any pending items, and incorporate them into
     /// the collection.  Drop stale snapshots from the collection.
-    pub fn update(&mut self) -> Result<(), SnapshotUpdateError> {
+    pub fn update(&mut self, current_time: Timestamp) -> Result<(), SnapshotUpdateError> {
         let recv_result = self.drain_queue();
         self.drop_stale_snapshots();
-        recv_result
+        recv_result?;
+        Ok(())
     }
 
     /// Given a timestamp, interpolate between the two most relevant snapshots.
     /// Update the oldest relevant snapshot.
     pub fn get_interpolated(&mut self, time: Timestamp) -> InterpResult {
         let snaps = &self.snapshots;
-
+        println!("snapshots: {}", snaps.len());
         match snaps.len() {
             0 => InterpResult::NoData,
             1 => {

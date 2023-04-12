@@ -201,6 +201,18 @@ impl Show {
         }
     }
 
+    pub fn create_frame(&self, number: u64) -> Frame {
+        Frame {
+            number,
+            timestamp: Timestamp(0),
+            mixer: self.state.mixer.clone(),
+            clocks: self.state.clocks.clone(),
+            color_palette: self.state.color_palette.clone(),
+            positions: self.state.positions.clone(),
+            audio_envelope: self.audio_input.envelope(),
+        }
+    }
+
     fn update_state(&mut self, delta_t: Duration) {
         self.audio_input.update_state(delta_t, &mut self.dispatcher);
         let audio_envelope = self.audio_input.envelope();
