@@ -5,8 +5,6 @@ mod constants {
 
 mod config;
 mod draw;
-mod interpolate;
-mod receive;
 mod remote;
 mod show;
 mod snapshot_manager;
