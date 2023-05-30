@@ -10,6 +10,7 @@ use crate::snapshot_manager::VecDequeSnapshotManager;
 use crate::timesync::SynchronizerHandle;
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
 use anyhow::{anyhow, Context as ErrorContext, Result};
+use glfw_window::GlfwWindow;
 use graphics::clear;
 use log::{debug, error, info, max_level, warn, Level};
 use opengl_graphics::{GlGraphics, OpenGL};
@@ -32,7 +33,7 @@ pub struct Show {
     timesync: SynchronizerHandle,
     cfg: ClientConfig,
     run_flag: RunFlag,
-    window: PistonWindow<Sdl2Window>,
+    window: PistonWindow<GlfwWindow>,
     render_reporter: RenderIssueLogger,
 }
 
@@ -85,7 +86,7 @@ impl Show {
         thread::sleep(cfg.render_delay);
 
         // Create the window.
-        let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
+        let mut window: PistonWindow<GlfwWindow> = WindowSettings::new(
             format!("tunnelclient: channel {}", cfg.video_channel),
             [cfg.x_resolution, cfg.y_resolution],
         )
@@ -98,7 +99,7 @@ impl Show {
         .map_err(|err| anyhow!("{err}"))?;
 
         window.set_capture_cursor(cfg.capture_mouse);
-        window.set_max_fps(120);
+        window.window.window.maximize();
 
         Ok(Show {
             gl: GlGraphics::new(opengl),
@@ -332,7 +333,7 @@ fn receive_snapshots(
                 }
                 match receiver.receive_msg(true) {
                     Ok(Some(msg)) => {
-                        // info!(
+                        // println!(
                         //     "receive latency: {}",
                         //     timesync.lock().unwrap().now() - msg.time
                         // );

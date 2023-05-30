@@ -70,7 +70,7 @@ fn main() -> Result<()> {
         show.load(&load_path)?;
     }
 
-    show.run(Duration::from_micros(16667))
+    show.run(Duration::from_nanos(16666667 / 4))
 }
 
 /// Prompt the user to optionally configure a test mode.
