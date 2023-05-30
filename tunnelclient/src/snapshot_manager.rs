@@ -24,6 +24,17 @@ pub enum SnapshotFetchResult {
     Error(Vec<Snapshot>),          // Something went wrong and we couldn't perform interpolation.
 }
 
+impl SnapshotFetchResult {
+    pub fn frame(&self) -> Option<&LayerCollection> {
+        match self {
+            Self::Good(frame) | Self::MissingNewer(frame) | Self::MissingOlder(frame) => {
+                Some(frame)
+            }
+            _ => None,
+        }
+    }
+}
+
 enum InsertStrategy {
     PushFront,
     Insert,
@@ -75,6 +86,11 @@ impl SnapshotManager {
     /// Drop stale snapshots from the collection.
     pub fn update(&mut self) {
         self.drop_stale_snapshots();
+    }
+
+    /// Peek at the front snapshot, if there is one.
+    pub fn peek_front(&self) -> Option<&Snapshot> {
+        self.snapshots.front()
     }
 
     /// Given a timestamp, select the most relevant snapshot.
