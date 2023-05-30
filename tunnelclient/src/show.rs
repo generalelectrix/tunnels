@@ -145,7 +145,7 @@ impl Show {
 
         let (snapshot_latency, snapshot_result) = {
             let mut manager = self.snapshot_manager.lock().unwrap();
-            let latency = manager.peek_front().map(|snap| (snap.time - now).0);
+            let latency = manager.peek_front().map(|snap| (now - snap.time).0);
             let result = manager.get(delayed_time);
             (latency, result)
         };
@@ -224,8 +224,8 @@ impl RenderIssueLogger {
             total: 0,
             missed: 0,
             mean_snapshot_latency_us: 0,
-            worst_snapshot_latency_us: 0,
-            best_snapshot_latency_us: 0,
+            worst_snapshot_latency_us: i64::MIN,
+            best_snapshot_latency_us: i64::MAX,
         }
     }
 
@@ -290,8 +290,8 @@ impl RenderIssueLogger {
             self.missed = 0;
             self.total = 0;
             self.mean_snapshot_latency_us = 0;
-            self.worst_snapshot_latency_us = 0;
-            self.best_snapshot_latency_us = 0;
+            self.worst_snapshot_latency_us = i64::MIN;
+            self.best_snapshot_latency_us = i64::MAX;
         }
     }
 }
@@ -322,6 +322,10 @@ fn receive_snapshots(
                 }
                 match receiver.receive_msg(true) {
                     Ok(Some(msg)) => {
+                        info!(
+                            "receive latency: {}",
+                            timesync.lock().unwrap().now() - msg.time
+                        );
                         snapshot_manager.lock().unwrap().insert_snapshot(msg);
                     }
                     Ok(None) => continue, // Odd case, given that we should have blocked.

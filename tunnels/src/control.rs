@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 use crate::master_ui::EmitStateChange;
@@ -23,6 +23,9 @@ pub struct Dispatcher {
     midi_dispatcher: MidiDispatcher,
     osc_dispatcher: OscDispatcher,
     recv: Receiver<ControlEvent>,
+    // Hang onto a copy of this for when we're running in test mode, otherwise
+    // the channel is closed instantly and we do not block properly.
+    _send: Sender<ControlEvent>,
 }
 
 impl Dispatcher {
@@ -32,8 +35,9 @@ impl Dispatcher {
 
         Ok(Self {
             midi_dispatcher: MidiDispatcher::new(midi_devices, send.clone())?,
-            osc_dispatcher: OscDispatcher::new(osc_devices, send)?,
+            osc_dispatcher: OscDispatcher::new(osc_devices, send.clone())?,
             recv,
+            _send: send,
         })
     }
 
