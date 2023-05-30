@@ -1,9 +1,12 @@
 use crate::config::ClientConfig;
+use crate::config::SnapshotManagement;
 use crate::draw::Draw;
+use crate::snapshot_manager::SingleSnapshotManager;
 use crate::snapshot_manager::SnapshotFetchResult;
 use crate::snapshot_manager::SnapshotFetchResult::*;
 use crate::snapshot_manager::SnapshotManager;
 use crate::snapshot_manager::SnapshotManagerHandle;
+use crate::snapshot_manager::VecDequeSnapshotManager;
 use crate::timesync::SynchronizerHandle;
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
 use anyhow::{anyhow, Context as ErrorContext, Result};
@@ -60,7 +63,14 @@ impl Show {
         )?;
 
         // Set up snapshot reception and management.
-        let snapshot_manager = Arc::new(Mutex::new(SnapshotManager::default()));
+        let snapshot_manager = Arc::new(Mutex::new(match cfg.snapshot_management {
+            SnapshotManagement::VecDeque => {
+                Box::<VecDequeSnapshotManager>::default() as Box<dyn SnapshotManager>
+            }
+            SnapshotManagement::Single => {
+                Box::<SingleSnapshotManager>::default() as Box<dyn SnapshotManager>
+            }
+        }));
         receive_snapshots(
             &ctx,
             &cfg,
@@ -322,10 +332,10 @@ fn receive_snapshots(
                 }
                 match receiver.receive_msg(true) {
                     Ok(Some(msg)) => {
-                        info!(
-                            "receive latency: {}",
-                            timesync.lock().unwrap().now() - msg.time
-                        );
+                        // info!(
+                        //     "receive latency: {}",
+                        //     timesync.lock().unwrap().now() - msg.time
+                        // );
                         snapshot_manager.lock().unwrap().insert_snapshot(msg);
                     }
                     Ok(None) => continue, // Odd case, given that we should have blocked.

@@ -9,6 +9,12 @@ use std::time::Duration;
 use yaml_rust::YamlLoader;
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum SnapshotManagement {
+    VecDeque,
+    Single,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClientConfig {
     /// Hostname of the machine running the controller.
     pub server_hostname: String,
@@ -16,6 +22,8 @@ pub struct ClientConfig {
     pub video_channel: u64,
     /// Delay between current time and time to render.
     pub render_delay: Duration,
+    /// Which snapshot management mechanism to use.
+    pub snapshot_management: SnapshotManagement,
     /// Delay between host/client time synchronization updates.
     pub timesync_interval: Duration,
     pub x_resolution: u32,
@@ -57,6 +65,7 @@ impl ClientConfig {
         capture_mouse: bool,
         transformation: Option<Transform>,
         log_level_debug: bool,
+        use_single_snapshot: bool,
     ) -> ClientConfig {
         let (x_resolution, y_resolution) = resolution;
 
@@ -77,6 +86,11 @@ impl ClientConfig {
             alpha_blend,
             transformation,
             log_level_debug,
+            snapshot_management: if use_single_snapshot {
+                SnapshotManagement::Single
+            } else {
+                SnapshotManagement::VecDeque
+            },
         }
     }
 
@@ -132,6 +146,7 @@ impl ClientConfig {
             flag("capture_mouse", "Bad mouse capture flag.")?,
             transformation,
             flag("log_level_debug", "Bad log level flag.")?,
+            flag("use_single_snapshot", "Bad use single snapshot flag.")?,
         ))
     }
 }
