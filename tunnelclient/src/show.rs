@@ -137,11 +137,11 @@ impl Show {
             Ok(ref mut ts) => ts.now() - Timestamp::from_duration(self.cfg.render_delay),
         };
 
-        let maybe_frame = match self.snapshot_manager.lock().unwrap().get(delayed_time) {
+        let frame = match self.snapshot_manager.lock().unwrap().get(delayed_time) {
             NoData => {
                 self.render_logger
                     .log(delayed_time, "No data available from snapshot service.");
-                None
+                return;
             }
             Error(snaps) => {
                 let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
@@ -149,32 +149,28 @@ impl Show {
                     "Something went wrong with snapshot interpolation for time {}.\n{:?}\n",
                     delayed_time, snap_times
                 );
-                None
+                return;
             }
-            Good(layers) => Some(layers),
+            Good(layers) => layers,
             MissingNewer(layers) => {
                 self.render_logger
                     .log(delayed_time, "Interpolation had no newer layer.");
-                Some(layers)
+                layers
             }
             MissingOlder(layers) => {
                 self.render_logger
                     .log(delayed_time, "Interpolation had no older layer");
-                Some(layers)
+                layers
             }
         };
 
-        if let Some(frame) = maybe_frame {
-            let cfg = &self.cfg;
+        self.gl.draw(args.viewport(), |c, gl| {
+            // Clear the screen.
+            clear([0.0, 0.0, 0.0, 1.0], gl);
 
-            self.gl.draw(args.viewport(), |c, gl| {
-                // Clear the screen.
-                clear([0.0, 0.0, 0.0, 1.0], gl);
-
-                // Draw everything.
-                frame.draw(&c, gl, cfg);
-            });
-        }
+            // Draw everything.
+            frame.draw(&c, gl, &self.cfg);
+        });
     }
 
     /// Perform a timestep update of all of the state of the show.
