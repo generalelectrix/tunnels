@@ -1,5 +1,5 @@
 server_hostname: "127.0.0.1"
-render_delay: 0.015
+render_delay: 0.020
 timesync_interval: 60000
 x_resolution: 1920
 y_resolution: 1080
@@ -9,3 +9,4 @@ fullscreen: false
 capture_mouse: false
 alpha_blend: true
 log_level_debug: false
+use_single_snapshot: true
