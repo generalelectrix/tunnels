@@ -85,13 +85,7 @@ impl<G: Graphics> Draw<G> for ArcSegment {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
 
-        let (val, alpha) = if cfg.alpha_blend {
-            (self.val, self.level)
-        } else {
-            (self.val * self.level, 1.0)
-        };
-
-        let color = hsv_to_rgb(self.hue, self.sat, val, alpha);
+        let color = hsv_to_rgb(self.hue, self.sat, self.val, self.level);
 
         let (x, y) = {
             let (x0, y0) = match cfg.transformation {

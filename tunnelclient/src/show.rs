@@ -64,7 +64,7 @@ impl Show {
 
         // Set up snapshot reception and management.
         let snapshot_manager = Arc::new(Mutex::new(match cfg.snapshot_management {
-            SnapshotManagement::VecDeque => {
+            SnapshotManagement::Queued => {
                 Box::<VecDequeSnapshotManager>::default() as Box<dyn SnapshotManager>
             }
             SnapshotManagement::Single => {
@@ -92,7 +92,7 @@ impl Show {
         .graphics_api(opengl)
         .exit_on_esc(true)
         .vsync(true)
-        .samples(if cfg.anti_alias { 4 } else { 0 })
+        .samples(4)
         .fullscreen(cfg.fullscreen)
         .build()
         .map_err(|err| anyhow!("{err}"))?;

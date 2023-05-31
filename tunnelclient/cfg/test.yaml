@@ -4,9 +4,7 @@ timesync_interval: 60000
 x_resolution: 960
 y_resolution: 540
 flip_horizontal: false
-anti_alias: true
 fullscreen: false
 capture_mouse: false
-alpha_blend: true
 log_level_debug: false
 use_single_snapshot: true
