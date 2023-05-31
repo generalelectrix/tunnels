@@ -30,7 +30,6 @@ derive_more = "0.99"
 log = "0.4"
 simplelog = "0.12.0"
 anyhow = "1.0.70"
-pistoncore-glfw_window = "0.78.0"
 
 [dependencies.pistoncore-sdl2_window]
 git = "https://github.com/PistonDevelopers/sdl2_window"
