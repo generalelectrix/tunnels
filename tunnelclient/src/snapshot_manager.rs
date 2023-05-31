@@ -8,6 +8,8 @@ use tunnels_lib::{LayerCollection, Snapshot};
 
 pub type SnapshotManagerHandle = Arc<Mutex<Box<dyn SnapshotManager>>>;
 
+pub type SnapshotHandle = Arc<Snapshot>;
+
 pub trait SnapshotManager: Send {
     fn insert_snapshot(&mut self, snapshot: Snapshot);
     fn update(&mut self);
@@ -17,23 +19,23 @@ pub trait SnapshotManager: Send {
 
 /// Maintain a single snapshot, use whatever is newest.
 #[derive(Default)]
-pub struct SingleSnapshotManager(Option<Snapshot>);
+pub struct SingleSnapshotManager(Option<SnapshotHandle>);
 
 impl SnapshotManager for SingleSnapshotManager {
     fn get(&mut self, _timestamp: Timestamp) -> SnapshotFetchResult {
         if let Some(snap) = &self.0 {
-            SnapshotFetchResult::Good(snap.layers.clone())
+            SnapshotFetchResult::Good(snap.clone())
         } else {
             SnapshotFetchResult::NoData
         }
     }
 
     fn insert_snapshot(&mut self, snapshot: Snapshot) {
-        self.0 = Some(snapshot);
+        self.0 = Some(Arc::new(snapshot));
     }
 
     fn peek_front(&self) -> Option<&Snapshot> {
-        self.0.as_ref()
+        self.0.as_ref().map(Arc::as_ref)
     }
 
     fn update(&mut self) {}
@@ -43,23 +45,23 @@ impl SnapshotManager for SingleSnapshotManager {
 /// Provide interpolated snapshots on request.
 #[derive(Default)]
 pub struct VecDequeSnapshotManager {
-    snapshots: VecDeque<Snapshot>, // Ordered queue of snapshots; latest is snapshots.front()
+    snapshots: VecDeque<SnapshotHandle>, // Ordered queue of snapshots; latest is snapshots.front()
     oldest_relevant_snapshot_time: Timestamp,
 }
 
 pub enum SnapshotFetchResult {
-    NoData,                        // no data is available at all
-    Good(LayerCollection),         // Both snapshots were available.
-    MissingNewer(LayerCollection), // Data is out-of-date for current timestamp.
-    MissingOlder(LayerCollection), // We only have snapshot data newer than requested.
-    Error(Vec<Snapshot>),          // Something went wrong and we couldn't perform interpolation.
+    NoData,                       // no data is available at all
+    Good(SnapshotHandle),         // Both snapshots were available.
+    MissingNewer(SnapshotHandle), // Data is out-of-date for current timestamp.
+    MissingOlder(SnapshotHandle), // We only have snapshot data newer than requested.
+    Error(Vec<SnapshotHandle>),   // Something went wrong and we couldn't perform interpolation.
 }
 
 impl SnapshotFetchResult {
     pub fn frame(&self) -> Option<&LayerCollection> {
         match self {
-            Self::Good(frame) | Self::MissingNewer(frame) | Self::MissingOlder(frame) => {
-                Some(frame)
+            Self::Good(snap) | Self::MissingNewer(snap) | Self::MissingOlder(snap) => {
+                Some(&snap.layers)
             }
             _ => None,
         }
@@ -86,7 +88,7 @@ impl SnapshotManager for VecDequeSnapshotManager {
         };
         match insert_strategy {
             InsertStrategy::PushFront => {
-                self.snapshots.push_front(snapshot);
+                self.snapshots.push_front(Arc::new(snapshot));
             }
             InsertStrategy::Insert => {
                 let mut insert_index = 0;
@@ -97,7 +99,7 @@ impl SnapshotManager for VecDequeSnapshotManager {
                         break;
                     }
                 }
-                self.snapshots.insert(insert_index, snapshot);
+                self.snapshots.insert(insert_index, Arc::new(snapshot));
             }
         }
     }
@@ -116,7 +118,7 @@ impl SnapshotManager for VecDequeSnapshotManager {
 
     /// Peek at the front snapshot, if there is one.
     fn peek_front(&self) -> Option<&Snapshot> {
-        self.snapshots.front()
+        self.snapshots.front().map(Arc::as_ref)
     }
 
     /// Given a timestamp, select the most relevant snapshot.
@@ -129,10 +131,10 @@ impl SnapshotManager for VecDequeSnapshotManager {
                 let s = &snaps[0];
                 if s.time < time {
                     self.oldest_relevant_snapshot_time = s.time;
-                    SnapshotFetchResult::MissingNewer(s.layers.clone())
+                    SnapshotFetchResult::MissingNewer(s.clone())
                 } else {
                     // don't update oldest relevant time as we're missing it!
-                    SnapshotFetchResult::MissingOlder(s.layers.clone())
+                    SnapshotFetchResult::MissingOlder(s.clone())
                 }
             }
             _ => {
@@ -140,14 +142,14 @@ impl SnapshotManager for VecDequeSnapshotManager {
                 if let Some(s) = snaps.front() {
                     if s.time < time {
                         self.oldest_relevant_snapshot_time = s.time;
-                        return SnapshotFetchResult::MissingNewer(s.layers.clone());
+                        return SnapshotFetchResult::MissingNewer(s.clone());
                     }
                 }
                 // Find the two snapshots that bracket the requested timestamp.
                 for (newer, older) in snaps.iter().zip(snaps.iter().skip(1)) {
                     if time <= newer.time && time >= older.time {
                         self.oldest_relevant_snapshot_time = older.time;
-                        return SnapshotFetchResult::Good(newer.layers.clone());
+                        return SnapshotFetchResult::Good(newer.clone());
                     }
                 }
                 SnapshotFetchResult::Error(Vec::from(snaps.clone()))
@@ -165,18 +167,18 @@ mod tests {
     use std::sync::Arc;
     use tunnels_lib::arc_segment_for_test;
 
-    fn mksnapshot(n: u64, time: Timestamp) -> Snapshot {
-        Snapshot {
+    fn mksnapshot(n: u64, time: Timestamp) -> SnapshotHandle {
+        Arc::new(Snapshot {
             frame_number: n,
             time,
             layers: Vec::new(),
-        }
+        })
     }
 
-    fn mksnapshot_with_arc(n: u64, time: Timestamp, arc: ArcSegment) -> Snapshot {
-        let mut snap = mksnapshot(n, time);
+    fn mksnapshot_with_arc(n: u64, time: Timestamp, arc: ArcSegment) -> SnapshotHandle {
+        let mut snap = mksnapshot(n, time).as_ref().clone();
         snap.layers.push(Arc::new(vec![arc]));
-        snap
+        Arc::new(snap)
     }
 
     fn zip_assert_same<A: Eq, T, U>(a: T, b: U)
@@ -198,13 +200,13 @@ mod tests {
             mksnapshot(2, Timestamp(30000)),
         ];
         for s in &snapshots_ordered {
-            sm.insert_snapshot(s.clone());
+            sm.insert_snapshot(s.as_ref().clone());
         }
 
         zip_assert_same(sm.snapshots.iter(), snapshots_ordered.iter().rev());
 
         let unordered_snapshot = mksnapshot(3, Timestamp(15000));
-        sm.insert_snapshot(unordered_snapshot);
+        sm.insert_snapshot(unordered_snapshot.as_ref().clone());
 
         let correct_ordering = [30000, 20000, 15000, 10000];
 
@@ -220,7 +222,7 @@ mod tests {
             mksnapshot(2, Timestamp(2000)),
         ];
         for s in &snaps {
-            sm.insert_snapshot(s.clone());
+            sm.insert_snapshot(s.as_ref().clone());
         }
         sm.oldest_relevant_snapshot_time = Timestamp(2000);
         sm.update();
@@ -242,9 +244,9 @@ mod tests {
     fn test_one_older_frame() {
         let mut sm = VecDequeSnapshotManager::default();
         let snap = mksnapshot_with_arc(0, Timestamp(0), arc_segment_for_test(0.2, 0.3));
-        sm.insert_snapshot(snap.clone());
+        sm.insert_snapshot(snap.as_ref().clone());
         if let SnapshotFetchResult::MissingNewer(f) = sm.get(Timestamp(1000)) {
-            assert_eq!(snap.layers, f);
+            assert_eq!(snap, f);
         } else {
             panic!();
         }
@@ -254,20 +256,20 @@ mod tests {
     fn test_one_newer_frame() {
         let mut sm = VecDequeSnapshotManager::default();
         let snap = mksnapshot_with_arc(0, Timestamp(10000), arc_segment_for_test(0.2, 0.3));
-        sm.insert_snapshot(snap.clone());
+        sm.insert_snapshot(snap.as_ref().clone());
         if let SnapshotFetchResult::MissingOlder(f) = sm.get(Timestamp(1000)) {
-            assert_eq!(snap.layers, f);
+            assert_eq!(snap, f);
         } else {
             panic!();
         }
     }
 
-    fn setup_two_frame_test() -> (VecDequeSnapshotManager, Snapshot, Snapshot) {
+    fn setup_two_frame_test() -> (VecDequeSnapshotManager, SnapshotHandle, SnapshotHandle) {
         let mut sm = VecDequeSnapshotManager::default();
         let snap0 = mksnapshot_with_arc(0, Timestamp(0), arc_segment_for_test(0.2, 0.3));
         let snap1 = mksnapshot_with_arc(1, Timestamp(10000), arc_segment_for_test(0.2, 0.3));
-        sm.insert_snapshot(snap0.clone());
-        sm.insert_snapshot(snap1.clone());
+        sm.insert_snapshot(snap0.as_ref().clone());
+        sm.insert_snapshot(snap1.as_ref().clone());
         (sm, snap0, snap1)
     }
 
@@ -275,7 +277,7 @@ mod tests {
     fn test_two_frames_exact_newer() {
         let (mut sm, _snap0, snap1) = setup_two_frame_test();
         if let SnapshotFetchResult::Good(f) = sm.get(Timestamp(1000)) {
-            assert_eq!(snap1.layers, f);
+            assert_eq!(snap1, f);
         } else {
             panic!();
         }
@@ -285,7 +287,7 @@ mod tests {
     fn test_two_frames_exact_older() {
         let (mut sm, snap0, _snap1) = setup_two_frame_test();
         if let SnapshotFetchResult::Good(f) = sm.get(Timestamp(0)) {
-            assert_eq!(snap0.layers, f);
+            assert_eq!(snap0, f);
         } else {
             panic!();
         }
