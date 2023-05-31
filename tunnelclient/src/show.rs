@@ -3,7 +3,7 @@ use crate::config::SnapshotManagement;
 use crate::draw::Draw;
 use crate::snapshot_manager::SingleSnapshotManager;
 use crate::snapshot_manager::SnapshotFetchResult;
-use crate::snapshot_manager::SnapshotFetchResult::*;
+
 use crate::snapshot_manager::SnapshotManager;
 use crate::snapshot_manager::SnapshotManagerHandle;
 use crate::snapshot_manager::VecDequeSnapshotManager;
@@ -11,7 +11,7 @@ use crate::timesync::SynchronizerHandle;
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
 use anyhow::{anyhow, Context as ErrorContext, Result};
 use graphics::clear;
-use log::{debug, error, info, max_level, warn, Level};
+use log::{debug, error, info, warn};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::*;
 use sdl2_window::Sdl2Window;
@@ -312,7 +312,7 @@ fn receive_snapshots(
     ctx: &Context,
     cfg: &ClientConfig,
     snapshot_manager: SnapshotManagerHandle,
-    timesync: SynchronizerHandle,
+    _timesync: SynchronizerHandle,
     run_flag: RunFlag,
 ) -> Result<()> {
     let mut receiver: Receiver<Snapshot> = Receiver::new(
