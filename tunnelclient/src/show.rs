@@ -98,6 +98,12 @@ impl Show {
         .map_err(|err| anyhow!("{err}"))?;
 
         window.set_capture_cursor(cfg.capture_mouse);
+        // This has no effect if vsync is properly enabled, but on machines with
+        // broken vsync this does work to make rendering a lot smoother.
+        // Note that with vsync enabled, this causes Piston to send incorrect
+        // timesteps to update args; since we only use this for interpolating
+        // timesync, it isn't a big deal.
+        window.set_max_fps(120);
 
         Ok(Show {
             gl: GlGraphics::new(opengl),
