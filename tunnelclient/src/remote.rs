@@ -270,22 +270,20 @@ where
     };
 
     // Some defaults we might configure in advanced mode.
-    let mut anti_alias = true;
     let mut timesync_interval = Duration::from_secs(60);
     let mut render_delay = 0.015;
-    let mut alpha_blend = true;
     let mut capture_mouse = true;
+    let mut single_snapshot = true;
 
     if prompt_y_n("Configure advanced settings") {
         capture_mouse = prompt_y_n("Capture mouse");
-        anti_alias = prompt_y_n("Use anti-aliasing");
-        alpha_blend = prompt_y_n("Use alpha channel blending");
         let timesync_interval_secs = prompt(
             "Host/client time resynchronization interval in seconds (default 60)",
             parse_uint,
         );
         timesync_interval = Duration::from_secs(timesync_interval_secs);
         render_delay = prompt("Client render delay in seconds (default 0.015)", parse_f64);
+        single_snapshot = prompt_y_n("Use single snapshot mode");
     }
 
     ClientConfig::new(
@@ -294,12 +292,11 @@ where
         resolution,
         timesync_interval,
         Duration::from_secs_f64(render_delay),
-        anti_alias,
         fullscreen,
-        alpha_blend,
         capture_mouse,
         transformation,
         false,
+        single_snapshot,
     )
 }
 

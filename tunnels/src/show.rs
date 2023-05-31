@@ -158,13 +158,14 @@ impl Show {
         let frame_sender = start_render_service(&ctx, self.run_clock_service)?;
 
         let mut last_update = start;
-        let mut timestamp = Timestamp(0);
 
         loop {
-            if Instant::now() - last_update > update_interval {
-                self.update_state(update_interval);
-                last_update += update_interval;
-                timestamp.step(update_interval);
+            let now = Instant::now();
+            let time_since_update = now - last_update;
+            if time_since_update >= update_interval {
+                self.update_state(time_since_update);
+                last_update = now;
+                let timestamp = Timestamp::since(start);
 
                 if frame_sender
                     .send(Frame {

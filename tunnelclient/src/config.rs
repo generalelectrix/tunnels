@@ -9,6 +9,14 @@ use std::time::Duration;
 use yaml_rust::YamlLoader;
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum SnapshotManagement {
+    /// Store a queue of snapshots and choose between them, with a render delay.
+    Queued,
+    /// Always render the latest snapshot.
+    Single,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClientConfig {
     /// Hostname of the machine running the controller.
     pub server_hostname: String,
@@ -16,14 +24,12 @@ pub struct ClientConfig {
     pub video_channel: u64,
     /// Delay between current time and time to render.
     pub render_delay: Duration,
+    /// Which snapshot management mechanism to use.
+    pub snapshot_management: SnapshotManagement,
     /// Delay between host/client time synchronization updates.
     pub timesync_interval: Duration,
     pub x_resolution: u32,
     pub y_resolution: u32,
-    /// If true, perform anti-aliasing.  Adds a small additional GPU load.
-    pub anti_alias: bool,
-    /// If true, use alpha-blending rather than stomping underlying beams.
-    pub alpha_blend: bool,
     /// If true, set the window to fullscreen on creation.
     pub fullscreen: bool,
     /// If true, capture and hide the cursor.
@@ -51,12 +57,11 @@ impl ClientConfig {
         resolution: Resolution,
         timesync_interval: Duration,
         render_delay: Duration,
-        anti_alias: bool,
         fullscreen: bool,
-        alpha_blend: bool,
         capture_mouse: bool,
         transformation: Option<Transform>,
         log_level_debug: bool,
+        use_single_snapshot: bool,
     ) -> ClientConfig {
         let (x_resolution, y_resolution) = resolution;
 
@@ -67,16 +72,19 @@ impl ClientConfig {
             timesync_interval,
             x_resolution,
             y_resolution,
-            anti_alias,
             fullscreen,
             capture_mouse,
             critical_size: f64::from(cmp::min(x_resolution, y_resolution)),
             thickness_scale: 0.5,
             x_center: f64::from(x_resolution / 2),
             y_center: f64::from(y_resolution / 2),
-            alpha_blend,
             transformation,
             log_level_debug,
+            snapshot_management: if use_single_snapshot {
+                SnapshotManagement::Single
+            } else {
+                SnapshotManagement::Queued
+            },
         }
     }
 
@@ -126,12 +134,11 @@ impl ClientConfig {
                     .as_f64()
                     .ok_or(anyhow!("Bad render delay."))?,
             ),
-            flag("anti_alias", "Bad anti-alias flag.")?,
             flag("fullscreen", "Bad fullscreen flag.")?,
-            flag("alpha_blend", "Bad alpha blend flag.")?,
             flag("capture_mouse", "Bad mouse capture flag.")?,
             transformation,
             flag("log_level_debug", "Bad log level flag.")?,
+            flag("use_single_snapshot", "Bad use single snapshot flag.")?,
         ))
     }
 }

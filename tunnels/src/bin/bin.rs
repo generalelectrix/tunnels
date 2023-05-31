@@ -17,6 +17,10 @@ use tunnels_lib::prompt::prompt_bool;
 use tunnels_lib::prompt::prompt_port;
 use tunnels_lib::prompt::read_string;
 
+/// This is approximately 240 fps, implying a worst-case client render latency of
+/// essentially this value.
+const RENDER_INTERVAL: Duration = Duration::from_nanos(16666667 / 4);
+
 fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
     let (inputs, outputs) = list_ports()?;
@@ -70,7 +74,7 @@ fn main() -> Result<()> {
         show.load(&load_path)?;
     }
 
-    show.run(Duration::from_micros(16667))
+    show.run(RENDER_INTERVAL)
 }
 
 /// Prompt the user to optionally configure a test mode.

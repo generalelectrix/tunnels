@@ -1,16 +1,21 @@
 use crate::config::ClientConfig;
+use crate::config::SnapshotManagement;
 use crate::draw::Draw;
-use crate::snapshot_manager::SnapshotFetchResult::*;
+use crate::snapshot_manager::SingleSnapshotManager;
+use crate::snapshot_manager::SnapshotFetchResult;
+
 use crate::snapshot_manager::SnapshotManager;
 use crate::snapshot_manager::SnapshotManagerHandle;
+use crate::snapshot_manager::VecDequeSnapshotManager;
 use crate::timesync::SynchronizerHandle;
 use crate::timesync::{Client as TimesyncClient, Synchronizer};
 use anyhow::{anyhow, Context as ErrorContext, Result};
 use graphics::clear;
-use log::{debug, error, info, max_level, warn, Level};
+use log::{debug, error, info, warn};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::*;
 use sdl2_window::Sdl2Window;
+use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -28,7 +33,7 @@ pub struct Show {
     cfg: ClientConfig,
     run_flag: RunFlag,
     window: PistonWindow<Sdl2Window>,
-    render_logger: RenderIssueLogger,
+    render_reporter: RenderIssueLogger,
 }
 
 impl Show {
@@ -58,7 +63,14 @@ impl Show {
         )?;
 
         // Set up snapshot reception and management.
-        let snapshot_manager = Arc::new(Mutex::new(SnapshotManager::default()));
+        let snapshot_manager = Arc::new(Mutex::new(match cfg.snapshot_management {
+            SnapshotManagement::Queued => {
+                Box::<VecDequeSnapshotManager>::default() as Box<dyn SnapshotManager>
+            }
+            SnapshotManagement::Single => {
+                Box::<SingleSnapshotManager>::default() as Box<dyn SnapshotManager>
+            }
+        }));
         receive_snapshots(
             &ctx,
             &cfg,
@@ -80,12 +92,17 @@ impl Show {
         .graphics_api(opengl)
         .exit_on_esc(true)
         .vsync(true)
-        .samples(if cfg.anti_alias { 4 } else { 0 })
+        .samples(4)
         .fullscreen(cfg.fullscreen)
         .build()
         .map_err(|err| anyhow!("{err}"))?;
 
         window.set_capture_cursor(cfg.capture_mouse);
+        // This has no effect if vsync is properly enabled, but on machines with
+        // broken vsync this does work to make rendering a lot smoother.
+        // Note that with vsync enabled, this causes Piston to send incorrect
+        // timesteps to update args; since we only use this for interpolating
+        // timesync, it isn't a big deal.
         window.set_max_fps(120);
 
         Ok(Show {
@@ -95,7 +112,10 @@ impl Show {
             cfg,
             run_flag,
             window,
-            render_logger: RenderIssueLogger::new(Duration::from_secs(1)),
+            render_reporter: RenderIssueLogger::new(
+                Duration::from_secs(1),
+                Box::new(log_render_issue_reporter),
+            ),
         })
     }
 
@@ -125,56 +145,39 @@ impl Show {
 
     /// Render a frame to the window.
     fn render(&mut self, args: &RenderArgs) {
-        // Get frame from the snapshot service.
-
-        let delayed_time = match self.timesync.lock() {
+        // Get our best estimate of the current host time.
+        let now = match self.timesync.lock() {
             Err(_) => {
                 // The timesync update thread has panicked, abort the show.
                 self.run_flag.stop();
                 error!("Timesync service crashed; aborting show.");
                 return;
             }
-            Ok(ref mut ts) => ts.now() - Timestamp::from_duration(self.cfg.render_delay),
+            Ok(ref mut ts) => ts.now(),
         };
 
-        let maybe_frame = match self.snapshot_manager.lock().unwrap().get(delayed_time) {
-            NoData => {
-                self.render_logger
-                    .log(delayed_time, "No data available from snapshot service.");
-                None
-            }
-            Error(snaps) => {
-                let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
-                error!(
-                    "Something went wrong with snapshot interpolation for time {}.\n{:?}\n",
-                    delayed_time, snap_times
-                );
-                None
-            }
-            Good(layers) => Some(layers),
-            MissingNewer(layers) => {
-                self.render_logger
-                    .log(delayed_time, "Interpolation had no newer layer.");
-                Some(layers)
-            }
-            MissingOlder(layers) => {
-                self.render_logger
-                    .log(delayed_time, "Interpolation had no older layer");
-                Some(layers)
-            }
+        let delayed_time = now - Timestamp::from_duration(self.cfg.render_delay);
+
+        let (snapshot_latency, snapshot_result) = {
+            let mut manager = self.snapshot_manager.lock().unwrap();
+            let latency = manager.peek_front().map(|snap| (now - snap.time).0);
+            let result = manager.get(delayed_time);
+            (latency, result)
         };
 
-        if let Some(frame) = maybe_frame {
-            let cfg = &self.cfg;
-
+        if let Some(frame) = snapshot_result.frame() {
             self.gl.draw(args.viewport(), |c, gl| {
                 // Clear the screen.
                 clear([0.0, 0.0, 0.0, 1.0], gl);
 
                 // Draw everything.
-                frame.draw(&c, gl, cfg);
+                frame.draw(&c, gl, &self.cfg);
             });
         }
+
+        // Report render issues.
+        self.render_reporter
+            .report(now, delayed_time, &snapshot_result, snapshot_latency);
     }
 
     /// Perform a timestep update of all of the state of the show.
@@ -189,40 +192,121 @@ impl Show {
     }
 }
 
-/// Logging helper that either logs everything at debug level or occasionally logs at warn level.
+/// Report render issues via logging.
+/// Only log if we have missed at least one frame.
+fn log_render_issue_reporter(report: RenderIssueReport) {
+    if report.missed == 0 {
+        return;
+    }
+    warn!("{}", report);
+}
+
+pub type RenderIssueReporter = Box<dyn FnMut(RenderIssueReport)>;
+
+pub struct RenderIssueReport {
+    interval: Duration,
+    total: usize,
+    missed: usize,
+    mean_snapshot_latency_us: i64,
+    best_snapshot_latency_us: i64,
+    worst_snapshot_latency_us: i64,
+}
+
+impl Display for RenderIssueReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "missed {}/{} snapshots in the last {} seconds.\nmean latency: {}\nworst latency: {}\nbest latency: {}", self.missed, self.total, self.interval.as_secs_f64(), self.mean_snapshot_latency_us, self.worst_snapshot_latency_us, self.best_snapshot_latency_us)
+    }
+}
+
+/// Helper to periodically report render quality.
 struct RenderIssueLogger {
     interval: Duration,
-    last_logged: Timestamp,
-    missed: u32,
-    log_all: bool,
+    last_report: Timestamp,
+    reporter: RenderIssueReporter,
+    total: usize,
+    missed: usize,
+    mean_snapshot_latency_us: i64,
+    worst_snapshot_latency_us: i64,
+    best_snapshot_latency_us: i64,
 }
 
 impl RenderIssueLogger {
-    fn new(interval: Duration) -> Self {
+    fn new(interval: Duration, reporter: RenderIssueReporter) -> Self {
         Self {
             interval,
-            last_logged: Timestamp(0),
+            last_report: Timestamp(0),
+            reporter,
+            total: 0,
             missed: 0,
-            log_all: max_level() >= Level::Debug,
+            mean_snapshot_latency_us: 0,
+            worst_snapshot_latency_us: i64::MIN,
+            best_snapshot_latency_us: i64::MAX,
         }
     }
 
-    fn log(&mut self, now: Timestamp, msg: &str) {
-        if self.log_all {
-            debug!("{}", msg);
-            return;
+    fn report(
+        &mut self,
+        now: Timestamp,
+        delayed_time: Timestamp,
+        render_result: &SnapshotFetchResult,
+        snapshot_latency: Option<i64>,
+    ) {
+        if let Some(lat) = snapshot_latency {
+            self.mean_snapshot_latency_us += lat;
+            if lat > self.worst_snapshot_latency_us {
+                self.worst_snapshot_latency_us = lat;
+            }
+            if lat < self.best_snapshot_latency_us {
+                self.best_snapshot_latency_us = lat;
+            }
         }
-        self.missed += 1;
 
-        if now > self.last_logged + Timestamp::from_duration(self.interval) {
-            let dt = now - self.last_logged;
-            self.last_logged = now;
-            warn!(
-                "Missed {} snapshots in the last {} seconds.",
-                self.missed,
-                dt.0 as f64 / 1_000_000.
-            );
+        use SnapshotFetchResult::*;
+        match render_result {
+            NoData => {
+                self.missed += 1;
+                warn!("No data available from snapshot service.");
+            }
+            Error(snaps) => {
+                let snap_times = snaps.iter().map(|s| s.time).collect::<Vec<_>>();
+                error!(
+                    "Something went wrong with snapshot interpolation for time {}.\n{:?}\n",
+                    delayed_time, snap_times
+                );
+                self.missed += 1;
+            }
+            Good(_) => {
+                self.total += 1;
+            }
+            MissingNewer(_) => {
+                self.total += 1;
+                self.missed += 1;
+                debug!("Interpolation had no newer layer.");
+            }
+            MissingOlder(_) => {
+                self.total += 1;
+                debug!("Interpolation had no older layer");
+            }
+        }
+        if (now - self.last_report) > Timestamp::from_duration(self.interval) {
+            (self.reporter)(RenderIssueReport {
+                interval: self.interval,
+                total: self.total,
+                missed: self.missed,
+                mean_snapshot_latency_us: if self.total == 0 {
+                    0
+                } else {
+                    self.mean_snapshot_latency_us / self.total as i64
+                },
+                worst_snapshot_latency_us: self.worst_snapshot_latency_us,
+                best_snapshot_latency_us: self.best_snapshot_latency_us,
+            });
+            self.last_report = now;
             self.missed = 0;
+            self.total = 0;
+            self.mean_snapshot_latency_us = 0;
+            self.worst_snapshot_latency_us = i64::MIN;
+            self.best_snapshot_latency_us = i64::MAX;
         }
     }
 }
@@ -234,7 +318,7 @@ fn receive_snapshots(
     ctx: &Context,
     cfg: &ClientConfig,
     snapshot_manager: SnapshotManagerHandle,
-    timesync: SynchronizerHandle,
+    _timesync: SynchronizerHandle,
     run_flag: RunFlag,
 ) -> Result<()> {
     let mut receiver: Receiver<Snapshot> = Receiver::new(
@@ -253,6 +337,10 @@ fn receive_snapshots(
                 }
                 match receiver.receive_msg(true) {
                     Ok(Some(msg)) => {
+                        // println!(
+                        //     "receive latency: {}",
+                        //     timesync.lock().unwrap().now() - msg.time
+                        // );
                         snapshot_manager.lock().unwrap().insert_snapshot(msg);
                     }
                     Ok(None) => continue, // Odd case, given that we should have blocked.

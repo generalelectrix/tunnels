@@ -5,7 +5,7 @@ pub mod number;
 pub mod prompt;
 pub mod smooth;
 
-use derive_more::{Add, Display, Div, Mul, Sub};
+use derive_more::{Add, AddAssign, Display, Div, Mul, Sub};
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -37,6 +37,7 @@ use std::{
     Mul,
     Div,
     Ord,
+    AddAssign,
     PartialOrd,
     Default,
 )]
@@ -49,11 +50,6 @@ impl Timestamp {
 
     pub fn from_duration(d: Duration) -> Self {
         Self(d.as_micros() as i64)
-    }
-
-    // Step mutably increments this timestamp by the provided step.
-    pub fn step(&mut self, step: Duration) {
-        *self = *self + Self::from_duration(step);
     }
 }
 
