@@ -51,11 +51,6 @@ impl Timestamp {
     pub fn from_duration(d: Duration) -> Self {
         Self(d.as_micros() as i64)
     }
-
-    // Step mutably increments this timestamp by the provided step.
-    pub fn step(&mut self, step: Duration) {
-        *self += Self::from_duration(step);
-    }
 }
 
 impl num_traits::cast::ToPrimitive for Timestamp {
