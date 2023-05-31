@@ -273,7 +273,7 @@ where
     let mut timesync_interval = Duration::from_secs(60);
     let mut render_delay = 0.015;
     let mut capture_mouse = true;
-    let mut single_snapshot = false;
+    let mut single_snapshot = true;
 
     if prompt_y_n("Configure advanced settings") {
         capture_mouse = prompt_y_n("Capture mouse");
