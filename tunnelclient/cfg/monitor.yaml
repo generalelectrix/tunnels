@@ -5,7 +5,7 @@ x_resolution: 700
 y_resolution: 525
 flip_horizontal: false
 anti_alias: true
-fullscreen: true
+fullscreen: false
 capture_mouse: false
 alpha_blend: true
 log_level_debug: false
