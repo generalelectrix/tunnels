@@ -27,8 +27,15 @@ pub fn clock_subscriber(ctx: Context) -> ClockSubscriber {
     SubscriberService::new(ctx, SERVICE_NAME.to_string())
 }
 
-pub type ClockPublisher = PublisherService<StaticClockBank>;
-pub type ClockSubscriber = SubscriberService<StaticClockBank>;
+/// A collection of static clock state data with audio envelope.
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub struct SharedClockData {
+    pub clock_bank: StaticClockBank,
+    pub audio_envelope: UnipolarFloat,
+}
+
+pub type ClockPublisher = PublisherService<SharedClockData>;
+pub type ClockSubscriber = SubscriberService<SharedClockData>;
 
 /// A collection of static clock state data, rendered from a ClockBank.
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]

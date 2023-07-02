@@ -7,6 +7,7 @@ use std::thread;
 use tunnels_lib::{number::UnipolarFloat, Snapshot, Timestamp};
 use zmq::{Context, Socket};
 
+use crate::clock_server::SharedClockData;
 use crate::{
     clock_bank::ClockBank,
     clock_server::{clock_publisher, StaticClockBank},
@@ -63,9 +64,10 @@ pub fn start_render_service(ctx: &Context, run_clock_service: bool) -> Result<Se
                     }
 
                     if let Some(ref mut clock_service) = clock_service {
-                        if let Err(e) =
-                            clock_service.send(&StaticClockBank(frame.clocks.as_static()))
-                        {
+                        if let Err(e) = clock_service.send(&SharedClockData {
+                            clock_bank: StaticClockBank(frame.clocks.as_static()),
+                            audio_envelope: frame.audio_envelope,
+                        }) {
                             error!(
                                 "failed to send clock snapshot for frame {}: {}",
                                 frame.number, e
