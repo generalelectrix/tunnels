@@ -71,6 +71,12 @@ impl WaveformArgsSpatial {
     }
 }
 
+/// Return an animation value that is a scaled constant.
+/// All parameters are ignored.
+pub fn constant(_args: &WaveformArgs) -> f64 {
+    1.0
+}
+
 pub fn sine(args: &WaveformArgs) -> f64 {
     let (amplitude, args) = args.spatial_params();
     amplitude * sine_spatial(&args)

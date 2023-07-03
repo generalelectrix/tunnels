@@ -15,6 +15,7 @@ pub enum Waveform {
     Triangle,
     Square,
     Sawtooth,
+    Constant,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -97,6 +98,7 @@ impl Animation {
             Waveform::Square => waveforms::square,
             Waveform::Sawtooth => waveforms::sawtooth,
             Waveform::Triangle => waveforms::triangle,
+            Waveform::Constant => waveforms::constant,
         };
         let mut result = self.size.val()
             * waveform_func(&WaveformArgs {
