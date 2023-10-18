@@ -99,13 +99,14 @@ impl<G: Graphics> Draw<G> for ArcSegment {
         };
 
         let transform = {
-            let t = c.transform.trans(x, y).rot_rad(self.rot_angle * TWOPI);
+            let t = c.transform.trans(x, y);
             match cfg.transformation {
                 None => t,
                 Some(Transform::Flip(TransformDirection::Horizontal)) => t.flip_h(),
                 Some(Transform::Flip(TransformDirection::Vertical)) => t.flip_v(),
             }
-        };
+        }
+        .rot_rad(self.rot_angle * TWOPI);
 
         let x_size = self.rad_x * cfg.critical_size;
         let y_size = self.rad_y * cfg.critical_size;
