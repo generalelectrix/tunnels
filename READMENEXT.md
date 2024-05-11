@@ -47,7 +47,6 @@ Akai APC40 should work out of the box.
 1. Install Homebrew: https://brew.sh/
 2. `$ brew install sdl2`
 3. Inside `tunnelclient/` `$ cargo build --release`
-4. Get up and make some tea or something while it compiles.
 
 ## Running the render client
 
