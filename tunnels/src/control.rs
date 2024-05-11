@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
+use tunnels_lib::number::BipolarFloat;
 
 use crate::master_ui::EmitStateChange;
 use crate::midi_controls::Dispatcher as MidiDispatcher;
