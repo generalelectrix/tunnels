@@ -32,7 +32,7 @@ Nice to have:
 
 ## Controllers
 
-Install `controller_templates/tunnels.touchosc` on a tablet of your choice running TouchOSC v1. Natively scaled for iPad. Connect to a network midi session on the server via TouchOSC Bridge.
+Install `controller_templates/tunnels.touchosc` on a tablet of your choice running TouchOSC v1. Natively scaled for iPad. Install TouchOSC Bridge on the host computer, launch it, make sure `Enable USB Connections` is checked, and connect your tablet to the host with USB. In TouchOSC connection settings, make sure everything besides the TouchOSC Bridge connection is disabled.
 
 Akai APC40 should work out of the box.
 
