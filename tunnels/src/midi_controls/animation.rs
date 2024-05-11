@@ -1,10 +1,8 @@
 use crate::{
-    animation::ControlMessage,
-    animation::StateChange,
-    animation::Waveform as WaveformType,
+    animation::{ControlMessage, StateChange, Waveform as WaveformType},
     clock_bank::{ClockIdxExt, N_CLOCKS},
     midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
-    midi_controls::Device,
+    midi_controls::{quadratic_knob_input, quadratic_knob_output, Device},
     show::ControlMessage::Animation,
 };
 use lazy_static::lazy_static;
@@ -62,7 +60,7 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
 
     add(
         SPEED,
-        Box::new(|v| Animation(Set(Speed(bipolar_from_midi(v))))),
+        Box::new(|v| Animation(Set(Speed(quadratic_knob_input(bipolar_from_midi(v)))))),
     );
     add(
         SIZE,
@@ -126,7 +124,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
     };
 
     match sc {
-        Speed(v) => send(event(SPEED, bipolar_to_midi(v))),
+        Speed(v) => send(event(SPEED, bipolar_to_midi(quadratic_knob_output(v)))),
         Size(v) => send(event(SIZE, unipolar_to_midi(v))),
         DutyCycle(v) => send(event(DUTY_CYCLE, unipolar_to_midi(v))),
         Smoothing(v) => send(event(SMOOTHING, unipolar_to_midi(v))),

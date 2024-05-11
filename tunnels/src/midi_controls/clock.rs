@@ -1,15 +1,12 @@
 //! Midi control declarations for clocks.
 
 use crate::{
-    clock::ControlMessage as ClockControlMessage,
-    clock::StateChange as ClockStateChange,
-    clock_bank::ClockIdxExt,
-    clock_bank::ControlMessage,
-    clock_bank::StateChange,
-    clock_bank::N_CLOCKS,
+    clock::{ControlMessage as ClockControlMessage, StateChange as ClockStateChange},
+    clock_bank::{ClockIdxExt, ControlMessage, StateChange, N_CLOCKS},
     midi::{cc, event, note_on, Manager, Mapping},
-    midi_controls::Device,
-    midi_controls::{bipolar_to_midi, unipolar_to_midi},
+    midi_controls::{
+        bipolar_to_midi, quadratic_knob_input, quadratic_knob_output, unipolar_to_midi, Device,
+    },
     show::ControlMessage::Clock,
 };
 
@@ -89,7 +86,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             Box::new(move |v| {
                 Clock(ControlMessage {
                     channel: ClockIdxExt(channel),
-                    msg: Set(Rate(bipolar_from_midi(v))),
+                    msg: Set(Rate(quadratic_knob_input(bipolar_from_midi(v)))),
                 })
             }),
         );
@@ -167,7 +164,7 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
         Retrigger(v) => send(Control::Retrigger, v as u8),
         OneShot(v) => send(Control::OneShot, v as u8),
         Ticked(v) => send(Control::Tap, v as u8),
-        Rate(v) => send(Control::Rate, bipolar_to_midi(v)),
+        Rate(v) => send(Control::Rate, bipolar_to_midi(quadratic_knob_output(v))),
         SubmasterLevel(v) => send(Control::Level, unipolar_to_midi(v)),
         UseAudioSize(v) => send(Control::AudioSize, v as u8),
         UseAudioSpeed(v) => send(Control::AudioSpeed, v as u8),

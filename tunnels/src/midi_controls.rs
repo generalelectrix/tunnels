@@ -187,6 +187,26 @@ fn unipolar_to_midi(val: UnipolarFloat) -> u8 {
     (val.val() * 127.) as u8
 }
 
+/// Scale input with a quadratic curve.
+/// This provides more resolution for smaller values.
+fn quadratic_knob_input(v: BipolarFloat) -> BipolarFloat {
+    let mut scaled = f64::powi(v.val(), 2);
+    if v < 0. {
+        scaled *= -1.
+    }
+    BipolarFloat::new(scaled)
+}
+
+/// Scale a linear value back into a quadratic knob mapping.
+/// This provides more resolution for smaller values.
+fn quadratic_knob_output(v: BipolarFloat) -> BipolarFloat {
+    let mut scaled = v.val().abs().sqrt();
+    if v < 0. {
+        scaled *= -1.
+    }
+    BipolarFloat::new(scaled)
+}
+
 /// Defines a collection of button mappings, only one of which can be active.
 /// Knows how to emit MIDI to activate just the selected one.
 pub struct RadioButtons {
@@ -221,4 +241,17 @@ impl RadioButtons {
             });
         }
     }
+}
+
+#[test]
+fn test_quadratic_knob_roundtrip() {
+    fn roundtrip(v: f64) {
+        let v = BipolarFloat::new(v);
+        assert_eq!(v, quadratic_knob_output(quadratic_knob_input(v)));
+    }
+    roundtrip(0.0);
+    roundtrip(0.1);
+    roundtrip(-0.1);
+    roundtrip(1.0);
+    roundtrip(-1.0);
 }
