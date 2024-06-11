@@ -62,17 +62,17 @@ impl Default for Tunnel {
             rot_speed: BipolarFloat::ZERO,
             thickness: Smoother::new(
                 UnipolarFloat::new(0.1),
-                Self::MOVE_SMOOTH_TIME,
+                Self::CONTROL_SMOOTH_TIME,
                 SmoothMode::Linear,
             ),
             size: Smoother::new(
                 UnipolarFloat::new(0.5),
-                Self::MOVE_SMOOTH_TIME,
+                Self::CONTROL_SMOOTH_TIME,
                 SmoothMode::Linear,
             ),
             aspect_ratio: Smoother::new(
                 UnipolarFloat::new(0.5),
-                Self::MOVE_SMOOTH_TIME,
+                Self::CONTROL_SMOOTH_TIME,
                 SmoothMode::Linear,
             ),
             col_center: UnipolarFloat::ZERO,
@@ -85,15 +85,15 @@ impl Default for Tunnel {
             blacking: BipolarFloat::new(0.15),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
-            x_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
-            y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
+            x_offset: Smoother::new(0.0, Self::CONTROL_SMOOTH_TIME, SmoothMode::Linear),
+            y_offset: Smoother::new(0.0, Self::CONTROL_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
         }
     }
 }
 
 impl Tunnel {
-    const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
+    const CONTROL_SMOOTH_TIME: Duration = Duration::from_millis(250);
     /// Return the blacking parameter, scaled to be an int on [-16, 16].
     ///
     /// If -1, return 1 (-1 implies all segments are black)
