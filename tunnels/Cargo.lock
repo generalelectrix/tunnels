@@ -1407,7 +1407,7 @@ dependencies = [
 [[package]]
 name = "number"
 version = "0.1.0"
-source = "git+https://github.com/generalelectrix/number?branch=main#4cc5b13f4b1f3efb69b5466cebc6d691cc4944ce"
+source = "git+https://github.com/generalelectrix/number?branch=main#12a0366d199b2da81ab9418cedf74cdf6fe08331"
 dependencies = [
  "derive_more",
  "num-traits",
