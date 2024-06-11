@@ -94,10 +94,7 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>> {
 }
 
 /// Prompt the user to configure midi devices.
-fn prompt_midi(
-    input_ports: &Vec<String>,
-    output_ports: &Vec<String>,
-) -> Result<Vec<MidiDeviceSpec>> {
+fn prompt_midi(input_ports: &[String], output_ports: &[String]) -> Result<Vec<MidiDeviceSpec>> {
     let mut devices = Vec::new();
     println!("Available devices:");
     for (i, port) in input_ports.iter().enumerate() {
@@ -126,9 +123,18 @@ fn prompt_midi(
 /// Prompt the user to select input and output ports for a device.
 fn prompt_input_output(
     device: MidiDevice,
-    input_ports: &Vec<String>,
-    output_ports: &Vec<String>,
+    input_ports: &[String],
+    output_ports: &[String],
 ) -> Result<MidiDeviceSpec> {
+    let name = device.device_name();
+    if input_ports.iter().any(|d| d == name) && output_ports.iter().any(|d| d == name) {
+        return Ok(MidiDeviceSpec {
+            device,
+            input_port_name: name.to_string(),
+            output_port_name: name.to_string(),
+        });
+    }
+    println!("Didn't find a device of the expected name. Please manually select input and output.");
     let input_port_name = prompt_indexed_value("Input port:", input_ports)?;
     let output_port_name = prompt_indexed_value("Output port:", output_ports)?;
     Ok(MidiDeviceSpec {
@@ -178,7 +184,7 @@ fn prompt_audio() -> Result<Option<String>> {
 }
 
 /// Prompt the user for a unsigned numeric index.
-fn prompt_indexed_value<T: Clone>(msg: &str, options: &Vec<T>) -> Result<T> {
+fn prompt_indexed_value<T: Clone>(msg: &str, options: &[T]) -> Result<T> {
     Ok(loop {
         print!("{} ", msg);
         io::stdout().flush()?;
