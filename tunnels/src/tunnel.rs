@@ -27,9 +27,9 @@ use typed_index_derive::TypedIndex;
 pub struct Tunnel {
     marquee_speed: BipolarFloat,
     rot_speed: BipolarFloat,
-    thickness: UnipolarFloat,
-    size: UnipolarFloat,
-    aspect_ratio: UnipolarFloat,
+    thickness: Smoother<UnipolarFloat>,
+    size: Smoother<UnipolarFloat>,
+    aspect_ratio: Smoother<UnipolarFloat>,
     col_center: UnipolarFloat,
     col_width: UnipolarFloat,
     col_spread: UnipolarFloat,
@@ -60,9 +60,21 @@ impl Default for Tunnel {
         Self {
             marquee_speed: BipolarFloat::ZERO,
             rot_speed: BipolarFloat::ZERO,
-            thickness: UnipolarFloat::new(0.1),
-            size: UnipolarFloat::new(0.5),
-            aspect_ratio: UnipolarFloat::new(0.5),
+            thickness: Smoother::new(
+                UnipolarFloat::new(0.1),
+                Self::CONTROL_SMOOTH_TIME,
+                SmoothMode::Linear,
+            ),
+            size: Smoother::new(
+                UnipolarFloat::new(0.5),
+                Self::CONTROL_SMOOTH_TIME,
+                SmoothMode::Linear,
+            ),
+            aspect_ratio: Smoother::new(
+                UnipolarFloat::new(0.5),
+                Self::CONTROL_SMOOTH_TIME,
+                SmoothMode::Linear,
+            ),
             col_center: UnipolarFloat::ZERO,
             col_width: UnipolarFloat::ZERO,
             col_spread: UnipolarFloat::ZERO,
@@ -73,15 +85,15 @@ impl Default for Tunnel {
             blacking: BipolarFloat::new(0.15),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
-            x_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
-            y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
+            x_offset: Smoother::new(0.0, Self::CONTROL_SMOOTH_TIME, SmoothMode::Linear),
+            y_offset: Smoother::new(0.0, Self::CONTROL_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
         }
     }
 }
 
 impl Tunnel {
-    const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
+    const CONTROL_SMOOTH_TIME: Duration = Duration::from_millis(250);
     /// Return the blacking parameter, scaled to be an int on [-16, 16].
     ///
     /// If -1, return 1 (-1 implies all segments are black)
@@ -239,11 +251,11 @@ impl Tunnel {
 
             // compute ellipse parameters
             let radius_x = ((self.size.val()
-                * (MAX_ASPECT_RATIO * (self.aspect_ratio.val() + aspect_ratio_adjust))
+                * (MAX_ASPECT_RATIO * (self.aspect_ratio.val().val() + aspect_ratio_adjust))
                 - thickness_allowance)
                 + size_adjust)
                 .abs();
-            let radius_y = (self.size.val() - thickness_allowance + size_adjust).abs();
+            let radius_y = (self.size.val().val() - thickness_allowance + size_adjust).abs();
 
             // The angle of this particular segment.
             let start_angle: Phase = self.curr_marquee_angle
@@ -315,9 +327,9 @@ impl Tunnel {
         use StateChange::*;
         emitter.emit_tunnel_state_change(MarqueeSpeed(self.marquee_speed));
         emitter.emit_tunnel_state_change(RotationSpeed(self.rot_speed));
-        emitter.emit_tunnel_state_change(Thickness(self.thickness));
-        emitter.emit_tunnel_state_change(Size(self.size));
-        emitter.emit_tunnel_state_change(AspectRatio(self.aspect_ratio));
+        emitter.emit_tunnel_state_change(Thickness(self.thickness.target()));
+        emitter.emit_tunnel_state_change(Size(self.size.target()));
+        emitter.emit_tunnel_state_change(AspectRatio(self.aspect_ratio.target()));
         emitter.emit_tunnel_state_change(ColorCenter(self.col_center));
         emitter.emit_tunnel_state_change(ColorWidth(self.col_width));
         emitter.emit_tunnel_state_change(ColorSpread(self.col_spread));
@@ -373,9 +385,9 @@ impl Tunnel {
         match sc {
             MarqueeSpeed(v) => self.marquee_speed = v,
             RotationSpeed(v) => self.rot_speed = v,
-            Thickness(v) => self.thickness = v,
-            Size(v) => self.size = v,
-            AspectRatio(v) => self.aspect_ratio = v,
+            Thickness(v) => self.thickness.set_target(v),
+            Size(v) => self.size.set_target(v),
+            AspectRatio(v) => self.aspect_ratio.set_target(v),
             ColorCenter(v) => self.col_center = v,
             ColorWidth(v) => self.col_width = v,
             ColorSpread(v) => self.col_spread = v,

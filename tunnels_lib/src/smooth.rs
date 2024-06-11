@@ -8,7 +8,7 @@ use std::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 // Smooth between two values using a smoothing function.
-pub struct Smoother<T: Add<Output = T> + Copy + Mul<f64, Output = T>> {
+pub struct Smoother<T: Add<Output = T> + Clone + Copy + Mul<UnipolarFloat, Output = T>> {
     previous: T,
     target: T,
     alpha: UnipolarFloat,
@@ -16,7 +16,7 @@ pub struct Smoother<T: Add<Output = T> + Copy + Mul<f64, Output = T>> {
     mode: SmoothMode,
 }
 
-impl<T: Add<Output = T> + Copy + Mul<f64, Output = T>> Smoother<T> {
+impl<T: Add<Output = T> + Clone + Copy + Mul<UnipolarFloat, Output = T>> Smoother<T> {
     pub fn new(initial: T, smooth_time: Duration, mode: SmoothMode) -> Self {
         Self {
             previous: initial,
@@ -54,8 +54,8 @@ impl<T: Add<Output = T> + Copy + Mul<f64, Output = T>> Smoother<T> {
             SmoothMode::Linear => linear,
             SmoothMode::Cosine => cosine,
         };
-        let target_weight = smoother(self.alpha).val();
-        (self.target * target_weight) + (self.previous * (1.0 - target_weight))
+        let target_weight = smoother(self.alpha);
+        (self.target * target_weight) + (self.previous * (UnipolarFloat::ONE - target_weight))
     }
 }
 
@@ -90,7 +90,7 @@ mod test {
     #[test]
     fn test_smoother() {
         let smooth_time = Duration::from_micros(10);
-        let mut smoother = Smoother::new(0.2f64, smooth_time, SmoothMode::Linear);
+        let mut smoother: Smoother<f64> = Smoother::new(0.2f64, smooth_time, SmoothMode::Linear);
 
         assert_almost_eq(0.2, smoother.val());
         smoother.set_target(0.8);
