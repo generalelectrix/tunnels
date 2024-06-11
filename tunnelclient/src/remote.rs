@@ -188,13 +188,13 @@ where
 
 /// Parse an expression as a resolution.
 /// Understands some shorthand like 1080p but also parses widthxheight.
-fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
+pub fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
     lazy_static! {
-        static ref SHORTHAND_RE: Regex = Regex::new(r"^(\d+)p$").unwrap();
+        static ref WIDESCREEN_RE: Regex = Regex::new(r"^(\d+)p$").unwrap();
         static ref WIDTH_HEIGHT_RE: Regex = Regex::new(r"^(\d+)x(\d+)$").unwrap();
     }
     // Try matching against shorthand.
-    if let Some(caps) = SHORTHAND_RE.captures(res_str) {
+    if let Some(caps) = WIDESCREEN_RE.captures(res_str) {
         let height: u32 = caps[1]
             .parse()
             .expect("Regex should only have matched integers");
@@ -214,6 +214,7 @@ fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
     let res_str = res_str.to_lowercase();
     // Normalize input and check against whitelist.
     match res_str.as_ref() {
+        "wuxga" => Ok((1920, 1200)),
         "sxga+" | "sx+" => Ok((1400, 1050)),
         _ => Err(format!(
             "Couldn't parse {} as resolution expression.",
@@ -259,7 +260,7 @@ where
 {
     let video_channel = prompt("Select video channel", parse_uint);
     let resolution = prompt(
-        "Specify display resolution (widthxheight or heightp for 16:9)",
+        "Specify display resolution (shorthands: wuxga (1920x1200), sx+ (1400x1050), heightp for 16:9, widthxheight)",
         parse_resolution,
     );
     let fullscreen = prompt_y_n("Fullscreen");
@@ -312,9 +313,9 @@ pub fn administrate() {
     // Wait a couple seconds for dns-sd to do its business.
     thread::sleep(Duration::from_secs(2));
 
-    let usage = "list    List the available clients.
-conf    Configure a client.
-quit    Quit.";
+    let usage = "l    List the available clients.
+c    Configure a client.
+q    Quit.";
     println!("Administrator started.");
 
     let parse_client_name = |name: &str| -> Result<String, String> {
@@ -333,10 +334,10 @@ quit    Quit.";
     loop {
         println!("Commands:\n{}", usage);
         match prompt_input("Enter a command").as_ref() {
-            "list" | "l" => {
+            "l" => {
                 println!("Available clients:\n{}\n", admin.clients().join("\n"));
             }
-            "conf" | "c" => {
+            "c" => {
                 let client_name = prompt("Enter client name", parse_client_name);
                 let config = configure_one(host.clone());
                 match admin.run_with_config(&client_name, config) {
@@ -348,7 +349,7 @@ quit    Quit.";
                     }
                 }
             }
-            "quit" | "q" => {
+            "q" => {
                 break;
             }
             bad => {
