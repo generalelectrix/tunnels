@@ -42,10 +42,10 @@ impl Device {
     /// Return the name of the midi device we should look for.
     pub fn device_name(&self) -> &'static str {
         match *self {
-            Self::AkaiApc40 => "Akai APC-40",
-            Self::AkaiApc20 => "Akai APC-20",
+            Self::AkaiApc40 => "Akai APC40",
+            Self::AkaiApc20 => "Akai APC20",
             Self::TouchOsc => "TouchOSC Bridge",
-            Self::BehringerCmdMM1 => "CMD-MM1",
+            Self::BehringerCmdMM1 => "CMD MM-1",
         }
     }
 }
