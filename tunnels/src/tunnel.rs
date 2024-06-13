@@ -62,17 +62,17 @@ impl Default for Tunnel {
             rot_speed: BipolarFloat::ZERO,
             thickness: Smoother::new(
                 UnipolarFloat::new(0.1),
-                Self::CONTROL_SMOOTH_TIME,
+                Self::GEOM_SMOOTH_TIME,
                 SmoothMode::Linear,
             ),
             size: Smoother::new(
                 UnipolarFloat::new(0.5),
-                Self::CONTROL_SMOOTH_TIME,
+                Self::GEOM_SMOOTH_TIME,
                 SmoothMode::Linear,
             ),
             aspect_ratio: Smoother::new(
                 UnipolarFloat::new(0.5),
-                Self::CONTROL_SMOOTH_TIME,
+                Self::GEOM_SMOOTH_TIME,
                 SmoothMode::Linear,
             ),
             col_center: UnipolarFloat::ZERO,
@@ -85,15 +85,16 @@ impl Default for Tunnel {
             blacking: BipolarFloat::new(0.15),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
-            x_offset: Smoother::new(0.0, Self::CONTROL_SMOOTH_TIME, SmoothMode::Linear),
-            y_offset: Smoother::new(0.0, Self::CONTROL_SMOOTH_TIME, SmoothMode::Linear),
+            x_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
+            y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
         }
     }
 }
 
 impl Tunnel {
-    const CONTROL_SMOOTH_TIME: Duration = Duration::from_millis(250);
+    const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
+    const GEOM_SMOOTH_TIME: Duration = Duration::from_millis(100);
     /// Return the blacking parameter, scaled to be an int on [-16, 16].
     ///
     /// If -1, return 1 (-1 implies all segments are black)
@@ -127,12 +128,12 @@ impl Tunnel {
 
     /// Update the state of this tunnel in preparation for drawing a frame.
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
-        // ensure we don't exceed the set bounds of the screen
-        // self.x_offset = f64::min(f64::max(self.x_offset, -MAX_X_OFFSET), MAX_X_OFFSET);
-        // self.y_offset = f64::min(f64::max(self.y_offset, -MAX_Y_OFFSET), MAX_Y_OFFSET);
         // Update smoothers.
         self.x_offset.update_state(delta_t);
         self.y_offset.update_state(delta_t);
+        self.thickness.update_state(delta_t);
+        self.aspect_ratio.update_state(delta_t);
+        self.size.update_state(delta_t);
 
         // Update the state of the animations.
         for anim in &mut self.anims {
