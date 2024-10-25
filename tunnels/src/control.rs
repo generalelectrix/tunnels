@@ -30,7 +30,10 @@ pub struct Dispatcher {
 
 impl Dispatcher {
     /// Instantiate the master control dispatcher.
-    pub fn new(midi_devices: Vec<MidiDeviceSpec>, osc_devices: Vec<OscDeviceSpec>) -> Result<Self> {
+    pub fn new(
+        midi_devices: Vec<MidiDeviceSpec<MidiDevice>>,
+        osc_devices: Vec<OscDeviceSpec>,
+    ) -> Result<Self> {
         let (send, recv) = channel();
 
         Ok(Self {

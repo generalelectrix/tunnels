@@ -114,7 +114,7 @@ pub fn map_master_ui_controls(device: Device, page: usize, map: &mut ControlMap)
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager<Device>) {
     use StateChange::*;
 
     let mut send_main = |event| {

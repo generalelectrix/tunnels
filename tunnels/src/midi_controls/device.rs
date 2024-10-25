@@ -28,9 +28,20 @@ impl fmt::Display for Device {
     }
 }
 
-impl Device {
+pub trait MidiDevice: PartialEq + Sized + Send + Clone {
+    /// Return the name of the midi device we should look for.
+    fn device_name(&self) -> &str;
+
     /// Perform device-specific midi initialization.
-    pub fn init_midi(&self, out: &mut Output) -> Result<(), SendError> {
+    #[allow(unused)]
+    fn init_midi(&self, out: &mut Output<Self>) -> Result<(), SendError> {
+        Ok(())
+    }
+}
+
+impl MidiDevice for Device {
+    /// Perform device-specific midi initialization.
+    fn init_midi(&self, out: &mut Output<Device>) -> Result<(), SendError> {
         match *self {
             Self::AkaiApc40 => init_apc_40(out),
             Self::AkaiApc20 => init_apc_20(out),
@@ -40,7 +51,7 @@ impl Device {
     }
 
     /// Return the name of the midi device we should look for.
-    pub fn device_name(&self) -> &'static str {
+    fn device_name(&self) -> &str {
         match *self {
             Self::AkaiApc40 => "Akai APC-40",
             Self::AkaiApc20 => "Akai APC-20",
@@ -50,7 +61,7 @@ impl Device {
     }
 }
 
-fn init_apc_40(out: &mut Output) -> Result<(), SendError> {
+fn init_apc_40(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
     // put into ableton (full control) mode
     debug!("Sending APC40 sysex mode command.");
     out.send_raw(&[
@@ -102,7 +113,7 @@ fn init_apc_40(out: &mut Output) -> Result<(), SendError> {
     Ok(())
 }
 
-fn init_apc_20(out: &mut Output) -> Result<(), SendError> {
+fn init_apc_20(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
     // put into ableton (full control) mode
     debug!("Sending APC20 sysex mode command.");
     out.send_raw(&[
