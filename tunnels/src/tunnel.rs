@@ -8,7 +8,7 @@ use crate::{
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
@@ -101,7 +101,7 @@ impl Tunnel {
     /// If 0, return 1
     fn blacking_integer(&self) -> i32 {
         let scaled = (17. * self.blacking.val()) as i32;
-        let clamped = max(min(scaled, 16), -16);
+        let clamped = scaled.clamp(-16, 16);
 
         // remote the "all segments blacked" bug
         if clamped >= -1 {

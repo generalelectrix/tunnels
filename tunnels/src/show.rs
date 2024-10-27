@@ -46,7 +46,7 @@ pub struct Show {
 impl Show {
     /// Create a new show from the provided config.
     pub fn new(
-        midi_devices: Vec<MidiDeviceSpec>,
+        midi_devices: Vec<MidiDeviceSpec<Device>>,
         osc_devices: Vec<OscDeviceSpec>,
         audio_input_device: Option<String>,
         run_clock_service: bool,

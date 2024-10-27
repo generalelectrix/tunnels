@@ -1,7 +1,4 @@
-use std::{
-    cmp::{max, min},
-    time::Duration,
-};
+use std::time::Duration;
 
 use tunnels_lib::number::UnipolarFloat;
 
@@ -48,7 +45,7 @@ pub fn map_audio_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_audio_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_audio_control(sc: StateChange, manager: &mut Manager<Device>) {
     use StateChange::*;
 
     let mut send = |event| {
@@ -73,7 +70,7 @@ fn envelope_edge_from_midi(v: u8) -> Duration {
 
 /// Clamp duration in integer milliseconds to midi range.
 fn envelope_edge_to_midi(d: Duration) -> u8 {
-    let clamped = max(min(d.as_millis(), 128), 1);
+    let clamped = d.as_millis().clamp(1, 128);
     (clamped - 1) as u8
 }
 

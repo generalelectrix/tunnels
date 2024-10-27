@@ -30,7 +30,7 @@ use self::mixer::{map_mixer_controls, update_mixer_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
 pub use self::mixer::PAGE_SIZE as MIXER_CHANNELS_PER_PAGE;
-pub use crate::midi_controls::device::Device;
+pub use crate::midi_controls::device::{Device, MidiDevice};
 
 type ControlMessageCreator = Box<dyn Fn(u8) -> ControlMessage>;
 
@@ -110,13 +110,13 @@ impl ControlMap {
 
 pub struct Dispatcher {
     midi_map: ControlMap,
-    midi_manager: Manager,
+    midi_manager: Manager<Device>,
 }
 
 impl Dispatcher {
     /// Instantiate the master midi control dispatcher.
     /// Create the midi control map and initialize midi inputs/outputs.
-    pub fn new(midi_devices: Vec<DeviceSpec>, send: Sender<ControlEvent>) -> Result<Self> {
+    pub fn new(midi_devices: Vec<DeviceSpec<Device>>, send: Sender<ControlEvent>) -> Result<Self> {
         let midi_map = ControlMap::new();
 
         let mut midi_manager = Manager::default();

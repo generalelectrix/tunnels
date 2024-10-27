@@ -4,7 +4,10 @@ use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnec
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::mpsc::Sender};
 
-use crate::{control::ControlEvent, midi_controls::Device};
+use crate::{
+    control::ControlEvent,
+    midi_controls::{Device, MidiDevice},
+};
 
 /// Specification for what type of midi event.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -121,15 +124,15 @@ fn get_named_port<T: MidiIO>(source: &T, name: &str) -> Result<T::Port> {
     bail!("no port found with name {}", name);
 }
 
-pub struct Output {
+pub struct Output<D: PartialEq> {
     name: String,
     conn: MidiOutputConnection,
-    device: Device,
+    device: D,
 }
 
-impl Output {
-    pub fn new(name: String, device: Device) -> Result<Self> {
-        let output = MidiOutput::new("tunnels")?;
+impl<D: PartialEq> Output<D> {
+    pub fn new(name: String, device: D) -> Result<Self> {
+        let output = MidiOutput::new(&name)?;
         let port = get_named_port(&output, &name)?;
         let conn = output
             .connect(&port, &name)
@@ -158,9 +161,23 @@ pub struct Input {
     _conn: MidiInputConnection<()>,
 }
 
+pub trait CreateControlEvent<D> {
+    fn from_event(event: Event, device: D) -> Self;
+}
+
+impl CreateControlEvent<Device> for ControlEvent {
+    fn from_event(event: Event, device: Device) -> Self {
+        ControlEvent::Midi((device, event))
+    }
+}
+
 impl Input {
-    pub fn new(name: String, device: Device, sender: Sender<ControlEvent>) -> Result<Self> {
-        let input = MidiInput::new("tunnels")?;
+    pub fn new<D, E>(name: String, device: D, sender: Sender<E>) -> Result<Self>
+    where
+        D: Send + 'static + Clone,
+        E: CreateControlEvent<D> + Send + 'static,
+    {
+        let input = MidiInput::new(&name)?;
         let port = get_named_port(&input, &name)?;
         let handler_name = name.clone();
 
@@ -183,8 +200,7 @@ impl Input {
                     };
                     let channel = msg[0] & 15;
                     sender
-                        .send(ControlEvent::Midi((
-                            device,
+                        .send(E::from_event(
                             Event {
                                 mapping: Mapping {
                                     event_type,
@@ -193,7 +209,8 @@ impl Input {
                                 },
                                 value: msg[2],
                             },
-                        )))
+                            device.clone(),
+                        ))
                         .unwrap();
                 },
                 (),
@@ -205,17 +222,29 @@ impl Input {
 
 /// Maintain midi inputs and outputs.
 /// Provide synchronous dispatch for outgoing messages based on device type.
-#[derive(Default)]
-pub struct Manager {
+pub struct Manager<D: MidiDevice> {
     inputs: Vec<Input>,
-    outputs: Vec<Output>,
+    outputs: Vec<Output<D>>,
 }
 
-impl Manager {
+impl<D: MidiDevice> Default for Manager<D> {
+    fn default() -> Self {
+        Self {
+            inputs: Default::default(),
+            outputs: Default::default(),
+        }
+    }
+}
+
+impl<D: MidiDevice + 'static> Manager<D> {
     /// Add a device to the manager given input and output port names.
-    pub fn add_device(&mut self, spec: DeviceSpec, send: Sender<ControlEvent>) -> Result<()> {
-        let input = Input::new(spec.input_port_name, spec.device, send)?;
-        let mut output = Output::new(spec.output_port_name, spec.device)?;
+    pub fn add_device(
+        &mut self,
+        spec: DeviceSpec<D>,
+        send: Sender<impl CreateControlEvent<D> + Send + 'static>,
+    ) -> Result<()> {
+        let input = Input::new(spec.input_port_name, spec.device.clone(), send)?;
+        let mut output = Output::new(spec.output_port_name, spec.device.clone())?;
 
         // Send initialization commands to the device.
         spec.device.init_midi(&mut output)?;
@@ -227,7 +256,7 @@ impl Manager {
 
     /// Send a message to the specified device type.
     /// Error conditions are logged rather than returned.
-    pub fn send(&mut self, device: Device, event: Event) {
+    pub fn send(&mut self, device: D, event: Event) {
         for output in &mut self.outputs {
             if output.device == device {
                 if let Err(e) = output.send(event) {
@@ -240,8 +269,8 @@ impl Manager {
 
 /// Wrapper struct for the data needed to describe a device to connect to.
 #[derive(Clone, Debug)]
-pub struct DeviceSpec {
-    pub device: Device,
+pub struct DeviceSpec<D> {
+    pub device: D,
     pub input_port_name: String,
     pub output_port_name: String,
 }

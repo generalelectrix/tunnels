@@ -132,7 +132,7 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.
-pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager<Device>) {
     use StateChange::*;
 
     let mut send = |event| {

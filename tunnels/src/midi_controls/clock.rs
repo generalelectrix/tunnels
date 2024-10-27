@@ -83,7 +83,6 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
     (assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows."));
 
     for channel in 0..N_CLOCKS {
-        if device == Device::BehringerCmdMM1 {}
         add(
             get_mapping(Control::Rate, channel),
             Box::new(move |v| {
@@ -151,7 +150,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_clock_control(sc: StateChange, manager: &mut Manager<Device>) {
     use ClockStateChange::*;
 
     let mut send = |control, value| {

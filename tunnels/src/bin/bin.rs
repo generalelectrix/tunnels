@@ -9,6 +9,7 @@ use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
 use tunnels::audio::AudioInput;
 use tunnels::midi::{list_ports, DeviceSpec as MidiDeviceSpec};
 use tunnels::midi_controls::Device as MidiDevice;
+use tunnels::midi_controls::MidiDevice as _;
 use tunnels::osc::Device as OscDevice;
 use tunnels::osc::DeviceSpec as OscDeviceSpec;
 use tunnels::show::Show;
@@ -94,7 +95,10 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>> {
 }
 
 /// Prompt the user to configure midi devices.
-fn prompt_midi(input_ports: &[String], output_ports: &[String]) -> Result<Vec<MidiDeviceSpec>> {
+fn prompt_midi(
+    input_ports: &[String],
+    output_ports: &[String],
+) -> Result<Vec<MidiDeviceSpec<MidiDevice>>> {
     let mut devices = Vec::new();
     println!("Available devices:");
     for (i, port) in input_ports.iter().enumerate() {
@@ -125,7 +129,7 @@ fn prompt_input_output(
     device: MidiDevice,
     input_ports: &[String],
     output_ports: &[String],
-) -> Result<MidiDeviceSpec> {
+) -> Result<MidiDeviceSpec<MidiDevice>> {
     let name = device.device_name();
     if input_ports.iter().any(|d| d == name) && output_ports.iter().any(|d| d == name) {
         return Ok(MidiDeviceSpec {
