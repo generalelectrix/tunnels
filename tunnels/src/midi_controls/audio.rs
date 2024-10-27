@@ -1,7 +1,4 @@
-use std::{
-    cmp::{max, min},
-    time::Duration,
-};
+use std::time::Duration;
 
 use tunnels_lib::number::UnipolarFloat;
 
@@ -73,7 +70,7 @@ fn envelope_edge_from_midi(v: u8) -> Duration {
 
 /// Clamp duration in integer milliseconds to midi range.
 fn envelope_edge_to_midi(d: Duration) -> u8 {
-    let clamped = max(min(d.as_millis(), 128), 1);
+    let clamped = d.as_millis().clamp(1, 128);
     (clamped - 1) as u8
 }
 

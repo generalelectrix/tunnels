@@ -35,7 +35,7 @@ where
 
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {
-            if let Err(e) = socket.send(&action(&msg), 0) {
+            if let Err(e) = socket.send(action(&msg), 0) {
                 println!("Failed to send response: {}", e);
             }
         }
