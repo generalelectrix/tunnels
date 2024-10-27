@@ -113,7 +113,7 @@ fn init_apc_40(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
     Ok(())
 }
 
-fn init_apc_20(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
+pub fn init_apc_20(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
     // put into ableton (full control) mode
     debug!("Sending APC20 sysex mode command.");
     out.send_raw(&[

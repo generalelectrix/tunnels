@@ -30,7 +30,7 @@ use self::mixer::{map_mixer_controls, update_mixer_control};
 use self::tunnel::{map_tunnel_controls, update_tunnel_control};
 
 pub use self::mixer::PAGE_SIZE as MIXER_CHANNELS_PER_PAGE;
-pub use crate::midi_controls::device::{Device, MidiDevice};
+pub use crate::midi_controls::device::{init_apc_20, Device, MidiDevice};
 
 type ControlMessageCreator = Box<dyn Fn(u8) -> ControlMessage>;
 
