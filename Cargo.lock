@@ -1172,15 +1172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gl"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a94edab108827d67608095e269cf862e60d920f144a5026d3dbcfd8b877fb404"
-dependencies = [
- "gl_generator 0.14.0",
-]
-
-[[package]]
 name = "gl_generator"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2199,7 +2190,7 @@ checksum = "6e465487e1063ebe4103bc0fb65bc3dd604b635b2012a41530d3a5f77106e526"
 dependencies = [
  "pistoncore-event_loop",
  "pistoncore-input",
- "pistoncore-window 0.47.1",
+ "pistoncore-window",
 ]
 
 [[package]]
@@ -2283,7 +2274,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62a12185c5d4ecd7fe8b85e0daecf5e49812063559a626d74fd3c5d0aa8a52f2"
 dependencies = [
  "fnv",
- "gl 0.13.0",
+ "gl",
  "image",
  "khronos_api 2.2.0",
  "piston-shaders_graphics2d",
@@ -2316,7 +2307,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41d86b3bf012430bb23694348615e37769aca0e9910539ce93674006aeeb77e6"
 dependencies = [
  "pistoncore-input",
- "pistoncore-window 0.47.1",
+ "pistoncore-window",
  "spin_sleep",
 ]
 
@@ -2326,11 +2317,11 @@ version = "0.71.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65d2af5268a7c85093df16a0a749a7a043fc2bab2f4619114a682685f05b13a7"
 dependencies = [
- "gl 0.13.0",
+ "gl",
  "glutin",
  "glutin-winit",
  "pistoncore-input",
- "pistoncore-window 0.47.1",
+ "pistoncore-window",
  "raw-window-handle",
  "shader_version",
  "winit",
@@ -2350,12 +2341,12 @@ dependencies = [
 
 [[package]]
 name = "pistoncore-sdl2_window"
-version = "0.70.0"
-source = "git+https://github.com/PistonDevelopers/sdl2_window#94a172ee21a22cced4c5492fef5dc97e4b816502"
+version = "0.67.0"
+source = "git+https://github.com/PistonDevelopers/sdl2_window?rev=bdfcb78dce92119cd83fd768f480c04e215277d0#bdfcb78dce92119cd83fd768f480c04e215277d0"
 dependencies = [
- "gl 0.14.0",
+ "gl",
  "pistoncore-input",
- "pistoncore-window 1.0.0",
+ "pistoncore-window",
  "sdl2",
  "shader_version",
 ]
@@ -2365,16 +2356,6 @@ name = "pistoncore-window"
 version = "0.47.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d62962b4e9cfc13143c77e032302fedc58a8f0f570d30006cdb38ba00a5e50bf"
-dependencies = [
- "piston-graphics_api_version",
- "pistoncore-input",
-]
-
-[[package]]
-name = "pistoncore-window"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26faf0ca71c8215a37b3920229b5b13e5f34a24737de32fba82d4ebc191f43d1"
 dependencies = [
  "piston-graphics_api_version",
  "pistoncore-input",
@@ -2743,9 +2724,9 @@ dependencies = [
 
 [[package]]
 name = "sdl2"
-version = "0.37.0"
+version = "0.34.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b498da7d14d1ad6c839729bd4ad6fc11d90a57583605f3b4df2cd709a9cd380"
+checksum = "deecbc3fa9460acff5a1e563e05cb5f31bba0aa0c214bb49a43db8159176d54b"
 dependencies = [
  "bitflags 1.3.2",
  "lazy_static",
@@ -2755,13 +2736,13 @@ dependencies = [
 
 [[package]]
 name = "sdl2-sys"
-version = "0.37.0"
+version = "0.34.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "951deab27af08ed9c6068b7b0d05a93c91f0a8eb16b6b816a5e73452a43521d3"
+checksum = "41a29aa21f175b5a41a6e26da572d5e5d1ee5660d35f9f9d0913e8a802098f74"
 dependencies = [
- "cfg-if 1.0.0",
+ "cfg-if 0.1.10",
  "libc",
- "version-compare 0.1.1",
+ "version-compare 0.0.10",
 ]
 
 [[package]]
@@ -3472,9 +3453,9 @@ dependencies = [
 
 [[package]]
 name = "version-compare"
-version = "0.1.1"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "579a42fc0b8e0c63b76519a339be31bed574929511fa53c1a3acae26eb258f29"
+checksum = "d63556a25bae6ea31b52e640d7c41d1ab27faba4ccb600013837a3d0b3994ca1"
 
 [[package]]
 name = "version-compare"
