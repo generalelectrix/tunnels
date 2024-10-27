@@ -7,8 +7,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "1", features = ["derive", "rc"] }
-derive_more = "^0.99"
+serde.workspace = true
+derive_more.workspace = true
 num-traits = "^0.2"
 ordered-float = "^2.0"
 number = { git = "https://github.com/generalelectrix/number", branch = "main" }
