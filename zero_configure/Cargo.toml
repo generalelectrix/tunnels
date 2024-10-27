@@ -8,7 +8,7 @@ edition = "2021"
 async-dnssd = "^0.4"
 tokio-core = "^0.1"
 futures = "^0.1"
-zmq = "0.10.0"
-serde = { version = "1", features = ["derive"] }
-rmp-serde = "1.1.1"
-anyhow = "1.0.70"
+zmq.workspace = true
+serde.workspace = true
+rmp-serde.workspace = true
+anyhow.workspace = true

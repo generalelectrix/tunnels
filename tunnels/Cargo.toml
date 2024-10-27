@@ -15,18 +15,21 @@ path = "src/bin/bin.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "^1", features = ["derive"]}
-log = "^0.4"
-simplelog = "0.12.0"
-derive_more = "^0.99"
+serde.workspace = true
+log.workspace = true
+simplelog.workspace = true
+derive_more.workspace = true
+lazy_static.workspace = true
+zmq.workspace = true
+anyhow.workspace = true
+rmp-serde.workspace = true
+
 midir = "0.9.1"
-lazy_static = "^1"
-typed_index_derive = "0.1.4"
-zmq = "0.10.0"
-tunnels_lib = { path = "../tunnels_lib" }
-rmp-serde = "1.1.1"
 rosc = "0.9.1"
 
+typed_index_derive = "0.1.4"
+
+tunnels_lib = { path = "../tunnels_lib" }
 zero_configure = { path = "../zero_configure" }
 
 # Audio subsystem
@@ -36,7 +39,7 @@ audio-processor-analysis = "0.4.0"
 audio-processor-traits = "2.2.0"
 augmented-atomics = "0.1.1"
 itertools = "0.10.5"
-anyhow = "1.0.70"
+
 
 [dev-dependencies]
 insta = { version = "1.28.0", features = ["yaml"] }
