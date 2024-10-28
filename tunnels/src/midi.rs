@@ -266,6 +266,11 @@ impl<D: MidiDevice + 'static> Manager<D> {
             }
         }
     }
+
+    /// Return an iterator over all devices.
+    pub fn devices(&self) -> impl Iterator<Item = &D> {
+        self.outputs.iter().map(|out| &out.device)
+    }
 }
 
 /// Wrapper struct for the data needed to describe a device to connect to.
