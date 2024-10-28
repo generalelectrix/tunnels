@@ -1,8 +1,8 @@
 use std::fmt::{self, Display};
 
 use crate::midi::{Event, EventType, Mapping, Output};
+use anyhow::Result;
 use log::debug;
-use midir::SendError;
 
 /// The input MIDI device types that tunnels can work with.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -45,14 +45,14 @@ pub trait MidiDevice: PartialEq + Sized + Send + Clone + Display {
 
     /// Perform device-specific midi initialization.
     #[allow(unused)]
-    fn init_midi(&self, out: &mut Output<Self>) -> Result<(), SendError> {
+    fn init_midi(&self, out: &mut Output<Self>) -> Result<()> {
         Ok(())
     }
 }
 
 impl MidiDevice for Device {
     /// Perform device-specific midi initialization.
-    fn init_midi(&self, out: &mut Output<Device>) -> Result<(), SendError> {
+    fn init_midi(&self, out: &mut Output<Device>) -> Result<()> {
         match *self {
             Self::AkaiApc40 => init_apc_40(out),
             Self::AkaiApc20 => init_apc_20(out),
@@ -72,7 +72,7 @@ impl MidiDevice for Device {
     }
 }
 
-fn init_apc_40(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
+fn init_apc_40(out: &mut Output<impl MidiDevice>) -> Result<()> {
     // put into ableton (full control) mode
     debug!("Sending APC40 sysex mode command.");
     out.send_raw(&[
@@ -124,10 +124,11 @@ fn init_apc_40(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
     Ok(())
 }
 
-pub fn init_apc_20(out: &mut Output<impl MidiDevice>) -> Result<(), SendError> {
+pub fn init_apc_20(out: &mut Output<impl MidiDevice>) -> Result<()> {
     // put into ableton (full control) mode
     debug!("Sending APC20 sysex mode command.");
     out.send_raw(&[
         0xF0, 0x47, 0x7F, 0x7B, 0x60, 0x00, 0x04, 0x42, 0x08, 0x02, 0x01, 0xF7,
-    ])
+    ])?;
+    Ok(())
 }
