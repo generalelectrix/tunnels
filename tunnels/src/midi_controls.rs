@@ -170,20 +170,20 @@ impl EmitStateChange for Dispatcher {
     }
 }
 
-fn bipolar_from_midi(val: u8) -> BipolarFloat {
+pub fn bipolar_from_midi(val: u8) -> BipolarFloat {
     let denom = if val > 64 { 63. } else { 64. };
     BipolarFloat::new((val as f64 - 64.) / denom)
 }
 
-fn bipolar_to_midi(val: BipolarFloat) -> u8 {
+pub fn bipolar_to_midi(val: BipolarFloat) -> u8 {
     u16::min((((val.val() + 1.0) / 2.0) * 128.) as u16, 127) as u8
 }
 
-fn unipolar_from_midi(val: u8) -> UnipolarFloat {
+pub fn unipolar_from_midi(val: u8) -> UnipolarFloat {
     UnipolarFloat::new(val as f64 / 127.)
 }
 
-fn unipolar_to_midi(val: UnipolarFloat) -> u8 {
+pub fn unipolar_to_midi(val: UnipolarFloat) -> u8 {
     (val.val() * 127.) as u8
 }
 
