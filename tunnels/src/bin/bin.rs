@@ -7,14 +7,16 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
 use tunnels::audio::AudioInput;
+use tunnels::midi::prompt_midi;
 use tunnels::midi::{list_ports, DeviceSpec as MidiDeviceSpec};
 use tunnels::midi_controls::Device as MidiDevice;
-use tunnels::midi_controls::MidiDevice as _;
+use tunnels::midi_controls::MidiDevice as MidiDeviceTrait;
 use tunnels::osc::Device as OscDevice;
 use tunnels::osc::DeviceSpec as OscDeviceSpec;
 use tunnels::show::Show;
 use tunnels::test_mode::{all_video_outputs, stress, TestModeSetup};
 use tunnels_lib::prompt::prompt_bool;
+use tunnels_lib::prompt::prompt_indexed_value;
 use tunnels_lib::prompt::prompt_port;
 use tunnels_lib::prompt::read_string;
 
@@ -31,7 +33,7 @@ fn main() -> Result<()> {
     let midi_devices = if test_mode.is_some() {
         Vec::new()
     } else {
-        prompt_midi(&inputs, &outputs)?
+        prompt_midi(&inputs, &outputs, MidiDevice::all())?
     };
 
     let osc_devices = if test_mode.is_some() {
@@ -94,60 +96,6 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>> {
     })
 }
 
-/// Prompt the user to configure midi devices.
-fn prompt_midi(
-    input_ports: &[String],
-    output_ports: &[String],
-) -> Result<Vec<MidiDeviceSpec<MidiDevice>>> {
-    let mut devices = Vec::new();
-    println!("Available devices:");
-    for (i, port) in input_ports.iter().enumerate() {
-        println!("{}: {}", i, port);
-    }
-    for (i, port) in output_ports.iter().enumerate() {
-        println!("{}: {}", i, port);
-    }
-    println!();
-
-    let mut add_device = |device| -> Result<()> {
-        if prompt_bool(&format!("Use {}?", device))? {
-            devices.push(prompt_input_output(device, input_ports, output_ports)?);
-        }
-        Ok(())
-    };
-
-    add_device(MidiDevice::TouchOsc)?;
-    add_device(MidiDevice::AkaiApc40)?;
-    add_device(MidiDevice::BehringerCmdMM1)?;
-    // add_device(MidiDevice::AkaiApc20)?;
-
-    Ok(devices)
-}
-
-/// Prompt the user to select input and output ports for a device.
-fn prompt_input_output(
-    device: MidiDevice,
-    input_ports: &[String],
-    output_ports: &[String],
-) -> Result<MidiDeviceSpec<MidiDevice>> {
-    let name = device.device_name();
-    if input_ports.iter().any(|d| d == name) && output_ports.iter().any(|d| d == name) {
-        return Ok(MidiDeviceSpec {
-            device,
-            input_port_name: name.to_string(),
-            output_port_name: name.to_string(),
-        });
-    }
-    println!("Didn't find a device of the expected name. Please manually select input and output.");
-    let input_port_name = prompt_indexed_value("Input port:", input_ports)?;
-    let output_port_name = prompt_indexed_value("Output port:", output_ports)?;
-    Ok(MidiDeviceSpec {
-        device,
-        input_port_name,
-        output_port_name,
-    })
-}
-
 /// Prompt the user to configure OSC devices.
 fn prompt_osc() -> Result<Vec<OscDeviceSpec>> {
     let mut devices = Vec::new();
@@ -185,26 +133,6 @@ fn prompt_audio() -> Result<Option<String>> {
         println!("{}: {}", i, port);
     }
     prompt_indexed_value("Input audio device:", &input_devices).map(Some)
-}
-
-/// Prompt the user for a unsigned numeric index.
-fn prompt_indexed_value<T: Clone>(msg: &str, options: &[T]) -> Result<T> {
-    Ok(loop {
-        print!("{} ", msg);
-        io::stdout().flush()?;
-        let input = read_string()?;
-        let index = match input.trim().parse::<usize>() {
-            Ok(num) => num,
-            Err(e) => {
-                println!("{}; please enter an integer.", e);
-                continue;
-            }
-        };
-        match options.get(index) {
-            Some(v) => break v.clone(),
-            None => println!("Please enter a value less than {}.", options.len()),
-        }
-    })
 }
 
 struct LoadSaveConfig {

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Display};
 
 use crate::midi::{Event, EventType, Mapping, Output};
 use log::debug;
@@ -28,7 +28,18 @@ impl fmt::Display for Device {
     }
 }
 
-pub trait MidiDevice: PartialEq + Sized + Send + Clone {
+impl Device {
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::AkaiApc40,
+            Self::TouchOsc,
+            Self::BehringerCmdMM1,
+            // TODO: update support for Apc20.
+        ]
+    }
+}
+
+pub trait MidiDevice: PartialEq + Sized + Send + Clone + Display {
     /// Return the name of the midi device we should look for.
     fn device_name(&self) -> &str;
 

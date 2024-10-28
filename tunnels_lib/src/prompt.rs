@@ -18,6 +18,26 @@ pub fn prompt_bool(msg: &str) -> Result<bool> {
     })
 }
 
+/// Prompt the user for a unsigned numeric index.
+pub fn prompt_indexed_value<T: Clone>(msg: &str, options: &[T]) -> Result<T> {
+    Ok(loop {
+        print!("{} ", msg);
+        io::stdout().flush()?;
+        let input = read_string()?;
+        let index = match input.trim().parse::<usize>() {
+            Ok(num) => num,
+            Err(e) => {
+                println!("{}; please enter an integer.", e);
+                continue;
+            }
+        };
+        match options.get(index) {
+            Some(v) => break v.clone(),
+            None => println!("Please enter a value less than {}.", options.len()),
+        }
+    })
+}
+
 /// Prompt the user to enter a network port.
 pub fn prompt_port() -> Result<u16> {
     prompt_parse("Enter a port number", |port| {

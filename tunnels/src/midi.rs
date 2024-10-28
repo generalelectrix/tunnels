@@ -3,6 +3,7 @@ use log::{error, warn};
 use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::mpsc::Sender};
+use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 use crate::{
     control::ControlEvent,
@@ -273,4 +274,58 @@ pub struct DeviceSpec<D> {
     pub device: D,
     pub input_port_name: String,
     pub output_port_name: String,
+}
+
+/// Prompt the user to configure midi devices.
+pub fn prompt_midi<D: MidiDevice>(
+    input_ports: &[String],
+    output_ports: &[String],
+    known_device_types: Vec<D>,
+) -> Result<Vec<DeviceSpec<D>>> {
+    let mut devices = Vec::new();
+    println!("Available devices:");
+    for (i, port) in input_ports.iter().enumerate() {
+        println!("{}: {}", i, port);
+    }
+    for (i, port) in output_ports.iter().enumerate() {
+        println!("{}: {}", i, port);
+    }
+    println!();
+
+    let mut add_device = |device| -> Result<()> {
+        if prompt_bool(&format!("Use {}?", device))? {
+            devices.push(prompt_input_output(device, input_ports, output_ports)?);
+        }
+        Ok(())
+    };
+
+    for d in known_device_types {
+        add_device(d)?;
+    }
+
+    Ok(devices)
+}
+
+/// Prompt the user to select input and output ports for a device.
+fn prompt_input_output<D: MidiDevice>(
+    device: D,
+    input_ports: &[String],
+    output_ports: &[String],
+) -> Result<DeviceSpec<D>> {
+    let name = device.device_name().to_string();
+    if input_ports.iter().any(|d| *d == name) && output_ports.iter().any(|d| *d == name) {
+        return Ok(DeviceSpec {
+            device,
+            input_port_name: name.to_string(),
+            output_port_name: name.to_string(),
+        });
+    }
+    println!("Didn't find a device of the expected name. Please manually select input and output.");
+    let input_port_name = prompt_indexed_value("Input port:", input_ports)?;
+    let output_port_name = prompt_indexed_value("Output port:", output_ports)?;
+    Ok(DeviceSpec {
+        device,
+        input_port_name,
+        output_port_name,
+    })
 }
