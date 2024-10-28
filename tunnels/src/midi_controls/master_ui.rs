@@ -118,8 +118,8 @@ pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager<Device>) 
     use StateChange::*;
 
     let mut send_main = |event| {
-        manager.send(Device::TouchOsc, event);
-        manager.send(Device::AkaiApc40, event);
+        manager.send(&Device::TouchOsc, event);
+        manager.send(&Device::AkaiApc40, event);
     };
 
     match sc {
@@ -136,11 +136,11 @@ pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager<Device>) 
             // If page 1, disable all buttons on APC40/TouchOSC.
             if page == 0 {
                 CHANNEL_SELECT_BUTTONS.select(note_on(midi_channel, CHANNEL_SELECT), send_main);
-                CHANNEL_SELECT_BUTTONS.all_off(|event| manager.send(Device::AkaiApc20, event));
+                CHANNEL_SELECT_BUTTONS.all_off(|event| manager.send(&Device::AkaiApc20, event));
             } else {
                 CHANNEL_SELECT_BUTTONS.all_off(send_main);
                 CHANNEL_SELECT_BUTTONS.select(note_on(midi_channel, CHANNEL_SELECT), |event| {
-                    manager.send(Device::AkaiApc20, event)
+                    manager.send(&Device::AkaiApc20, event)
                 });
             }
         }
@@ -162,14 +162,14 @@ pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager<Device>) 
             if page == 0 {
                 send_main(e);
             } else {
-                manager.send(Device::AkaiApc20, e);
+                manager.send(&Device::AkaiApc20, e);
             }
         }
         BeamStoreState(state) => {
             let send_all = |event| {
-                manager.send(Device::TouchOsc, event);
-                manager.send(Device::AkaiApc40, event);
-                manager.send(Device::AkaiApc20, event);
+                manager.send(&Device::TouchOsc, event);
+                manager.send(&Device::AkaiApc40, event);
+                manager.send(&Device::AkaiApc20, event);
             };
             use BeamStoreStatePayload::*;
             match state {

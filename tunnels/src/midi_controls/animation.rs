@@ -121,8 +121,8 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager<Device>) 
     use StateChange::*;
 
     let mut send = |event| {
-        manager.send(Device::AkaiApc40, event);
-        manager.send(Device::TouchOsc, event);
+        manager.send(&Device::AkaiApc40, event);
+        manager.send(&Device::TouchOsc, event);
     };
 
     match sc {

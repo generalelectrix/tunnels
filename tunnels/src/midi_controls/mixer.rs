@@ -78,13 +78,13 @@ pub fn update_mixer_control(sc: StateChange, manager: &mut Manager<Device>) {
         // Send page 0 to the APC40, page 1 to APC20
         manager.send(
             if page == 0 {
-                Device::AkaiApc40
+                &Device::AkaiApc40
             } else {
-                Device::AkaiApc20
+                &Device::AkaiApc20
             },
             event,
         );
-        manager.send(Device::TouchOsc, event);
+        manager.send(&Device::TouchOsc, event);
     };
 
     match sc.change {

@@ -155,10 +155,10 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager<Device>) {
 
     let mut send = |control, value| {
         if let Some(mapping) = mapping_cmd_mm1(control, sc.channel.into()) {
-            manager.send(Device::BehringerCmdMM1, event(mapping, value));
+            manager.send(&Device::BehringerCmdMM1, event(mapping, value));
         }
         if let Some(mapping) = mapping_touchosc(control, sc.channel.into()) {
-            manager.send(Device::TouchOsc, event(mapping, value));
+            manager.send(&Device::TouchOsc, event(mapping, value));
         }
     };
 

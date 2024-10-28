@@ -93,7 +93,7 @@ pub fn map_animation_target_controls(device: Device, map: &mut ControlMap) {
 /// Emit midi messages to update UIs given the provided state change.
 pub fn update_animation_target_control(sc: AnimationTargetState, manager: &mut Manager<Device>) {
     let send = |event| {
-        manager.send(Device::TouchOsc, event);
+        manager.send(&Device::TouchOsc, event);
     };
 
     use AnimationTargetState::*;

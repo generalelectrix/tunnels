@@ -257,9 +257,9 @@ impl<D: MidiDevice + 'static> Manager<D> {
 
     /// Send a message to the specified device type.
     /// Error conditions are logged rather than returned.
-    pub fn send(&mut self, device: D, event: Event) {
+    pub fn send(&mut self, device: &D, event: Event) {
         for output in &mut self.outputs {
-            if output.device == device {
+            if output.device == *device {
                 if let Err(e) = output.send(event) {
                     error!("Failed to send midi event to {}: {}.", output.name, e);
                 }
