@@ -267,9 +267,9 @@ impl<D: MidiDevice + 'static> Manager<D> {
         }
     }
 
-    /// Return an iterator over all devices.
-    pub fn devices(&self) -> impl Iterator<Item = &D> {
-        self.outputs.iter().map(|out| &out.device)
+    /// Return an iterator over all outputs.
+    pub fn outputs(&mut self) -> impl Iterator<Item = &mut Output<D>> {
+        self.outputs.iter_mut()
     }
 }
 
