@@ -141,6 +141,11 @@ impl<D: PartialEq> Output<D> {
         Ok(Self { name, conn, device })
     }
 
+    /// Return a reference to the device attached to this output.
+    pub fn device(&self) -> &D {
+        &self.device
+    }
+
     pub fn send(&mut self, event: Event) -> Result<(), SendError> {
         let mut msg: [u8; 3] = [0; 3];
         msg[0] = match event.mapping.event_type {
