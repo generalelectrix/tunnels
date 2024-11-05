@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use io::Write;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::net::IpAddr;
@@ -6,7 +6,7 @@ use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
-use tunnels::audio::AudioInput;
+use tunnels::audio::prompt_audio;
 use tunnels::midi::list_ports;
 use tunnels::midi::prompt_midi;
 use tunnels::midi_controls::Device as MidiDevice;
@@ -15,7 +15,6 @@ use tunnels::osc::DeviceSpec as OscDeviceSpec;
 use tunnels::show::Show;
 use tunnels::test_mode::{all_video_outputs, stress, TestModeSetup};
 use tunnels_lib::prompt::prompt_bool;
-use tunnels_lib::prompt::prompt_indexed_value;
 use tunnels_lib::prompt::prompt_port;
 use tunnels_lib::prompt::read_string;
 
@@ -116,22 +115,6 @@ fn prompt_osc() -> Result<Vec<OscDeviceSpec>> {
     }
 
     Ok(devices)
-}
-
-/// Prompt the user to configure an audio input device.
-fn prompt_audio() -> Result<Option<String>> {
-    if !prompt_bool("Use audio input?")? {
-        return Ok(None);
-    }
-    let input_devices = AudioInput::devices()?;
-    if input_devices.is_empty() {
-        bail!("No audio input devices found.");
-    }
-    println!("Available devices:");
-    for (i, port) in input_devices.iter().enumerate() {
-        println!("{}: {}", i, port);
-    }
-    prompt_indexed_value("Input audio device:", &input_devices).map(Some)
 }
 
 struct LoadSaveConfig {

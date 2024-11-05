@@ -1,10 +1,11 @@
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::transient_indicator::TransientIndicator;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{info, warn};
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
+use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 use self::processor::ProcessorSettings;
 use self::reconnect::ReconnectingInput;
@@ -191,4 +192,20 @@ impl<T: EmitShowStateChange> EmitStateChange for T {
         use crate::show::StateChange as ShowStateChange;
         self.emit(ShowStateChange::Audio(sc))
     }
+}
+
+/// Prompt the user to configure an audio input device.
+pub fn prompt_audio() -> Result<Option<String>> {
+    if !prompt_bool("Use audio input?")? {
+        return Ok(None);
+    }
+    let input_devices = AudioInput::devices()?;
+    if input_devices.is_empty() {
+        bail!("No audio input devices found.");
+    }
+    println!("Available devices:");
+    for (i, port) in input_devices.iter().enumerate() {
+        println!("{}: {}", i, port);
+    }
+    prompt_indexed_value("Input audio device:", &input_devices).map(Some)
 }
