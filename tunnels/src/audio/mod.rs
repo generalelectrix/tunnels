@@ -166,7 +166,7 @@ impl AudioInput {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StateChange {
     Monitor(bool),
     EnvelopeValue(UnipolarFloat),
@@ -177,6 +177,7 @@ pub enum StateChange {
     IsClipping(bool),
 }
 
+#[derive(Debug, Clone)]
 pub enum ControlMessage {
     Set(StateChange),
     ToggleMonitor,

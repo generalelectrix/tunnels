@@ -145,12 +145,13 @@ impl<'e, E: EmitStateChange> EmitClockStateChange for ChannelEmitter<'e, E> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ControlMessage {
     pub channel: ClockIdxExt,
     pub msg: ClockControlMessage,
 }
 
+#[derive(Debug, Clone)]
 pub struct StateChange {
     pub channel: ClockIdx,
     pub change: ClockStateChange,
