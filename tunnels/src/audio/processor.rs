@@ -3,7 +3,7 @@
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
 use audio_processor_traits::{AtomicF32, AudioProcessorSettings, SimpleAudioProcessor};
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
-use log::{info, warn};
+use log::{debug, warn};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -67,7 +67,7 @@ impl Processor {
     fn maybe_update_parameters(&mut self) {
         let new_filter_cutoff = self.settings.filter_cutoff.get();
         if new_filter_cutoff != self.filter_cutoff {
-            info!("Updating filter cutoff to {}", new_filter_cutoff);
+            debug!("Updating filter cutoff to {}", new_filter_cutoff);
             self.filter_cutoff = new_filter_cutoff;
             for filter in self.filters.iter_mut() {
                 filter.set_cutoff(new_filter_cutoff);
@@ -78,7 +78,7 @@ impl Processor {
         if new_envelope_attack != self.envelope_attack
             || new_envelope_release != self.envelope_release
         {
-            info!(
+            debug!(
                 "Updating envelope parameters to {}, {}",
                 new_envelope_attack, new_envelope_release
             );
