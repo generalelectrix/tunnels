@@ -150,7 +150,6 @@ impl AudioInput {
                     warn!("Invalid audio envelope gain {} (< 0).", v);
                     return;
                 }
-                info!("Gain: {}", v);
                 self.gain = v;
             }
             IsClipping(_) => {
