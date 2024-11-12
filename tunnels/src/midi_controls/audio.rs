@@ -90,14 +90,14 @@ fn filter_to_midi(f: f32) -> u8 {
     ))
 }
 
-// Set gain as a unipolar knob, scaled by 10, interpreted as dB.
+// Set gain as a unipolar knob, scaled by 20, interpreted as dB.
 
 fn gain_from_midi(v: u8) -> f64 {
-    let gain_db = 10. * unipolar_from_midi(v).val();
+    let gain_db = 20. * unipolar_from_midi(v).val();
     (10_f64).powf(gain_db / 20.)
 }
 
 fn gain_to_midi(g: f64) -> u8 {
     let gain_db = 20. * g.log10();
-    unipolar_to_midi(UnipolarFloat::new(gain_db / 10.))
+    unipolar_to_midi(UnipolarFloat::new(gain_db / 20.))
 }
