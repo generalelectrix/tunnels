@@ -126,7 +126,8 @@ impl Animation {
                 Waveform::Perlin => {
                     let full_spatial_offset = self.ticks(external_clocks) as f64
                         + spatial_phase_offset.val() * (self.n_periods as f64);
-                    self.perlin_gen.get([full_spatial_offset])
+                    self.perlin_gen
+                        .get([full_spatial_offset + self.phase(external_clocks).val()])
                 }
             };
 

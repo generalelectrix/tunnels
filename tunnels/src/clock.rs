@@ -87,14 +87,9 @@ impl Clock {
             self.run = false;
         } else {
             // if the phase just escaped our range, we ticked this frame
-            if new_angle >= 1.0 {
-                self.ticked = true;
-                self.ticks += 1;
-            } else if new_angle < 0.0 {
-                self.ticked = true;
-                self.ticks -= 1;
-            } else {
-                self.ticked = false;
+            self.ticked = !(0.0..1.0).contains(&new_angle);
+            if self.ticked {
+                self.ticks = self.ticks.wrapping_add(new_angle.div_euclid(1.0) as i64);
             }
             self.phase = Phase::new(new_angle);
         }

@@ -84,6 +84,7 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
     add(SQUARE, Box::new(|_| Animation(Set(Waveform(Square)))));
     add(SAWTOOTH, Box::new(|_| Animation(Set(Waveform(Sawtooth)))));
     add(CONSTANT, Box::new(|_| Animation(Set(Waveform(Constant)))));
+    add(PERLIN, Box::new(|_| Animation(Set(Waveform(Perlin)))));
 
     // n periods select
     for n_periods in 0..16 {
