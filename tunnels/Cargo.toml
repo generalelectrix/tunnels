@@ -39,6 +39,7 @@ audio-processor-analysis = "0.4.0"
 audio-processor-traits = "2.2.0"
 augmented-atomics = "0.1.1"
 itertools = "0.10.5"
+noise = "0.9.0"
 
 
 [dev-dependencies]
