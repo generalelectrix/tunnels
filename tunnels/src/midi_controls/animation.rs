@@ -26,6 +26,7 @@ const TRIANGLE: Mapping = note_on_ch0(25);
 const SQUARE: Mapping = note_on_ch0(26);
 const SAWTOOTH: Mapping = note_on_ch0(27);
 const CONSTANT: Mapping = note_on_ch0(28);
+const PERLIN: Mapping = note_on_ch0(29);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
@@ -139,6 +140,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager<Device>) 
                     Square => SQUARE,
                     Sawtooth => SAWTOOTH,
                     Constant => CONSTANT,
+                    Perlin => PERLIN,
                 },
                 send,
             );

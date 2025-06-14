@@ -1,10 +1,13 @@
 use crate::clock::Clock;
 use crate::clock::ControllableClock;
+use crate::clock::Ticks;
 use crate::clock_bank::{ClockIdxExt, ClockStore};
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms::WaveformArgs;
 use crate::{clock_bank::ClockIdx, waveforms};
 use log::error;
+use noise::NoiseFn;
+use noise::Perlin;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
@@ -16,6 +19,7 @@ pub enum Waveform {
     Square,
     Sawtooth,
     Constant,
+    Perlin,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -31,6 +35,8 @@ pub struct Animation {
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
     use_audio_size: bool,
+    #[serde(skip)]
+    perlin_gen: Perlin,
 }
 
 impl Default for Animation {
@@ -53,6 +59,7 @@ impl Animation {
             internal_clock: Clock::new(),
             clock_source: None,
             use_audio_size: false,
+            perlin_gen: Perlin::default(),
         }
     }
 
@@ -65,6 +72,13 @@ impl Animation {
         match self.clock_source {
             None => self.internal_clock.phase(),
             Some(id) => external_clocks.phase(id),
+        }
+    }
+
+    fn ticks(&self, external_clocks: &impl ClockStore) -> Ticks {
+        match self.clock_source {
+            None => self.internal_clock.ticks(),
+            Some(id) => external_clocks.ticks(id),
         }
     }
 
@@ -93,22 +107,28 @@ impl Animation {
         if !self.active() {
             return 0.;
         }
-        let waveform_func = match self.waveform {
-            Waveform::Sine => waveforms::sine,
-            Waveform::Square => waveforms::square,
-            Waveform::Sawtooth => waveforms::sawtooth,
-            Waveform::Triangle => waveforms::triangle,
-            Waveform::Constant => waveforms::constant,
-        };
+
         let mut result = self.size.val()
-            * waveform_func(&WaveformArgs {
-                phase_spatial: spatial_phase_offset * (self.n_periods as f64),
-                phase_temporal: self.phase(external_clocks),
-                smoothing: self.smoothing,
-                duty_cycle: self.duty_cycle,
-                pulse: self.pulse,
-                standing: self.standing,
-            });
+            * match self.waveform {
+                Waveform::Sine => {
+                    waveforms::sine(&self.waveform_args(spatial_phase_offset, external_clocks))
+                }
+                Waveform::Square => {
+                    waveforms::square(&self.waveform_args(spatial_phase_offset, external_clocks))
+                }
+                Waveform::Sawtooth => {
+                    waveforms::sawtooth(&self.waveform_args(spatial_phase_offset, external_clocks))
+                }
+                Waveform::Triangle => {
+                    waveforms::triangle(&self.waveform_args(spatial_phase_offset, external_clocks))
+                }
+                Waveform::Constant => 1.0,
+                Waveform::Perlin => {
+                    let full_spatial_offset = self.ticks(external_clocks) as f64
+                        + spatial_phase_offset.val() * (self.n_periods as f64);
+                    self.perlin_gen.get([full_spatial_offset])
+                }
+            };
 
         // scale this animation by submaster level if using external clock
         let mut use_audio_size = self.use_audio_size;
@@ -124,6 +144,22 @@ impl Animation {
             -1.0 * result
         } else {
             result
+        }
+    }
+
+    #[inline(always)]
+    fn waveform_args(
+        &self,
+        spatial_phase_offset: Phase,
+        external_clocks: &impl ClockStore,
+    ) -> WaveformArgs {
+        WaveformArgs {
+            phase_spatial: spatial_phase_offset * (self.n_periods as f64),
+            phase_temporal: self.phase(external_clocks),
+            smoothing: self.smoothing,
+            duty_cycle: self.duty_cycle,
+            pulse: self.pulse,
+            standing: self.standing,
         }
     }
 

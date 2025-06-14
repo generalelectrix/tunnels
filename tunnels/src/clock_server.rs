@@ -46,6 +46,10 @@ impl ClockStore for StaticClockBank {
         self.get(index).phase
     }
 
+    fn ticks(&self, index: ClockIdx) -> crate::clock::Ticks {
+        self.get(index).ticks
+    }
+
     fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
         self.get(index).submaster_level
     }
