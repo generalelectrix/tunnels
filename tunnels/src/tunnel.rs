@@ -213,7 +213,6 @@ impl Tunnel {
             let mut aspect_ratio_adjust = 0.;
             let mut col_center_adjust = 0.;
             let mut col_width_adjust = 0.;
-            let mut col_period_adjust = 0.;
             let mut col_sat_adjust = 0.;
             let mut x_adjust = 0.;
             let mut y_adjust = 0.;
@@ -237,7 +236,6 @@ impl Tunnel {
                     AspectRatio => aspect_ratio_adjust += anim_value,
                     Color => col_center_adjust += anim_value * 0.5,
                     ColorSpread => col_width_adjust += anim_value,
-                    ColorPeriodicity => col_period_adjust += anim_value * 8.,
                     ColorSaturation => col_sat_adjust += anim_value * 0.5, // limit adjustment
                     PositionX => x_adjust += anim_value,
                     PositionY => y_adjust += anim_value,
@@ -294,8 +292,7 @@ impl Tunnel {
                             * (self.col_width.val() + col_width_adjust)
                             * sawtooth(&WaveformArgs {
                                 phase_spatial: rel_angle
-                                    * ((COLOR_SPREAD_SCALE * self.col_spread.val()).floor()
-                                        + col_period_adjust),
+                                    * ((COLOR_SPREAD_SCALE * self.col_spread.val()).floor()),
                                 phase_temporal: Phase::ZERO,
                                 smoothing: UnipolarFloat::ZERO,
                                 duty_cycle: UnipolarFloat::ONE,

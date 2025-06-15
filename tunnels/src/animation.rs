@@ -19,8 +19,8 @@ pub enum Waveform {
     Triangle,
     Square,
     Sawtooth,
-    Constant,
     Noise,
+    Constant,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -132,7 +132,6 @@ impl Animation {
                 Waveform::Triangle => {
                     waveforms::triangle(&self.waveform_args(spatial_phase_offset, external_clocks))
                 }
-                Waveform::Constant => 1.0,
                 Waveform::Noise => {
                     let full_spatial_offset = (self.ticks(external_clocks) as f64)
                         + (spatial_phase_offset.val() * (self.n_periods as f64));
@@ -141,11 +140,20 @@ impl Animation {
                     // samples. Smoothing of zero offsets each sample by a full
                     // interval, which should produce fairly uncorrelated noise
                     // for different offsets.
-                    let correlation = 1.0 - self.smoothing.val().val();
-                    let offset = correlation * offset_index as f64;
+                    // Always use a Y-offset of 0 in periodicity of 0 to preserve
+                    // the expected behavior.
+                    //
+                    // Because of the smooth 2D landscape, smoothing parameters
+                    // modestly lower than 1 tend to look similar to an
+                    // increase in periodicity.
+                    let y_offset = if self.n_periods == 0 {
+                        0.0
+                    } else {
+                        (1.0 - self.smoothing.val().val()) * offset_index as f64
+                    };
                     let mut val = self.simplex_gen.get([
                         full_spatial_offset + self.phase(external_clocks).val(),
-                        offset,
+                        y_offset,
                     ]);
                     if self.pulse {
                         // Square the noise for pulse mode, to ensure we still
@@ -159,6 +167,7 @@ impl Animation {
                     }
                     val
                 }
+                Waveform::Constant => 1.0,
             };
 
         // scale this animation by submaster level if using external clock
