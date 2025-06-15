@@ -26,7 +26,7 @@ const TRIANGLE: Mapping = note_on_ch0(25);
 const SQUARE: Mapping = note_on_ch0(26);
 const SAWTOOTH: Mapping = note_on_ch0(27);
 const CONSTANT: Mapping = note_on_ch0(28);
-const PERLIN: Mapping = note_on_ch0(29);
+const NOISE: Mapping = note_on_ch0(29);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
@@ -84,7 +84,7 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
     add(SQUARE, Box::new(|_| Animation(Set(Waveform(Square)))));
     add(SAWTOOTH, Box::new(|_| Animation(Set(Waveform(Sawtooth)))));
     add(CONSTANT, Box::new(|_| Animation(Set(Waveform(Constant)))));
-    add(PERLIN, Box::new(|_| Animation(Set(Waveform(Perlin)))));
+    add(NOISE, Box::new(|_| Animation(Set(Waveform(Noise)))));
 
     // n periods select
     for n_periods in 0..16 {
@@ -141,7 +141,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager<Device>) 
                     Square => SQUARE,
                     Sawtooth => SAWTOOTH,
                     Constant => CONSTANT,
-                    Perlin => PERLIN,
+                    Noise => NOISE,
                 },
                 send,
             );

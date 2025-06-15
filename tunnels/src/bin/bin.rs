@@ -13,7 +13,7 @@ use tunnels::midi_controls::Device as MidiDevice;
 use tunnels::osc::Device as OscDevice;
 use tunnels::osc::DeviceSpec as OscDeviceSpec;
 use tunnels::show::Show;
-use tunnels::test_mode::{all_video_outputs, stress, TestModeSetup};
+use tunnels::test_mode::{all_video_outputs, noise, stress, TestModeSetup};
 use tunnels_lib::prompt::prompt_bool;
 use tunnels_lib::prompt::prompt_port;
 use tunnels_lib::prompt::read_string;
@@ -84,11 +84,12 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>> {
         return Ok(None);
     }
     Ok(loop {
-        print!("Select test mode ('video_outs', 'stress'): ");
+        print!("Select test mode ('video_outs', 'stress', 'noise'): ");
         io::stdout().flush()?;
         match &read_string()?[..] {
             "video_outs" => break Some(all_video_outputs),
             "stress" => break Some(stress),
+            "noise" => break Some(noise),
             _ => (),
         }
     })

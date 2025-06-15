@@ -74,6 +74,37 @@ pub fn stress(channel_count: usize, i: usize, channel: &mut Channel) {
     }
 }
 
+/// A test mode designed to test noise generation.
+pub fn noise(_: usize, i: usize, channel: &mut Channel) {
+    if i > 0 {
+        return;
+    }
+    channel.level = UnipolarFloat::ONE;
+
+    if let Beam::Tunnel(ref mut tunnel) = channel.beam {
+        use TunnelStateChange::*;
+
+        set_tunnel_state(tunnel, Blacking(BipolarFloat::ZERO));
+        set_tunnel_state(tunnel, Size(UnipolarFloat::new(0.5)));
+        set_tunnel_state(tunnel, Thickness(UnipolarFloat::new(0.05)));
+
+        let anim = tunnel.animations().next().unwrap();
+        set_animation_state(
+            &mut anim.animation,
+            AnimationStateChange::Waveform(Waveform::Noise),
+        );
+        set_animation_state(
+            &mut anim.animation,
+            AnimationStateChange::Speed(BipolarFloat::new(0.5)),
+        );
+        set_animation_state(
+            &mut anim.animation,
+            AnimationStateChange::Size(UnipolarFloat::new(0.5)),
+        );
+        set_animation_state(&mut anim.animation, AnimationStateChange::NPeriods(5));
+    }
+}
+
 struct DummyEmitter;
 
 impl EmitStateChange for DummyEmitter {

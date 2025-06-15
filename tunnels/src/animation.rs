@@ -7,7 +7,7 @@ use crate::waveforms::WaveformArgs;
 use crate::{clock_bank::ClockIdx, waveforms};
 use log::error;
 use noise::NoiseFn;
-use noise::Perlin;
+use noise::Simplex;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
@@ -19,7 +19,7 @@ pub enum Waveform {
     Square,
     Sawtooth,
     Constant,
-    Perlin,
+    Noise,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -28,7 +28,7 @@ pub struct Animation {
     pulse: bool,
     standing: bool,
     invert: bool,
-    n_periods: usize,
+    pub n_periods: usize,
     size: UnipolarFloat,
     duty_cycle: UnipolarFloat,
     smoothing: UnipolarFloat,
@@ -36,7 +36,7 @@ pub struct Animation {
     clock_source: Option<ClockIdx>,
     use_audio_size: bool,
     #[serde(skip)]
-    perlin_gen: Perlin,
+    simplex_gen: Simplex,
 }
 
 impl Default for Animation {
@@ -59,7 +59,7 @@ impl Animation {
             internal_clock: Clock::new(),
             clock_source: None,
             use_audio_size: false,
-            perlin_gen: Perlin::default(),
+            simplex_gen: Default::default(),
         }
     }
 
@@ -123,11 +123,11 @@ impl Animation {
                     waveforms::triangle(&self.waveform_args(spatial_phase_offset, external_clocks))
                 }
                 Waveform::Constant => 1.0,
-                Waveform::Perlin => {
-                    let full_spatial_offset = self.ticks(external_clocks) as f64
-                        + spatial_phase_offset.val() * (self.n_periods as f64);
-                    self.perlin_gen
-                        .get([full_spatial_offset + self.phase(external_clocks).val()])
+                Waveform::Noise => {
+                    let full_spatial_offset = (self.ticks(external_clocks) as f64)
+                        + (spatial_phase_offset.val() * (self.n_periods as f64));
+                    self.simplex_gen
+                        .get([full_spatial_offset + self.phase(external_clocks).val(), 0.0])
                 }
             };
 
