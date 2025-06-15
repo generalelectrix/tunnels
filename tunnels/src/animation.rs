@@ -25,11 +25,11 @@ pub enum Waveform {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Animation {
-    pub waveform: Waveform,
+    waveform: Waveform,
     pulse: bool,
     standing: bool,
     invert: bool,
-    pub n_periods: usize,
+    n_periods: usize,
     size: UnipolarFloat,
     duty_cycle: UnipolarFloat,
     /// Use a smoother for the smoothing parameter.
