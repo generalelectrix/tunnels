@@ -6,6 +6,9 @@ use crate::transient_indicator::TransientIndicator;
 
 /// The number of times a clock has ticked.
 /// Signed to support negative rates.
+///
+/// A "max rate" clock, ticking every frame somehow, would accrue about
+/// 2M ticks per day.
 pub type Ticks = i64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
