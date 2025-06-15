@@ -4,6 +4,7 @@ use crate::{
     clock::{
         ControlMessage as ClockControlMessage, ControllableClock,
         EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange, StaticClock,
+        Ticks,
     },
     master_ui::EmitStateChange as EmitShowStateChange,
 };
@@ -17,6 +18,9 @@ use typed_index_derive::TypedIndex;
 pub trait ClockStore {
     /// Return the current phase of this clock.
     fn phase(&self, index: ClockIdx) -> Phase;
+
+    /// Returnt the absolute number of ticks.
+    fn ticks(&self, index: ClockIdx) -> Ticks;
 
     /// Return the current submaster level of this clock.
     fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat;
@@ -63,6 +67,10 @@ pub struct ClockBank([ControllableClock; N_CLOCKS]);
 impl ClockStore for ClockBank {
     fn phase(&self, index: ClockIdx) -> Phase {
         self.get(index).phase()
+    }
+
+    fn ticks(&self, index: ClockIdx) -> Ticks {
+        self.get(index).ticks()
     }
 
     fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {

@@ -22,7 +22,7 @@ pub struct WaveformArgs {
 
 impl WaveformArgs {
     /// Return a temporal scaling factor and processed waveform args.
-    /// This implements standing vs travelling wave behavior for all waveforms.
+    /// This implements standing vs travelling wave behavior for any periodic waveform.
     fn spatial_params(&self) -> (f64, WaveformArgsSpatial) {
         if self.standing {
             let mut amplitude = (TWO_PI * self.phase_temporal.val()).cos();
@@ -69,12 +69,6 @@ impl WaveformArgsSpatial {
     fn duty_cycle_scaled_phase(&self) -> Phase {
         self.phase / self.duty_cycle
     }
-}
-
-/// Return an animation value that is a scaled constant.
-/// All parameters are ignored.
-pub fn constant(_args: &WaveformArgs) -> f64 {
-    1.0
 }
 
 pub fn sine(args: &WaveformArgs) -> f64 {

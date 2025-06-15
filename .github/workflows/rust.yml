@@ -18,12 +18,12 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install libasound2-dev libavahi-compat-libdnssd-dev libzmq3-dev pkg-config
+          sudo apt-get install libasound2-dev libavahi-compat-libdnssd-dev libzmq3-dev pkg-config libfontconfig1-dev
       - name: Build controller
-        run: cargo build --verbose
+        run: cargo build
         working-directory: tunnels
       - name: Run controller tests
-        run: cargo test --verbose
+        run: cargo test
         working-directory: tunnels
   client:
     runs-on: ubuntu-latest

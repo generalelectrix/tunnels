@@ -4,9 +4,19 @@ use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 
 use crate::transient_indicator::TransientIndicator;
 
+/// The number of times a clock has ticked.
+/// Signed to support negative rates.
+///
+/// A "max rate" clock, ticking every frame somehow, would accrue about
+/// 2M ticks per day.
+pub type Ticks = i64;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
+    /// The current phase of this clock.
     phase: Phase,
+    /// The total number of ticks this clock has made.
+    ticks: Ticks,
     /// in unit angle per second
     pub rate: f64,
     /// did the clock tick on its most recent update?
@@ -33,6 +43,7 @@ impl Clock {
     pub fn new() -> Self {
         Self {
             phase: Phase::ZERO,
+            ticks: 0,
             rate: 0.0,
             ticked: true,
             one_shot: false,
@@ -45,6 +56,7 @@ impl Clock {
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         if self.reset_on_update {
             self.ticked = true;
+            self.ticks = 0;
             // Reset phase to zero or one, depending on sign of rate.
             self.phase = if self.rate >= 0.0 {
                 Phase::ZERO
@@ -81,6 +93,9 @@ impl Clock {
         } else {
             // if the phase just escaped our range, we ticked this frame
             self.ticked = !(0.0..1.0).contains(&new_angle);
+            if self.ticked {
+                self.ticks = self.ticks.wrapping_add(new_angle.div_euclid(1.0) as i64);
+            }
             self.phase = Phase::new(new_angle);
         }
     }
@@ -95,12 +110,17 @@ impl Clock {
     pub fn phase(&self) -> Phase {
         self.phase
     }
+
+    pub fn ticks(&self) -> Ticks {
+        self.ticks
+    }
 }
 
 /// A static snapshot of externally-visible ControllableClock state.
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct StaticClock {
     pub phase: Phase,
+    pub ticks: Ticks,
     pub submaster_level: UnipolarFloat,
     pub use_audio_size: bool,
 }
@@ -148,6 +168,11 @@ impl ControllableClock {
         self.clock.phase()
     }
 
+    /// Return the number of ticks this clock has ticked.
+    pub fn ticks(&self) -> Ticks {
+        self.clock.ticks()
+    }
+
     /// Return the current submaster level.
     pub fn submaster_level(&self) -> UnipolarFloat {
         self.submaster_level
@@ -165,6 +190,7 @@ impl ControllableClock {
     pub fn as_static(&self) -> StaticClock {
         StaticClock {
             phase: self.phase(),
+            ticks: self.ticks(),
             submaster_level: self.submaster_level(),
             use_audio_size: self.use_audio_size(),
         }

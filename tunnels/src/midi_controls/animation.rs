@@ -25,7 +25,8 @@ const SINE: Mapping = note_on_ch0(24);
 const TRIANGLE: Mapping = note_on_ch0(25);
 const SQUARE: Mapping = note_on_ch0(26);
 const SAWTOOTH: Mapping = note_on_ch0(27);
-const CONSTANT: Mapping = note_on_ch0(28);
+const NOISE: Mapping = note_on_ch0(28);
+const CONSTANT: Mapping = note_on_ch0(29);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
@@ -38,7 +39,7 @@ const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
 lazy_static! {
     static ref WAVEFORM_SELECT_BUTTONS: RadioButtons = RadioButtons {
-        mappings: vec!(SINE, TRIANGLE, SQUARE, SAWTOOTH, CONSTANT), off: 0, on: 1,
+        mappings: vec!(SINE, TRIANGLE, SQUARE, SAWTOOTH, NOISE, CONSTANT), off: 0, on: 1,
     };
     static ref N_PERIODS_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..15).map(note_on_ch0).collect(), off: 0, on: 1,
@@ -82,6 +83,7 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
     add(TRIANGLE, Box::new(|_| Animation(Set(Waveform(Triangle)))));
     add(SQUARE, Box::new(|_| Animation(Set(Waveform(Square)))));
     add(SAWTOOTH, Box::new(|_| Animation(Set(Waveform(Sawtooth)))));
+    add(NOISE, Box::new(|_| Animation(Set(Waveform(Noise)))));
     add(CONSTANT, Box::new(|_| Animation(Set(Waveform(Constant)))));
 
     // n periods select
@@ -138,6 +140,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut Manager<Device>) 
                     Triangle => TRIANGLE,
                     Square => SQUARE,
                     Sawtooth => SAWTOOTH,
+                    Noise => NOISE,
                     Constant => CONSTANT,
                 },
                 send,

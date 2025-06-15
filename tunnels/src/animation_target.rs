@@ -1,8 +1,7 @@
 //! Targeting animations to tunnel parameters.
 //! Due to some quirks in the way I implemented the UI, it makes the most sense
 //! to extract this as a separate module since it needs its own control layer
-//! due animation targets being scoped to an animation but owned by the tunnel.
-//! TODO: consider making this somehow generic for re-use in other applications.
+//! due to animation targets being scoped to an animation but owned by the tunnel.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +14,6 @@ pub enum AnimationTarget {
     AspectRatio,
     Color,
     ColorSpread,
-    ColorPeriodicity,
     ColorSaturation,
     MarqueeRotation,
     PositionX,
