@@ -7,7 +7,7 @@ use std::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// Smooth between two values using a smoothing function.
+/// Smooth between two values using a smoothing function.
 pub struct Smoother<T: Add<Output = T> + Clone + Copy + Mul<UnipolarFloat, Output = T>> {
     previous: T,
     target: T,
@@ -27,25 +27,25 @@ impl<T: Add<Output = T> + Clone + Copy + Mul<UnipolarFloat, Output = T>> Smoothe
         }
     }
 
-    // Set a new target for this smoother.
+    /// Set a new target for this smoother.
     pub fn set_target(&mut self, target: T) {
         self.previous = self.val();
         self.target = target;
         self.alpha = UnipolarFloat::ZERO;
     }
 
-    // Get the current target value.
+    /// Get the current target value.
     pub fn target(&self) -> T {
         self.target
     }
 
-    // Update the state of this smoother.
+    /// Update the state of this smoother.
     pub fn update_state(&mut self, delta_t: Duration) {
         let delta_alpha = delta_t.as_secs_f64() / self.smooth_time.as_secs_f64();
         self.alpha += delta_alpha;
     }
 
-    // Return the current smoothed value.
+    /// Return the current smoothed value.
     pub fn val(&self) -> T {
         if self.alpha == UnipolarFloat::ONE {
             return self.target;

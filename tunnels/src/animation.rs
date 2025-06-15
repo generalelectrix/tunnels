@@ -11,6 +11,7 @@ use noise::Simplex;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
+use tunnels_lib::smooth::Smoother;
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub enum Waveform {
@@ -31,7 +32,12 @@ pub struct Animation {
     pub n_periods: usize,
     size: UnipolarFloat,
     duty_cycle: UnipolarFloat,
-    smoothing: UnipolarFloat,
+    /// Use a smoother for the smoothing parameter.
+    /// This is only necessary when used as the noise cross-correlation parameter,
+    /// since small changes imply significant movements in the noise distribution.
+    /// TODO: consider if we want to turn smoothing of this parameter off when
+    /// we're in anything besides noise.
+    smoothing: Smoother<UnipolarFloat>,
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
     use_audio_size: bool,
@@ -41,12 +47,6 @@ pub struct Animation {
 
 impl Default for Animation {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Animation {
-    pub fn new() -> Self {
         Self {
             waveform: Waveform::Sine,
             pulse: false,
@@ -55,13 +55,21 @@ impl Animation {
             n_periods: 0,
             size: UnipolarFloat::ZERO,
             duty_cycle: UnipolarFloat::ONE,
-            smoothing: UnipolarFloat::new(0.25),
+            smoothing: Smoother::new(
+                UnipolarFloat::new(0.25),
+                Self::SMOOTH_SMOOTH_TIME,
+                tunnels_lib::smooth::SmoothMode::Linear,
+            ),
             internal_clock: Clock::new(),
             clock_source: None,
             use_audio_size: false,
             simplex_gen: Default::default(),
         }
     }
+}
+
+impl Animation {
+    const SMOOTH_SMOOTH_TIME: Duration = Duration::from_millis(100);
 
     /// Return true if this animation has nonzero size.
     fn active(&self) -> bool {
@@ -95,6 +103,7 @@ impl Animation {
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         if self.active() {
             self.internal_clock.update_state(delta_t, audio_envelope);
+            self.smoothing.update_state(delta_t);
         }
     }
 
@@ -132,7 +141,7 @@ impl Animation {
                     // samples. Smoothing of zero offsets each sample by a full
                     // interval, which should produce fairly uncorrelated noise
                     // for different offsets.
-                    let correlation = 1.0 - self.smoothing.val();
+                    let correlation = 1.0 - self.smoothing.val().val();
                     let offset = correlation * offset_index as f64;
                     let mut val = self.simplex_gen.get([
                         full_spatial_offset + self.phase(external_clocks).val(),
@@ -178,7 +187,7 @@ impl Animation {
         WaveformArgs {
             phase_spatial: spatial_phase_offset * (self.n_periods as f64),
             phase_temporal: self.phase(external_clocks),
-            smoothing: self.smoothing,
+            smoothing: self.smoothing.val(),
             duty_cycle: self.duty_cycle,
             pulse: self.pulse,
             standing: self.standing,
@@ -196,7 +205,7 @@ impl Animation {
         emitter.emit_animation_state_change(Speed(self.clock_speed()));
         emitter.emit_animation_state_change(Size(self.size));
         emitter.emit_animation_state_change(DutyCycle(self.duty_cycle));
-        emitter.emit_animation_state_change(Smoothing(self.smoothing));
+        emitter.emit_animation_state_change(Smoothing(self.smoothing.target()));
         emitter.emit_animation_state_change(ClockSource(self.clock_source));
         emitter.emit_animation_state_change(UseAudioSize(self.use_audio_size));
         emitter.emit_animation_state_change(UseAudioSpeed(self.internal_clock.use_audio));
@@ -257,7 +266,7 @@ impl Animation {
             Speed(v) => self.set_clock_speed(v),
             Size(v) => self.size = v,
             DutyCycle(v) => self.duty_cycle = v,
-            Smoothing(v) => self.smoothing = v,
+            Smoothing(v) => self.smoothing.set_target(v),
             ClockSource(v) => self.clock_source = v,
             UseAudioSize(v) => self.use_audio_size = v,
             UseAudioSpeed(v) => self.internal_clock.use_audio = v,
