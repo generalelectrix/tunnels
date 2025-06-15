@@ -133,9 +133,21 @@ impl Animation {
                     waveforms::triangle(&self.waveform_args(spatial_phase_offset, external_clocks))
                 }
                 Waveform::Noise => {
-                    let full_spatial_offset = (self.ticks(external_clocks) as f64)
-                        + (spatial_phase_offset.val() * (self.n_periods as f64));
-                    let x_offset = full_spatial_offset + self.phase(external_clocks).val();
+                    // Handle duty cycle - this is a bit odd compared to waveforms,
+                    // since noise isn't periodic. Rather than trying to compress
+                    // the waveform to maintain the waveshape, we just turn off
+                    // the animation for a portion of each cycle.
+                    let spatial_phase = spatial_phase_offset.val() * self.n_periods as f64;
+                    let temporal_phase = self.phase(external_clocks).val();
+
+                    if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
+                        || self.duty_cycle == 0.0
+                    {
+                        return 0.0;
+                    }
+
+                    let x_offset =
+                        self.ticks(external_clocks) as f64 + spatial_phase + temporal_phase;
 
                     // Use smoothing parameter as a "cross-correlation" term;
                     // increased smoothing means a smaller Y-offset between
