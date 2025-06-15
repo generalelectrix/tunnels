@@ -236,7 +236,7 @@ impl Tunnel {
                     AspectRatio => aspect_ratio_adjust += anim_value,
                     Color => col_center_adjust += anim_value * 0.5,
                     ColorSpread => col_width_adjust += anim_value,
-                    ColorSaturation => col_sat_adjust += anim_value * 0.5, // limit adjustment
+                    ColorSaturation => col_sat_adjust += anim_value,
                     PositionX => x_adjust += anim_value,
                     PositionY => y_adjust += anim_value,
                 }
