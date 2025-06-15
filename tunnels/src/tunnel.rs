@@ -221,9 +221,12 @@ impl Tunnel {
             let mut marquee_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
             for anim in &self.anims {
-                let anim_value =
-                    anim.animation
-                        .get_value(rel_angle, external_clocks, audio_envelope);
+                let anim_value = anim.animation.get_value(
+                    rel_angle,
+                    seg_num as usize,
+                    external_clocks,
+                    audio_envelope,
+                );
 
                 use AnimationTarget::*;
                 match anim.target {

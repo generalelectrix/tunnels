@@ -101,6 +101,7 @@ impl Animation {
     pub fn get_value(
         &self,
         spatial_phase_offset: Phase,
+        offset_index: usize,
         external_clocks: &impl ClockStore,
         audio_envelope: UnipolarFloat,
     ) -> f64 {
@@ -126,8 +127,28 @@ impl Animation {
                 Waveform::Noise => {
                     let full_spatial_offset = (self.ticks(external_clocks) as f64)
                         + (spatial_phase_offset.val() * (self.n_periods as f64));
-                    self.simplex_gen
-                        .get([full_spatial_offset + self.phase(external_clocks).val(), 0.0])
+                    // Use smoothing parameter as a "cross-correlation" term;
+                    // increased smoothing means a smaller Y-offset between
+                    // samples. Smoothing of zero offsets each sample by a full
+                    // interval, which should produce fairly uncorrelated noise
+                    // for different offsets.
+                    let correlation = 1.0 - self.smoothing.val();
+                    let offset = correlation * offset_index as f64;
+                    let mut val = self.simplex_gen.get([
+                        full_spatial_offset + self.phase(external_clocks).val(),
+                        offset,
+                    ]);
+                    if self.pulse {
+                        // Square the noise for pulse mode, to ensure we still
+                        // get smooth transitions through zero. This does reduce
+                        // peak width; we may want to adjust this strategy.
+                        // Absolute value would preserve peak width while
+                        // sacrificing smooth transitions to zero, but that may
+                        // actually not matter for most of the parameters we'd
+                        // want to animated with this (like brightness).
+                        val = val.powi(2);
+                    }
+                    val
                 }
             };
 
