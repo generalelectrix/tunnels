@@ -4,13 +4,15 @@ use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 
 use crate::transient_indicator::TransientIndicator;
 
+/// The number of times a clock has ticked.
+/// Signed to support negative rates.
 pub type Ticks = i64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clock {
     /// The current phase of this clock.
     phase: Phase,
-    /// The total number of ticks this clock has made. Signed to support negative rates.
+    /// The total number of ticks this clock has made.
     ticks: Ticks,
     /// in unit angle per second
     pub rate: f64,
