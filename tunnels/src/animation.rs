@@ -135,6 +135,8 @@ impl Animation {
                 Waveform::Noise => {
                     let full_spatial_offset = (self.ticks(external_clocks) as f64)
                         + (spatial_phase_offset.val() * (self.n_periods as f64));
+                    let x_offset = full_spatial_offset + self.phase(external_clocks).val();
+
                     // Use smoothing parameter as a "cross-correlation" term;
                     // increased smoothing means a smaller Y-offset between
                     // samples. Smoothing of zero offsets each sample by a full
@@ -151,18 +153,16 @@ impl Animation {
                     } else {
                         (1.0 - self.smoothing.val().val()) * offset_index as f64
                     };
-                    let mut val = self.simplex_gen.get([
-                        full_spatial_offset + self.phase(external_clocks).val(),
-                        y_offset,
-                    ]);
+
+                    let mut val = self.simplex_gen.get([x_offset, y_offset]);
+
+                    // Take the square for pulse mode to avoid sharp edges at zero,
+                    // and to maintain a bias towards the animation value frequently
+                    // touching zero. This produces more of a forest of peaks.
+                    // Simply rescaling the full noise spectrum into the unipolar
+                    // range would result in very rarely touching zero, which is
+                    // unlikely to be what we're looking for, artistically speaking.
                     if self.pulse {
-                        // Square the noise for pulse mode, to ensure we still
-                        // get smooth transitions through zero. This does reduce
-                        // peak width; we may want to adjust this strategy.
-                        // Absolute value would preserve peak width while
-                        // sacrificing smooth transitions to zero, but that may
-                        // actually not matter for most of the parameters we'd
-                        // want to animated with this (like brightness).
                         val = val.powi(2);
                     }
                     val
