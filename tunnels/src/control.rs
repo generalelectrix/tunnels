@@ -4,11 +4,12 @@ use std::time::Duration;
 
 use crate::master_ui::EmitStateChange;
 use crate::midi_controls::Dispatcher as MidiDispatcher;
+use crate::osc;
 use crate::show::{ControlMessage, StateChange};
 use crate::{
     midi::{DeviceSpec as MidiDeviceSpec, Event as MidiEvent},
     midi_controls::Device as MidiDevice,
-    osc::{Device as OscDevice, DeviceSpec as OscDeviceSpec, Dispatcher as OscDispatcher},
+    osc::{Device as OscDevice, DeviceSpec as OscDeviceSpec},
 };
 use anyhow::bail;
 use rosc::OscMessage;
@@ -21,7 +22,6 @@ pub enum ControlEvent {
 
 pub struct Dispatcher {
     midi_dispatcher: MidiDispatcher,
-    osc_dispatcher: OscDispatcher,
     recv: Receiver<ControlEvent>,
     // Hang onto a copy of this for when we're running in test mode, otherwise
     // the channel is closed instantly and we do not block properly.
@@ -36,9 +36,12 @@ impl Dispatcher {
     ) -> Result<Self> {
         let (send, recv) = channel();
 
+        for osc_device in osc_devices {
+            osc::listen(osc_device, send.clone())?;
+        }
+
         Ok(Self {
             midi_dispatcher: MidiDispatcher::new(midi_devices, send.clone())?,
-            osc_dispatcher: OscDispatcher::new(osc_devices, send.clone())?,
             recv,
             _send: send,
         })
@@ -59,7 +62,7 @@ impl Dispatcher {
             Midi((device, event)) => Ok(self
                 .midi_dispatcher
                 .map_event_to_show_control(device, event)),
-            Osc((device, event)) => self.osc_dispatcher.map_event_to_show_control(device, event),
+            Osc((device, event)) => osc::map_event_to_show_control(device, event),
         }
     }
 }

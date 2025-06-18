@@ -10,10 +10,9 @@ use tunnels_lib::color::Rgb;
 use tunnels_lib::number::UnipolarFloat;
 
 use crate::control::ControlEvent;
-use crate::master_ui::EmitStateChange;
 use crate::palette::{ControlMessage as PaletteControlMessage, StateChange as PaletteStateChange};
 use crate::position_bank::Position;
-use crate::show::{ControlMessage, StateChange};
+use crate::show::ControlMessage;
 
 /// The OSC device types that tunnels can work with.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Display)]
@@ -29,36 +28,21 @@ pub struct DeviceSpec {
     pub addr: SocketAddr,
 }
 
-pub struct Dispatcher {
-    _inputs: Vec<Input>,
-}
-
-impl Dispatcher {
-    pub fn new(osc_devices: Vec<DeviceSpec>, send: Sender<ControlEvent>) -> Result<Self> {
-        let mut inputs = Vec::new();
-        for osc_device in osc_devices {
-            inputs.push(Input::new(osc_device, send.clone())?);
-        }
-        Ok(Self { _inputs: inputs })
-    }
-
-    /// Map the provided OSC event to a show control message.
-    /// Return None if the event does not map to a known control.
-    pub fn map_event_to_show_control(
-        &self,
-        device: Device,
-        event: OscMessage,
-    ) -> Result<Option<ControlMessage>> {
-        match event.addr.as_str() {
-            "/palette" => handle_palette(event.args).map(Some),
-            "/position" => handle_position(event.args).map(Some),
-            unknown => {
-                debug!(
-                    "Unknown OSC command from device {} with address {}: {:?}",
-                    device, unknown, event.args
-                );
-                Ok(None)
-            }
+/// Map the provided OSC event to a show control message.
+/// Return None if the event does not map to a known control.
+pub fn map_event_to_show_control(
+    device: Device,
+    event: OscMessage,
+) -> Result<Option<ControlMessage>> {
+    match event.addr.as_str() {
+        "/palette" => handle_palette(event.args).map(Some),
+        "/position" => handle_position(event.args).map(Some),
+        unknown => {
+            debug!(
+                "Unknown OSC command from device {} with address {}: {:?}",
+                device, unknown, event.args
+            );
+            Ok(None)
         }
     }
 }
@@ -126,41 +110,30 @@ fn get_osc_float(v: &OscType) -> Result<f64> {
     }
 }
 
-impl EmitStateChange for Dispatcher {
-    /// Map application state changes into OSC update midi messages.
-    fn emit(&mut self, _: StateChange) {
-        // For the moment there's no talkback over OSC.
-    }
-}
-
-/// Input is a OSC input, forwarding OSC messages to the provided sender.
+/// Open an OSC input, forwarding OSC messages to the provided sender.
 /// Spawns a new thread to handle listening for messages.
-struct Input(DeviceSpec);
+pub fn listen(spec: DeviceSpec, send: Sender<ControlEvent>) -> Result<()> {
+    let socket = UdpSocket::bind(spec.addr)?;
 
-impl Input {
-    pub fn new(spec: DeviceSpec, send: Sender<ControlEvent>) -> Result<Self> {
-        let socket = UdpSocket::bind(spec.addr)?;
+    let mut buf = [0u8; rosc::decoder::MTU];
 
-        let mut buf = [0u8; rosc::decoder::MTU];
+    let mut recv = move || -> Result<OscPacket> {
+        let size = socket.recv(&mut buf)?;
+        let (_, packet) = rosc::decoder::decode_udp(&buf[..size])?;
+        Ok(packet)
+    };
 
-        let mut recv = move || -> Result<OscPacket> {
-            let size = socket.recv(&mut buf)?;
-            let (_, packet) = rosc::decoder::decode_udp(&buf[..size])?;
-            Ok(packet)
-        };
-
-        thread::spawn(move || loop {
-            match recv() {
-                Ok(packet) => {
-                    forward_packet(packet, spec.device, &send);
-                }
-                Err(e) => {
-                    error!("Error receiving from OSC device {}: {}", spec.device, e);
-                }
+    thread::spawn(move || loop {
+        match recv() {
+            Ok(packet) => {
+                forward_packet(packet, spec.device, &send);
             }
-        });
-        Ok(Self(spec))
-    }
+            Err(e) => {
+                error!("Error receiving from OSC device {}: {}", spec.device, e);
+            }
+        }
+    });
+    Ok(())
 }
 
 /// Recursively unpack OSC packets and send all the inner messages as control events.
