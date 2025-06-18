@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Result};
-use log::{error, warn};
+use log::{debug, error};
 use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::mpsc::Sender};
@@ -197,7 +197,7 @@ impl Input {
                         9 => EventType::NoteOn,
                         11 => EventType::ControlChange,
                         other => {
-                            warn!(
+                            debug!(
                                 "Ignoring midi input event on {} of unimplemented type {}.",
                                 handler_name, other
                             );
@@ -323,7 +323,7 @@ fn prompt_input_output<D: MidiDevice>(
     output_ports: &[String],
 ) -> Result<DeviceSpec<D>> {
     let name = device.device_name().to_string();
-    if input_ports.iter().any(|d| *d == name) && output_ports.iter().any(|d| *d == name) {
+    if input_ports.contains(&name) && output_ports.contains(&name) {
         return Ok(DeviceSpec {
             device,
             input_port_name: name.to_string(),
