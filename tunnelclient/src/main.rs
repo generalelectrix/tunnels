@@ -1,14 +1,7 @@
-mod constants {
-    use std::f64::consts::PI;
-    pub const TWOPI: f64 = 2.0 * PI;
-}
-
 mod config;
 mod draw;
 mod remote;
 mod show;
-mod snapshot_manager;
-mod timesync;
 
 use crate::config::ClientConfig;
 use crate::remote::{administrate, run_remote};

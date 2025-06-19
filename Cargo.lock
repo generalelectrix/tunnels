@@ -3764,7 +3764,6 @@ dependencies = [
  "anyhow",
  "derive_more 2.0.1",
  "hostname",
- "interpolation",
  "lazy_static",
  "log 0.4.27",
  "piston2d-graphics 0.45.0",

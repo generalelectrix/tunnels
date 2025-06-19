@@ -189,27 +189,27 @@ pub fn assert_almost_eq(a: f64, b: f64) {
     assert!(almost_eq(a, b), "{} != {}", a, b);
 }
 
-pub fn arc_segment_for_test(linear: f64, radial: f64) -> ArcSegment {
-    ArcSegment {
-        level: linear,
-        thickness: linear,
-        sat: linear,
-        val: linear,
-        x: linear,
-        y: linear,
-        rad_x: linear,
-        rad_y: linear,
-        // radial items
-        hue: radial,
-        start: radial,
-        stop: radial,
-        rot_angle: radial,
-    }
-}
-
 #[cfg(test)]
 pub mod test {
-    use crate::arc_segment_for_test;
+    use crate::ArcSegment;
+
+    fn arc_segment_for_test(linear: f64, radial: f64) -> ArcSegment {
+        ArcSegment {
+            level: linear,
+            thickness: linear,
+            sat: linear,
+            val: linear,
+            x: linear,
+            y: linear,
+            rad_x: linear,
+            rad_y: linear,
+            // radial items
+            hue: radial,
+            start: radial,
+            stop: radial,
+            rot_angle: radial,
+        }
+    }
 
     #[test]
     fn test_arc_eq() {

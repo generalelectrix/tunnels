@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
 use crate::config::ClientConfig;
-use crate::constants::TWOPI;
 use graphics::types::Color;
 use graphics::Context;
 use graphics::{rectangle, CircleArc, Graphics, Transformed};
 use serde::{Deserialize, Serialize};
+use std::f64::consts::PI;
 use tunnels_lib::ArcSegment;
 use tunnels_lib::Snapshot;
+
+const TWOPI: f64 = 2.0 * PI;
 
 /// The axis along which to perform a transformation.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]

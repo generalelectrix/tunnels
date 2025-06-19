@@ -247,12 +247,6 @@ fn parse_uint(s: &str) -> Result<u64, String> {
         .map_err(|e| format!("Could not parse '{}' as positive integer: {}", s, e))
 }
 
-/// Parse string as float.
-fn parse_f64(s: &str) -> Result<f64, String> {
-    s.parse()
-        .map_err(|e| format!("Could not parse '{}' as float: {}", s, e))
-}
-
 /// Interactive series of user prompts, producing a configuration.
 fn configure_one<H>(hostname: H) -> ClientConfig
 where
@@ -270,34 +264,16 @@ where
         None
     };
 
-    // Some defaults we might configure in advanced mode.
-    let mut timesync_interval = Duration::from_secs(60);
-    let mut render_delay = 0.015;
-    let mut capture_mouse = true;
-    let mut single_snapshot = true;
-
-    if prompt_y_n("Configure advanced settings") {
-        capture_mouse = prompt_y_n("Capture mouse");
-        let timesync_interval_secs = prompt(
-            "Host/client time resynchronization interval in seconds (default 60)",
-            parse_uint,
-        );
-        timesync_interval = Duration::from_secs(timesync_interval_secs);
-        render_delay = prompt("Client render delay in seconds (default 0.015)", parse_f64);
-        single_snapshot = prompt_y_n("Use single snapshot mode");
-    }
+    let capture_mouse = prompt_y_n("Capture mouse");
 
     ClientConfig::new(
         video_channel,
         hostname.into(),
         resolution,
-        timesync_interval,
-        Duration::from_secs_f64(render_delay),
         fullscreen,
         capture_mouse,
         transformation,
         false,
-        single_snapshot,
     )
 }
 
