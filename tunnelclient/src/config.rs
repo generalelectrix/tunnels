@@ -20,11 +20,11 @@ pub struct ClientConfig {
     pub server_hostname: String,
     /// Virtual video channel to listen to.
     pub video_channel: u64,
-    /// Delay between current time and time to render.
-    pub render_delay: Duration, // UNUSED - preserved until client machines are updated
-    /// Which snapshot management mechanism to use.
-    pub snapshot_management: SnapshotManagement, // UNUSED - preserved until client machines are updated
-    /// Delay between host/client time synchronization updates.
+    /// UNUSED - preserved until client machines are updated
+    pub render_delay: Duration,
+    /// UNUSED - preserved until client machines are updated
+    pub snapshot_management: SnapshotManagement,
+    /// UNUSED - preserved until client machines are updated.
     pub timesync_interval: Duration,
     pub x_resolution: u32,
     pub y_resolution: u32,
@@ -53,8 +53,6 @@ impl ClientConfig {
         video_channel: u64,
         host: String,
         resolution: Resolution,
-        timesync_interval: Duration,
-        render_delay: Duration,
         fullscreen: bool,
         capture_mouse: bool,
         transformation: Option<Transform>,
@@ -65,8 +63,8 @@ impl ClientConfig {
         ClientConfig {
             server_hostname: host,
             video_channel,
-            render_delay,
-            timesync_interval,
+            render_delay: Default::default(),
+            timesync_interval: Default::default(),
             x_resolution,
             y_resolution,
             fullscreen,
@@ -101,11 +99,6 @@ impl ClientConfig {
             .ok_or(anyhow!("Hostname missing."))?
             .trim()
             .to_string();
-        let timesync_interval = Duration::from_millis(
-            cfg["timesync_interval"]
-                .as_i64()
-                .ok_or(anyhow!("Bad timesync_interval."))? as u64,
-        );
 
         let flag = |name: &str, missing: &'static str| -> Result<bool> {
             cfg[name].as_bool().ok_or(anyhow!(missing))
@@ -121,12 +114,6 @@ impl ClientConfig {
             video_channel,
             host,
             (x_resolution, y_resolution),
-            timesync_interval,
-            Duration::from_secs_f64(
-                cfg["render_delay"]
-                    .as_f64()
-                    .ok_or(anyhow!("Bad render delay."))?,
-            ),
             flag("fullscreen", "Bad fullscreen flag.")?,
             flag("capture_mouse", "Bad mouse capture flag.")?,
             transformation,

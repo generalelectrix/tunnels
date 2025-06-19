@@ -35,9 +35,6 @@ impl Show {
 
         let opengl = OpenGL::V3_2;
 
-        // Sleep for a render delay to make sure we have snapshots before we start rendering.
-        thread::sleep(cfg.render_delay);
-
         // Create the window.
         let mut window: PistonWindow<Sdl2Window> = WindowSettings::new(
             format!("tunnelclient: channel {}", cfg.video_channel),

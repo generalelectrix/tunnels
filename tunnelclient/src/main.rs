@@ -1,8 +1,3 @@
-mod constants {
-    use std::f64::consts::PI;
-    pub const TWOPI: f64 = 2.0 * PI;
-}
-
 mod config;
 mod draw;
 mod remote;

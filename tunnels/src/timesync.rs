@@ -1,3 +1,4 @@
+//! TODO: destroy this part of the codebase once the clients no longer expect it
 use anyhow::Result;
 use log::{error, info};
 use std::thread;
