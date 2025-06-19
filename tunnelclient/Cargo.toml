@@ -23,7 +23,6 @@ piston2d-graphics = "0.45"
 pistoncore-glutin_window = "0.72"
 piston2d-opengl_graphics = "0.89"
 pistoncore-sdl2_window = { git = "https://github.com/PistonDevelopers/sdl2_window" }
-interpolation = "0.3"
 yaml-rust = "0.4"
 
 streaming-stats = "0.2"

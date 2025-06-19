@@ -274,7 +274,6 @@ where
     let mut timesync_interval = Duration::from_secs(60);
     let mut render_delay = 0.015;
     let mut capture_mouse = true;
-    let mut single_snapshot = true;
 
     if prompt_y_n("Configure advanced settings") {
         capture_mouse = prompt_y_n("Capture mouse");
@@ -284,7 +283,6 @@ where
         );
         timesync_interval = Duration::from_secs(timesync_interval_secs);
         render_delay = prompt("Client render delay in seconds (default 0.015)", parse_f64);
-        single_snapshot = prompt_y_n("Use single snapshot mode");
     }
 
     ClientConfig::new(
@@ -297,7 +295,6 @@ where
         capture_mouse,
         transformation,
         false,
-        single_snapshot,
     )
 }
 

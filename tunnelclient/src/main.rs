@@ -7,8 +7,6 @@ mod config;
 mod draw;
 mod remote;
 mod show;
-mod snapshot_manager;
-mod timesync;
 
 use crate::config::ClientConfig;
 use crate::remote::{administrate, run_remote};

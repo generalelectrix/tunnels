@@ -10,8 +10,6 @@ use yaml_rust::YamlLoader;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SnapshotManagement {
-    /// Store a queue of snapshots and choose between them, with a render delay.
-    Queued,
     /// Always render the latest snapshot.
     Single,
 }
@@ -23,9 +21,9 @@ pub struct ClientConfig {
     /// Virtual video channel to listen to.
     pub video_channel: u64,
     /// Delay between current time and time to render.
-    pub render_delay: Duration,
+    pub render_delay: Duration, // UNUSED - preserved until client machines are updated
     /// Which snapshot management mechanism to use.
-    pub snapshot_management: SnapshotManagement,
+    pub snapshot_management: SnapshotManagement, // UNUSED - preserved until client machines are updated
     /// Delay between host/client time synchronization updates.
     pub timesync_interval: Duration,
     pub x_resolution: u32,
@@ -61,7 +59,6 @@ impl ClientConfig {
         capture_mouse: bool,
         transformation: Option<Transform>,
         log_level_debug: bool,
-        use_single_snapshot: bool,
     ) -> ClientConfig {
         let (x_resolution, y_resolution) = resolution;
 
@@ -80,11 +77,7 @@ impl ClientConfig {
             y_center: f64::from(y_resolution / 2),
             transformation,
             log_level_debug,
-            snapshot_management: if use_single_snapshot {
-                SnapshotManagement::Single
-            } else {
-                SnapshotManagement::Queued
-            },
+            snapshot_management: SnapshotManagement::Single,
         }
     }
 
@@ -138,7 +131,6 @@ impl ClientConfig {
             flag("capture_mouse", "Bad mouse capture flag.")?,
             transformation,
             flag("log_level_debug", "Bad log level flag.")?,
-            flag("use_single_snapshot", "Bad use single snapshot flag.")?,
         ))
     }
 }
