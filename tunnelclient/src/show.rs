@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context as ErrorContext, Result};
 use graphics::clear;
 use log::{debug, error, info, warn};
 use opengl_graphics::{GlGraphics, OpenGL};
-use piston_window::*;
+use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex};

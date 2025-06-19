@@ -5,7 +5,7 @@ members = ["tunnels_lib", "tunnels", "tunnelclient", "zero_configure"]
 [workspace.dependencies]
 serde = { version = "^1", features = ["derive", "rc"] }
 log = "0.4"
-derive_more = "0.99"
+derive_more = { version = "2", features = ["full"] }
 simplelog = "0.12"
 lazy_static = "1"
 zmq = "0.10"

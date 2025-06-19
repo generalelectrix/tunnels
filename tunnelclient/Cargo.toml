@@ -18,12 +18,12 @@ anyhow.workspace = true
 derive_more.workspace = true
 zmq.workspace = true
 
-piston_window = "0.128.0"
-piston2d-graphics = "0.43.0"
-pistoncore-glutin_window = "0.71.0"
-piston2d-opengl_graphics = "0.82.0"
-pistoncore-sdl2_window = { git = "https://github.com/PistonDevelopers/sdl2_window", rev = "bdfcb78dce92119cd83fd768f480c04e215277d0" }
-interpolation = "0.2"
+piston_window = "0.132"
+piston2d-graphics = "0.45"
+pistoncore-glutin_window = "0.72"
+piston2d-opengl_graphics = "0.89"
+pistoncore-sdl2_window = { git = "https://github.com/PistonDevelopers/sdl2_window" }
+interpolation = "0.3"
 yaml-rust = "0.4"
 
 streaming-stats = "0.2"
@@ -32,4 +32,4 @@ regex = "1"
 zero_configure = { path = "../zero_configure" }
 tunnels_lib = { path = "../tunnels_lib" }
 
-hostname = "0.3"
+hostname = "0.4"
