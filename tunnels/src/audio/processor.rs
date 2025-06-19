@@ -6,7 +6,7 @@ use audio_processor_traits::{simple_processor::MonoAudioProcessor, AtomicF32, Au
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use log::debug;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct ProcessorSettingsInner {
