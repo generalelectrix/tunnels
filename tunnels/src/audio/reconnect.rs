@@ -2,6 +2,8 @@
 use anyhow::bail;
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::BufferSize;
+use cpal::SupportedBufferSize;
 use cpal::{Device, Stream, StreamError};
 use log::{info, warn};
 use std::sync::mpsc::channel;
@@ -138,7 +140,38 @@ where
     F: FnMut() + Send + 'static,
 {
     let device = open_audio_device(device_name)?;
-    let config: cpal::StreamConfig = device.default_input_config()?.into();
+    let supported = device.default_input_config()?;
+
+    // Aim for about 1 ms of audio buffering latency.
+    let sample_duration = 1. / supported.sample_rate().0 as f64;
+
+    // 1000 updates/sec
+    let target_latency = 1. / 1000.;
+
+    // Compute target samples; use a power of 2, and multiply by the number of
+    // channels (always gonna be 2)
+    let frame_count = ((target_latency / sample_duration).round() as u32).next_power_of_two();
+
+    // Check if this is valid for the device.
+    let frame_count = match supported.buffer_size() {
+        SupportedBufferSize::Unknown => {
+            warn!("Unable to get supported audio device buffer sizes.");
+            frame_count
+        }
+        SupportedBufferSize::Range { min, max } => {
+            let clamped_buffer_size = frame_count.clamp(*min, *max);
+            if clamped_buffer_size != frame_count {
+                warn!("Target audio buffer size {frame_count} is out of range for this device; using {clamped_buffer_size}.");
+            }
+            clamped_buffer_size
+        }
+    };
+    info!(
+        "Approximate audio latency {:.1} ms.",
+        frame_count as f64 * sample_duration * 1000.
+    );
+    let mut config: cpal::StreamConfig = supported.into();
+    config.buffer_size = BufferSize::Fixed(frame_count);
 
     let mut processor = Processor::new(
         processor_settings,

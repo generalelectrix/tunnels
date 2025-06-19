@@ -6,7 +6,7 @@ use audio_processor_traits::{simple_processor::MonoAudioProcessor, AtomicF32, Au
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use log::debug;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone)]
 pub struct ProcessorSettingsInner {
@@ -134,20 +134,21 @@ impl Processor {
     pub fn process(&mut self, interleaved_buffer: &[f32]) {
         self.maybe_update_parameters();
 
-        // Average the envelopes together.
-        let mut envelope_sum = 0.0;
-
         for frame in interleaved_buffer.chunks(self.channel_count) {
             for (channel_idx, sample) in frame.iter().enumerate() {
                 let sample = self.filters[channel_idx].m_process(&mut self.context, *sample);
                 let envelope = &mut self.envelopes[channel_idx];
                 envelope.m_process(&mut self.context, sample);
-                envelope_sum += envelope.handle().state();
             }
         }
 
-        self.settings
-            .envelope
-            .set(envelope_sum / self.channel_count as f32);
+        let mean_envelope = self
+            .envelopes
+            .iter()
+            .map(|envelope| envelope.handle().state())
+            .sum::<f32>()
+            / self.channel_count as f32;
+
+        self.settings.envelope.set(mean_envelope);
     }
 }
