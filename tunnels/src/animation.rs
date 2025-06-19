@@ -9,6 +9,7 @@ use log::error;
 use noise::NoiseFn;
 use noise::Simplex;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::Smoother;
@@ -41,8 +42,14 @@ pub struct Animation {
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
     use_audio_size: bool,
-    #[serde(skip)]
-    simplex_gen: Simplex,
+    #[serde(skip, default = "get_simplex_gen")]
+    simplex_gen: &'static Simplex,
+}
+
+fn get_simplex_gen() -> &'static Simplex {
+    static SIMPLEX_GEN: LazyLock<Simplex> = LazyLock::new(Default::default);
+
+    &SIMPLEX_GEN
 }
 
 impl Default for Animation {
@@ -63,7 +70,7 @@ impl Default for Animation {
             internal_clock: Clock::new(),
             clock_source: None,
             use_audio_size: false,
-            simplex_gen: Default::default(),
+            simplex_gen: get_simplex_gen(),
         }
     }
 }
