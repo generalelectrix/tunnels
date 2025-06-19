@@ -33,7 +33,7 @@ tunnels_lib = { path = "../tunnels_lib" }
 zero_configure = { path = "../zero_configure" }
 
 # Audio subsystem
-cpal = "0.15.1"
+cpal = "0.16"
 augmented-dsp-filters = "1.3.1"
 audio-processor-analysis = "0.4.0"
 audio-processor-traits = "2.2.0"
