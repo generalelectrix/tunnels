@@ -24,8 +24,8 @@ zmq.workspace = true
 anyhow.workspace = true
 rmp-serde.workspace = true
 
-midir = "0.9.1"
-rosc = "0.9.1"
+midir = "0.10"
+rosc = "0.11"
 noise = "0.9.0"
 
 typed_index_derive = "0.1.4"
