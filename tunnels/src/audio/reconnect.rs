@@ -1,11 +1,9 @@
 //! Provide an audio input stream that automatically reconnects when disconnected.
 use anyhow::bail;
 use anyhow::Result;
-use audio_processor_traits::{
-    AudioProcessor, AudioProcessorSettings, BufferProcessor, InterleavedAudioBuffer,
-    SimpleAudioProcessor,
-};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::BufferSize;
+use cpal::SupportedBufferSize;
 use cpal::{Device, Stream, StreamError};
 use log::{info, warn};
 use std::sync::mpsc::channel;
@@ -142,30 +140,47 @@ where
     F: FnMut() + Send + 'static,
 {
     let device = open_audio_device(device_name)?;
-    let config: cpal::StreamConfig = device.default_input_config()?.into();
+    let supported = device.default_input_config()?;
 
-    let audio_settings = AudioProcessorSettings {
-        sample_rate: config.sample_rate.0 as f32,
-        input_channels: config.channels as usize,
-        output_channels: config.channels as usize, // unused
-        block_size: AudioProcessorSettings::default().block_size, // unused
+    // Aim for about 1 ms of audio buffering latency.
+    let sample_duration = 1. / supported.sample_rate().0 as f64;
+
+    // 1000 updates/sec
+    let target_latency = 1. / 1000.;
+
+    // Compute target samples; use a power of 2, and multiply by the number of
+    // channels (always gonna be 2)
+    let frame_count = ((target_latency / sample_duration).round() as u32).next_power_of_two();
+
+    // Check if this is valid for the device.
+    let frame_count = match supported.buffer_size() {
+        SupportedBufferSize::Unknown => {
+            warn!("Unable to get supported audio device buffer sizes.");
+            frame_count
+        }
+        SupportedBufferSize::Range { min, max } => {
+            let clamped_buffer_size = frame_count.clamp(*min, *max);
+            if clamped_buffer_size != frame_count {
+                warn!("Target audio buffer size {frame_count} is out of range for this device; using {clamped_buffer_size}.");
+            }
+            clamped_buffer_size
+        }
     };
+    info!(
+        "Approximate audio latency {:.1} ms.",
+        frame_count as f64 * sample_duration * 1000.
+    );
+    let mut config: cpal::StreamConfig = supported.into();
+    config.buffer_size = BufferSize::Fixed(frame_count);
 
-    let mut processor = Processor::new(processor_settings);
-    processor.s_prepare(audio_settings);
+    let mut processor = Processor::new(
+        processor_settings,
+        config.sample_rate.0,
+        config.channels as usize,
+    );
 
-    let mut buffer_proc = BufferProcessor(processor);
-
-    // Need to locally buffer each frame for filtering.
-    let mut audio_buf: Vec<f32> = Vec::new();
-
-    let handle_buffer = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        audio_buf.clear();
-        audio_buf.extend_from_slice(data);
-
-        let mut interleaved_buffer =
-            InterleavedAudioBuffer::new(audio_settings.input_channels, audio_buf.as_mut_slice());
-        buffer_proc.process(&mut interleaved_buffer);
+    let handle_buffer = move |interleaved_buffer: &[f32], _: &cpal::InputCallbackInfo| {
+        processor.process(interleaved_buffer);
     };
 
     let handle_error = move |err: StreamError| match err {

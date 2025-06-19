@@ -20,6 +20,8 @@ pub struct AudioInput {
     envelope_value: UnipolarFloat,
     /// Should we send monitor updates?
     monitor: bool,
+    /// How long has it been since we last updated the monitor?,
+    monitor_update_age: Duration,
     /// Envelope gain factor.
     gain: f64,
     /// Transient envelope clip indicator.
@@ -28,6 +30,8 @@ pub struct AudioInput {
 
 impl AudioInput {
     const CLIP_INDICATOR_DURATION: Duration = Duration::from_millis(100);
+    /// Update the monitor at about 60 fps.
+    const MONITOR_UPDATE_INTERVAL: Duration = Duration::from_micros(16_667);
     /// Get the names of all available input audio devices.
     pub fn devices() -> Result<Vec<String>> {
         let host = cpal::default_host();
@@ -43,6 +47,7 @@ impl AudioInput {
             processor_settings: ProcessorSettings::default(),
             envelope_value: UnipolarFloat::ZERO,
             monitor: false,
+            monitor_update_age: Duration::ZERO,
             gain: 1.0,
             clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
         }
@@ -67,6 +72,7 @@ impl AudioInput {
             processor_settings,
             envelope_value: UnipolarFloat::ZERO,
             monitor: false,
+            monitor_update_age: Duration::ZERO,
             gain: 1.0,
             clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
         })
@@ -80,7 +86,11 @@ impl AudioInput {
         let clipping = scaled_envelope > 1.0;
         self.envelope_value = UnipolarFloat::new(scaled_envelope);
         if self.monitor {
-            emitter.emit_audio_state_change(StateChange::EnvelopeValue(self.envelope_value));
+            self.monitor_update_age += delta_t;
+            if self.monitor_update_age >= Self::MONITOR_UPDATE_INTERVAL {
+                self.monitor_update_age = Duration::ZERO;
+                emitter.emit_audio_state_change(StateChange::EnvelopeValue(self.envelope_value));
+            }
             if let Some(clip_state) = self.clip_indicator.update_state(delta_t, clipping) {
                 emitter.emit_audio_state_change(StateChange::IsClipping(clip_state));
             }

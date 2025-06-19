@@ -1,9 +1,10 @@
 //! A multi-channel audio processor that derives a single envelope from its input.
 //! Provides lowpass filterting and configurable amplitude envelope.
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
-use audio_processor_traits::{AtomicF32, AudioProcessorSettings, SimpleAudioProcessor};
+use audio_processor_traits::AudioProcessorSettings;
+use audio_processor_traits::{simple_processor::MonoAudioProcessor, AtomicF32, AudioContext};
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
-use log::{debug, warn};
+use log::debug;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,18 +49,51 @@ pub struct Processor {
     channel_count: usize,
     filters: Vec<FilterProcessor<f32>>,
     envelopes: Vec<EnvelopeFollowerProcessor>,
+    context: AudioContext,
 }
 
 impl Processor {
-    pub fn new(handle: ProcessorSettings) -> Self {
+    pub fn new(handle: ProcessorSettings, sample_rate: u32, channel_count: usize) -> Self {
+        let mut context: AudioContext = AudioProcessorSettings {
+            sample_rate: sample_rate as f32,
+            input_channels: channel_count,
+            output_channels: channel_count, // unused
+            ..Default::default()
+        }
+        .into();
+        let settings = context.settings;
+
+        let mut filters = vec![];
+        let mut envelopes = vec![];
+
+        let filter_cutoff = handle.filter_cutoff.get();
+        let envelope_attack = handle.envelope_attack.get();
+        let envelope_release = handle.envelope_release.get();
+
+        for _ in 0..settings.input_channels {
+            let mut filter = FilterProcessor::new(FilterType::LowPass);
+            filter.set_cutoff(filter_cutoff);
+            filter.m_prepare(&mut context);
+            filters.push(filter);
+
+            let mut envelope = EnvelopeFollowerProcessor::new(
+                Duration::from_secs_f32(envelope_attack),
+                Duration::from_secs_f32(envelope_release),
+            );
+            envelope.m_prepare(&mut context);
+
+            envelopes.push(envelope);
+        }
+
         Self {
-            filter_cutoff: handle.filter_cutoff.get(),
-            envelope_attack: handle.envelope_attack.get(),
-            envelope_release: handle.envelope_release.get(),
+            filter_cutoff,
+            envelope_attack,
+            envelope_release,
             settings: handle,
-            channel_count: 0,
-            filters: Vec::new(),
-            envelopes: Vec::new(),
+            channel_count: settings.input_channels,
+            filters,
+            envelopes,
+            context,
         }
     }
 
@@ -95,59 +129,26 @@ impl Processor {
     }
 }
 
-impl SimpleAudioProcessor for Processor {
-    type SampleType = f32;
-    /// Prepare for playback based on current audio settings
-    fn s_prepare(&mut self, settings: AudioProcessorSettings) {
-        self.channel_count = settings.input_channels;
-        self.filters.clear();
-        self.envelopes.clear();
-        for _ in 0..settings.input_channels {
-            let mut filter = FilterProcessor::new(FilterType::LowPass);
-            filter.set_cutoff(self.filter_cutoff);
-            filter.s_prepare(settings);
-            self.filters.push(filter);
-
-            let mut envelope = EnvelopeFollowerProcessor::new(
-                Duration::from_secs_f32(self.envelope_attack),
-                Duration::from_secs_f32(self.envelope_release),
-            );
-            envelope.s_prepare(settings);
-
-            self.envelopes.push(envelope);
-        }
-    }
-
-    fn s_process(&mut self, _: Self::SampleType) -> Self::SampleType {
-        panic!("MultichannelProcessor must be called via s_process_frame.")
-    }
-
-    fn s_process_frame(&mut self, frame: &mut [Self::SampleType]) {
-        if frame.len() != self.channel_count {
-            warn!(
-                "Audio frame has size {} but processor is configured for {}.",
-                frame.len(),
-                self.channel_count
-            );
-        }
-
+impl Processor {
+    /// Process a buffer of interleaved audio data.
+    pub fn process(&mut self, interleaved_buffer: &[f32]) {
         self.maybe_update_parameters();
 
-        // Average the envelopes together.
-        let mut envelope_sum = 0.0;
-
-        // Manually call each inner processor using a slice of length 1, to
-        // work around the bizarre multichannel behavior of filters.
-        for chan in 0..frame.len() {
-            let single_channel_frame = &mut frame[chan..chan + 1];
-            self.filters[chan].s_process_frame(single_channel_frame);
-            let envelope = &mut self.envelopes[chan];
-            envelope.s_process_frame(single_channel_frame);
-            envelope_sum += envelope.handle().state();
+        for frame in interleaved_buffer.chunks(self.channel_count) {
+            for (channel_idx, sample) in frame.iter().enumerate() {
+                let sample = self.filters[channel_idx].m_process(&mut self.context, *sample);
+                let envelope = &mut self.envelopes[channel_idx];
+                envelope.m_process(&mut self.context, sample);
+            }
         }
 
-        self.settings
-            .envelope
-            .set(envelope_sum / self.channel_count as f32);
+        let mean_envelope = self
+            .envelopes
+            .iter()
+            .map(|envelope| envelope.handle().state())
+            .sum::<f32>()
+            / self.channel_count as f32;
+
+        self.settings.envelope.set(mean_envelope);
     }
 }
