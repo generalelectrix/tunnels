@@ -1,10 +1,6 @@
 //! Provide an audio input stream that automatically reconnects when disconnected.
 use anyhow::bail;
 use anyhow::Result;
-use audio_processor_traits::{
-    AudioProcessor, AudioProcessorSettings, BufferProcessor, InterleavedAudioBuffer,
-    SimpleAudioProcessor,
-};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamError};
 use log::{info, warn};
@@ -144,28 +140,14 @@ where
     let device = open_audio_device(device_name)?;
     let config: cpal::StreamConfig = device.default_input_config()?.into();
 
-    let audio_settings = AudioProcessorSettings {
-        sample_rate: config.sample_rate.0 as f32,
-        input_channels: config.channels as usize,
-        output_channels: config.channels as usize, // unused
-        block_size: AudioProcessorSettings::default().block_size, // unused
-    };
+    let mut processor = Processor::new(
+        processor_settings,
+        config.sample_rate.0,
+        config.channels as usize,
+    );
 
-    let mut processor = Processor::new(processor_settings);
-    processor.s_prepare(audio_settings);
-
-    let mut buffer_proc = BufferProcessor(processor);
-
-    // Need to locally buffer each frame for filtering.
-    let mut audio_buf: Vec<f32> = Vec::new();
-
-    let handle_buffer = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        audio_buf.clear();
-        audio_buf.extend_from_slice(data);
-
-        let mut interleaved_buffer =
-            InterleavedAudioBuffer::new(audio_settings.input_channels, audio_buf.as_mut_slice());
-        buffer_proc.process(&mut interleaved_buffer);
+    let handle_buffer = move |interleaved_buffer: &[f32], _: &cpal::InputCallbackInfo| {
+        processor.process(interleaved_buffer);
     };
 
     let handle_error = move |err: StreamError| match err {
