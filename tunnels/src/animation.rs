@@ -30,7 +30,7 @@ pub struct Animation {
     pulse: bool,
     standing: bool,
     invert: bool,
-    n_periods: usize,
+    n_periods: u16,
     size: UnipolarFloat,
     duty_cycle: UnipolarFloat,
     /// Use a smoother for the smoothing parameter.
@@ -309,7 +309,7 @@ pub enum StateChange {
     Pulse(bool),
     Standing(bool),
     Invert(bool),
-    NPeriods(usize),
+    NPeriods(u16),
     Speed(BipolarFloat),
     Size(UnipolarFloat),
     DutyCycle(UnipolarFloat),
