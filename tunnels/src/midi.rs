@@ -192,8 +192,11 @@ impl Input {
                 &port,
                 &name,
                 move |_, msg: &[u8], _| {
+                    let control = msg[1];
+                    let value = msg[2];
                     let event_type = match msg[0] >> 4 {
-                        8 => EventType::NoteOff,
+                        // Most midi devices just send NoteOn with a velocity of 0 for NoteOff.
+                        8 | 9 if value == 0 => EventType::NoteOff,
                         9 => EventType::NoteOn,
                         11 => EventType::ControlChange,
                         other => {
@@ -211,9 +214,9 @@ impl Input {
                                 mapping: Mapping {
                                     event_type,
                                     channel,
-                                    control: msg[1],
+                                    control,
                                 },
-                                value: msg[2],
+                                value,
                             },
                             device.clone(),
                         ))
