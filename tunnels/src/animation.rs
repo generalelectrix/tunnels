@@ -99,12 +99,12 @@ impl Animation {
 
     /// Return the clock's current rate, scaled into a bipolar float.
     fn clock_speed(&self) -> BipolarFloat {
-        BipolarFloat::new(self.internal_clock.rate / ControllableClock::RATE_SCALE)
+        BipolarFloat::new(self.internal_clock.rate_coarse / ControllableClock::RATE_SCALE)
     }
 
     /// Set the clock's current rate, scaling by our scale factor.
     fn set_clock_speed(&mut self, speed: BipolarFloat) {
-        self.internal_clock.rate = speed.val() * ControllableClock::RATE_SCALE;
+        self.internal_clock.rate_coarse = speed.val() * ControllableClock::RATE_SCALE;
     }
 
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {

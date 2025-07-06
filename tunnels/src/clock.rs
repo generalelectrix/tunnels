@@ -18,7 +18,9 @@ pub struct Clock {
     /// The total number of ticks this clock has made.
     ticks: Ticks,
     /// in unit angle per second
-    pub rate: f64,
+    pub rate_coarse: f64,
+    /// in 1/24th unit angle per second
+    pub rate_fine: f64,
     /// did the clock tick on its most recent update?
     ticked: bool,
     /// is this clock running in "one-shot" mode?
@@ -44,7 +46,8 @@ impl Clock {
         Self {
             phase: Phase::ZERO,
             ticks: 0,
-            rate: 0.0,
+            rate_coarse: 0.0,
+            rate_fine: 0.0,
             ticked: true,
             one_shot: false,
             reset_on_update: false,
@@ -53,12 +56,17 @@ impl Clock {
         }
     }
 
+    /// Return the sum of the coarse and fine rate controls.
+    pub fn rate(&self) -> f64 {
+        self.rate_coarse + self.rate_fine
+    }
+
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
         if self.reset_on_update {
             self.ticked = true;
             self.ticks = 0;
             // Reset phase to zero or one, depending on sign of rate.
-            self.phase = if self.rate >= 0.0 {
+            self.phase = if self.rate() >= 0.0 {
                 Phase::ZERO
             } else {
                 Phase::ONE
@@ -79,7 +87,7 @@ impl Clock {
         };
 
         let new_angle =
-            self.phase.val() + (self.rate * rate_modulation.val() * delta_t.as_secs_f64());
+            self.phase.val() + (self.rate() * rate_modulation.val() * delta_t.as_secs_f64());
 
         // if we're running in one-shot mode, clamp the angle at 1.0
         if self.one_shot && new_angle >= 1.0 {
@@ -151,6 +159,7 @@ impl ControllableClock {
     /// clockwise makes the animation appear to run around the beam in the same
     /// direction
     pub const RATE_SCALE: f64 = -1.5;
+    pub const RATE_SCALE_FINE: f64 = Self::RATE_SCALE / 24.;
 
     pub fn new() -> Self {
         Self {
@@ -231,10 +240,12 @@ impl ControllableClock {
                 if self.retrigger {
                     self.clock.reset_on_update = true;
                 } else if let Some(rate) = self.sync.tap() {
-                    self.clock.rate = rate;
+                    self.clock.rate_coarse = rate;
+                    self.clock.rate_fine = 0.;
                     emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
-                        self.clock.rate / ControllableClock::RATE_SCALE,
+                        self.clock.rate_coarse / ControllableClock::RATE_SCALE,
                     )));
+                    emitter.emit_clock_state_change(StateChange::RateFine(BipolarFloat::ZERO));
                 }
             }
             ToggleOneShot => {
@@ -258,7 +269,8 @@ impl ControllableClock {
     fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use StateChange::*;
         match sc {
-            Rate(v) => self.clock.rate = v.val() * ControllableClock::RATE_SCALE,
+            Rate(v) => self.clock.rate_coarse = v.val() * ControllableClock::RATE_SCALE,
+            RateFine(v) => self.clock.rate_fine = v.val() * ControllableClock::RATE_SCALE_FINE,
             Retrigger(v) => self.retrigger = v,
             OneShot(v) => self.clock.set_one_shot(v),
             SubmasterLevel(v) => self.submaster_level = v,
@@ -273,6 +285,7 @@ impl ControllableClock {
 #[derive(Debug, Clone)]
 pub enum StateChange {
     Rate(BipolarFloat),
+    RateFine(BipolarFloat),
     Retrigger(bool),
     OneShot(bool),
     SubmasterLevel(UnipolarFloat),

@@ -18,6 +18,7 @@ use super::{bipolar_from_midi, unipolar_from_midi, ControlMap};
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Control {
     Rate,
+    RateFine,
     Level,
     Tap,
     OneShot,
@@ -35,6 +36,7 @@ fn mapping_cmd_mm1(control: Control, channel: usize) -> Option<Mapping> {
 
     match control {
         Rate => Some(cc(midi_channel, 6 + channel)),
+        RateFine => Some(cc(midi_channel, 7 + channel)),
         Level => Some(cc(midi_channel, 48 + channel)),
         Tap => Some(note_on(midi_channel, 48 + channel)),
         OneShot => Some(note_on(midi_channel, 19 + channel * 4)),
@@ -53,6 +55,9 @@ fn mapping_touchosc(control: Control, channel: usize) -> Option<Mapping> {
 
     Some(match control {
         Rate => cc(channel, 0),
+        RateFine => {
+            return None;
+        } // TODO: fine rate control on TouchOSC
         Level => cc(channel, 1),
         Tap => note_on(channel, 0),
         OneShot => note_on(channel, 1),
@@ -89,6 +94,15 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
                 Clock(ControlMessage {
                     channel: ClockIdxExt(channel),
                     msg: Set(Rate(bipolar_from_midi(v))),
+                })
+            }),
+        );
+        add(
+            get_mapping(Control::RateFine, channel),
+            Box::new(move |v| {
+                Clock(ControlMessage {
+                    channel: ClockIdxExt(channel),
+                    msg: Set(RateFine(bipolar_from_midi(v))),
                 })
             }),
         );
@@ -167,6 +181,7 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager<Device>) {
         OneShot(v) => send(Control::OneShot, v as u8),
         Ticked(v) => send(Control::Tap, v as u8),
         Rate(v) => send(Control::Rate, bipolar_to_midi(v)),
+        RateFine(v) => send(Control::RateFine, bipolar_to_midi(v)),
         SubmasterLevel(v) => send(Control::Level, unipolar_to_midi(v)),
         UseAudioSize(v) => send(Control::AudioSize, v as u8),
         UseAudioSpeed(v) => send(Control::AudioSpeed, v as u8),
