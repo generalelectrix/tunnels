@@ -36,7 +36,7 @@ fn mapping_cmd_mm1(control: Control, channel: usize) -> Option<Mapping> {
 
     match control {
         Rate => Some(cc(midi_channel, 6 + channel)),
-        RateFine => Some(cc(midi_channel, 7 + channel)),
+        RateFine => Some(cc(midi_channel, 10 + channel)),
         Level => Some(cc(midi_channel, 48 + channel)),
         Tap => Some(note_on(midi_channel, 48 + channel)),
         OneShot => Some(note_on(midi_channel, 19 + channel * 4)),
