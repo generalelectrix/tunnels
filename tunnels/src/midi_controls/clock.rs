@@ -80,7 +80,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
     let get_mapping = match device {
         Device::BehringerCmdMM1 => mapping_cmd_mm1,
         Device::TouchOsc => mapping_touchosc,
-        _ => panic!("No clock control mappings for {}.", device),
+        _ => panic!("No clock control mappings for {device}."),
     };
 
     // This is to catch a future change to N_CLOCKS.

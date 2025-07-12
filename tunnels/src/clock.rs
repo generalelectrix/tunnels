@@ -362,11 +362,7 @@ impl TapSync {
 
                 // if this single estimate of tempo is within +-10% of current, use it
                 // otherwise, empty the buffer and start over
-                let abs_difference = if period > dt {
-                    period - dt
-                } else {
-                    dt - period
-                };
+                let abs_difference = period.abs_diff(dt);
                 let fractional_difference = abs_difference.as_secs_f64() / period.as_secs_f64();
 
                 if fractional_difference > Self::RESET_THRESHOLD {

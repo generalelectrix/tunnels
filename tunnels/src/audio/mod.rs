@@ -61,7 +61,7 @@ impl AudioInput {
             Some(d) => d,
         };
 
-        info!("Using audio input device {}.", device_name);
+        info!("Using audio input device {device_name}.");
 
         let processor_settings = ProcessorSettings::default();
 
@@ -145,7 +145,7 @@ impl AudioInput {
             Monitor(v) => self.monitor = v,
             FilterCutoff(v) => {
                 if v <= 0. {
-                    warn!("Invalid filter cutoff frequency {} (<= 0).", v);
+                    warn!("Invalid filter cutoff frequency {v} (<= 0).");
                     return;
                 }
                 self.processor_settings.filter_cutoff.set(v);
@@ -157,7 +157,7 @@ impl AudioInput {
                 .set(v.as_secs_f32()),
             Gain(v) => {
                 if v < 0. {
-                    warn!("Invalid audio envelope gain {} (< 0).", v);
+                    warn!("Invalid audio envelope gain {v} (< 0).");
                     return;
                 }
                 self.gain = v;
@@ -215,7 +215,7 @@ pub fn prompt_audio() -> Result<Option<String>> {
     }
     println!("Available devices:");
     for (i, port) in input_devices.iter().enumerate() {
-        println!("{}: {}", i, port);
+        println!("{i}: {port}");
     }
     prompt_indexed_value("Input audio device:", &input_devices).map(Some)
 }

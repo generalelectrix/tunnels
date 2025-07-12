@@ -21,7 +21,7 @@ impl TimesyncServer {
     /// The server will run until it is dropped.
     pub fn start(ctx: &Context, start: Instant) -> Result<Self> {
         let socket = ctx.socket(zmq::REP)?;
-        let addr = format!("tcp://*:{}", PORT);
+        let addr = format!("tcp://*:{PORT}");
         socket.bind(&addr)?;
         // time out once per second
         socket.set_rcvtimeo(1000)?;
@@ -40,16 +40,16 @@ impl TimesyncServer {
                 match socket.recv_bytes(0) {
                     Err(zmq::Error::EAGAIN) => (),
                     Err(e) => {
-                        error!("Timesync receieve error: {}.", e);
+                        error!("Timesync receieve error: {e}.");
                     }
                     Ok(_) => {
                         if let Err(e) =
                             Timestamp::since(start).serialize(&mut Serializer::new(&mut resp_buf))
                         {
-                            error!("Timesync serialization error: {}.", e);
+                            error!("Timesync serialization error: {e}.");
                         }
                         if let Err(e) = socket.send(&resp_buf, 0) {
-                            error!("Timesync send error: {}.", e);
+                            error!("Timesync send error: {e}.");
                         }
                         resp_buf.clear();
                     }

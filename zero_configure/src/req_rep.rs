@@ -20,7 +20,7 @@ where
 {
     // Open the 0mq socket we'll use to service requests.
     let socket = ctx.socket(zmq::REP)?;
-    let addr = format!("tcp://*:{}", port);
+    let addr = format!("tcp://*:{port}");
     socket.bind(&addr)?;
 
     // Create a tokio core just to run this one future.
@@ -36,7 +36,7 @@ where
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {
             if let Err(e) = socket.send(action(&msg), 0) {
-                println!("Failed to send response: {}", e);
+                println!("Failed to send response: {e}");
             }
         }
     }
@@ -77,7 +77,7 @@ impl Controller {
 
 /// Try to connect a REQ socket at this host and port.
 fn req_socket(host: &str, port: u16, ctx: &Context) -> Result<Socket> {
-    let addr = format!("tcp://{}:{}", host, port);
+    let addr = format!("tcp://{host}:{port}");
 
     // Connect a REQ socket.
     let socket = ctx.socket(zmq::REQ)?;

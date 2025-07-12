@@ -92,8 +92,8 @@ impl<G: Graphics> Draw<G> for ArcSegment {
         let (x, y) = {
             let (x0, y0) = match cfg.transformation {
                 None => (self.x, self.y),
-                Some(Transform::Flip(TransformDirection::Horizontal)) => (-1.0 * self.x, self.y),
-                Some(Transform::Flip(TransformDirection::Vertical)) => (self.x, -1.0 * self.y),
+                Some(Transform::Flip(TransformDirection::Horizontal)) => (-self.x, self.y),
+                Some(Transform::Flip(TransformDirection::Vertical)) => (self.x, -self.y),
             };
             let x = x0 * f64::from(cfg.x_resolution) + cfg.x_center;
             let y = y0 * f64::from(cfg.y_resolution) + cfg.y_center;

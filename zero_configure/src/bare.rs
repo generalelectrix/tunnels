@@ -18,7 +18,7 @@ pub type StopFn = Box<dyn FnOnce() + Send>;
 
 /// Format a service name into a DNS-SD TCP registration type.
 pub fn reg_type(name: &str) -> String {
-    format!("_{}._tcp", name)
+    format!("_{name}._tcp")
 }
 
 /// Register a vanilla service over DNS-SD.

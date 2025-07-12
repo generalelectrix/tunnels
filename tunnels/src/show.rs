@@ -186,7 +186,7 @@ impl Show {
 
             // Consider autosaving the show.
             if let Err(e) = self.autosave() {
-                error!("Autosave error: {}.", e);
+                error!("Autosave error: {e}.");
             }
 
             // Process a control event for a fraction of the time between now
@@ -224,7 +224,7 @@ impl Show {
             ),
             Ok(None) => (),
             Err(e) => {
-                warn!("{}", e);
+                warn!("{e}");
             }
         }
     }

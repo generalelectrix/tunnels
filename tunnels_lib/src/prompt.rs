@@ -5,7 +5,7 @@ use std::io;
 
 /// Prompt the user to answer a yes or no question.
 pub fn prompt_bool(msg: &str) -> Result<bool> {
-    prompt_parse(format!("{} y/n", msg).as_str(), |input| {
+    prompt_parse(format!("{msg} y/n").as_str(), |input| {
         input
             .chars()
             .next()
@@ -21,13 +21,13 @@ pub fn prompt_bool(msg: &str) -> Result<bool> {
 /// Prompt the user for a unsigned numeric index.
 pub fn prompt_indexed_value<T: Clone>(msg: &str, options: &[T]) -> Result<T> {
     Ok(loop {
-        print!("{} ", msg);
+        print!("{msg} ");
         io::stdout().flush()?;
         let input = read_string()?;
         let index = match input.trim().parse::<usize>() {
             Ok(num) => num,
             Err(e) => {
-                println!("{}; please enter an integer.", e);
+                println!("{e}; please enter an integer.");
                 continue;
             }
         };
@@ -52,13 +52,13 @@ where
     F: Fn(&str) -> Result<T>,
 {
     Ok(loop {
-        print!("{}: ", msg);
+        print!("{msg}: ");
         io::stdout().flush()?;
         let input = read_string()?;
         match parse(&input) {
             Ok(v) => break v,
             Err(e) => {
-                println!("{}", e);
+                println!("{e}");
             }
         }
     })

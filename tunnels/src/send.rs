@@ -23,7 +23,7 @@ const PORT: u16 = 6000;
 /// The service runs until the channel is dropped.
 pub fn start_render_service(ctx: &Context, run_clock_service: bool) -> Result<Sender<Frame>> {
     let socket = ctx.socket(zmq::PUB)?;
-    let addr = format!("tcp://*:{}", PORT);
+    let addr = format!("tcp://*:{PORT}");
     socket.bind(&addr)?;
 
     let mut clock_service = if run_clock_service {
@@ -45,7 +45,7 @@ pub fn start_render_service(ctx: &Context, run_clock_service: bool) -> Result<Se
                 }
                 Some((dropped_frames, frame)) => {
                     if dropped_frames > 0 {
-                        warn!("Render server dropped {} frames.", dropped_frames);
+                        warn!("Render server dropped {dropped_frames} frames.");
                     }
 
                     let video_outs = frame.mixer.render(

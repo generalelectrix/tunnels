@@ -186,7 +186,7 @@ pub fn angle_almost_eq(a: f64, b: f64) -> bool {
 
 /// Panic if a and b are not almost equal.
 pub fn assert_almost_eq(a: f64, b: f64) {
-    assert!(almost_eq(a, b), "{} != {}", a, b);
+    assert!(almost_eq(a, b), "{a} != {b}");
 }
 
 #[cfg(test)]

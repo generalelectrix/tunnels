@@ -69,7 +69,7 @@ impl ControlMap {
 
     pub fn add(&mut self, device: Device, mapping: Mapping, creator: ControlMessageCreator) {
         if self.0.insert((device, mapping), creator).is_some() {
-            panic!("duplicate control definition: {:?} {:?}", device, mapping);
+            panic!("duplicate control definition: {device:?} {mapping:?}");
         }
     }
 
@@ -99,9 +99,9 @@ impl ControlMap {
         // Sort the mappings and produce the report.
         for (device, mappings) in controls.iter_mut() {
             mappings.sort();
-            report.push(format!("{}", device));
+            report.push(format!("{device}"));
             for mapping in mappings {
-                report.push(format!("{}", mapping))
+                report.push(format!("{mapping}"))
             }
         }
         report.join("\n")

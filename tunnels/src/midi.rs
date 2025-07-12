@@ -201,8 +201,7 @@ impl Input {
                         11 => EventType::ControlChange,
                         other => {
                             debug!(
-                                "Ignoring midi input event on {} of unimplemented type {}.",
-                                handler_name, other
+                                "Ignoring midi input event on {handler_name} of unimplemented type {other}."
                             );
                             return;
                         }
@@ -298,15 +297,15 @@ pub fn prompt_midi<D: MidiDevice>(
     let mut devices = Vec::new();
     println!("Available devices:");
     for (i, port) in input_ports.iter().enumerate() {
-        println!("{}: {}", i, port);
+        println!("{i}: {port}");
     }
     for (i, port) in output_ports.iter().enumerate() {
-        println!("{}: {}", i, port);
+        println!("{i}: {port}");
     }
     println!();
 
     let mut add_device = |device| -> Result<()> {
-        if prompt_bool(&format!("Use {}?", device))? {
+        if prompt_bool(&format!("Use {device}?"))? {
             devices.push(prompt_input_output(device, input_ports, output_ports)?);
         }
         Ok(())

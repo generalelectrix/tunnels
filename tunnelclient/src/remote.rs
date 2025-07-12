@@ -51,7 +51,7 @@ pub fn run_remote(ctx: Context) {
         // Wait on a config from the remote service.
         let (config, run_flag) = recv.recv().expect("Remote service thread hung up.");
 
-        info!("Starting a new show with configuration: {:?}", config);
+        info!("Starting a new show with configuration: {config:?}");
         // Start up a fresh show.
         match Show::new(config, ctx.clone(), run_flag) {
             Ok(mut show) => {
@@ -63,7 +63,7 @@ pub fn run_remote(ctx: Context) {
 
             // TODO: enable some kind of remote logging so we can collect these messages at the
             // controller.
-            Err(e) => error!("Failed to initialize show: {}", e),
+            Err(e) => error!("Failed to initialize show: {e}"),
         }
     }
 }
@@ -94,15 +94,14 @@ pub fn run_remote_service(ctx: Context, sender: Sender<(ClientConfig, RunFlag)>)
                 // Send the config and flag back to the show thread.
                 if let Err(e) = sender.send((config, new_run_flag)) {
                     format!(
-                        "{}\nError trying to start new show: {}.",
-                        show_stop_message, e
+                        "{show_stop_message}\nError trying to start new show: {e}."
                     )
                 } else {
                     // everything is OK
-                    format!("{}\nStarting a new show.", show_stop_message)
+                    format!("{show_stop_message}\nStarting a new show.")
                 }
             }
-            Err(e) => format!("Could not parse request as a show configuration:\n{}", e),
+            Err(e) => format!("Could not parse request as a show configuration:\n{e}"),
         }
         .into_bytes()
     })
@@ -161,7 +160,7 @@ fn read_input() -> String {
 
 /// Prompt a user for input and return the string they entered.
 fn prompt_input(msg: &str) -> String {
-    print!("{}", msg);
+    print!("{msg}");
     print!(": ");
     stdout().flush().expect("Error flushing stdout");
     read_input()
@@ -180,7 +179,7 @@ where
                 return result;
             }
             Err(e) => {
-                println!("{}", e);
+                println!("{e}");
             }
         }
     }
@@ -217,8 +216,7 @@ pub fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
         "wuxga" => Ok((1920, 1200)),
         "sxga+" | "sx+" => Ok((1400, 1050)),
         _ => Err(format!(
-            "Couldn't parse {} as resolution expression.",
-            res_str
+            "Couldn't parse {res_str} as resolution expression."
         )),
     }
 }
@@ -232,19 +230,19 @@ fn parse_y_n(s: &str) -> Result<bool, String> {
     } else if lowered.starts_with('n') {
         Ok(false)
     } else {
-        Err(format!("Please enter y/n, not '{}'.", s))
+        Err(format!("Please enter y/n, not '{s}'."))
     }
 }
 
 /// Prompt for a yes/no answer.
 fn prompt_y_n(msg: &str) -> bool {
-    prompt(&format!("{}? Y/n", msg), parse_y_n)
+    prompt(&format!("{msg}? Y/n"), parse_y_n)
 }
 
 /// Parse string as an unsigned integer.
 fn parse_uint(s: &str) -> Result<u64, String> {
     s.parse()
-        .map_err(|e| format!("Could not parse '{}' as positive integer: {}", s, e))
+        .map_err(|e| format!("Could not parse '{s}' as positive integer: {e}"))
 }
 
 /// Interactive series of user prompts, producing a configuration.
@@ -308,7 +306,7 @@ q    Quit.";
     };
 
     loop {
-        println!("Commands:\n{}", usage);
+        println!("Commands:\n{usage}");
         match prompt_input("Enter a command").as_ref() {
             "l" => {
                 println!("Available clients:\n{}\n", admin.clients().join("\n"));
@@ -318,10 +316,10 @@ q    Quit.";
                 let config = configure_one(host.clone());
                 match admin.run_with_config(&client_name, config) {
                     Ok(msg) => {
-                        println!("{}", msg);
+                        println!("{msg}");
                     }
                     Err(e) => {
-                        println!("Could not configure due to an error: {}", e);
+                        println!("Could not configure due to an error: {e}");
                     }
                 }
             }
@@ -329,7 +327,7 @@ q    Quit.";
                 break;
             }
             bad => {
-                println!("Unknown command '{}'.", bad);
+                println!("Unknown command '{bad}'.");
             }
         }
     }

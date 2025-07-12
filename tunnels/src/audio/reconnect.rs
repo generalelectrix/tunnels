@@ -78,11 +78,11 @@ fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> Stop
 
                     match reopen_result {
                         Ok(input) => {
-                            info!("Successfully opened audio input {}.", device_name);
+                            info!("Successfully opened audio input {device_name}.");
                             _input_stream = Some(input);
                         }
                         Err(e) => {
-                            warn!("Unable to reopen audio input {}: {}.", device_name, e);
+                            warn!("Unable to reopen audio input {device_name}: {e}.");
                             let sender = disconnected_sender.clone();
                             // Spawn a thread to wake us up and try again after a delay.
                             thread::spawn(move || {
@@ -119,7 +119,7 @@ fn open_audio_device(name: &str) -> Result<Device> {
             }
         }
     }
-    let mut err_msg = format!("audio input {} not found", name);
+    let mut err_msg = format!("audio input {name} not found");
     if !errors.is_empty() {
         err_msg = format!(
             "{}; some device errors occurred: {}",
@@ -185,7 +185,7 @@ where
 
     let handle_error = move |err: StreamError| match err {
         StreamError::BackendSpecific { err } => {
-            eprintln!("An audio input error occurred: {}", err);
+            eprintln!("An audio input error occurred: {err}");
         }
         StreamError::DeviceNotAvailable => {
             on_disconnect();

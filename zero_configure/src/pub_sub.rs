@@ -23,7 +23,7 @@ impl<T: Serialize> PublisherService<T> {
     pub fn new(ctx: &Context, name: &str, port: u16) -> Result<Self> {
         let stop = register_service(name, port)?;
         let socket = ctx.socket(zmq::PUB)?;
-        let addr = format!("tcp://*:{}", port);
+        let addr = format!("tcp://*:{port}");
         socket.bind(&addr)?;
         Ok(Self {
             stop: Some(stop),
@@ -104,7 +104,7 @@ impl<T: DeserializeOwned> Receiver<T> {
     /// Expect a multipart message if a topic is provided.
     pub fn new(ctx: &Context, host: &str, port: u16, topic: Option<&[u8]>) -> Result<Self> {
         let socket = ctx.socket(zmq::SUB)?;
-        let addr = format!("tcp://{}:{}", host, port);
+        let addr = format!("tcp://{host}:{port}");
         socket.connect(&addr)?;
         socket.set_subscribe(topic.unwrap_or(&[]))?;
 

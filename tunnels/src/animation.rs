@@ -200,7 +200,7 @@ impl Animation {
             result *= audio_envelope.val();
         }
         if self.invert {
-            -1.0 * result
+            -result
         } else {
             result
         }

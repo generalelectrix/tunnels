@@ -101,7 +101,7 @@ impl Processor {
     fn maybe_update_parameters(&mut self) {
         let new_filter_cutoff = self.settings.filter_cutoff.get();
         if new_filter_cutoff != self.filter_cutoff {
-            debug!("Updating filter cutoff to {}", new_filter_cutoff);
+            debug!("Updating filter cutoff to {new_filter_cutoff}");
             self.filter_cutoff = new_filter_cutoff;
             for filter in self.filters.iter_mut() {
                 filter.set_cutoff(new_filter_cutoff);
@@ -113,8 +113,7 @@ impl Processor {
             || new_envelope_release != self.envelope_release
         {
             debug!(
-                "Updating envelope parameters to {}, {}",
-                new_envelope_attack, new_envelope_release
+                "Updating envelope parameters to {new_envelope_attack}, {new_envelope_release}"
             );
             self.envelope_attack = new_envelope_attack;
             self.envelope_release = new_envelope_release;
