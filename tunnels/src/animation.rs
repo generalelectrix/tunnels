@@ -114,6 +114,84 @@ impl Animation {
         }
     }
 
+    /// Return the value of this animation, but with the amplitude always scaled
+    /// to 1.0 regardless of parameters.
+    pub fn get_unit_value(
+        &self,
+        spatial_phase_offset: Phase,
+        offset_index: usize,
+        external_clocks: &impl ClockStore,
+    ) -> f64 {
+        let mut result = match self.waveform {
+            Waveform::Sine => {
+                waveforms::sine(&self.waveform_args(spatial_phase_offset, external_clocks))
+            }
+            Waveform::Square => {
+                waveforms::square(&self.waveform_args(spatial_phase_offset, external_clocks))
+            }
+            Waveform::Sawtooth => {
+                waveforms::sawtooth(&self.waveform_args(spatial_phase_offset, external_clocks))
+            }
+            Waveform::Triangle => {
+                waveforms::triangle(&self.waveform_args(spatial_phase_offset, external_clocks))
+            }
+            Waveform::Noise => {
+                // Handle duty cycle - this is a bit odd compared to waveforms,
+                // since noise isn't periodic. Rather than trying to compress
+                // the waveform to maintain the waveshape, we just turn off
+                // the animation for a portion of each cycle.
+                let spatial_phase = spatial_phase_offset.val() * self.n_periods as f64;
+                let temporal_phase = self.phase(external_clocks).val();
+
+                if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
+                    || self.duty_cycle == 0.0
+                {
+                    return 0.0;
+                }
+
+                let x_offset = self.ticks(external_clocks) as f64 + spatial_phase + temporal_phase;
+
+                // Use smoothing parameter as a "cross-correlation" term;
+                // increased smoothing means a smaller Y-offset between
+                // samples. Smoothing of zero offsets each sample by a full
+                // interval, which should produce fairly uncorrelated noise
+                // for different offsets.
+                // Always use a Y-offset of 0 in periodicity of 0 to preserve
+                // the expected behavior.
+                //
+                // Because of the smooth 2D landscape, smoothing parameters
+                // modestly lower than 1 tend to look similar to an
+                // increase in periodicity.
+                let y_offset = if self.n_periods == 0 {
+                    0.0
+                } else {
+                    (1.0 - self.smoothing.val().val()) * offset_index as f64
+                };
+
+                let mut val = self.simplex_gen.get([x_offset, y_offset]);
+
+                // Take the square for pulse mode to avoid sharp edges at zero,
+                // and to maintain a bias towards the animation value frequently
+                // touching zero. This produces more of a forest of peaks.
+                // Simply rescaling the full noise spectrum into the unipolar
+                // range would result in very rarely touching zero, which is
+                // unlikely to be what we're looking for, artistically speaking.
+                if self.pulse {
+                    val = val.powi(2);
+                }
+                val
+            }
+            Waveform::Constant => 1.0,
+        };
+
+        if self.invert {
+            -result
+        } else {
+            result
+        }
+    }
+
+    /// Return the complete, scaled value of this animation for the provided parameters.
     pub fn get_value(
         &self,
         spatial_phase_offset: Phase,
@@ -125,85 +203,32 @@ impl Animation {
             return 0.;
         }
 
-        let mut result = self.size.val()
-            * match self.waveform {
-                Waveform::Sine => {
-                    waveforms::sine(&self.waveform_args(spatial_phase_offset, external_clocks))
-                }
-                Waveform::Square => {
-                    waveforms::square(&self.waveform_args(spatial_phase_offset, external_clocks))
-                }
-                Waveform::Sawtooth => {
-                    waveforms::sawtooth(&self.waveform_args(spatial_phase_offset, external_clocks))
-                }
-                Waveform::Triangle => {
-                    waveforms::triangle(&self.waveform_args(spatial_phase_offset, external_clocks))
-                }
-                Waveform::Noise => {
-                    // Handle duty cycle - this is a bit odd compared to waveforms,
-                    // since noise isn't periodic. Rather than trying to compress
-                    // the waveform to maintain the waveshape, we just turn off
-                    // the animation for a portion of each cycle.
-                    let spatial_phase = spatial_phase_offset.val() * self.n_periods as f64;
-                    let temporal_phase = self.phase(external_clocks).val();
+        let result = self.get_unit_value(spatial_phase_offset, offset_index, external_clocks);
 
-                    if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
-                        || self.duty_cycle == 0.0
-                    {
-                        return 0.0;
-                    }
+        self.scale_value(external_clocks, audio_envelope, result)
+    }
 
-                    let x_offset =
-                        self.ticks(external_clocks) as f64 + spatial_phase + temporal_phase;
-
-                    // Use smoothing parameter as a "cross-correlation" term;
-                    // increased smoothing means a smaller Y-offset between
-                    // samples. Smoothing of zero offsets each sample by a full
-                    // interval, which should produce fairly uncorrelated noise
-                    // for different offsets.
-                    // Always use a Y-offset of 0 in periodicity of 0 to preserve
-                    // the expected behavior.
-                    //
-                    // Because of the smooth 2D landscape, smoothing parameters
-                    // modestly lower than 1 tend to look similar to an
-                    // increase in periodicity.
-                    let y_offset = if self.n_periods == 0 {
-                        0.0
-                    } else {
-                        (1.0 - self.smoothing.val().val()) * offset_index as f64
-                    };
-
-                    let mut val = self.simplex_gen.get([x_offset, y_offset]);
-
-                    // Take the square for pulse mode to avoid sharp edges at zero,
-                    // and to maintain a bias towards the animation value frequently
-                    // touching zero. This produces more of a forest of peaks.
-                    // Simply rescaling the full noise spectrum into the unipolar
-                    // range would result in very rarely touching zero, which is
-                    // unlikely to be what we're looking for, artistically speaking.
-                    if self.pulse {
-                        val = val.powi(2);
-                    }
-                    val
-                }
-                Waveform::Constant => 1.0,
-            };
+    /// Scale a value using the amplitude scaling factors set by this animator.
+    pub fn scale_value(
+        &self,
+        external_clocks: &impl ClockStore,
+        audio_envelope: UnipolarFloat,
+        mut v: f64,
+    ) -> f64 {
+        v *= self.size.val();
 
         // scale this animation by submaster level if using external clock
         let mut use_audio_size = self.use_audio_size;
         if let Some(id) = self.clock_source {
-            result *= external_clocks.submaster_level(id).val();
+            v *= external_clocks.submaster_level(id).val();
             use_audio_size = use_audio_size || external_clocks.use_audio_size(id);
         }
         // scale this animation by audio envelope if set
         if use_audio_size {
-            result *= audio_envelope.val();
+            v *= audio_envelope.val();
         }
-        if self.invert {
-            -result
-        } else {
-            result
-        }
+
+        v
     }
 
     #[inline(always)]
