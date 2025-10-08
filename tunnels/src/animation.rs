@@ -122,7 +122,7 @@ impl Animation {
         offset_index: usize,
         external_clocks: &impl ClockStore,
     ) -> f64 {
-        let mut result = match self.waveform {
+        let result = match self.waveform {
             Waveform::Sine => {
                 waveforms::sine(&self.waveform_args(spatial_phase_offset, external_clocks))
             }
