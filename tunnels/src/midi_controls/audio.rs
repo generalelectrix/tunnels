@@ -3,15 +3,15 @@ use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
 
 use crate::{
-    audio::ControlMessage,
-    audio::StateChange,
-    midi::{cc, event, note_on_ch1, Manager, Mapping},
+    audio::{ControlMessage, StateChange},
+    midi::{cc, event, note_on, note_on_ch1, Manager, Mapping},
     midi_controls::Device,
     show::ControlMessage::Audio,
 };
 
 use super::{unipolar_from_midi, unipolar_to_midi, ControlMap};
 
+// Midi mappings for touch OSC.
 const MONITOR: Mapping = cc(1, 0);
 const MONITOR_TOGGLE: Mapping = note_on_ch1(4);
 const FILTER_CUTOFF: Mapping = cc(1, 1);
@@ -21,11 +21,15 @@ const GAIN: Mapping = cc(1, 4);
 const RESET: Mapping = note_on_ch1(5);
 const IS_CLIPPING: Mapping = note_on_ch1(6);
 
-pub fn map_audio_controls(device: Device, map: &mut ControlMap) {
+// Midi mappings for CMD MM-1.
+const CMD_MM1_VU_METER: Mapping = cc(4, 81);
+const CMD_MM1_MONITOR_TOGGLE: Mapping = note_on(4, 18);
+
+pub fn map_touch_osc_audio_controls(map: &mut ControlMap) {
     use ControlMessage::*;
     use StateChange::*;
 
-    let mut add = |mapping, creator| map.add(device, mapping, creator);
+    let mut add = |mapping, creator| map.add(Device::TouchOsc, mapping, creator);
 
     add(MONITOR_TOGGLE, Box::new(|_| Audio(ToggleMonitor)));
     add(
@@ -44,6 +48,14 @@ pub fn map_audio_controls(device: Device, map: &mut ControlMap) {
     add(GAIN, Box::new(|v| Audio(Set(Gain(gain_from_midi(v))))));
 }
 
+pub fn map_cmd_mm1_audio_controls(map: &mut ControlMap) {
+    use ControlMessage::*;
+
+    let mut add = |mapping, creator| map.add(Device::BehringerCmdMM1, mapping, creator);
+
+    add(CMD_MM1_MONITOR_TOGGLE, Box::new(|_| Audio(ToggleMonitor)));
+}
+
 /// Emit midi messages to update UIs given the provided state change.
 pub fn update_audio_control(sc: StateChange, manager: &mut Manager<Device>) {
     use StateChange::*;
@@ -53,8 +65,20 @@ pub fn update_audio_control(sc: StateChange, manager: &mut Manager<Device>) {
     };
 
     match sc {
-        EnvelopeValue(v) => send(event(MONITOR, unipolar_to_midi(v))),
-        Monitor(v) => send(event(MONITOR_TOGGLE, v as u8)),
+        EnvelopeValue(v) => {
+            send(event(MONITOR, unipolar_to_midi(v)));
+            manager.send(
+                &Device::BehringerCmdMM1,
+                event(CMD_MM1_VU_METER, 48 + (v.val() * 15.) as u8),
+            );
+        }
+        Monitor(v) => {
+            send(event(MONITOR_TOGGLE, v as u8));
+            manager.send(
+                &Device::BehringerCmdMM1,
+                event(CMD_MM1_MONITOR_TOGGLE, v as u8),
+            );
+        }
         FilterCutoff(v) => send(event(FILTER_CUTOFF, filter_to_midi(v))),
         EnvelopeAttack(v) => send(event(ENVELOPE_ATTACK, envelope_edge_to_midi(v))),
         EnvelopeRelease(v) => send(event(ENVELOPE_RELEASE, envelope_edge_to_midi(v))),

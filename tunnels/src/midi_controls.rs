@@ -14,8 +14,8 @@ use crate::{
     control::ControlEvent,
     master_ui::EmitStateChange,
     midi::{DeviceSpec, Event, Manager, Mapping},
-    show::ControlMessage,
-    show::StateChange,
+    midi_controls::audio::map_cmd_mm1_audio_controls,
+    show::{ControlMessage, StateChange},
 };
 use anyhow::Result;
 
@@ -23,7 +23,7 @@ use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
 use self::animation::{map_animation_controls, update_animation_control};
 use self::animation_target::{map_animation_target_controls, update_animation_target_control};
-use self::audio::{map_audio_controls, update_audio_control};
+use self::audio::{map_touch_osc_audio_controls, update_audio_control};
 use self::clock::{map_clock_controls, update_clock_control};
 use self::master_ui::{map_master_ui_controls, update_master_ui_control};
 use self::mixer::{map_mixer_controls, update_mixer_control};
@@ -63,7 +63,8 @@ impl ControlMap {
         map_clock_controls(Device::BehringerCmdMM1, &mut map);
         map_clock_controls(Device::TouchOsc, &mut map);
 
-        map_audio_controls(Device::TouchOsc, &mut map);
+        map_touch_osc_audio_controls(&mut map);
+        map_cmd_mm1_audio_controls(&mut map);
         map
     }
 
