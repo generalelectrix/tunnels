@@ -139,8 +139,6 @@ pub struct ControllableClock {
     clock: Clock,
     sync: TapSync,
     tick_indicator: TransientIndicator,
-    /// If true, reset the clock's phase to zero on every tap.
-    retrigger: bool,
     /// submaster level for this clock
     submaster_level: UnipolarFloat,
     /// If true, modulate the submaster level using audio envelope.
@@ -166,7 +164,6 @@ impl ControllableClock {
             clock: Clock::new(),
             sync: TapSync::new(),
             tick_indicator: TransientIndicator::new(Duration::from_millis(100)),
-            retrigger: false,
             submaster_level: UnipolarFloat::ONE,
             use_audio_size: false,
         }
@@ -222,7 +219,6 @@ impl ControllableClock {
     /// Emit the current value of all controllable state.
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
         use StateChange::*;
-        emitter.emit_clock_state_change(Retrigger(self.retrigger));
         emitter.emit_clock_state_change(OneShot(self.clock.one_shot));
         emitter.emit_clock_state_change(SubmasterLevel(self.submaster_level));
         emitter.emit_clock_state_change(Ticked(self.tick_indicator.state()));
@@ -237,9 +233,7 @@ impl ControllableClock {
         match msg {
             Set(sc) => self.handle_state_change(sc, emitter),
             Tap => {
-                if self.retrigger {
-                    self.clock.reset_on_update = true;
-                } else if let Some(rate) = self.sync.tap() {
+                if let Some(rate) = self.sync.tap() {
                     self.clock.rate_coarse = rate;
                     self.clock.rate_fine = 0.;
                     emitter.emit_clock_state_change(StateChange::Rate(BipolarFloat::new(
@@ -251,8 +245,8 @@ impl ControllableClock {
             ToggleOneShot => {
                 self.handle_state_change(StateChange::OneShot(!self.clock.one_shot), emitter);
             }
-            ToggleRetrigger => {
-                self.handle_state_change(StateChange::Retrigger(!self.retrigger), emitter);
+            Retrigger => {
+                self.clock.reset_on_update = true;
             }
             ToggleUseAudioSize => {
                 self.handle_state_change(StateChange::UseAudioSize(!self.use_audio_size), emitter);
@@ -271,7 +265,6 @@ impl ControllableClock {
         match sc {
             Rate(v) => self.clock.rate_coarse = v.val() * ControllableClock::RATE_SCALE,
             RateFine(v) => self.clock.rate_fine = v.val() * ControllableClock::RATE_SCALE_FINE,
-            Retrigger(v) => self.retrigger = v,
             OneShot(v) => self.clock.set_one_shot(v),
             SubmasterLevel(v) => self.submaster_level = v,
             UseAudioSpeed(v) => self.clock.use_audio = v,
@@ -286,7 +279,6 @@ impl ControllableClock {
 pub enum StateChange {
     Rate(BipolarFloat),
     RateFine(BipolarFloat),
-    Retrigger(bool),
     OneShot(bool),
     SubmasterLevel(UnipolarFloat),
     UseAudioSize(bool),
@@ -300,7 +292,8 @@ pub enum ControlMessage {
     Set(StateChange),
     Tap,
     ToggleOneShot,
-    ToggleRetrigger,
+    /// Reset the phase of the clock on the next update.
+    Retrigger,
     ToggleUseAudioSize,
     ToggleUseAudioSpeed,
 }

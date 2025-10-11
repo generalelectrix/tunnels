@@ -138,7 +138,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
             Box::new(move |_| {
                 Clock(ControlMessage {
                     channel: ClockIdxExt(channel),
-                    msg: ToggleRetrigger,
+                    msg: Retrigger,
                 })
             }),
         );
@@ -177,7 +177,6 @@ pub fn update_clock_control(sc: StateChange, manager: &mut Manager<Device>) {
     };
 
     match sc.change {
-        Retrigger(v) => send(Control::Retrigger, v as u8),
         OneShot(v) => send(Control::OneShot, v as u8),
         Ticked(v) => send(Control::Tap, v as u8),
         Rate(v) => send(Control::Rate, bipolar_to_midi(v)),
