@@ -297,8 +297,8 @@ pub fn prompt_midi<D: MidiDevice>(
     }
     println!();
 
-    let mut add_device = |device| -> Result<()> {
-        if prompt_bool(&format!("Use {device}?"))? {
+    let mut add_device = |device: D| -> Result<()> {
+        if prompt_bool(&format!("Use {}?", device.device_name()))? {
             devices.push(prompt_input_output(device, input_ports, output_ports)?);
         }
         Ok(())

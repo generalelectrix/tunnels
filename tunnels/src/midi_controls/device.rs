@@ -1,5 +1,3 @@
-use std::fmt::{self, Display};
-
 use crate::midi::{Event, EventType, Mapping, Output};
 use anyhow::Result;
 use log::debug;
@@ -13,18 +11,9 @@ pub enum Device {
     BehringerCmdMM1,
 }
 
-impl fmt::Display for Device {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::AkaiApc40 => "Akai APC40",
-                Self::AkaiApc20 => "Akai APC20",
-                Self::TouchOsc => "Touch OSC",
-                Self::BehringerCmdMM1 => "Behringer CMD MM-1",
-            }
-        )
+impl std::fmt::Display for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.device_name())
     }
 }
 
@@ -39,7 +28,7 @@ impl Device {
     }
 }
 
-pub trait MidiDevice: PartialEq + Sized + Send + Clone + Display {
+pub trait MidiDevice: PartialEq + Sized + Send + Clone {
     /// Return the name of the midi device we should look for.
     fn device_name(&self) -> &str;
 
