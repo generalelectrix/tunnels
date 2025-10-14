@@ -1,6 +1,6 @@
 mod animation;
 mod animation_target;
-mod audio;
+pub mod audio;
 mod clock;
 mod device;
 mod master_ui;

@@ -25,7 +25,7 @@ const IS_CLIPPING: Mapping = note_on_ch1(6);
 const CMD_MM1_VU_METER: Mapping = cc(4, 81);
 const CMD_MM1_MONITOR_TOGGLE: Mapping = note_on(4, 18);
 
-pub fn map_touch_osc_audio_controls(map: &mut ControlMap) {
+pub(crate) fn map_touch_osc_audio_controls(map: &mut ControlMap) {
     use ControlMessage::*;
     use StateChange::*;
 
@@ -48,7 +48,7 @@ pub fn map_touch_osc_audio_controls(map: &mut ControlMap) {
     add(GAIN, Box::new(|v| Audio(Set(Gain(gain_from_midi(v))))));
 }
 
-pub fn map_cmd_mm1_audio_controls(map: &mut ControlMap) {
+pub(crate) fn map_cmd_mm1_audio_controls(map: &mut ControlMap) {
     use ControlMessage::*;
 
     let mut add = |mapping, creator| map.add(Device::BehringerCmdMM1, mapping, creator);
@@ -57,7 +57,7 @@ pub fn map_cmd_mm1_audio_controls(map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_audio_control(sc: StateChange, manager: &mut Manager<Device>) {
+pub(crate) fn update_audio_control(sc: StateChange, manager: &mut Manager<Device>) {
     use StateChange::*;
 
     let mut send = |event| {
