@@ -78,6 +78,26 @@ impl Default for Animation {
 impl Animation {
     const SMOOTH_SMOOTH_TIME: Duration = Duration::from_millis(100);
 
+    /// Return the current value of the internal animation size.
+    pub fn size(&self) -> UnipolarFloat {
+        self.size
+    }
+
+    /// Return the current value of the duty cycle.
+    pub fn duty_cycle(&self) -> UnipolarFloat {
+        self.duty_cycle
+    }
+
+    /// Return the current value of the smoothing parameter.
+    pub fn smoothing(&self) -> UnipolarFloat {
+        self.smoothing.target()
+    }
+
+    /// Return the current selected number of animation periods.
+    pub fn n_periods(&self) -> u16 {
+        self.n_periods
+    }
+
     /// Return true if this animation has nonzero size.
     fn active(&self) -> bool {
         self.size > 0.0
@@ -98,7 +118,7 @@ impl Animation {
     }
 
     /// Return the clock's current rate, scaled into a bipolar float.
-    fn clock_speed(&self) -> BipolarFloat {
+    pub fn clock_speed(&self) -> BipolarFloat {
         BipolarFloat::new(self.internal_clock.rate_coarse / ControllableClock::RATE_SCALE)
     }
 
