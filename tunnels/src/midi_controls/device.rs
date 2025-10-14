@@ -45,14 +45,14 @@ pub trait MidiDevice: PartialEq + Sized + Send + Clone + Display {
 
     /// Perform device-specific midi initialization.
     #[allow(unused)]
-    fn init_midi(&self, out: &mut Output<Self>) -> Result<()> {
+    fn init_midi(&self, out: &mut Output) -> Result<()> {
         Ok(())
     }
 }
 
 impl MidiDevice for Device {
     /// Perform device-specific midi initialization.
-    fn init_midi(&self, out: &mut Output<Device>) -> Result<()> {
+    fn init_midi(&self, out: &mut Output) -> Result<()> {
         match *self {
             Self::AkaiApc40 => init_apc_40(out),
             Self::AkaiApc20 => init_apc_20(out),
@@ -72,7 +72,7 @@ impl MidiDevice for Device {
     }
 }
 
-fn init_apc_40(out: &mut Output<impl MidiDevice>) -> Result<()> {
+fn init_apc_40(out: &mut Output) -> Result<()> {
     // put into ableton (full control) mode
     debug!("Sending APC40 sysex mode command.");
     out.send_raw(&[
@@ -124,7 +124,7 @@ fn init_apc_40(out: &mut Output<impl MidiDevice>) -> Result<()> {
     Ok(())
 }
 
-pub fn init_apc_20(out: &mut Output<impl MidiDevice>) -> Result<()> {
+pub fn init_apc_20(out: &mut Output) -> Result<()> {
     // put into ableton (full control) mode
     debug!("Sending APC20 sysex mode command.");
     out.send_raw(&[

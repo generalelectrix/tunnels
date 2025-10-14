@@ -96,7 +96,6 @@ pub const fn event(mapping: Mapping, value: u8) -> Event {
     Event { mapping, value }
 }
 
-#[allow(dead_code)]
 // Return the available ports by name,
 pub fn list_ports() -> Result<(Vec<String>, Vec<String>)> {
     let input = MidiInput::new("tunnels")?;
@@ -125,25 +124,19 @@ fn get_named_port<T: MidiIO>(source: &T, name: &str) -> Result<T::Port> {
     bail!("no port found with name {}", name);
 }
 
-pub struct Output<D: PartialEq> {
+pub struct Output {
     name: String,
     conn: MidiOutputConnection,
-    device: D,
 }
 
-impl<D: PartialEq> Output<D> {
-    pub fn new(name: String, device: D) -> Result<Self> {
+impl Output {
+    pub fn new(name: String) -> Result<Self> {
         let output = MidiOutput::new(&name)?;
         let port = get_named_port(&output, &name)?;
         let conn = output
             .connect(&port, &name)
             .map_err(|err| anyhow!("failed to connect to midi output: {err}"))?;
-        Ok(Self { name, conn, device })
-    }
-
-    /// Return a reference to the device attached to this output.
-    pub fn device(&self) -> &D {
-        &self.device
+        Ok(Self { conn, name })
     }
 
     pub fn send(&mut self, event: Event) -> Result<(), SendError> {
@@ -232,7 +225,7 @@ impl Input {
 /// Provide synchronous dispatch for outgoing messages based on device type.
 pub struct Manager<D: MidiDevice> {
     inputs: Vec<Input>,
-    outputs: Vec<Output<D>>,
+    outputs: Vec<(D, Output)>,
 }
 
 impl<D: MidiDevice> Default for Manager<D> {
@@ -252,21 +245,21 @@ impl<D: MidiDevice + 'static> Manager<D> {
         send: Sender<impl CreateControlEvent<D> + Send + 'static>,
     ) -> Result<()> {
         let input = Input::new(spec.input_port_name, spec.device.clone(), send)?;
-        let mut output = Output::new(spec.output_port_name, spec.device.clone())?;
+        let mut output = Output::new(spec.output_port_name)?;
 
         // Send initialization commands to the device.
         spec.device.init_midi(&mut output)?;
 
         self.inputs.push(input);
-        self.outputs.push(output);
+        self.outputs.push((spec.device, output));
         Ok(())
     }
 
     /// Send a message to the specified device type.
     /// Error conditions are logged rather than returned.
     pub fn send(&mut self, device: &D, event: Event) {
-        for output in &mut self.outputs {
-            if output.device == *device {
+        for (d, output) in &mut self.outputs {
+            if d == device {
                 if let Err(e) = output.send(event) {
                     error!("Failed to send midi event to {}: {}.", output.name, e);
                 }
@@ -275,7 +268,7 @@ impl<D: MidiDevice + 'static> Manager<D> {
     }
 
     /// Return an iterator over all outputs.
-    pub fn outputs(&mut self) -> impl Iterator<Item = &mut Output<D>> {
+    pub fn outputs(&mut self) -> impl Iterator<Item = &mut (D, Output)> {
         self.outputs.iter_mut()
     }
 }
