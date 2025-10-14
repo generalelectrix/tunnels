@@ -88,12 +88,12 @@ pub fn update_audio_control(sc: StateChange, manager: &mut Manager<Device>) {
 }
 
 /// Get midi value plus 1, in milliseconds.
-fn envelope_edge_from_midi(v: u8) -> Duration {
+pub fn envelope_edge_from_midi(v: u8) -> Duration {
     Duration::from_millis(v as u64 + 1)
 }
 
 /// Clamp duration in integer milliseconds to midi range.
-fn envelope_edge_to_midi(d: Duration) -> u8 {
+pub fn envelope_edge_to_midi(d: Duration) -> u8 {
     let clamped = d.as_millis().clamp(1, 128);
     (clamped - 1) as u8
 }
@@ -104,11 +104,11 @@ fn envelope_edge_to_midi(d: Duration) -> u8 {
 const FILTER_LOWER_BOUND: f64 = 40.;
 const FILTER_SCALE: f64 = 1000.;
 
-fn filter_from_midi(v: u8) -> f32 {
+pub fn filter_from_midi(v: u8) -> f32 {
     (unipolar_from_midi(v).val() * FILTER_SCALE + FILTER_LOWER_BOUND) as f32
 }
 
-fn filter_to_midi(f: f32) -> u8 {
+pub fn filter_to_midi(f: f32) -> u8 {
     unipolar_to_midi(UnipolarFloat::new(
         ((f as f64) - FILTER_LOWER_BOUND) / FILTER_SCALE,
     ))
@@ -116,12 +116,12 @@ fn filter_to_midi(f: f32) -> u8 {
 
 // Set gain as a unipolar knob, scaled by 20, interpreted as dB.
 
-fn gain_from_midi(v: u8) -> f64 {
+pub fn gain_from_midi(v: u8) -> f64 {
     let gain_db = 20. * unipolar_from_midi(v).val();
     (10_f64).powf(gain_db / 20.)
 }
 
-fn gain_to_midi(g: f64) -> u8 {
+pub fn gain_to_midi(g: f64) -> u8 {
     let gain_db = 20. * g.log10();
     unipolar_to_midi(UnipolarFloat::new(gain_db / 20.))
 }
