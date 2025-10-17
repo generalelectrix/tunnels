@@ -104,11 +104,22 @@ impl Clock {
         }
     }
 
-    fn set_one_shot(&mut self, one_shot: bool) {
+    /// Tell the clock to reset phase on its next update.
+    pub fn reset_next_update(&mut self) {
+        self.reset_on_update = true;
+    }
+
+    /// Set whether this clock should run in one-shot mode.
+    pub fn set_one_shot(&mut self, one_shot: bool) {
         self.one_shot = one_shot;
         if !one_shot {
             self.run = true;
         }
+    }
+
+    /// Return true if the clock ticked on its most recent update.
+    pub fn ticked(&self) -> bool {
+        self.ticked
     }
 
     pub fn phase(&self) -> Phase {
@@ -146,7 +157,7 @@ impl Default for ControllableClock {
         Self {
             clock: Default::default(),
             sync: Default::default(),
-            tick_indicator: TransientIndicator::new(Duration::from_millis(100)),
+            tick_indicator: Default::default(),
             submaster_level: UnipolarFloat::ONE,
             use_audio_size: false,
         }
@@ -238,7 +249,7 @@ impl ControllableClock {
                 self.handle_state_change(StateChange::OneShot(!self.clock.one_shot), emitter);
             }
             Retrigger => {
-                self.clock.reset_on_update = true;
+                self.clock.reset_next_update();
             }
             ToggleUseAudioSize => {
                 self.handle_state_change(StateChange::UseAudioSize(!self.use_audio_size), emitter);

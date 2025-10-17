@@ -9,6 +9,12 @@ pub struct TransientIndicator {
     display_duration: Duration,
 }
 
+impl Default for TransientIndicator {
+    fn default() -> Self {
+        Self::new(Duration::from_millis(100))
+    }
+}
+
 impl TransientIndicator {
     pub fn new(display_duration: Duration) -> Self {
         Self {
