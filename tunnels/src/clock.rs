@@ -37,12 +37,6 @@ pub struct Clock {
 
 impl Default for Clock {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Clock {
-    pub fn new() -> Self {
         Self {
             phase: Phase::ZERO,
             ticks: 0,
@@ -55,7 +49,9 @@ impl Clock {
             use_audio: false,
         }
     }
+}
 
+impl Clock {
     /// Return the sum of the coarse and fine rate controls.
     pub fn rate(&self) -> f64 {
         self.rate_coarse + self.rate_fine
@@ -147,7 +143,13 @@ pub struct ControllableClock {
 
 impl Default for ControllableClock {
     fn default() -> Self {
-        Self::new()
+        Self {
+            clock: Default::default(),
+            sync: Default::default(),
+            tick_indicator: TransientIndicator::new(Duration::from_millis(100)),
+            submaster_level: UnipolarFloat::ONE,
+            use_audio_size: false,
+        }
     }
 }
 
@@ -158,16 +160,6 @@ impl ControllableClock {
     /// direction
     pub const RATE_SCALE: f64 = -1.5;
     pub const RATE_SCALE_FINE: f64 = Self::RATE_SCALE / 24.;
-
-    pub fn new() -> Self {
-        Self {
-            clock: Clock::new(),
-            sync: TapSync::new(),
-            tick_indicator: TransientIndicator::new(Duration::from_millis(100)),
-            submaster_level: UnipolarFloat::ONE,
-            use_audio_size: false,
-        }
-    }
 
     /// Return the current phase of this clock.
     pub fn phase(&self) -> Phase {
@@ -302,9 +294,9 @@ pub trait EmitStateChange {
     fn emit_clock_state_change(&mut self, sc: StateChange);
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 /// Estimate rate from a series of taps.
-struct TapSync {
+pub struct TapSync {
     #[serde(skip)]
     taps: Vec<Instant>,
     rate: Option<f64>,
@@ -315,14 +307,6 @@ impl TapSync {
     /// Fractional threshold at which we'll discard the current tap buffer and
     /// start a new one.
     const RESET_THRESHOLD: f64 = 0.1;
-
-    pub fn new() -> Self {
-        Self {
-            taps: Vec::new(),
-            rate: None,
-            period: None,
-        }
-    }
 
     fn reset_buffer(&mut self, tap: Instant) {
         self.taps.clear();
