@@ -67,7 +67,7 @@ impl Default for Animation {
                 Self::SMOOTH_SMOOTH_TIME,
                 tunnels_lib::smooth::SmoothMode::Linear,
             ),
-            internal_clock: Clock::new(),
+            internal_clock: Default::default(),
             clock_source: None,
             use_audio_size: false,
             simplex_gen: get_simplex_gen(),
