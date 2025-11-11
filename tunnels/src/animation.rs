@@ -59,7 +59,7 @@ impl Default for Animation {
             pulse: false,
             standing: false,
             invert: false,
-            n_periods: 0,
+            n_periods: 1,
             size: UnipolarFloat::ZERO,
             duty_cycle: UnipolarFloat::ONE,
             smoothing: Smoother::new(
