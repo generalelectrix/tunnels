@@ -31,6 +31,7 @@ noise = "0.9.0"
 typed_index_derive = "0.1.4"
 itertools = "0.14"
 
+midi_harness = { path = "../midi_harness" }
 tunnels_lib = { path = "../tunnels_lib" }
 zero_configure = { path = "../zero_configure" }
 

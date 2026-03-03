@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["tunnels_lib", "tunnels", "tunnelclient", "zero_configure"]
+members = [
+    "tunnels_lib",
+    "tunnels",
+    "tunnelclient",
+    "zero_configure",
+    "midi_harness",
+]
 
 [workspace.dependencies]
 serde = { version = "^1", features = ["derive", "rc"] }
