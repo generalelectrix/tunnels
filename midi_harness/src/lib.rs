@@ -9,12 +9,12 @@ use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, Se
 
 use crate::{
     device_change::DeviceId,
-    event::{Event, EventType, Mapping, ParseError},
+    event::{Event, EventType},
 };
 
 pub struct DeviceManager<D, F>
 where
-    D: 'static + Clone,
+    D: InitMidiDevice,
     F: Fn(Event, &D) + Clone,
 {
     slots: Vec<DeviceSlot<D>>,
@@ -28,36 +28,44 @@ where
 
 impl<D, F> DeviceManager<D, F>
 where
-    D: 'static + Clone,
-    F: Fn(Event, &D) + Clone,
+    D: InitMidiDevice,
+    F: 'static + Fn(Event, &D) + Send + Clone,
 {
     /// Call the provided closure on each connected output.
     /// The attached model and the MIDI output are provided.
     pub fn visit_outputs(&mut self, visitor: impl Fn(&D, OutputPort)) {
         for slot in &mut self.slots {
-            let Some(device) = &mut slot.device else {
-                continue;
-            };
-            let Some(output) = &mut device.output else {
+            let Some(output) = &mut slot.output else {
                 continue;
             };
             let Some(conn) = &mut output.port else {
                 continue;
             };
-            visitor(&device.model, OutputPort { conn });
+            visitor(&slot.model, OutputPort { conn });
         }
+    }
+
+    /// Connect the provided device ID to the input in the named slot.
+    pub fn connect_input(&mut self, slot: &str, id: DeviceId) -> Result<()> {
+        let Some(slot) = self.slots.iter_mut().find(|s| s.name == slot) else {
+            bail!("unknown device slot {slot}");
+        };
+        slot.connect_input(id, self.proc_input.clone())
+    }
+
+    /// Connect the provided device ID to the output in the named slot.
+    pub fn connect_output(&mut self, slot: &str, id: DeviceId) -> Result<()> {
+        let Some(slot) = self.slots.iter_mut().find(|s| s.name == slot) else {
+            bail!("unknown device slot {slot}");
+        };
+        slot.connect_output(id)
     }
 }
 
 /// A control "slot" that can have a MIDI device connected to it.
-pub struct DeviceSlot<D: 'static + Clone> {
+pub struct DeviceSlot<D: InitMidiDevice> {
     /// The name of this slot. Must be unique in the context of a single manager.
     name: String,
-    /// The physical device wired up to this slot. If None, this slot is empty.
-    device: Option<DeviceState<D>>,
-}
-
-struct DeviceState<D: 'static + Clone> {
     model: D,
     /// The input wired up to this device. If None, no input has been assigned.
     input: Option<DeviceInput<D>>,
@@ -65,7 +73,7 @@ struct DeviceState<D: 'static + Clone> {
     output: Option<DeviceOutput>,
 }
 
-impl<D: 'static + Clone + Send> DeviceState<D> {
+impl<D: InitMidiDevice + Send> DeviceSlot<D> {
     /// Connect the provided device ID to this input.
     ///
     /// Any existing device will be replaced.
@@ -109,7 +117,7 @@ impl<D: 'static + Clone + Send> DeviceState<D> {
     /// Connect the provided device ID to this output.
     ///
     /// Any existing device will be replaced.
-    pub fn connect_output<F>(&mut self, id: DeviceId) -> Result<()> {
+    pub fn connect_output(&mut self, id: DeviceId) -> Result<()> {
         let output = MidiOutput::new(&id.0)?;
         let Some(port) = output.ports().into_iter().find(|p| DeviceId(p.id()) == id) else {
             bail!("no MIDI output found with {id:?}");
@@ -127,7 +135,7 @@ impl<D: 'static + Clone + Send> DeviceState<D> {
     }
 }
 
-struct DeviceInput<D: 'static + Clone> {
+struct DeviceInput<D: InitMidiDevice> {
     id: DeviceId,
     name: String,
     /// If None, the device is disconnected.
@@ -161,5 +169,13 @@ impl<'a> OutputPort<'a> {
 
     pub fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError> {
         self.conn.send(msg)
+    }
+}
+
+pub trait InitMidiDevice: Sized + Send + Clone + 'static {
+    /// Perform device-specific midi initialization.
+    #[allow(unused)]
+    fn init_midi(&self, out: OutputPort<'_>) -> Result<()> {
+        Ok(())
     }
 }
