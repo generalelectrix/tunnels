@@ -1,151 +1,165 @@
-use anyhow::{Result, anyhow};
-use std::collections::HashSet;
-use std::sync::mpsc::sync_channel;
+//! MIDI device management to plug into an event-driven environment.
+mod device_change;
+pub mod event;
 
-/// Initialize MIDI device notifications.
-/// The provided callback will be called when devices appear or disappear.
-///
-/// This should be called at application init.
-/// If it is called more than once, only the last registered callback will get
-/// device appeared/disappeared updates.
-///
-/// NOTE: this currently only supports MacOS for dynamic device notifications.
-/// Other OSes will fall back to an initial report of the currently-connected
-/// devices.
-pub fn initialize<C>(mut on_device_change: C) -> Result<()>
+use anyhow::{Context, Result, bail};
+pub use device_change::initialize;
+use log::debug;
+use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
+
+use crate::{
+    device_change::DeviceId,
+    event::{Event, EventType, Mapping, ParseError},
+};
+
+pub struct DeviceManager<D, F>
 where
-    C: FnMut(Result<DeviceChange>) + Send + 'static,
+    D: 'static + Clone,
+    F: Fn(Event, &D) + Clone,
 {
-    let (send, recv) = sync_channel(0);
+    slots: Vec<DeviceSlot<D>>,
+    /// Callback that will be called by a MIDI input on message arrival.
+    ///
+    /// Accepts the MIDI Event, and will also be handed your device model to be
+    /// used to interpret the message. This callback should do something with
+    /// the result, such as push it onto a channel.
+    proc_input: F,
+}
 
-    let mut connected_devices = ConnectedDevices::default();
-
-    std::thread::spawn(move || {
-        for _ in recv {
-            connected_devices.update(&mut on_device_change);
+impl<D, F> DeviceManager<D, F>
+where
+    D: 'static + Clone,
+    F: Fn(Event, &D) + Clone,
+{
+    /// Call the provided closure on each connected output.
+    /// The attached model and the MIDI output are provided.
+    pub fn visit_outputs(&mut self, visitor: impl Fn(&D, OutputPort)) {
+        for slot in &mut self.slots {
+            let Some(device) = &mut slot.device else {
+                continue;
+            };
+            let Some(output) = &mut device.output else {
+                continue;
+            };
+            let Some(conn) = &mut output.port else {
+                continue;
+            };
+            visitor(&device.model, OutputPort { conn });
         }
-    });
+    }
+}
 
-    #[cfg(target_os = "macos")]
-    // Register for device update notifications
-    coremidi_hotplug_notification::receive_device_updates(move || {
-        let _ = send.send(());
-    })
-    .map_err(|err| anyhow!("failed to initialize MIDI harness: {err}"))?;
+/// A control "slot" that can have a MIDI device connected to it.
+pub struct DeviceSlot<D: 'static + Clone> {
+    /// The name of this slot. Must be unique in the context of a single manager.
+    name: String,
+    /// The physical device wired up to this slot. If None, this slot is empty.
+    device: Option<DeviceState<D>>,
+}
 
-    #[cfg(not(target_os = "macos"))]
+struct DeviceState<D: 'static + Clone> {
+    model: D,
+    /// The input wired up to this device. If None, no input has been assigned.
+    input: Option<DeviceInput<D>>,
+    /// The output wired up to this device. If None, no output has been assigned.
+    output: Option<DeviceOutput>,
+}
+
+impl<D: 'static + Clone + Send> DeviceState<D> {
+    /// Connect the provided device ID to this input.
+    ///
+    /// Any existing device will be replaced.
+    pub fn connect_input<F>(&mut self, id: DeviceId, handle_msg: F) -> Result<()>
+    where
+        F: Fn(Event, &D) + Send + 'static,
     {
-        warn!("MIDI device hotplugging notification is not supported on this OS!");
-
-        // Run one initial cycle of device discovery and report the results.
-        // This is sufficient for static device discovery at init.
-        // TODO: decide if we can support this for other platforms
-        send.send(());
-    }
-
-    Ok(())
-}
-
-#[derive(Default)]
-struct ConnectedDevices {
-    inputs: Devices,
-    outputs: Devices,
-}
-
-impl ConnectedDevices {
-    /// Refresh the currently-connected devices. Send messages for devices that
-    /// have connected or disconnected, as well as errors.
-    fn update<C: FnMut(Result<DeviceChange>)>(&mut self, on_device_change: &mut C) {
-        self.update_inputs(on_device_change);
-        self.update_outputs(on_device_change);
-    }
-
-    fn update_inputs<C: FnMut(Result<DeviceChange>)>(&mut self, on_device_change: &mut C) {
-        let port = match midir::MidiInput::new("midi_harness") {
-            Ok(port) => port,
-            Err(err) => {
-                on_device_change(Err(anyhow!("failed to refresh MIDI inputs: {err}")));
-                return;
-            }
+        let input = MidiInput::new(&id.0)?;
+        let Some(port) = input.ports().into_iter().find(|p| DeviceId(p.id()) == id) else {
+            bail!("no MIDI input found with {id:?}");
         };
-        let ports: Vec<_> = port
-            .ports()
-            .into_iter()
-            .filter_map(|p| {
-                let name = port.port_name(&p).ok()?;
-                Some((DeviceId(p.id()), name))
-            })
-            .collect();
-        self.inputs =
-            report_device_changes(&self.inputs, ports, DeviceKind::Input, on_device_change);
+        let name = input
+            .port_name(&port)
+            .with_context(|| format!("unable to get port name for {id:?}"))?;
+        let handler_name = name.clone();
+        let conn = input
+            .connect(
+                &port,
+                &name,
+                move |_timestamp, msg: &[u8], model| {
+                    let event = match Event::parse(msg) {
+                        Ok(event) => event,
+                        Err(err) => {
+                            debug!("Ignoring midi input event on {handler_name}: {err:?}.");
+                            return;
+                        }
+                    };
+                    handle_msg(event, model);
+                },
+                self.model.clone(),
+            )
+            .with_context(|| name.clone())?;
+        self.input = Some(DeviceInput {
+            id,
+            name,
+            port: Some(conn),
+        });
+        Ok(())
     }
 
-    fn update_outputs<C: FnMut(Result<DeviceChange>)>(&mut self, on_device_change: &mut C) {
-        let port = match midir::MidiOutput::new("midi_harness") {
-            Ok(port) => port,
-            Err(err) => {
-                on_device_change(Err(anyhow!("failed to refresh MIDI inputs: {err}")));
-                return;
-            }
+    /// Connect the provided device ID to this output.
+    ///
+    /// Any existing device will be replaced.
+    pub fn connect_output<F>(&mut self, id: DeviceId) -> Result<()> {
+        let output = MidiOutput::new(&id.0)?;
+        let Some(port) = output.ports().into_iter().find(|p| DeviceId(p.id()) == id) else {
+            bail!("no MIDI output found with {id:?}");
         };
-        let ports: Vec<_> = port
-            .ports()
-            .into_iter()
-            .filter_map(|p| {
-                let name = port.port_name(&p).ok()?;
-                Some((DeviceId(p.id()), name))
-            })
-            .collect();
-        self.outputs =
-            report_device_changes(&self.outputs, ports, DeviceKind::Output, on_device_change);
+        let name = output
+            .port_name(&port)
+            .with_context(|| format!("unable to get port name for {id:?}"))?;
+        let conn = output.connect(&port, &name).with_context(|| name.clone())?;
+        self.output = Some(DeviceOutput {
+            id,
+            name,
+            port: Some(conn),
+        });
+        Ok(())
     }
 }
 
-fn report_device_changes<C: FnMut(Result<DeviceChange>)>(
-    previous: &Devices,
-    current: Vec<(DeviceId, String)>,
-    kind: DeviceKind,
-    on_device_change: &mut C,
-) -> Devices {
-    let current_ids: Devices = current.iter().map(|(id, _)| id).cloned().collect();
-
-    for disconnected in previous.difference(&current_ids) {
-        on_device_change(Ok(DeviceChange::Disconnected(disconnected.clone())));
-    }
-    for (id, name) in current {
-        if previous.contains(&id) {
-            continue;
-        }
-        on_device_change(Ok(DeviceChange::Connected { id, name, kind }));
-    }
-    current_ids
+struct DeviceInput<D: 'static + Clone> {
+    id: DeviceId,
+    name: String,
+    /// If None, the device is disconnected.
+    port: Option<MidiInputConnection<D>>,
 }
 
-type Devices = HashSet<DeviceId>;
-
-/// An opaque ID for a connected MIDI device.
-///
-/// Produced by the underlying support library. The exact semantics of what
-/// generates these is not clear.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-
-pub struct DeviceId(String);
-
-/// A device appeared or disappeared.
-pub enum DeviceChange {
-    Connected {
-        id: DeviceId,
-        name: String,
-        kind: DeviceKind,
-    },
-    Disconnected(DeviceId),
+struct DeviceOutput {
+    id: DeviceId,
+    name: String,
+    /// If None, the device is disconnected.
+    port: Option<MidiOutputConnection>,
 }
 
-/// Is this a MIDI input or output device?
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DeviceKind {
-    /// MIDI input
-    Input,
-    /// MIDI output
-    Output,
+/// Helper wrapper around a port to provide a more convenient interface.
+pub struct OutputPort<'a> {
+    conn: &'a mut MidiOutputConnection,
+}
+
+impl<'a> OutputPort<'a> {
+    pub fn send(&mut self, event: Event) -> Result<(), SendError> {
+        let mut msg: [u8; 3] = [0; 3];
+        msg[0] = match event.mapping.event_type {
+            EventType::ControlChange => 11 << 4,
+            EventType::NoteOn => 9 << 4,
+            EventType::NoteOff => 8 << 4,
+        } + event.mapping.channel;
+        msg[1] = event.mapping.control;
+        msg[2] = event.value;
+        self.conn.send(&msg)
+    }
+
+    pub fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError> {
+        self.conn.send(msg)
+    }
 }

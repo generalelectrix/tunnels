@@ -1804,6 +1804,7 @@ dependencies = [
  "coremidi-hotplug-notification",
  "log 0.4.27",
  "midir",
+ "serde",
 ]
 
 [[package]]
