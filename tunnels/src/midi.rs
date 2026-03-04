@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use log::{debug, error};
+use midi_harness::{DeviceId, DeviceManager, MidiHandler};
 use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::mpsc::Sender};
@@ -137,55 +138,48 @@ impl Input {
     }
 }
 
-/// Maintain midi inputs and outputs.
-/// Provide synchronous dispatch for outgoing messages based on device type.
-pub struct Manager<D: MidiDevice> {
-    inputs: Vec<Input>,
-    outputs: Vec<(D, Output)>,
-}
+/// Handle MIDI events by forwarding to a channel.
+#[derive(Clone)]
+struct ControlEventHandler(Sender<ControlEvent>);
 
-impl<D: MidiDevice> Default for Manager<D> {
-    fn default() -> Self {
-        Self {
-            inputs: Default::default(),
-            outputs: Default::default(),
-        }
+impl MidiHandler<Device> for ControlEventHandler {
+    fn handle(&self, event: Event, device: &Device) {
+        let _ = self.0.send(ControlEvent::Midi((*device, event)));
     }
 }
 
-impl<D: MidiDevice + 'static> Manager<D> {
+/// Maintain midi inputs and outputs.
+/// Provide synchronous dispatch for outgoing messages based on device type.
+pub struct Manager {
+    manager: DeviceManager<Device, ControlEventHandler>,
+}
+
+impl Manager {
+    /// Initialize the manager.
+    pub fn new(send: Sender<ControlEvent>) -> Self {
+        Self {
+            manager: DeviceManager::new(ControlEventHandler(send)),
+        }
+    }
+
     /// Add a device to the manager given input and output port names.
-    pub fn add_device(
-        &mut self,
-        spec: DeviceSpec<D>,
-        send: Sender<impl CreateControlEvent<D> + Send + 'static>,
-    ) -> Result<()> {
-        let input = Input::new(spec.input_port_name, spec.device.clone(), send)?;
-        let mut output = Output::new(spec.output_port_name)?;
-
-        // Send initialization commands to the device.
-        spec.device.init_midi(&mut output)?;
-
-        self.inputs.push(input);
-        self.outputs.push((spec.device, output));
+    pub fn add_device(&mut self, slot_name: String, spec: DeviceSpec<Device>) -> Result<()> {
+        self.manager.add_slot(slot_name.clone(), spec.device)?;
+        self.manager.connect_input(&slot_name, spec.input_id)?;
+        self.manager.connect_output(&slot_name, spec.output_id)?;
         Ok(())
     }
 
     /// Send a message to the specified device type.
     /// Error conditions are logged rather than returned.
-    pub fn send(&mut self, device: &D, event: Event) {
-        for (d, output) in &mut self.outputs {
+    pub fn send(&mut self, device: &Device, event: Event) {
+        self.manager.visit_outputs(|d, mut output| {
             if d == device {
                 if let Err(e) = output.send(event) {
-                    error!("Failed to send midi event to {}: {}.", output.name, e);
+                    error!("Failed to send midi event to {}: {}.", output.name(), e);
                 }
             }
-        }
-    }
-
-    /// Return an iterator over all outputs.
-    pub fn outputs(&mut self) -> impl Iterator<Item = &mut (D, Output)> {
-        self.outputs.iter_mut()
+        });
     }
 }
 
@@ -193,23 +187,23 @@ impl<D: MidiDevice + 'static> Manager<D> {
 #[derive(Clone, Debug)]
 pub struct DeviceSpec<D> {
     pub device: D,
-    pub input_port_name: String,
-    pub output_port_name: String,
+    pub input_id: DeviceId,
+    pub output_id: DeviceId,
 }
 
 /// Prompt the user to configure midi devices.
 pub fn prompt_midi<D: MidiDevice>(
-    input_ports: &[String],
-    output_ports: &[String],
+    input_ports: &[MidiPortSpec],
+    output_ports: &[MidiPortSpec],
     known_device_types: Vec<D>,
 ) -> Result<Vec<DeviceSpec<D>>> {
     let mut devices = Vec::new();
     println!("Available devices:");
     for (i, port) in input_ports.iter().enumerate() {
-        println!("{i}: {port}");
+        println!("{i}: {}", port.name);
     }
     for (i, port) in output_ports.iter().enumerate() {
-        println!("{i}: {port}");
+        println!("{i}: {}", port.name);
     }
     println!();
 
@@ -227,26 +221,34 @@ pub fn prompt_midi<D: MidiDevice>(
     Ok(devices)
 }
 
+#[derive(Clone)]
+pub struct MidiPortSpec {
+    pub id: DeviceId,
+    pub name: String,
+}
+
 /// Prompt the user to select input and output ports for a device.
 fn prompt_input_output<D: MidiDevice>(
     device: D,
-    input_ports: &[String],
-    output_ports: &[String],
+    input_ports: &[MidiPortSpec],
+    output_ports: &[MidiPortSpec],
 ) -> Result<DeviceSpec<D>> {
     let name = device.device_name().to_string();
-    if input_ports.contains(&name) && output_ports.contains(&name) {
-        return Ok(DeviceSpec {
-            device,
-            input_port_name: name.to_string(),
-            output_port_name: name.to_string(),
-        });
+    if let Some(input) = input_ports.iter().find(|p| p.name == name) {
+        if let Some(output) = output_ports.iter().find(|p| p.name == name) {
+            return Ok(DeviceSpec {
+                device,
+                input_id: input.id.clone(),
+                output_id: output.id.clone(),
+            });
+        }
     }
     println!("Didn't find a device of the expected name. Please manually select input and output.");
-    let input_port_name = prompt_indexed_value("Input port:", input_ports)?;
-    let output_port_name = prompt_indexed_value("Output port:", output_ports)?;
+    let input_id = prompt_indexed_value("Input port:", input_ports)?.id;
+    let output_id = prompt_indexed_value("Output port:", output_ports)?.id;
     Ok(DeviceSpec {
         device,
-        input_port_name,
-        output_port_name,
+        input_id,
+        output_id,
     })
 }

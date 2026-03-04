@@ -111,7 +111,7 @@ impl ControlMap {
 
 pub struct Dispatcher {
     midi_map: ControlMap,
-    midi_manager: Manager<Device>,
+    midi_manager: Manager,
 }
 
 impl Dispatcher {
@@ -120,9 +120,9 @@ impl Dispatcher {
     pub fn new(midi_devices: Vec<DeviceSpec<Device>>, send: Sender<ControlEvent>) -> Result<Self> {
         let midi_map = ControlMap::new();
 
-        let mut midi_manager = Manager::default();
+        let mut midi_manager = Manager::new(send);
         for device_spec in midi_devices.into_iter() {
-            midi_manager.add_device(device_spec, send.clone())?;
+            midi_manager.add_device(device_spec.device.device_name().to_string(), device_spec)?;
         }
 
         Ok(Self {

@@ -87,7 +87,7 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>> {
         print!("Select test mode ('video_outs', 'stress', 'noise'): ");
         io::stdout().flush()?;
         match &read_string()?[..] {
-            "video_outs" => break Some(all_video_outputs),
+            "video_outs" => break Some(all_video_outputs as TestModeSetup),
             "stress" => break Some(stress),
             "noise" => break Some(noise),
             _ => (),

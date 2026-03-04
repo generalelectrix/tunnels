@@ -3,34 +3,59 @@ mod device_change;
 pub mod event;
 
 use anyhow::{Context, Result, bail};
-pub use device_change::initialize;
+pub use device_change::{DeviceId, initialize};
 use log::debug;
 use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 
-use crate::{
-    device_change::DeviceId,
-    event::{Event, EventType},
-};
+use crate::event::{Event, EventType};
 
-pub struct DeviceManager<D, F>
+pub struct DeviceManager<D, H>
 where
     D: InitMidiDevice,
-    F: Fn(Event, &D) + Clone,
+    H: MidiHandler<D>,
 {
     slots: Vec<DeviceSlot<D>>,
-    /// Callback that will be called by a MIDI input on message arrival.
+    /// Handler that will be called by a MIDI input on message arrival.
     ///
     /// Accepts the MIDI Event, and will also be handed your device model to be
     /// used to interpret the message. This callback should do something with
     /// the result, such as push it onto a channel.
-    proc_input: F,
+    handler: H,
 }
 
-impl<D, F> DeviceManager<D, F>
+/// Something that handles a MIDI event using a provided device model for interpretation.
+pub trait MidiHandler<D>: Clone + Send + 'static {
+    /// Handle the event.
+    fn handle(&self, event: Event, device: &D);
+}
+
+impl<D, H> DeviceManager<D, H>
 where
     D: InitMidiDevice,
-    F: 'static + Fn(Event, &D) + Send + Clone,
+    H: MidiHandler<D>,
 {
+    /// Initialize the manager.
+    pub fn new(handler: H) -> Self {
+        Self {
+            slots: vec![],
+            handler,
+        }
+    }
+
+    /// Add a new slot. Return an error if we already have a slot with this name.
+    pub fn add_slot(&mut self, name: String, model: D) -> Result<()> {
+        if self.slots.iter().any(|s| s.name == name) {
+            bail!("refusing to add a MIDI device slot with duplicate name \"{name}\"");
+        }
+        self.slots.push(DeviceSlot {
+            name,
+            model,
+            input: None,
+            output: None,
+        });
+        Ok(())
+    }
+
     /// Call the provided closure on each connected output.
     /// The attached model and the MIDI output are provided.
     pub fn visit_outputs(&mut self, visitor: impl Fn(&D, OutputPort)) {
@@ -41,7 +66,13 @@ where
             let Some(conn) = &mut output.port else {
                 continue;
             };
-            visitor(&slot.model, OutputPort { conn });
+            visitor(
+                &slot.model,
+                OutputPort {
+                    conn,
+                    name: &output.name,
+                },
+            );
         }
     }
 
@@ -50,7 +81,7 @@ where
         let Some(slot) = self.slots.iter_mut().find(|s| s.name == slot) else {
             bail!("unknown device slot {slot}");
         };
-        slot.connect_input(id, self.proc_input.clone())
+        slot.connect_input(id, self.handler.clone())
     }
 
     /// Connect the provided device ID to the output in the named slot.
@@ -59,6 +90,24 @@ where
             bail!("unknown device slot {slot}");
         };
         slot.connect_output(id)
+    }
+
+    /// Set the specified device as disconnected, if it is connected.
+    pub fn mark_disconnected(&mut self, id: &DeviceId) {
+        for slot in &mut self.slots {
+            slot.mark_disconnected(id);
+        }
+    }
+
+    /// If any slot is connected to the provided device ID and is disconnected,
+    /// try to reconnect. Return true if we successfully reconnected a device.
+    pub fn try_reconnect(&mut self, id: &DeviceId) -> Result<bool> {
+        for slot in &mut self.slots {
+            if slot.try_reconnect(id, &self.handler)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -77,17 +126,90 @@ impl<D: InitMidiDevice + Send> DeviceSlot<D> {
     /// Connect the provided device ID to this input.
     ///
     /// Any existing device will be replaced.
-    pub fn connect_input<F>(&mut self, id: DeviceId, handle_msg: F) -> Result<()>
-    where
-        F: Fn(Event, &D) + Send + 'static,
-    {
-        let input = MidiInput::new(&id.0)?;
-        let Some(port) = input.ports().into_iter().find(|p| DeviceId(p.id()) == id) else {
-            bail!("no MIDI input found with {id:?}");
+    pub fn connect_input(&mut self, id: DeviceId, handler: impl MidiHandler<D>) -> Result<()> {
+        self.input = None;
+        let mut input = DeviceInput {
+            id,
+            name: String::new(),
+            port: None,
+        };
+        input.connect(self.model.clone(), handler)?;
+        self.input = Some(input);
+        Ok(())
+    }
+
+    /// Connect the provided device ID to this output.
+    ///
+    /// Any existing device will be replaced.
+    pub fn connect_output(&mut self, id: DeviceId) -> Result<()> {
+        self.output = None;
+        let mut output = DeviceOutput {
+            id,
+            name: String::new(),
+            port: None,
+        };
+        output.connect(&self.model)?;
+        self.output = Some(output);
+        Ok(())
+    }
+
+    /// Set the specified device as disconnected if it is attached to this slot.
+    pub fn mark_disconnected(&mut self, id: &DeviceId) {
+        if let Some(input) = self.input.as_mut()
+            && &input.id == id
+        {
+            input.port = None;
+        }
+        if let Some(output) = self.output.as_mut()
+            && &output.id == id
+        {
+            output.port = None;
+        }
+    }
+
+    /// Potentially attempt reconnect.
+    pub fn try_reconnect(&mut self, id: &DeviceId, handler: &impl MidiHandler<D>) -> Result<bool> {
+        if let Some(input) = self.input.as_mut()
+            && input.id == *id
+            && input.port.is_none()
+        {
+            input.connect(self.model.clone(), handler.clone())?;
+            return Ok(true);
+        }
+        if let Some(output) = self.output.as_mut()
+            && output.id == *id
+            && output.port.is_none()
+        {
+            output.connect(&self.model)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+}
+
+struct DeviceInput<D: InitMidiDevice> {
+    id: DeviceId,
+    name: String,
+    /// If None, the device is disconnected.
+    port: Option<MidiInputConnection<D>>,
+}
+
+impl<D: InitMidiDevice> DeviceInput<D> {
+    /// Connect the currently-assigned device.
+    ///
+    /// Any existing device will be replaced.
+    pub fn connect(&mut self, model: D, handler: impl MidiHandler<D>) -> Result<()> {
+        let input = MidiInput::new(&self.id.0)?;
+        let Some(port) = input
+            .ports()
+            .into_iter()
+            .find(|p| DeviceId(p.id()) == self.id)
+        else {
+            bail!("no MIDI input found with {:?}", self.id);
         };
         let name = input
             .port_name(&port)
-            .with_context(|| format!("unable to get port name for {id:?}"))?;
+            .with_context(|| format!("unable to get port name for {:?}", self.id))?;
         let handler_name = name.clone();
         let conn = input
             .connect(
@@ -101,45 +223,15 @@ impl<D: InitMidiDevice + Send> DeviceSlot<D> {
                             return;
                         }
                     };
-                    handle_msg(event, model);
+                    handler.handle(event, model);
                 },
-                self.model.clone(),
+                model,
             )
             .with_context(|| name.clone())?;
-        self.input = Some(DeviceInput {
-            id,
-            name,
-            port: Some(conn),
-        });
+        self.port = Some(conn);
+        self.name = name;
         Ok(())
     }
-
-    /// Connect the provided device ID to this output.
-    ///
-    /// Any existing device will be replaced.
-    pub fn connect_output(&mut self, id: DeviceId) -> Result<()> {
-        let output = MidiOutput::new(&id.0)?;
-        let Some(port) = output.ports().into_iter().find(|p| DeviceId(p.id()) == id) else {
-            bail!("no MIDI output found with {id:?}");
-        };
-        let name = output
-            .port_name(&port)
-            .with_context(|| format!("unable to get port name for {id:?}"))?;
-        let conn = output.connect(&port, &name).with_context(|| name.clone())?;
-        self.output = Some(DeviceOutput {
-            id,
-            name,
-            port: Some(conn),
-        });
-        Ok(())
-    }
-}
-
-struct DeviceInput<D: InitMidiDevice> {
-    id: DeviceId,
-    name: String,
-    /// If None, the device is disconnected.
-    port: Option<MidiInputConnection<D>>,
 }
 
 struct DeviceOutput {
@@ -149,12 +241,42 @@ struct DeviceOutput {
     port: Option<MidiOutputConnection>,
 }
 
+impl DeviceOutput {
+    /// Connect the currently-assigned device.
+    ///
+    /// Any existing device will be replaced.
+    ///
+    /// The device will be initialized.
+    pub fn connect<D: InitMidiDevice>(&mut self, device: &D) -> Result<()> {
+        let output = MidiOutput::new(&self.id.0)?;
+        let Some(port) = output
+            .ports()
+            .into_iter()
+            .find(|p| DeviceId(p.id()) == self.id)
+        else {
+            bail!("no MIDI output found with {:?}", self.id);
+        };
+        let name = output
+            .port_name(&port)
+            .with_context(|| format!("unable to get port name for {:?}", self.id))?;
+        let mut conn = output.connect(&port, &name).with_context(|| name.clone())?;
+        device.init_midi(OutputPort {
+            conn: &mut conn,
+            name: &self.name,
+        })?;
+        self.port = Some(conn);
+        Ok(())
+    }
+}
+
 /// Helper wrapper around a port to provide a more convenient interface.
 pub struct OutputPort<'a> {
     conn: &'a mut MidiOutputConnection,
+    name: &'a String,
 }
 
 impl<'a> OutputPort<'a> {
+    /// Send a MIDI event.
     pub fn send(&mut self, event: Event) -> Result<(), SendError> {
         let mut msg: [u8; 3] = [0; 3];
         msg[0] = match event.mapping.event_type {
@@ -167,8 +289,14 @@ impl<'a> OutputPort<'a> {
         self.conn.send(&msg)
     }
 
+    /// Send a raw byte buffer to this MIDI device.
     pub fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError> {
         self.conn.send(msg)
+    }
+
+    /// Get the name of the device associated with this port.
+    pub fn name(&self) -> &str {
+        self.name
     }
 }
 

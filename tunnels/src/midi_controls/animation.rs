@@ -1,7 +1,5 @@
 use crate::{
-    animation::ControlMessage,
-    animation::StateChange,
-    animation::Waveform as WaveformType,
+    animation::{ControlMessage, StateChange, Waveform as WaveformType},
     clock_bank::{ClockIdxExt, N_CLOCKS},
     midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Manager, Mapping},
     midi_controls::Device,
@@ -119,7 +117,7 @@ pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_animation_control(sc: StateChange, manager: &mut Manager<Device>) {
+pub fn update_animation_control(sc: StateChange, manager: &mut Manager) {
     use StateChange::*;
 
     let mut send = |event| {
