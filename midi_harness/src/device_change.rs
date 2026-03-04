@@ -13,7 +13,7 @@ use std::sync::mpsc::sync_channel;
 /// NOTE: this currently only supports MacOS for dynamic device notifications.
 /// Other OSes will fall back to an initial report of the currently-connected
 /// devices.
-pub fn initialize(handler: impl HandleDeviceChange) -> Result<()> {
+pub fn install_midi_device_change_handler(handler: impl HandleDeviceChange) -> Result<()> {
     let (send, recv) = sync_channel(0);
 
     let mut connected_devices = ConnectedDevices::default();

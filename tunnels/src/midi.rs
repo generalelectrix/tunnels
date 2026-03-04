@@ -16,7 +16,7 @@ pub use midi_harness::list_ports;
 
 /// Handle MIDI events by forwarding to a channel.
 #[derive(Clone)]
-struct ControlEventHandler(Sender<ControlEvent>);
+pub struct ControlEventHandler(pub Sender<ControlEvent>);
 
 impl MidiHandler<Device> for ControlEventHandler {
     fn handle(&self, event: Event, device: &Device) {
@@ -37,10 +37,10 @@ pub struct Manager {
 
 impl Manager {
     /// Initialize the manager.
-    pub fn new(send: Sender<ControlEvent>) -> Result<Self> {
-        Ok(Self {
-            manager: DeviceManager::new(ControlEventHandler(send))?,
-        })
+    pub fn new(send: Sender<ControlEvent>) -> Self {
+        Self {
+            manager: DeviceManager::new(ControlEventHandler(send)),
+        }
     }
 
     /// Add a device to the manager given input and output port names.

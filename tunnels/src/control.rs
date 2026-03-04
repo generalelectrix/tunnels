@@ -1,6 +1,6 @@
 use anyhow::Result;
 use midi_harness::DeviceChange;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 use crate::master_ui::EmitStateChange;
@@ -32,9 +32,9 @@ impl Dispatcher {
     pub fn new(
         midi_devices: Vec<MidiDeviceSpec<MidiDevice>>,
         osc_devices: Vec<OscDeviceSpec>,
+        send: Sender<ControlEvent>,
+        recv: Receiver<ControlEvent>,
     ) -> Result<Self> {
-        let (send, recv) = channel();
-
         for osc_device in osc_devices {
             osc::listen(osc_device, send.clone())?;
         }

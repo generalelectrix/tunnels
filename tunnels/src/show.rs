@@ -6,6 +6,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::{Path, PathBuf},
+    sync::mpsc::{Receiver, Sender},
     time::{Duration, Instant},
 };
 use tunnels_lib::Timestamp;
@@ -15,13 +16,11 @@ use crate::{
     animation_target::AnimationTarget,
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
-    control::Dispatcher,
-    master_ui,
-    master_ui::MasterUI,
+    control::{ControlEvent, Dispatcher},
+    master_ui::{self, MasterUI},
     midi::DeviceSpec as MidiDeviceSpec,
     midi_controls::Device,
-    mixer,
-    mixer::Mixer,
+    mixer::{self, Mixer},
     osc::DeviceSpec as OscDeviceSpec,
     palette::{self, ColorPalette},
     position_bank::{self, PositionBank},
@@ -48,6 +47,8 @@ impl Show {
     pub fn new(
         midi_devices: Vec<MidiDeviceSpec<Device>>,
         osc_devices: Vec<OscDeviceSpec>,
+        send_control_event: Sender<ControlEvent>,
+        recv_control_event: Receiver<ControlEvent>,
         audio_input_device: Option<String>,
         run_clock_service: bool,
         save_path: Option<PathBuf>,
@@ -60,7 +61,12 @@ impl Show {
         let n_pages = if use_wing { 2 } else { 1 };
 
         Ok(Self {
-            dispatcher: Dispatcher::new(midi_devices, osc_devices)?,
+            dispatcher: Dispatcher::new(
+                midi_devices,
+                osc_devices,
+                send_control_event,
+                recv_control_event,
+            )?,
             audio_input: AudioInput::new(audio_input_device)?,
             run_clock_service,
             state: ShowState {
@@ -265,7 +271,10 @@ pub struct ShowState {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashSet, sync::Arc};
+    use std::{
+        collections::HashSet,
+        sync::{mpsc::channel, Arc},
+    };
 
     use tunnels_lib::{number::UnipolarFloat, ArcSegment, LayerCollection};
 
@@ -278,7 +287,8 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<()> {
-        let mut show = Show::new(Vec::new(), Vec::new(), None, false, None)?;
+        let (send, recv) = channel();
+        let mut show = Show::new(Vec::new(), Vec::new(), send, recv, None, false, None)?;
 
         show.test_mode(stress);
 

@@ -5,14 +5,13 @@ mod select;
 pub use select::*;
 
 use anyhow::{Context, Result, bail};
-pub use device_change::{DeviceChange, DeviceId, HandleDeviceChange};
+pub use device_change::{
+    DeviceChange, DeviceId, HandleDeviceChange, install_midi_device_change_handler,
+};
 use log::{debug, error, info};
 use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 
-use crate::{
-    device_change::initialize,
-    event::{Event, EventType},
-};
+use crate::event::{Event, EventType};
 
 pub struct DeviceManager<D, H>
 where
@@ -41,15 +40,25 @@ where
     D: InitMidiDevice,
     H: MidiHandler<D> + HandleDeviceChange,
 {
+    /// Initialize the manager, and set up device change notification using the
+    /// same provided handler.
+    pub fn with_device_changes(handler: H) -> Result<Self> {
+        install_midi_device_change_handler(handler.clone())?;
+        Ok(Self::new(handler))
+    }
+}
+
+impl<D, H> DeviceManager<D, H>
+where
+    D: InitMidiDevice,
+    H: MidiHandler<D>,
+{
     /// Initialize the manager.
-    ///
-    /// This also starts up device notifications.
-    pub fn new(handler: H) -> Result<Self> {
-        initialize(handler.clone())?;
-        Ok(Self {
+    pub fn new(handler: H) -> Self {
+        Self {
             slots: vec![],
             handler,
-        })
+        }
     }
 
     /// Add a new slot. Return an error if we already have a slot with this name.
