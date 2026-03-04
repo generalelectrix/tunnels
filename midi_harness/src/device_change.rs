@@ -33,7 +33,7 @@ pub fn install_midi_device_change_handler(handler: impl HandleDeviceChange) -> R
 
     #[cfg(not(target_os = "macos"))]
     {
-        warn!("MIDI device hotplugging notification is not supported on this OS!");
+        log::warn!("MIDI device hotplugging notification is not supported on this OS!");
 
         // Run one initial cycle of device discovery and report the results.
         // This is sufficient for static device discovery at init.

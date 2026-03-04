@@ -4,7 +4,7 @@ pub mod event;
 mod select;
 pub use select::*;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 pub use device_change::{
     DeviceChange, DeviceId, DeviceKind, HandleDeviceChange, install_midi_device_change_handler,
 };
@@ -295,7 +295,7 @@ impl<D: InitMidiDevice> DeviceInput<D> {
                 },
                 model,
             )
-            .with_context(|| name.clone())?;
+            .map_err(|err| anyhow!("failed to open MIDI input {name}: {err}"))?;
         self.port = Some(conn);
         self.name = name;
         Ok(())
@@ -327,7 +327,9 @@ impl DeviceOutput {
         let name = output
             .port_name(&port)
             .with_context(|| format!("unable to get port name for {:?}", self.id))?;
-        let mut conn = output.connect(&port, &name).with_context(|| name.clone())?;
+        let mut conn = output
+            .connect(&port, &name)
+            .map_err(|err| anyhow!("failed to open MIDI output {name}: {err}"))?;
         device.init_midi(&mut OutputPort {
             conn: &mut conn,
             name: &self.name,
