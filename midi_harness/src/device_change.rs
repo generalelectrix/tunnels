@@ -13,17 +13,14 @@ use std::sync::mpsc::sync_channel;
 /// NOTE: this currently only supports MacOS for dynamic device notifications.
 /// Other OSes will fall back to an initial report of the currently-connected
 /// devices.
-pub fn initialize<C>(mut on_device_change: C) -> Result<()>
-where
-    C: FnMut(Result<DeviceChange>) + Send + 'static,
-{
+pub fn initialize(handler: impl HandleDeviceChange) -> Result<()> {
     let (send, recv) = sync_channel(0);
 
     let mut connected_devices = ConnectedDevices::default();
 
     std::thread::spawn(move || {
         for _ in recv {
-            connected_devices.update(&mut on_device_change);
+            connected_devices.update(&handler);
         }
     });
 
@@ -47,6 +44,11 @@ where
     Ok(())
 }
 
+pub trait HandleDeviceChange: Send + 'static {
+    /// Handle a device change notification.
+    fn on_device_change(&self, change: Result<DeviceChange>);
+}
+
 #[derive(Default)]
 struct ConnectedDevices {
     inputs: Devices,
@@ -56,16 +58,16 @@ struct ConnectedDevices {
 impl ConnectedDevices {
     /// Refresh the currently-connected devices. Send messages for devices that
     /// have connected or disconnected, as well as errors.
-    fn update<C: FnMut(Result<DeviceChange>)>(&mut self, on_device_change: &mut C) {
-        self.update_inputs(on_device_change);
-        self.update_outputs(on_device_change);
+    fn update(&mut self, handler: &impl HandleDeviceChange) {
+        self.update_inputs(handler);
+        self.update_outputs(handler);
     }
 
-    fn update_inputs<C: FnMut(Result<DeviceChange>)>(&mut self, on_device_change: &mut C) {
-        let port = match midir::MidiInput::new("midi_harness") {
+    fn update_inputs(&mut self, handler: &impl HandleDeviceChange) {
+        let port = match midir::MidiInput::new("update_inputs") {
             Ok(port) => port,
             Err(err) => {
-                on_device_change(Err(anyhow!("failed to refresh MIDI inputs: {err}")));
+                handler.on_device_change(Err(anyhow!("failed to refresh MIDI inputs: {err}")));
                 return;
             }
         };
@@ -77,15 +79,14 @@ impl ConnectedDevices {
                 Some((DeviceId(p.id()), name))
             })
             .collect();
-        self.inputs =
-            report_device_changes(&self.inputs, ports, DeviceKind::Input, on_device_change);
+        self.inputs = report_device_changes(&self.inputs, ports, DeviceKind::Input, handler);
     }
 
-    fn update_outputs<C: FnMut(Result<DeviceChange>)>(&mut self, on_device_change: &mut C) {
-        let port = match midir::MidiOutput::new("midi_harness") {
+    fn update_outputs(&mut self, handler: &impl HandleDeviceChange) {
+        let port = match midir::MidiOutput::new("update_outputs") {
             Ok(port) => port,
             Err(err) => {
-                on_device_change(Err(anyhow!("failed to refresh MIDI inputs: {err}")));
+                handler.on_device_change(Err(anyhow!("failed to refresh MIDI inputs: {err}")));
                 return;
             }
         };
@@ -97,27 +98,26 @@ impl ConnectedDevices {
                 Some((DeviceId(p.id()), name))
             })
             .collect();
-        self.outputs =
-            report_device_changes(&self.outputs, ports, DeviceKind::Output, on_device_change);
+        self.outputs = report_device_changes(&self.outputs, ports, DeviceKind::Output, handler);
     }
 }
 
-fn report_device_changes<C: FnMut(Result<DeviceChange>)>(
+fn report_device_changes(
     previous: &Devices,
     current: Vec<(DeviceId, String)>,
     kind: DeviceKind,
-    on_device_change: &mut C,
+    handler: &impl HandleDeviceChange,
 ) -> Devices {
     let current_ids: Devices = current.iter().map(|(id, _)| id).cloned().collect();
 
     for disconnected in previous.difference(&current_ids) {
-        on_device_change(Ok(DeviceChange::Disconnected(disconnected.clone())));
+        handler.on_device_change(Ok(DeviceChange::Disconnected(disconnected.clone())));
     }
     for (id, name) in current {
         if previous.contains(&id) {
             continue;
         }
-        on_device_change(Ok(DeviceChange::Connected { id, name, kind }));
+        handler.on_device_change(Ok(DeviceChange::Connected { id, name, kind }));
     }
     current_ids
 }

@@ -1,6 +1,8 @@
 use anyhow::Result;
-use log::error;
-use midi_harness::{DeviceId, DeviceManager, MidiHandler, MidiPortSpec};
+use log::{error, info};
+use midi_harness::{
+    DeviceChange, DeviceId, DeviceManager, HandleDeviceChange, MidiHandler, MidiPortSpec,
+};
 use std::sync::mpsc::Sender;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
@@ -22,6 +24,11 @@ impl MidiHandler<Device> for ControlEventHandler {
     }
 }
 
+impl HandleDeviceChange for ControlEventHandler {
+    fn on_device_change(&self, change: Result<DeviceChange>) {
+        self.0.send(ControlEvent::MidiDevice(change)).unwrap();
+    }
+}
 /// Maintain midi inputs and outputs.
 /// Provide synchronous dispatch for outgoing messages based on device type.
 pub struct Manager {
@@ -30,10 +37,10 @@ pub struct Manager {
 
 impl Manager {
     /// Initialize the manager.
-    pub fn new(send: Sender<ControlEvent>) -> Self {
-        Self {
-            manager: DeviceManager::new(ControlEventHandler(send)),
-        }
+    pub fn new(send: Sender<ControlEvent>) -> Result<Self> {
+        Ok(Self {
+            manager: DeviceManager::new(ControlEventHandler(send))?,
+        })
     }
 
     /// Add a device to the manager given input and output port names.
@@ -54,6 +61,11 @@ impl Manager {
                 }
             }
         });
+    }
+
+    /// Handle a device appearing or disappearing.
+    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<()> {
+        self.manager.handle_device_change(change)
     }
 }
 

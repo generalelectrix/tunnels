@@ -5,11 +5,14 @@ mod select;
 pub use select::*;
 
 use anyhow::{Context, Result, bail};
-pub use device_change::{DeviceId, initialize};
-use log::debug;
+pub use device_change::{DeviceChange, DeviceId, HandleDeviceChange};
+use log::{debug, error, info};
 use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 
-use crate::event::{Event, EventType};
+use crate::{
+    device_change::initialize,
+    event::{Event, EventType},
+};
 
 pub struct DeviceManager<D, H>
 where
@@ -26,6 +29,8 @@ where
 }
 
 /// Something that handles a MIDI event using a provided device model for interpretation.
+///
+/// Also provides handling for device change notifications.
 pub trait MidiHandler<D>: Clone + Send + 'static {
     /// Handle the event.
     fn handle(&self, event: Event, device: &D);
@@ -34,14 +39,17 @@ pub trait MidiHandler<D>: Clone + Send + 'static {
 impl<D, H> DeviceManager<D, H>
 where
     D: InitMidiDevice,
-    H: MidiHandler<D>,
+    H: MidiHandler<D> + HandleDeviceChange,
 {
     /// Initialize the manager.
-    pub fn new(handler: H) -> Self {
-        Self {
+    ///
+    /// This also starts up device notifications.
+    pub fn new(handler: H) -> Result<Self> {
+        initialize(handler.clone())?;
+        Ok(Self {
             slots: vec![],
             handler,
-        }
+        })
     }
 
     /// Add a new slot. Return an error if we already have a slot with this name.
@@ -95,21 +103,46 @@ where
     }
 
     /// Set the specified device as disconnected, if it is connected.
-    pub fn mark_disconnected(&mut self, id: &DeviceId) {
+    ///
+    /// Return true if an active device was disconnected.
+    fn mark_disconnected(&mut self, id: &DeviceId) -> bool {
+        let mut disconnected = false;
         for slot in &mut self.slots {
-            slot.mark_disconnected(id);
+            disconnected |= slot.mark_disconnected(id);
         }
+        disconnected
     }
 
     /// If any slot is connected to the provided device ID and is disconnected,
     /// try to reconnect. Return true if we successfully reconnected a device.
-    pub fn try_reconnect(&mut self, id: &DeviceId) -> Result<bool> {
+    fn try_reconnect(&mut self, id: &DeviceId) -> Result<bool> {
         for slot in &mut self.slots {
             if slot.try_reconnect(id, &self.handler)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Handle a device appearing or disappearing.
+    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<()> {
+        match change {
+            DeviceChange::Connected { id, name, kind: _ } => {
+                let reconnected = self.try_reconnect(&id)?;
+                if reconnected {
+                    info!("successfully reconnected MIDI device {name}");
+                }
+                Ok(())
+            }
+            DeviceChange::Disconnected(id) => {
+                let disconnected = self.mark_disconnected(&id);
+                if disconnected {
+                    // FIXME: this would be a lot more useful with a name
+                    error!("MIDI device {id:?} disconnected.");
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -156,17 +189,21 @@ impl<D: InitMidiDevice + Send> DeviceSlot<D> {
     }
 
     /// Set the specified device as disconnected if it is attached to this slot.
-    pub fn mark_disconnected(&mut self, id: &DeviceId) {
+    pub fn mark_disconnected(&mut self, id: &DeviceId) -> bool {
+        let mut disconnected = false;
         if let Some(input) = self.input.as_mut()
             && &input.id == id
         {
             input.port = None;
+            disconnected = true;
         }
         if let Some(output) = self.output.as_mut()
             && &output.id == id
         {
             output.port = None;
+            disconnected = true;
         }
+        disconnected
     }
 
     /// Potentially attempt reconnect.

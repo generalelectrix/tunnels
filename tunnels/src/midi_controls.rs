@@ -8,6 +8,7 @@ mod mixer;
 mod tunnel;
 
 use log::debug;
+use midi_harness::DeviceChange;
 use std::{collections::HashMap, sync::mpsc::Sender};
 
 use crate::{
@@ -120,7 +121,7 @@ impl Dispatcher {
     pub fn new(midi_devices: Vec<DeviceSpec<Device>>, send: Sender<ControlEvent>) -> Result<Self> {
         let midi_map = ControlMap::new();
 
-        let mut midi_manager = Manager::new(send);
+        let mut midi_manager = Manager::new(send)?;
         for device_spec in midi_devices.into_iter() {
             midi_manager.add_device(device_spec.device.device_name().to_string(), device_spec)?;
         }
@@ -148,6 +149,11 @@ impl Dispatcher {
                 None
             }
         }
+    }
+
+    /// Handle a device appearing or disappearing.
+    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<()> {
+        self.midi_manager.handle_device_change(change)
     }
 }
 

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use midi_harness::DeviceChange;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use rosc::OscMessage;
 
 /// Top-level enum for the types of control messages the show can receive.
 pub enum ControlEvent {
+    MidiDevice(Result<DeviceChange>),
     Midi((MidiDevice, MidiEvent)),
     Osc((OscDevice, OscMessage)),
 }
@@ -23,9 +25,6 @@ pub enum ControlEvent {
 pub struct Dispatcher {
     midi_dispatcher: MidiDispatcher,
     recv: Receiver<ControlEvent>,
-    // Hang onto a copy of this for when we're running in test mode, otherwise
-    // the channel is closed instantly and we do not block properly.
-    _send: Sender<ControlEvent>,
 }
 
 impl Dispatcher {
@@ -41,13 +40,12 @@ impl Dispatcher {
         }
 
         Ok(Self {
-            midi_dispatcher: MidiDispatcher::new(midi_devices, send.clone())?,
+            midi_dispatcher: MidiDispatcher::new(midi_devices, send)?,
             recv,
-            _send: send,
         })
     }
 
-    pub fn receive(&self, timeout: Duration) -> Result<Option<ControlMessage>> {
+    pub fn receive(&mut self, timeout: Duration) -> Result<Option<ControlMessage>> {
         let event = match self.recv.recv_timeout(timeout) {
             Ok(e) => e,
             Err(RecvTimeoutError::Timeout) => {
@@ -59,6 +57,10 @@ impl Dispatcher {
         };
         use ControlEvent::*;
         match event {
+            MidiDevice(event) => {
+                self.midi_dispatcher.handle_device_change(event?)?;
+                Ok(None)
+            }
             Midi((device, event)) => Ok(self
                 .midi_dispatcher
                 .map_event_to_show_control(device, event)),
