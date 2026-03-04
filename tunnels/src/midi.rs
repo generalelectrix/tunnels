@@ -45,11 +45,9 @@ impl Manager {
     }
 
     /// Add a device to the manager given input and output port names.
-    pub fn add_device(&mut self, slot_name: String, spec: DeviceSpec<Device>) -> Result<()> {
-        self.manager.add_slot(slot_name.clone(), spec.device)?;
-        self.manager.connect_input(&slot_name, spec.input_id)?;
-        self.manager.connect_output(&slot_name, spec.output_id)?;
-        Ok(())
+    pub fn add_device(&mut self, spec: DeviceSpec<Device>) -> Result<()> {
+        self.manager
+            .add_from_spec(spec.device, spec.input_id, spec.output_id)
     }
 
     /// Send a message to the specified device type.

@@ -123,7 +123,7 @@ impl Dispatcher {
 
         let mut midi_manager = Manager::new(send);
         for device_spec in midi_devices.into_iter() {
-            midi_manager.add_device(device_spec.device.device_name().to_string(), device_spec)?;
+            midi_manager.add_device(device_spec)?;
         }
 
         Ok(Self {

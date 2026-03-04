@@ -61,6 +61,22 @@ where
         }
     }
 
+    /// Helper method to wire up a device in full, from pieces.
+    /// The input device ID will be used as the slot name.
+    /// This is a shim to make it easy to use legacy up-front configuration methods.
+    pub fn add_from_spec(
+        &mut self,
+        device: D,
+        input_id: DeviceId,
+        output_id: DeviceId,
+    ) -> Result<()> {
+        let slot_name = input_id.0.clone();
+        self.add_slot(slot_name.clone(), device)?;
+        self.connect_input(&slot_name, input_id)?;
+        self.connect_output(&slot_name, output_id)?;
+        Ok(())
+    }
+
     /// Add a new slot. Return an error if we already have a slot with this name.
     pub fn add_slot(&mut self, name: String, model: D) -> Result<()> {
         if self.slots.iter().any(|s| s.name == name) {
