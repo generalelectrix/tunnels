@@ -164,7 +164,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_clock_control(sc: StateChange, manager: &mut Manager<Device>) {
+pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
     use ClockStateChange::*;
 
     let mut send = |control, value| {

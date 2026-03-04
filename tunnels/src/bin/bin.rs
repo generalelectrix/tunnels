@@ -1,14 +1,17 @@
 use anyhow::Result;
 use io::Write;
+use midi_harness::install_midi_device_change_handler;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
+use std::sync::mpsc::channel;
 use std::time::Duration;
 use std::{env::current_dir, fs::create_dir_all, io, path::PathBuf};
 use tunnels::audio::prompt_audio;
 use tunnels::midi::list_ports;
 use tunnels::midi::prompt_midi;
+use tunnels::midi::ControlEventHandler;
 use tunnels::midi_controls::Device as MidiDevice;
 use tunnels::osc::Device as OscDevice;
 use tunnels::osc::DeviceSpec as OscDeviceSpec;
@@ -24,6 +27,8 @@ const RENDER_INTERVAL: Duration = Duration::from_nanos(16666667 / 4);
 
 fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
+    let (send_control_event, recv_control_event) = channel();
+    install_midi_device_change_handler(ControlEventHandler(send_control_event.clone()))?;
     let (inputs, outputs) = list_ports()?;
 
     let test_mode = prompt_test_mode()?;
@@ -64,6 +69,8 @@ fn main() -> Result<()> {
     let mut show = Show::new(
         midi_devices,
         osc_devices,
+        send_control_event,
+        recv_control_event,
         audio_input_device,
         run_clock_service,
         paths.save_path,
@@ -87,7 +94,7 @@ fn prompt_test_mode() -> Result<Option<TestModeSetup>> {
         print!("Select test mode ('video_outs', 'stress', 'noise'): ");
         io::stdout().flush()?;
         match &read_string()?[..] {
-            "video_outs" => break Some(all_video_outputs),
+            "video_outs" => break Some(all_video_outputs as TestModeSetup),
             "stress" => break Some(stress),
             "noise" => break Some(noise),
             _ => (),

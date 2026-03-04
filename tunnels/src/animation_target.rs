@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 
 /// Tunnel parameters that can be targeted by animations.
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Default)]
 pub enum AnimationTarget {
     Rotation,
     Thickness,
+    #[default]
     Size,
     AspectRatio,
     Color,
@@ -20,8 +22,3 @@ pub enum AnimationTarget {
     PositionY,
 }
 
-impl Default for AnimationTarget {
-    fn default() -> Self {
-        Self::Size
-    }
-}

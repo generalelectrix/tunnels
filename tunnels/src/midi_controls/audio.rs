@@ -57,7 +57,7 @@ pub(crate) fn map_cmd_mm1_audio_controls(map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub(crate) fn update_audio_control(sc: StateChange, manager: &mut Manager<Device>) {
+pub(crate) fn update_audio_control(sc: StateChange, manager: &mut Manager) {
     use StateChange::*;
 
     let mut send = |event| {

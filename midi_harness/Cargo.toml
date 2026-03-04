@@ -1,0 +1,13 @@
+[package]
+name = "midi_harness"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde.workspace = true
+anyhow.workspace = true
+log.workspace = true
+midir = "0.10.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+coremidi-hotplug-notification = "0.1.3"
