@@ -1,9 +1,7 @@
-use anyhow::{anyhow, bail, Result};
-use log::{debug, error};
+use anyhow::Result;
+use log::error;
 use midi_harness::{DeviceId, DeviceManager, MidiHandler, MidiPortSpec};
-use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
-use serde::{Deserialize, Serialize};
-use std::{fmt, sync::mpsc::Sender};
+use std::sync::mpsc::Sender;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 use crate::{
@@ -13,17 +11,6 @@ use crate::{
 
 pub use midi_harness::event::*;
 pub use midi_harness::list_ports;
-
-fn get_named_port<T: MidiIO>(source: &T, name: &str) -> Result<T::Port> {
-    for port in source.ports() {
-        if let Ok(this_name) = source.port_name(&port) {
-            if this_name == name {
-                return Ok(port);
-            }
-        }
-    }
-    bail!("no port found with name {}", name);
-}
 
 /// Handle MIDI events by forwarding to a channel.
 #[derive(Clone)]

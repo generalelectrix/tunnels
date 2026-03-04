@@ -163,7 +163,7 @@ impl Tunnel {
         audio_envelope: UnipolarFloat,
     ) -> Vec<ArcSegment> {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
-        let segs = if self.segs > 40 && self.segs % 2 != 0 {
+        let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
             self.segs + 1
         } else {
             self.segs
