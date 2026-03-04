@@ -93,7 +93,7 @@ where
 
     /// Call the provided closure on each connected output.
     /// The attached model and the MIDI output are provided.
-    pub fn visit_outputs(&mut self, visitor: impl Fn(&D, OutputPort)) {
+    pub fn visit_outputs(&mut self, visitor: impl Fn(&D, &mut OutputPort)) {
         for slot in &mut self.slots {
             let Some(output) = &mut slot.output else {
                 continue;
@@ -103,7 +103,7 @@ where
             };
             visitor(
                 &slot.model,
-                OutputPort {
+                &mut OutputPort {
                     conn,
                     name: &output.name,
                 },

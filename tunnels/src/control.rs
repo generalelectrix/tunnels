@@ -17,7 +17,7 @@ use rosc::OscMessage;
 
 /// Top-level enum for the types of control messages the show can receive.
 pub enum ControlEvent {
-    MidiDevice(Result<DeviceChange>),
+    MidiDevice(DeviceChange),
     Midi((MidiDevice, MidiEvent)),
     Osc((OscDevice, OscMessage)),
 }
@@ -58,7 +58,7 @@ impl Dispatcher {
         use ControlEvent::*;
         match event {
             MidiDevice(event) => {
-                let needs_ui_refresh = self.midi_dispatcher.handle_device_change(event?)?;
+                let needs_ui_refresh = self.midi_dispatcher.handle_device_change(event)?;
                 Ok(needs_ui_refresh.then_some(ControlMessage::UIRefresh))
             }
             Midi((device, event)) => Ok(self

@@ -27,7 +27,16 @@ impl MidiHandler<Device> for ControlEventHandler {
 
 impl HandleDeviceChange for ControlEventHandler {
     fn on_device_change(&self, change: Result<DeviceChange>) {
-        self.0.send(ControlEvent::MidiDevice(change)).unwrap();
+        match change {
+            Ok(change) => {
+                self.0.send(ControlEvent::MidiDevice(change)).unwrap();
+            }
+            Err(err) => {
+                error!(
+                    "An error occurred while processing a MIDI device change notification: {err}."
+                );
+            }
+        }
     }
 }
 /// Maintain midi inputs and outputs.
@@ -53,7 +62,7 @@ impl Manager {
     /// Send a message to the specified device type.
     /// Error conditions are logged rather than returned.
     pub fn send(&mut self, device: &Device, event: Event) {
-        self.manager.visit_outputs(|d, mut output| {
+        self.manager.visit_outputs(|d, output| {
             if d == device {
                 if let Err(e) = output.send(event) {
                     error!("Failed to send midi event to {}: {}.", output.name(), e);
