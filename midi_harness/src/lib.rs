@@ -1,6 +1,8 @@
 //! MIDI device management to plug into an event-driven environment.
 mod device_change;
 pub mod event;
+mod select;
+pub use select::*;
 
 use anyhow::{Context, Result, bail};
 pub use device_change::{DeviceId, initialize};

@@ -1,4 +1,4 @@
-use crate::midi::{Event, EventType, Mapping, Output};
+use crate::midi::{Event, EventType, Mapping};
 use anyhow::Result;
 use log::debug;
 use midi_harness::{InitMidiDevice, OutputPort};

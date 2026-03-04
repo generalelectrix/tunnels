@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use log::{debug, error};
-use midi_harness::{DeviceId, DeviceManager, MidiHandler};
+use midi_harness::{DeviceId, DeviceManager, MidiHandler, MidiPortSpec};
 use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::mpsc::Sender};
@@ -12,23 +12,7 @@ use crate::{
 };
 
 pub use midi_harness::event::*;
-
-// Return the available ports by name,
-pub fn list_ports() -> Result<(Vec<String>, Vec<String>)> {
-    let input = MidiInput::new("tunnels")?;
-    let inputs = input
-        .ports()
-        .iter()
-        .filter_map(|p| input.port_name(p).ok())
-        .collect::<Vec<String>>();
-    let output = MidiOutput::new("tunnels")?;
-    let outputs = output
-        .ports()
-        .iter()
-        .filter_map(|p| output.port_name(p).ok())
-        .collect::<Vec<String>>();
-    Ok((inputs, outputs))
-}
+pub use midi_harness::list_ports;
 
 fn get_named_port<T: MidiIO>(source: &T, name: &str) -> Result<T::Port> {
     for port in source.ports() {
@@ -41,110 +25,13 @@ fn get_named_port<T: MidiIO>(source: &T, name: &str) -> Result<T::Port> {
     bail!("no port found with name {}", name);
 }
 
-pub struct Output {
-    name: String,
-    conn: MidiOutputConnection,
-}
-
-impl Output {
-    pub fn new(name: String) -> Result<Self> {
-        let output = MidiOutput::new(&name)?;
-        let port = get_named_port(&output, &name)?;
-        let conn = output
-            .connect(&port, &name)
-            .map_err(|err| anyhow!("failed to connect to midi output: {err}"))?;
-        Ok(Self { conn, name })
-    }
-
-    pub fn send(&mut self, event: Event) -> Result<(), SendError> {
-        let mut msg: [u8; 3] = [0; 3];
-        msg[0] = match event.mapping.event_type {
-            EventType::ControlChange => 11 << 4,
-            EventType::NoteOn => 9 << 4,
-            EventType::NoteOff => 8 << 4,
-        } + event.mapping.channel;
-        msg[1] = event.mapping.control;
-        msg[2] = event.value;
-        self.conn.send(&msg)
-    }
-
-    pub fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError> {
-        self.conn.send(msg)
-    }
-}
-
-pub struct Input {
-    _conn: MidiInputConnection<()>,
-}
-
-pub trait CreateControlEvent<D> {
-    fn from_event(event: Event, device: D) -> Self;
-}
-
-impl CreateControlEvent<Device> for ControlEvent {
-    fn from_event(event: Event, device: Device) -> Self {
-        ControlEvent::Midi((device, event))
-    }
-}
-
-impl Input {
-    pub fn new<D, E>(name: String, device: D, sender: Sender<E>) -> Result<Self>
-    where
-        D: Send + 'static + Clone,
-        E: CreateControlEvent<D> + Send + 'static,
-    {
-        let input = MidiInput::new(&name)?;
-        let port = get_named_port(&input, &name)?;
-        let handler_name = name.clone();
-
-        let conn = input
-            .connect(
-                &port,
-                &name,
-                move |_, msg: &[u8], _| {
-                    let control = msg[1];
-                    let value = msg[2];
-                    let event_type = match msg[0] >> 4 {
-                        // Most midi devices just send NoteOn with a velocity of 0 for NoteOff.
-                        8 | 9 if value == 0 => EventType::NoteOff,
-                        9 => EventType::NoteOn,
-                        11 => EventType::ControlChange,
-                        other => {
-                            debug!(
-                                "Ignoring midi input event on {handler_name} of unimplemented type {other}."
-                            );
-                            return;
-                        }
-                    };
-                    let channel = msg[0] & 15;
-                    sender
-                        .send(E::from_event(
-                            Event {
-                                mapping: Mapping {
-                                    event_type,
-                                    channel,
-                                    control,
-                                },
-                                value,
-                            },
-                            device.clone(),
-                        ))
-                        .unwrap();
-                },
-                (),
-            )
-            .map_err(|err| anyhow!("failed to connect to midi input: {err}"))?;
-        Ok(Input { _conn: conn })
-    }
-}
-
 /// Handle MIDI events by forwarding to a channel.
 #[derive(Clone)]
 struct ControlEventHandler(Sender<ControlEvent>);
 
 impl MidiHandler<Device> for ControlEventHandler {
     fn handle(&self, event: Event, device: &Device) {
-        let _ = self.0.send(ControlEvent::Midi((*device, event)));
+        self.0.send(ControlEvent::Midi((*device, event))).unwrap();
     }
 }
 
@@ -219,12 +106,6 @@ pub fn prompt_midi<D: MidiDevice>(
     }
 
     Ok(devices)
-}
-
-#[derive(Clone)]
-pub struct MidiPortSpec {
-    pub id: DeviceId,
-    pub name: String,
 }
 
 /// Prompt the user to select input and output ports for a device.
