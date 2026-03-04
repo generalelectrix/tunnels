@@ -152,7 +152,9 @@ impl Dispatcher {
     }
 
     /// Handle a device appearing or disappearing.
-    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<()> {
+    ///
+    /// Return true if we should trigger a UI refresh due to a device reconnecting.
+    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<bool> {
         self.midi_manager.handle_device_change(change)
     }
 }

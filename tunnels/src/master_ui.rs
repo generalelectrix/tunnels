@@ -11,6 +11,7 @@ use crate::{
     tunnel::{AnimationIdx, TargetedAnimation},
 };
 
+use log::info;
 use serde::{Deserialize, Serialize};
 
 /// Manage stateful aspects of the UI.
@@ -105,6 +106,10 @@ impl MasterUI {
                 audio_input.control(cm, emitter);
             }
             MasterUI(uim) => self.control(uim, mixer, emitter),
+            UIRefresh => {
+                info!("Full UI refresh.");
+                self.emit_state(mixer, clocks, color_palette, audio_input, emitter);
+            }
         }
     }
 

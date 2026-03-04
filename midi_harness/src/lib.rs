@@ -6,7 +6,7 @@ pub use select::*;
 
 use anyhow::{Context, Result, bail};
 pub use device_change::{
-    DeviceChange, DeviceId, HandleDeviceChange, install_midi_device_change_handler,
+    DeviceChange, DeviceId, DeviceKind, HandleDeviceChange, install_midi_device_change_handler,
 };
 use log::{debug, error, info};
 use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
@@ -134,14 +134,18 @@ where
     }
 
     /// Handle a device appearing or disappearing.
-    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<()> {
+    ///
+    /// Return Some(kind) if we reconnected an input or output.
+    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<Option<DeviceKind>> {
         match change {
-            DeviceChange::Connected { id, name, kind: _ } => {
+            DeviceChange::Connected { id, name, kind } => {
                 let reconnected = self.try_reconnect(&id)?;
-                if reconnected {
+                Ok(if reconnected {
                     info!("successfully reconnected MIDI device {name}");
-                }
-                Ok(())
+                    Some(kind)
+                } else {
+                    None
+                })
             }
             DeviceChange::Disconnected(id) => {
                 let disconnected = self.mark_disconnected(&id);
@@ -149,7 +153,7 @@ where
                     // FIXME: this would be a lot more useful with a name
                     error!("MIDI device {id:?} disconnected.");
                 }
-                Ok(())
+                Ok(None)
             }
         }
     }

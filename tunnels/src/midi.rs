@@ -1,7 +1,8 @@
 use anyhow::Result;
-use log::{error, info};
+use log::error;
 use midi_harness::{
-    DeviceChange, DeviceId, DeviceManager, HandleDeviceChange, MidiHandler, MidiPortSpec,
+    DeviceChange, DeviceId, DeviceKind, DeviceManager, HandleDeviceChange, MidiHandler,
+    MidiPortSpec,
 };
 use std::sync::mpsc::Sender;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
@@ -64,8 +65,13 @@ impl Manager {
     }
 
     /// Handle a device appearing or disappearing.
-    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<()> {
-        self.manager.handle_device_change(change)
+    ///
+    /// Return true if we should trigger a UI refresh due to a device reconnecting.
+    pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<bool> {
+        let Some(reconnected_kind) = self.manager.handle_device_change(change)? else {
+            return Ok(false);
+        };
+        Ok(reconnected_kind == DeviceKind::Output)
     }
 }
 

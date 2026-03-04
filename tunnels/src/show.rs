@@ -246,6 +246,8 @@ pub enum ControlMessage {
     Position(position_bank::ControlMessage),
     Audio(audio::ControlMessage),
     MasterUI(master_ui::ControlMessage),
+    /// Force a full UI refresh.
+    UIRefresh,
 }
 
 pub enum StateChange {

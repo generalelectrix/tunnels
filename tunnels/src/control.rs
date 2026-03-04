@@ -58,8 +58,8 @@ impl Dispatcher {
         use ControlEvent::*;
         match event {
             MidiDevice(event) => {
-                self.midi_dispatcher.handle_device_change(event?)?;
-                Ok(None)
+                let needs_ui_refresh = self.midi_dispatcher.handle_device_change(event?)?;
+                Ok(needs_ui_refresh.then_some(ControlMessage::UIRefresh))
             }
             Midi((device, event)) => Ok(self
                 .midi_dispatcher
