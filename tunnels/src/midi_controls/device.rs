@@ -1,7 +1,7 @@
 use crate::midi::{Event, EventType, Mapping};
 use anyhow::Result;
 use log::debug;
-use midi_harness::{InitMidiDevice, OutputPort};
+use midi_harness::{InitMidiDevice, Output};
 
 /// The input MIDI device types that tunnels can work with.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -36,7 +36,7 @@ pub trait MidiDevice: PartialEq + Sized + Send + Clone + InitMidiDevice + 'stati
 
 impl InitMidiDevice for Device {
     /// Perform device-specific midi initialization.
-    fn init_midi(&self, out: OutputPort<'_>) -> Result<()> {
+    fn init_midi(&self, out: &mut dyn Output) -> Result<()> {
         match *self {
             Self::AkaiApc40 => init_apc_40(out),
             Self::AkaiApc20 => init_apc_20(out),
@@ -58,7 +58,7 @@ impl MidiDevice for Device {
     }
 }
 
-fn init_apc_40(mut out: OutputPort<'_>) -> Result<()> {
+fn init_apc_40(out: &mut dyn Output) -> Result<()> {
     // put into ableton (full control) mode
     debug!("Sending APC40 sysex mode command.");
     out.send_raw(&[
@@ -110,7 +110,7 @@ fn init_apc_40(mut out: OutputPort<'_>) -> Result<()> {
     Ok(())
 }
 
-pub fn init_apc_20(mut out: OutputPort<'_>) -> Result<()> {
+pub fn init_apc_20(out: &mut dyn Output) -> Result<()> {
     // put into ableton (full control) mode
     debug!("Sending APC20 sysex mode command.");
     out.send_raw(&[

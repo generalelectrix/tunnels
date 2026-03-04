@@ -312,7 +312,7 @@ impl DeviceOutput {
             .port_name(&port)
             .with_context(|| format!("unable to get port name for {:?}", self.id))?;
         let mut conn = output.connect(&port, &name).with_context(|| name.clone())?;
-        device.init_midi(OutputPort {
+        device.init_midi(&mut OutputPort {
             conn: &mut conn,
             name: &self.name,
         })?;
@@ -327,9 +327,9 @@ pub struct OutputPort<'a> {
     name: &'a String,
 }
 
-impl<'a> OutputPort<'a> {
+impl<'a> Output for OutputPort<'a> {
     /// Send a MIDI event.
-    pub fn send(&mut self, event: Event) -> Result<(), SendError> {
+    fn send(&mut self, event: Event) -> Result<(), SendError> {
         let mut msg: [u8; 3] = [0; 3];
         msg[0] = match event.mapping.event_type {
             EventType::ControlChange => 11 << 4,
@@ -342,12 +342,12 @@ impl<'a> OutputPort<'a> {
     }
 
     /// Send a raw byte buffer to this MIDI device.
-    pub fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError> {
+    fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError> {
         self.conn.send(msg)
     }
 
     /// Get the name of the device associated with this port.
-    pub fn name(&self) -> &str {
+    fn name(&self) -> &str {
         self.name
     }
 }
@@ -355,7 +355,19 @@ impl<'a> OutputPort<'a> {
 pub trait InitMidiDevice: Sized + Send + Clone + 'static {
     /// Perform device-specific midi initialization.
     #[allow(unused)]
-    fn init_midi(&self, out: OutputPort<'_>) -> Result<()> {
+    fn init_midi(&self, out: &mut dyn Output) -> Result<()> {
         Ok(())
     }
+}
+
+/// Behaviors provided by a generic MIDI output.
+pub trait Output {
+    /// Send a MIDI event.
+    fn send(&mut self, event: Event) -> Result<(), SendError>;
+
+    /// Send a raw byte buffer to this MIDI device.
+    fn send_raw(&mut self, msg: &[u8]) -> Result<(), SendError>;
+
+    /// Get the name of the device associated with this port.
+    fn name(&self) -> &str;
 }

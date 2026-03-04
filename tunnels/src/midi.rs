@@ -2,7 +2,7 @@ use anyhow::Result;
 use log::error;
 use midi_harness::{
     DeviceChange, DeviceId, DeviceKind, DeviceManager, HandleDeviceChange, MidiHandler,
-    MidiPortSpec,
+    MidiPortSpec, Output,
 };
 use std::sync::mpsc::Sender;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
