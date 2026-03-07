@@ -582,3 +582,35 @@ pub fn stress_tunnel_snapshot_fixture() -> tunnels_lib::Snapshot {
         layers: vec![Arc::new(arcs)],
     }
 }
+
+/// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.
+pub fn stress_tunnel_evolved_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tunnels_lib::{Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+
+    let frame_interval = Duration::from_micros(25_300);
+    let n_frames: u64 = 20;
+
+    let mut tunnel = Tunnel::default();
+    configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
+    for _ in 0..n_frames {
+        tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
+    }
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: n_frames,
+        time: Timestamp(frame_interval.as_millis() as i64 * n_frames as i64),
+        layers: vec![Arc::new(arcs)],
+    }
+}

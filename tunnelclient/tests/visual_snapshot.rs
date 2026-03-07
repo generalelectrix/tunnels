@@ -353,3 +353,10 @@ fn stress_tunnel() {
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "stress_tunnel.png");
 }
+
+#[test]
+fn stress_tunnel_evolved() {
+    let snapshot = tunnels::tunnel::stress_tunnel_evolved_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "stress_tunnel_evolved.png");
+}
