@@ -171,6 +171,12 @@ fn test_config() -> ClientConfig {
     )
 }
 
+fn dot_config() -> ClientConfig {
+    let mut cfg = test_config();
+    cfg.render_mode = tunnelclient::config::RenderMode::Dot;
+    cfg
+}
+
 fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage {
     let mut buffer = RenderBuffer::new(WIDTH, HEIGHT);
     // Clear to black
@@ -359,4 +365,18 @@ fn stress_tunnel_evolved() {
     let snapshot = tunnels::tunnel::stress_tunnel_evolved_snapshot_fixture();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "stress_tunnel_evolved.png");
+}
+
+#[test]
+fn default_tunnel_dot_mode() {
+    let snapshot = tunnels::tunnel::default_tunnel_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &dot_config());
+    compare_to_fixture(&image, "default_tunnel_dot.png");
+}
+
+#[test]
+fn stress_tunnel_dot_mode() {
+    let snapshot = tunnels::tunnel::stress_tunnel_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &dot_config());
+    compare_to_fixture(&image, "stress_tunnel_dot.png");
 }

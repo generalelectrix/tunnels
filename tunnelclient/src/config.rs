@@ -8,6 +8,16 @@ use std::io::Read;
 use std::time::Duration;
 use yaml_rust::YamlLoader;
 
+/// Controls how arc segments are rendered.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default)]
+pub enum RenderMode {
+    /// Render as arc segments (default).
+    #[default]
+    Arc,
+    /// Render as filled circles positioned at arc segment centroids.
+    Dot,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SnapshotManagement {
     /// Always render the latest snapshot.
@@ -42,6 +52,8 @@ pub struct ClientConfig {
     pub y_center: f64,
     /// Geometric transformation to optionally apply to the entire image.
     pub transformation: Option<Transform>,
+    /// Controls how arc segments are rendered (arc or dot).
+    pub render_mode: RenderMode,
     /// Log at debug level?  This option is ignored when running in remote mode.
     pub log_level_debug: bool,
 }
@@ -74,6 +86,7 @@ impl ClientConfig {
             x_center: f64::from(x_resolution / 2),
             y_center: f64::from(y_resolution / 2),
             transformation,
+            render_mode: RenderMode::default(),
             log_level_debug,
             snapshot_management: SnapshotManagement::Single,
         }
