@@ -380,3 +380,17 @@ fn stress_tunnel_dot_mode() {
     let image = render_snapshot(&snapshot, &dot_config());
     compare_to_fixture(&image, "stress_tunnel_dot.png");
 }
+
+#[test]
+fn elliptical_tunnel() {
+    let snapshot = tunnels::tunnel::elliptical_tunnel_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "elliptical_tunnel.png");
+}
+
+#[test]
+fn elliptical_tunnel_dot_mode() {
+    let snapshot = tunnels::tunnel::elliptical_tunnel_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &dot_config());
+    compare_to_fixture(&image, "elliptical_tunnel_dot.png");
+}

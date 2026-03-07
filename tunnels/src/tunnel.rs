@@ -504,6 +504,34 @@ pub fn default_tunnel_snapshot_fixture() -> tunnels_lib::Snapshot {
     }
 }
 
+/// Render a tunnel with aspect ratio set halfway towards max for elliptical shape.
+pub fn elliptical_tunnel_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use tunnels_lib::{Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+    use tunnels_lib::number::UnipolarFloat;
+
+    let mut tunnel = Tunnel::default();
+    tunnel.handle_state_change(StateChange::AspectRatio(UnipolarFloat::new(0.75)), &mut NoopEmitter);
+    // Settle the smoother.
+    tunnel.update_state(std::time::Duration::from_secs(1), UnipolarFloat::ZERO);
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: 0,
+        time: Timestamp(0),
+        layers: vec![Arc::new(arcs)],
+    }
+}
+
 struct NoopEmitter;
 
 impl EmitStateChange for NoopEmitter {
