@@ -20,5 +20,5 @@ pub mod show;
 pub mod test_mode;
 mod timesync;
 pub mod transient_indicator;
-mod tunnel;
+pub mod tunnel;
 mod waveforms;

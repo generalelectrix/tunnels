@@ -1,5 +1,5 @@
-use crate::config::ClientConfig;
-use crate::draw::Draw;
+use tunnelclient::config::ClientConfig;
+use tunnelclient::draw::Draw;
 use anyhow::{anyhow, Result};
 use graphics::clear;
 use log::{error, info};

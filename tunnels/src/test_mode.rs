@@ -1,4 +1,3 @@
-use crate::animation_target::AnimationTarget;
 use crate::master_ui::EmitStateChange;
 use crate::{
     animation::{Animation, StateChange as AnimationStateChange, Waveform},
@@ -37,40 +36,10 @@ pub fn stress(channel_count: usize, i: usize, channel: &mut Channel) {
     channel.level = UnipolarFloat::ONE;
 
     if let Beam::Tunnel(ref mut tunnel) = channel.beam {
-        use TunnelStateChange::*;
-
-        set_tunnel_state(tunnel, ColorWidth(UnipolarFloat::new(0.25)));
-        set_tunnel_state(tunnel, ColorSpread(UnipolarFloat::ONE));
-        set_tunnel_state(tunnel, ColorSaturation(UnipolarFloat::new(0.25)));
-        set_tunnel_state(
+        crate::tunnel::configure_stress(
             tunnel,
-            MarqueeSpeed(BipolarFloat::new(
-                -1.0 + (2.0 * i as f64 / channel_count as f64),
-            )),
+            BipolarFloat::new(-1.0 + (2.0 * i as f64 / channel_count as f64)),
         );
-        set_tunnel_state(tunnel, Blacking(BipolarFloat::ZERO));
-
-        for (i, anim) in tunnel.animations().enumerate() {
-            set_animation_state(
-                &mut anim.animation,
-                AnimationStateChange::Waveform(match i % 4 {
-                    0 => Waveform::Sine,
-                    1 => Waveform::Triangle,
-                    2 => Waveform::Square,
-                    _ => Waveform::Sawtooth,
-                }),
-            );
-            set_animation_state(
-                &mut anim.animation,
-                AnimationStateChange::Speed(BipolarFloat::new(i as f64 / 3.0)),
-            );
-            set_animation_state(
-                &mut anim.animation,
-                AnimationStateChange::Size(UnipolarFloat::new(0.5)),
-            );
-            anim.target = AnimationTarget::Thickness;
-            set_animation_state(&mut anim.animation, AnimationStateChange::NPeriods(3));
-        }
     }
 }
 

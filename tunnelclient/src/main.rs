@@ -1,9 +1,7 @@
-mod config;
-mod draw;
 mod remote;
 mod show;
 
-use crate::config::ClientConfig;
+use tunnelclient::config::ClientConfig;
 use crate::remote::{administrate, run_remote};
 use crate::show::Show;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
