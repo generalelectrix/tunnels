@@ -1,6 +1,6 @@
-// Vendored software rasterizer for Piston's Graphics trait.
-// Based on graphics_buffer (MIT license, https://github.com/kaikalii/graphics_buffer).
-// Simplified: no rayon, no texture UV, no glyphs — just solid-color triangle rasterization.
+//! Vendored software rasterizer for Piston's Graphics trait.
+//! Based on graphics_buffer (MIT license, https://github.com/kaikalii/graphics_buffer).
+//! Simplified: no rayon, no texture UV, no glyphs — just solid-color triangle rasterization.
 
 use graphics::draw_state::DrawState;
 use graphics::types::Color;
@@ -106,8 +106,7 @@ impl Graphics for RenderBuffer {
                 for x in x0..x1 {
                     for y in y0..y1 {
                         if triangle_contains(tri, [x as f32, y as f32]) {
-                            let under =
-                                color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
+                            let under = color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
                             let blended = layer_color(color, &under);
                             self.inner
                                 .put_pixel(x as u32, y as u32, color_f32_rgba(&blended));
