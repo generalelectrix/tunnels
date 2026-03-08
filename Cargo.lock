@@ -1428,9 +1428,13 @@ dependencies = [
  "bytemuck",
  "byteorder",
  "color_quant",
+ "exr",
+ "gif 0.13.1",
  "jpeg-decoder",
  "num-traits",
  "png",
+ "qoi",
+ "tiff",
 ]
 
 [[package]]
@@ -1593,6 +1597,9 @@ name = "jpeg-decoder"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5d4a7da358eff58addd2877a45865158f0d78c911d43a5784ceb7bbf52833b0"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "js-sys"
@@ -3787,6 +3794,7 @@ dependencies = [
  "anyhow",
  "derive_more 2.0.1",
  "hostname",
+ "image 0.24.9",
  "lazy_static",
  "log 0.4.27",
  "piston2d-graphics 0.45.0",
@@ -3799,6 +3807,7 @@ dependencies = [
  "serde",
  "simplelog",
  "streaming-stats",
+ "tunnels",
  "tunnels_lib",
  "yaml-rust",
  "zero_configure",

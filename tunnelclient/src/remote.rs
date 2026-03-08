@@ -5,8 +5,8 @@
 //! parameters.
 //! Also provide the tools needed for simple remote administration.
 
-use crate::config::{ClientConfig, Resolution};
-use crate::draw::{Transform, TransformDirection};
+use tunnelclient::config::{ClientConfig, Resolution};
+use tunnelclient::draw::{Transform, TransformDirection};
 use crate::show::Show;
 use anyhow::Result;
 use lazy_static::lazy_static;

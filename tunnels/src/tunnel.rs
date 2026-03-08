@@ -478,3 +478,139 @@ impl<T: EmitShowStateChange> EmitStateChange for T {
         self.emit(ShowStateChange::Tunnel(sc))
     }
 }
+
+/// Render a default tunnel to a snapshot for use in test fixtures.
+pub fn default_tunnel_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use tunnels_lib::{Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+    use tunnels_lib::number::UnipolarFloat;
+
+    let tunnel = Tunnel::default();
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: 0,
+        time: Timestamp(0),
+        layers: vec![Arc::new(arcs)],
+    }
+}
+
+struct NoopEmitter;
+
+impl EmitStateChange for NoopEmitter {
+    fn emit_tunnel_state_change(&mut self, _: StateChange) {}
+}
+
+impl crate::animation::EmitStateChange for NoopEmitter {
+    fn emit_animation_state_change(&mut self, _: crate::animation::StateChange) {}
+}
+
+/// Configure a tunnel for stress testing.
+///
+/// `marquee_speed` is parameterized because the stress test varies it
+/// across channels: `-1.0 + (2.0 * i / channel_count)`.
+pub fn configure_stress(tunnel: &mut Tunnel, marquee_speed: BipolarFloat) {
+    use crate::animation::{
+        ControlMessage as AnimControlMessage,
+        StateChange as AnimStateChange,
+        Waveform,
+    };
+    use StateChange::*;
+
+    tunnel.handle_state_change(ColorWidth(UnipolarFloat::new(0.25)), &mut NoopEmitter);
+    tunnel.handle_state_change(ColorSpread(UnipolarFloat::ONE), &mut NoopEmitter);
+    tunnel.handle_state_change(ColorSaturation(UnipolarFloat::new(0.25)), &mut NoopEmitter);
+    tunnel.handle_state_change(MarqueeSpeed(marquee_speed), &mut NoopEmitter);
+    tunnel.handle_state_change(Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+
+    for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+        anim.animation.control(
+            AnimControlMessage::Set(AnimStateChange::Waveform(match i % 4 {
+                0 => Waveform::Sine,
+                1 => Waveform::Triangle,
+                2 => Waveform::Square,
+                _ => Waveform::Sawtooth,
+            })),
+            &mut NoopEmitter,
+        );
+        anim.animation.control(
+            AnimControlMessage::Set(AnimStateChange::Speed(BipolarFloat::new(i as f64 / 3.0))),
+            &mut NoopEmitter,
+        );
+        anim.animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
+            &mut NoopEmitter,
+        );
+        anim.target = AnimationTarget::Thickness;
+        anim.animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(3)),
+            &mut NoopEmitter,
+        );
+    }
+}
+
+/// Render a stress-configured tunnel to a snapshot for use in test fixtures.
+pub fn stress_tunnel_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use tunnels_lib::{Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+
+    let mut tunnel = Tunnel::default();
+    configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: 0,
+        time: Timestamp(0),
+        layers: vec![Arc::new(arcs)],
+    }
+}
+
+/// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.
+pub fn stress_tunnel_evolved_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tunnels_lib::{Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+
+    let frame_interval = Duration::from_micros(25_300);
+    let n_frames: u64 = 20;
+
+    let mut tunnel = Tunnel::default();
+    configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
+    for _ in 0..n_frames {
+        tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
+    }
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: n_frames,
+        time: Timestamp(frame_interval.as_millis() as i64 * n_frames as i64),
+        layers: vec![Arc::new(arcs)],
+    }
+}
