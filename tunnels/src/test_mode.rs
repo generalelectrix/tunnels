@@ -36,7 +36,7 @@ pub fn stress(channel_count: usize, i: usize, channel: &mut Channel) {
     channel.level = UnipolarFloat::ONE;
 
     if let Beam::Tunnel(ref mut tunnel) = channel.beam {
-        crate::tunnel::configure_stress(
+        crate::tunnel::fixture::configure_stress(
             tunnel,
             BipolarFloat::new(-1.0 + (2.0 * i as f64 / channel_count as f64)),
         );
