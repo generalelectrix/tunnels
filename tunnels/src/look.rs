@@ -4,7 +4,7 @@ use crate::{clock_bank::ClockBank, mixer::Channel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
-use tunnels_lib::ArcSegment;
+use tunnels_lib::Shape;
 
 /// A look is a beam that is essentially the contents of an entire mixer.
 /// All channel settings are preserved.
@@ -36,7 +36,7 @@ impl Look {
         color_palette: &ColorPalette,
         positions: &PositionBank,
         audio_envelope: UnipolarFloat,
-    ) -> Vec<ArcSegment> {
+    ) -> Vec<Shape> {
         let mut arcs = Vec::new();
         for channel in &self.channels {
             let mut rendered = channel.render(

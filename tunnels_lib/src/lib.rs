@@ -89,9 +89,20 @@ impl RunFlag {
     }
 }
 
-/// A command to draw a single arc segment.
+/// Controls how a shape is rendered.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+pub enum RenderMode {
+    /// Render as an arc segment (default).
+    #[default]
+    Arc,
+    /// Render as a filled circle positioned at the arc segment centroid.
+    Dot,
+}
+
+/// A command to draw a single shape.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ArcSegment {
+pub struct Shape {
+    pub render_mode: RenderMode,
     pub level: f64,
     pub thickness: f64,
     pub hue: f64,
@@ -106,8 +117,9 @@ pub struct ArcSegment {
     pub rot_angle: f64,
 }
 
-impl Hash for ArcSegment {
+impl Hash for Shape {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.render_mode.hash(state);
         OrderedFloat(self.level).hash(state);
         OrderedFloat(self.level).hash(state);
         OrderedFloat(self.thickness).hash(state);
@@ -124,9 +136,10 @@ impl Hash for ArcSegment {
     }
 }
 
-impl PartialEq for ArcSegment {
+impl PartialEq for Shape {
     fn eq(&self, o: &Self) -> bool {
-        almost_eq(self.level, o.level)
+        self.render_mode == o.render_mode
+            && almost_eq(self.level, o.level)
             && almost_eq(self.thickness, o.thickness)
             && almost_eq(self.sat, o.sat)
             && almost_eq(self.val, o.val)
@@ -141,9 +154,9 @@ impl PartialEq for ArcSegment {
     }
 }
 
-impl Eq for ArcSegment {}
+impl Eq for Shape {}
 
-pub type LayerCollection = Vec<Arc<Vec<ArcSegment>>>;
+pub type LayerCollection = Vec<Arc<Vec<Shape>>>;
 
 /// A complete single-frame video snapshot.
 /// This is the top-level structure sent in each serialized frame.
@@ -191,10 +204,11 @@ pub fn assert_almost_eq(a: f64, b: f64) {
 
 #[cfg(test)]
 pub mod test {
-    use crate::ArcSegment;
+    use crate::{RenderMode, Shape};
 
-    fn arc_segment_for_test(linear: f64, radial: f64) -> ArcSegment {
-        ArcSegment {
+    fn shape_for_test(linear: f64, radial: f64) -> Shape {
+        Shape {
+            render_mode: RenderMode::default(),
             level: linear,
             thickness: linear,
             sat: linear,
@@ -213,8 +227,8 @@ pub mod test {
 
     #[test]
     fn test_arc_eq() {
-        let a = arc_segment_for_test(1.0, 0.5);
-        let b = arc_segment_for_test(0.4, 0.5);
+        let a = shape_for_test(1.0, 0.5);
+        let b = shape_for_test(0.4, 0.5);
         assert_eq!(a, a);
         assert_ne!(a, b);
     }

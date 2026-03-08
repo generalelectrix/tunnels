@@ -4,7 +4,7 @@ use crate::{clock_bank::ClockBank, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
-use tunnels_lib::ArcSegment;
+use tunnels_lib::Shape;
 
 /// Union type for all of the kinds of beams we can have.
 /// Since we don't need beam to be very extensible, we will try this approach
@@ -33,7 +33,7 @@ impl Beam {
         color_palette: &ColorPalette,
         positions: &PositionBank,
         audio_envelope: UnipolarFloat,
-    ) -> Vec<ArcSegment> {
+    ) -> Vec<Shape> {
         match self {
             Self::Tunnel(t) => t.render(
                 level,

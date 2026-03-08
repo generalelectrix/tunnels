@@ -3,11 +3,10 @@ use std::sync::Arc;
 use crate::config::ClientConfig;
 use graphics::types::Color;
 use graphics::Context;
-use graphics::{rectangle, CircleArc, Graphics, Transformed};
+use graphics::{ellipse, rectangle, CircleArc, Graphics, Transformed};
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
-use tunnels_lib::ArcSegment;
-use tunnels_lib::Snapshot;
+use tunnels_lib::{RenderMode, Shape, Snapshot};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -83,10 +82,8 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     }
 }
 
-impl<G: Graphics> Draw<G> for ArcSegment {
+impl<G: Graphics> Draw<G> for Shape {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
-
         let color = hsv_to_rgb(self.hue, self.sat, self.val, self.level);
 
         let (x, y) = {
@@ -110,20 +107,35 @@ impl<G: Graphics> Draw<G> for ArcSegment {
         }
         .rot_rad(self.rot_angle * TWOPI);
 
-        let x_size = self.rad_x * cfg.critical_size;
-        let y_size = self.rad_y * cfg.critical_size;
-
-        let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
-
-        let start = self.start * TWOPI;
-        let stop = self.stop * TWOPI;
-
-        CircleArc::new(color, thickness, start, stop).draw(
-            bound,
-            &Default::default(),
-            transform,
-            gl,
-        );
+        match self.render_mode {
+            RenderMode::Arc => {
+                let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
+                let x_size = self.rad_x * cfg.critical_size;
+                let y_size = self.rad_y * cfg.critical_size;
+                let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
+                let start = self.start * TWOPI;
+                let stop = self.stop * TWOPI;
+                CircleArc::new(color, thickness, start, stop).draw(
+                    bound,
+                    &Default::default(),
+                    transform,
+                    gl,
+                );
+            }
+            RenderMode::Dot => {
+                let dot_radius = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
+                let mid_angle = (self.start + self.stop) / 2.0 * TWOPI;
+                let cx = self.rad_x * cfg.critical_size * mid_angle.cos();
+                let cy = self.rad_y * cfg.critical_size * mid_angle.sin();
+                let bound = rectangle::centered([cx, cy, dot_radius, dot_radius]);
+                ellipse::Ellipse::new(color).draw(
+                    bound,
+                    &Default::default(),
+                    transform,
+                    gl,
+                );
+            }
+        }
     }
 }
 
