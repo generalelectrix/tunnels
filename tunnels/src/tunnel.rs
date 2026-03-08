@@ -491,9 +491,7 @@ pub mod fixture {
     use tunnels_lib::{RenderMode, Snapshot, Timestamp};
 
     use crate::animation::{
-        ControlMessage as AnimControlMessage,
-        StateChange as AnimStateChange,
-        Waveform,
+        ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
     };
     use crate::animation_target::AnimationTarget;
     use crate::clock_bank::ClockBank;
@@ -536,9 +534,18 @@ pub mod fixture {
     /// `marquee_speed` is parameterized because the stress test varies it
     /// across channels: `-1.0 + (2.0 * i / channel_count)`.
     pub fn configure_stress(tunnel: &mut Tunnel, marquee_speed: BipolarFloat) {
-        tunnel.handle_state_change(StateChange::ColorWidth(UnipolarFloat::new(0.25)), &mut NoopEmitter);
-        tunnel.handle_state_change(StateChange::ColorSpread(UnipolarFloat::ONE), &mut NoopEmitter);
-        tunnel.handle_state_change(StateChange::ColorSaturation(UnipolarFloat::new(0.25)), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::ColorWidth(UnipolarFloat::new(0.25)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorSpread(UnipolarFloat::ONE),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorSaturation(UnipolarFloat::new(0.25)),
+            &mut NoopEmitter,
+        );
         tunnel.handle_state_change(StateChange::MarqueeSpeed(marquee_speed), &mut NoopEmitter);
         tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
 
@@ -576,7 +583,10 @@ pub mod fixture {
     /// Render a tunnel with aspect ratio set halfway towards max for elliptical shape.
     pub fn elliptical_tunnel_snapshot() -> Snapshot {
         let mut tunnel = Tunnel::default();
-        tunnel.handle_state_change(StateChange::AspectRatio(UnipolarFloat::new(0.75)), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::AspectRatio(UnipolarFloat::new(0.75)),
+            &mut NoopEmitter,
+        );
         tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         snapshot(render_default(&tunnel))
     }
@@ -590,24 +600,33 @@ pub mod fixture {
 
     /// Render a default tunnel in dot mode for snapshot testing.
     pub fn default_tunnel_dot_snapshot() -> Snapshot {
-        let mut tunnel = Tunnel::default();
-        tunnel.render_mode = RenderMode::Dot;
+        let tunnel = Tunnel {
+            render_mode: RenderMode::Dot,
+            ..Default::default()
+        };
         snapshot(render_default(&tunnel))
     }
 
     /// Render a stress-configured tunnel in dot mode for snapshot testing.
     pub fn stress_tunnel_dot_snapshot() -> Snapshot {
-        let mut tunnel = Tunnel::default();
-        tunnel.render_mode = RenderMode::Dot;
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Dot,
+            ..Default::default()
+        };
         configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
         snapshot(render_default(&tunnel))
     }
 
     /// Render an elliptical tunnel in dot mode for snapshot testing.
     pub fn elliptical_tunnel_dot_snapshot() -> Snapshot {
-        let mut tunnel = Tunnel::default();
-        tunnel.render_mode = RenderMode::Dot;
-        tunnel.handle_state_change(StateChange::AspectRatio(UnipolarFloat::new(0.75)), &mut NoopEmitter);
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Dot,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(
+            StateChange::AspectRatio(UnipolarFloat::new(0.75)),
+            &mut NoopEmitter,
+        );
         tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         snapshot(render_default(&tunnel))
     }
