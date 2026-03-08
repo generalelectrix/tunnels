@@ -12,7 +12,7 @@ use std::cmp::max;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
-use tunnels_lib::ArcSegment;
+use tunnels_lib::{RenderMode, Shape};
 use typed_index_derive::TypedIndex;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -53,6 +53,7 @@ pub struct Tunnel {
     x_offset: Smoother<f64>,
     y_offset: Smoother<f64>,
     anims: [TargetedAnimation; N_ANIM],
+    render_mode: RenderMode,
 }
 
 impl Default for Tunnel {
@@ -88,6 +89,7 @@ impl Default for Tunnel {
             x_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
+            render_mode: RenderMode::default(),
         }
     }
 }
@@ -161,7 +163,7 @@ impl Tunnel {
         color_palette: &ColorPalette,
         positions: &PositionBank,
         audio_envelope: UnipolarFloat,
-    ) -> Vec<ArcSegment> {
+    ) -> Vec<Shape> {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
         let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
             self.segs + 1
@@ -271,7 +273,8 @@ impl Tunnel {
             let rot_angle = self.curr_rot_angle + rot_angle_adjust;
 
             let arc = if as_mask {
-                ArcSegment {
+                Shape {
+                    render_mode: self.render_mode,
                     level: 1.0,
                     thickness: stroke_weight,
                     hue: 0.0,
@@ -303,7 +306,8 @@ impl Tunnel {
 
                 let sat = UnipolarFloat::new(self.col_sat.val() + col_sat_adjust);
 
-                ArcSegment {
+                Shape {
+                    render_mode: self.render_mode,
                     level: level_scale.val(),
                     thickness: stroke_weight,
                     hue: hue.val(),
@@ -596,6 +600,84 @@ pub fn stress_tunnel_snapshot_fixture() -> tunnels_lib::Snapshot {
 
     let mut tunnel = Tunnel::default();
     configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: 0,
+        time: Timestamp(0),
+        layers: vec![Arc::new(arcs)],
+    }
+}
+
+/// Render a default tunnel in dot mode for snapshot testing.
+pub fn default_tunnel_dot_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use tunnels_lib::{RenderMode, Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+
+    let mut tunnel = Tunnel::default();
+    tunnel.render_mode = RenderMode::Dot;
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: 0,
+        time: Timestamp(0),
+        layers: vec![Arc::new(arcs)],
+    }
+}
+
+/// Render a stress-configured tunnel in dot mode for snapshot testing.
+pub fn stress_tunnel_dot_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use tunnels_lib::{RenderMode, Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+
+    let mut tunnel = Tunnel::default();
+    tunnel.render_mode = RenderMode::Dot;
+    configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
+    let arcs = tunnel.render(
+        UnipolarFloat::ONE,
+        false,
+        &ClockBank::default(),
+        &ColorPalette::default(),
+        &PositionBank::default(),
+        UnipolarFloat::ZERO,
+    );
+    Snapshot {
+        frame_number: 0,
+        time: Timestamp(0),
+        layers: vec![Arc::new(arcs)],
+    }
+}
+
+/// Render an elliptical tunnel in dot mode for snapshot testing.
+pub fn elliptical_tunnel_dot_snapshot_fixture() -> tunnels_lib::Snapshot {
+    use std::sync::Arc;
+    use tunnels_lib::{RenderMode, Snapshot, Timestamp};
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+
+    let mut tunnel = Tunnel::default();
+    tunnel.render_mode = RenderMode::Dot;
+    tunnel.handle_state_change(StateChange::AspectRatio(UnipolarFloat::new(0.75)), &mut NoopEmitter);
+    tunnel.update_state(std::time::Duration::from_secs(1), UnipolarFloat::ZERO);
     let arcs = tunnel.render(
         UnipolarFloat::ONE,
         false,

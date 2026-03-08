@@ -6,7 +6,7 @@ use crate::{clock_bank::ClockBank, master_ui::EmitStateChange as EmitShowStateCh
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
-use tunnels_lib::{ArcSegment, LayerCollection};
+use tunnels_lib::{Shape, LayerCollection};
 use typed_index_derive::TypedIndex;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
@@ -209,7 +209,7 @@ impl Channel {
         color_palette: &ColorPalette,
         positions: &PositionBank,
         audio_envelope: UnipolarFloat,
-    ) -> Vec<ArcSegment> {
+    ) -> Vec<Shape> {
         let mut level: UnipolarFloat = if self.bump {
             UnipolarFloat::ONE
         } else {

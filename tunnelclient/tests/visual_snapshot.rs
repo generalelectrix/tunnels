@@ -154,7 +154,7 @@ use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::config::ClientConfig;
 use tunnelclient::draw::Draw;
-use tunnels_lib::{ArcSegment, Snapshot, Timestamp};
+use tunnels_lib::{Shape, Snapshot, Timestamp};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -169,12 +169,6 @@ fn test_config() -> ClientConfig {
         None,
         false,
     )
-}
-
-fn dot_config() -> ClientConfig {
-    let mut cfg = test_config();
-    cfg.render_mode = tunnelclient::config::RenderMode::Dot;
-    cfg
 }
 
 fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage {
@@ -252,8 +246,9 @@ fn assert_images_match_with_limit(
     }
 }
 
-fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> ArcSegment {
-    ArcSegment {
+fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> Shape {
+    Shape {
+        render_mode: Default::default(),
         level: 1.0,
         thickness: 0.1,
         hue,
@@ -369,15 +364,15 @@ fn stress_tunnel_evolved() {
 
 #[test]
 fn default_tunnel_dot_mode() {
-    let snapshot = tunnels::tunnel::default_tunnel_snapshot_fixture();
-    let image = render_snapshot(&snapshot, &dot_config());
+    let snapshot = tunnels::tunnel::default_tunnel_dot_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "default_tunnel_dot.png");
 }
 
 #[test]
 fn stress_tunnel_dot_mode() {
-    let snapshot = tunnels::tunnel::stress_tunnel_snapshot_fixture();
-    let image = render_snapshot(&snapshot, &dot_config());
+    let snapshot = tunnels::tunnel::stress_tunnel_dot_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "stress_tunnel_dot.png");
 }
 
@@ -390,7 +385,7 @@ fn elliptical_tunnel() {
 
 #[test]
 fn elliptical_tunnel_dot_mode() {
-    let snapshot = tunnels::tunnel::elliptical_tunnel_snapshot_fixture();
-    let image = render_snapshot(&snapshot, &dot_config());
+    let snapshot = tunnels::tunnel::elliptical_tunnel_dot_snapshot_fixture();
+    let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "elliptical_tunnel_dot.png");
 }

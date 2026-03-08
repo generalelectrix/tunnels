@@ -278,7 +278,7 @@ mod test {
         sync::{mpsc::channel, Arc},
     };
 
-    use tunnels_lib::{number::UnipolarFloat, ArcSegment, LayerCollection};
+    use tunnels_lib::{number::UnipolarFloat, Shape, LayerCollection};
 
     use super::*;
     use crate::test_mode::stress;
@@ -342,7 +342,7 @@ mod test {
 
     /// Truncate the values in an arc segment to a reasonable precision.
     /// This should avoid very minor platform-dependent floating point differences.
-    fn trunc_arc_segment(seg: &mut ArcSegment) {
+    fn trunc_arc_segment(seg: &mut Shape) {
         seg.level = trunc_f64(seg.level);
         seg.thickness = trunc_f64(seg.thickness);
         seg.hue = trunc_f64(seg.hue);
