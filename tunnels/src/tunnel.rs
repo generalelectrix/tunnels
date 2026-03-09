@@ -358,6 +358,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
+        emitter.emit_tunnel_state_change(RenderMode(self.render_mode));
     }
 
     /// Handle a control event.
@@ -422,6 +423,7 @@ impl Tunnel {
             PositionX(v) => self.x_offset.set_target(v),
             PositionY(v) => self.y_offset.set_target(v),
             SpinSpeed(v) => self.spin_speed = v,
+            RenderMode(v) => self.render_mode = v,
         };
         emitter.emit_tunnel_state_change(sc);
     }
@@ -483,6 +485,7 @@ pub enum StateChange {
     PositionX(f64),
     PositionY(f64),
     SpinSpeed(BipolarFloat),
+    RenderMode(RenderMode),
 }
 pub enum ControlMessage {
     Set(StateChange),

@@ -1,6 +1,6 @@
 use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap};
 use crate::{
-    midi::{cc, cc_ch0, event, note_on_ch0, Manager, Mapping},
+    midi::{cc, cc_ch0, event, note_on, note_on_ch0, Manager, Mapping},
     midi_controls::Device,
     midi_controls::RadioButtons,
     palette::ColorPaletteIdx,
@@ -36,6 +36,10 @@ const RESET_MARQUEE: Mapping = note_on_ch0(121);
 const SPIN_SPEED: Mapping = cc_ch0(55);
 const RESET_SPIN: Mapping = note_on_ch0(122);
 
+const RENDER_MODE_ARC: Mapping = note_on(8, 62);
+const RENDER_MODE_DOT: Mapping = note_on(8, 63);
+const RENDER_MODE_SAUCER: Mapping = note_on(8, 64);
+
 // TouchOSC XY position pad.
 const POSITION_X: Mapping = cc(8, 1);
 const POSITION_Y: Mapping = cc(8, 0);
@@ -44,6 +48,15 @@ const PALETTE_SELECT_CONTROL_OFFSET: i32 = 59;
 const N_PALETTE_SELECTS: i32 = 3;
 
 lazy_static! {
+    static ref RENDER_MODE_BUTTONS: RadioButtons = RadioButtons {
+        mappings: vec!(
+            RENDER_MODE_ARC,
+            RENDER_MODE_DOT,
+            RENDER_MODE_SAUCER,
+        ),
+        off: 0,
+        on: 1,
+    };
     static ref PALETTE_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
         mappings: (-1..N_PALETTE_SELECTS)
@@ -122,6 +135,20 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
         Box::new(|v| Tunnel(Set(PositionY(bipolar_from_midi(v).val())))),
     );
 
+    // render mode select
+    add(
+        RENDER_MODE_ARC,
+        Box::new(|_| Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Arc)))),
+    );
+    add(
+        RENDER_MODE_DOT,
+        Box::new(|_| Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Dot)))),
+    );
+    add(
+        RENDER_MODE_SAUCER,
+        Box::new(|_| Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Saucer)))),
+    );
+
     // palette select
     add(
         note_on_ch0((PALETTE_SELECT_CONTROL_OFFSET - 1) as u8),
@@ -174,5 +201,16 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
         PositionX(v) => send(event(POSITION_X, bipolar_to_midi(BipolarFloat::new(v)))),
         PositionY(v) => send(event(POSITION_Y, bipolar_to_midi(BipolarFloat::new(v)))),
         SpinSpeed(v) => send(event(SPIN_SPEED, bipolar_to_midi(v))),
+        RenderMode(v) => {
+            use tunnels_lib::RenderMode::*;
+            RENDER_MODE_BUTTONS.select(
+                match v {
+                    Arc => RENDER_MODE_ARC,
+                    Dot => RENDER_MODE_DOT,
+                    Saucer => RENDER_MODE_SAUCER,
+                },
+                send,
+            );
+        }
     };
 }
