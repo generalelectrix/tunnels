@@ -11,12 +11,13 @@ use tunnels_lib::{Shape, Snapshot, Timestamp};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
+const WIDE_WIDTH: u32 = 768;
 
-fn test_config() -> ClientConfig {
+fn test_config_sized(width: u32, height: u32) -> ClientConfig {
     ClientConfig::new(
         0,
         "test".to_string(),
-        (WIDTH, HEIGHT),
+        (width, height),
         false,
         false,
         None,
@@ -24,8 +25,17 @@ fn test_config() -> ClientConfig {
     )
 }
 
-fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage {
-    let mut buffer = RenderBuffer::new(WIDTH, HEIGHT);
+fn test_config() -> ClientConfig {
+    test_config_sized(WIDTH, HEIGHT)
+}
+
+fn render_snapshot_sized(
+    snapshot: &Snapshot,
+    cfg: &ClientConfig,
+    width: u32,
+    height: u32,
+) -> image::RgbaImage {
+    let mut buffer = RenderBuffer::new(width, height);
     // Clear to black
     buffer.clear_color([0.0, 0.0, 0.0, 1.0]);
 
@@ -38,6 +48,10 @@ fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage 
     snapshot.draw(&context, &mut buffer, cfg);
 
     buffer.into_image()
+}
+
+fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage {
+    render_snapshot_sized(snapshot, cfg, WIDTH, HEIGHT)
 }
 
 fn compare_to_fixture(actual: &image::RgbaImage, fixture_name: &str) {
@@ -232,13 +246,44 @@ fn stress_tunnel_dot_mode() {
 #[test]
 fn elliptical_tunnel() {
     let snapshot = tunnels::tunnel::fixture::elliptical_tunnel_snapshot();
-    let image = render_snapshot(&snapshot, &test_config());
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "elliptical_tunnel.png");
 }
 
 #[test]
 fn elliptical_tunnel_dot_mode() {
     let snapshot = tunnels::tunnel::fixture::elliptical_tunnel_dot_snapshot();
-    let image = render_snapshot(&snapshot, &test_config());
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "elliptical_tunnel_dot.png");
+}
+
+#[test]
+fn saucer_few_thin() {
+    let snapshot = tunnels::tunnel::fixture::saucer_few_thin_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "saucer_few_thin.png");
+}
+
+#[test]
+fn saucer_many_thick() {
+    let snapshot = tunnels::tunnel::fixture::saucer_many_thick_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "saucer_many_thick.png");
+}
+
+#[test]
+fn saucer_wide_ellipse() {
+    let snapshot = tunnels::tunnel::fixture::saucer_wide_ellipse_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "saucer_wide_ellipse.png");
+}
+
+#[test]
+fn saucer_tall_ellipse() {
+    let snapshot = tunnels::tunnel::fixture::saucer_tall_ellipse_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "saucer_tall_ellipse.png");
 }

@@ -135,6 +135,42 @@ impl<G: Graphics> Draw<G> for Shape {
                     gl,
                 );
             }
+            RenderMode::Saucer => {
+                // Centroid: same as Dot mode
+                let mid_angle = (self.start + self.stop) / 2.0 * TWOPI;
+                let rx = self.rad_x * cfg.critical_size;
+                let ry = self.rad_y * cfg.critical_size;
+                let cx = rx * mid_angle.cos();
+                let cy = ry * mid_angle.sin();
+
+                // Major axis: chord length between start and end points on ellipse
+                let start_rad = self.start * TWOPI;
+                let stop_rad = self.stop * TWOPI;
+                let p1x = rx * start_rad.cos();
+                let p1y = ry * start_rad.sin();
+                let p2x = rx * stop_rad.cos();
+                let p2y = ry * stop_rad.sin();
+                let chord_len = ((p2x - p1x).powi(2) + (p2y - p1y).powi(2)).sqrt() / 2.0;
+
+                // Minor axis: thickness (same scaling as Dot mode radius)
+                let minor_radius =
+                    self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
+
+                // Orientation: tangent to ellipse path at midpoint
+                // For parametric ellipse (rx*cos(t), ry*sin(t)), tangent at t is (-rx*sin(t), ry*cos(t))
+                let tangent_angle = (ry * mid_angle.cos()).atan2(-rx * mid_angle.sin());
+
+                // Center bound at origin, then transform: rotate by tangent, translate to centroid.
+                // This ensures rotation happens around the saucer's center, not around (0,0).
+                let bound = rectangle::centered([0.0, 0.0, chord_len, minor_radius]);
+                let local_transform = transform.trans(cx, cy).rot_rad(tangent_angle);
+                ellipse::Ellipse::new(color).draw(
+                    bound,
+                    &Default::default(),
+                    local_transform,
+                    gl,
+                );
+            }
         }
     }
 }

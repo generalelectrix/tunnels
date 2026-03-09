@@ -631,6 +631,52 @@ pub mod fixture {
         snapshot(render_default(&tunnel))
     }
 
+    fn saucer_tunnel(segs: u8, thickness: f64) -> Tunnel {
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Saucer,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(segs), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(thickness)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel
+    }
+
+    /// Render a saucer tunnel with few thin segments for snapshot testing.
+    pub fn saucer_few_thin_snapshot() -> Snapshot {
+        snapshot(render_default(&saucer_tunnel(12, 0.1)))
+    }
+
+    /// Render a saucer tunnel with many thick segments for snapshot testing.
+    pub fn saucer_many_thick_snapshot() -> Snapshot {
+        snapshot(render_default(&saucer_tunnel(126, 0.5)))
+    }
+
+    /// Render a saucer tunnel on a wide ellipse for snapshot testing.
+    pub fn saucer_wide_ellipse_snapshot() -> Snapshot {
+        let mut tunnel = saucer_tunnel(12, 0.1);
+        tunnel.handle_state_change(
+            StateChange::AspectRatio(UnipolarFloat::new(0.75)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Render a saucer tunnel on a tall ellipse for snapshot testing.
+    pub fn saucer_tall_ellipse_snapshot() -> Snapshot {
+        let mut tunnel = saucer_tunnel(12, 0.1);
+        tunnel.handle_state_change(
+            StateChange::AspectRatio(UnipolarFloat::new(0.25)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
     /// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.
     pub fn stress_tunnel_evolved_snapshot() -> Snapshot {
         let frame_interval = Duration::from_micros(25_300);
