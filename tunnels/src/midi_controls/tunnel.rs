@@ -33,6 +33,10 @@ const RESET_POSITION: Mapping = note_on_ch0(0x62);
 const RESET_ROTATION: Mapping = note_on_ch0(120);
 const RESET_MARQUEE: Mapping = note_on_ch0(121);
 
+// PLACEHOLDER: CC and note assignments for spin TBD
+// const SPIN_SPEED: Mapping = cc_ch0(55);
+// const RESET_SPIN: Mapping = note_on_ch0(122);
+
 // TouchOSC XY position pad.
 const POSITION_X: Mapping = cc(8, 1);
 const POSITION_Y: Mapping = cc(8, 0);
@@ -105,6 +109,9 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
     add(RESET_POSITION, Box::new(|_| Tunnel(ResetPosition)));
     add(RESET_ROTATION, Box::new(|_| Tunnel(ResetRotation)));
     add(RESET_MARQUEE, Box::new(|_| Tunnel(ResetMarquee)));
+    // PLACEHOLDER: uncomment when MIDI mapping is finalized
+    // add(SPIN_SPEED, Box::new(|v| Tunnel(Set(SpinSpeed(bipolar_from_midi(v))))));
+    // add(RESET_SPIN, Box::new(|_| Tunnel(ResetSpin)));
     add(
         POSITION_X,
         Box::new(|v| Tunnel(Set(PositionX(bipolar_from_midi(v).val())))),
@@ -165,5 +172,8 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
         // Clamp outgoing tunnel position messages to regular midi range.
         PositionX(v) => send(event(POSITION_X, bipolar_to_midi(BipolarFloat::new(v)))),
         PositionY(v) => send(event(POSITION_Y, bipolar_to_midi(BipolarFloat::new(v)))),
+        // PLACEHOLDER: uncomment when MIDI mapping is finalized
+        // SpinSpeed(v) => send(event(SPIN_SPEED, bipolar_to_midi(v))),
+        SpinSpeed(_) => {} // TODO: wire up when MIDI mapping is decided
     };
 }

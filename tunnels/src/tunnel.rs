@@ -50,6 +50,8 @@ pub struct Tunnel {
     blacking: BipolarFloat,
     curr_rot_angle: Phase,
     curr_marquee_angle: Phase,
+    spin_speed: BipolarFloat,
+    curr_spin_angle: Phase,
     x_offset: Smoother<f64>,
     y_offset: Smoother<f64>,
     anims: [TargetedAnimation; N_ANIM],
@@ -86,6 +88,8 @@ impl Default for Tunnel {
             blacking: BipolarFloat::new(0.15),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
+            spin_speed: BipolarFloat::ZERO,
+            curr_spin_angle: Phase::ZERO,
             x_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
@@ -152,6 +156,10 @@ impl Tunnel {
         // delta_t*30 implies the same speed scale as we had at 30fps with evolution tied to frame
         self.curr_marquee_angle +=
             (scale_speed(self.marquee_speed).val() * timestep_secs * 30.) * MARQUEE_SPEED_SCALE;
+
+        // calculate the spin angle
+        self.curr_spin_angle +=
+            (scale_speed(self.spin_speed).val() * timestep_secs * 30.) * SPIN_SPEED_SCALE;
     }
 
     /// Render the current state of the tunnel.
@@ -220,6 +228,7 @@ impl Tunnel {
             let mut y_adjust = 0.;
             let mut rot_angle_adjust = 0.;
             let mut marquee_angle_adjust = 0.;
+            let mut spin_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
             for anim in &self.anims {
                 let anim_value = anim.animation.get_value(
@@ -241,6 +250,7 @@ impl Tunnel {
                     ColorSaturation => col_sat_adjust += anim_value,
                     PositionX => x_adjust += anim_value,
                     PositionY => y_adjust += anim_value,
+                    Spin => spin_angle_adjust += anim_value,
                 }
             }
             // the abs() is there to prevent negative width setting when using multiple animations.
@@ -271,6 +281,7 @@ impl Tunnel {
             let stop_angle = start_angle.val() + marquee_interval;
 
             let rot_angle = self.curr_rot_angle + rot_angle_adjust;
+            let spin_angle = self.curr_spin_angle + spin_angle_adjust;
 
             let arc = if as_mask {
                 Shape {
@@ -287,6 +298,7 @@ impl Tunnel {
                     start: start_angle.val(),
                     stop: stop_angle,
                     rot_angle: rot_angle.val(),
+                    spin_angle: spin_angle.val(),
                 }
             } else {
                 let hue = Phase::new(
@@ -320,6 +332,7 @@ impl Tunnel {
                     start: start_angle.val(),
                     stop: stop_angle,
                     rot_angle: rot_angle.val(),
+                    spin_angle: spin_angle.val(),
                 }
             };
             arcs.push(arc);
@@ -344,6 +357,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(Blacking(self.blacking));
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
+        emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
     }
 
     /// Handle a control event.
@@ -382,6 +396,11 @@ impl Tunnel {
                 self.curr_marquee_angle = Phase::ZERO;
                 emitter.emit_tunnel_state_change(StateChange::MarqueeSpeed(BipolarFloat::ZERO));
             }
+            ResetSpin => {
+                self.spin_speed = BipolarFloat::ZERO;
+                self.curr_spin_angle = Phase::ZERO;
+                emitter.emit_tunnel_state_change(StateChange::SpinSpeed(BipolarFloat::ZERO));
+            }
         }
     }
 
@@ -402,6 +421,7 @@ impl Tunnel {
             Blacking(v) => self.blacking = v,
             PositionX(v) => self.x_offset.set_target(v),
             PositionY(v) => self.y_offset.set_target(v),
+            SpinSpeed(v) => self.spin_speed = v,
         };
         emitter.emit_tunnel_state_change(sc);
     }
@@ -436,6 +456,8 @@ pub const N_ANIM: usize = 4;
 const ROT_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; marquee rotated this many radial units/frame at 30fps
 const MARQUEE_SPEED_SCALE: f64 = 0.023;
+/// legacy tuning parameter; spin rotated this many radial units/frame at 30fps
+const SPIN_SPEED_SCALE: f64 = 0.023;
 const COLOR_SPREAD_SCALE: f64 = 16.;
 /// X nudge increment
 const X_NUDGE: f64 = 0.025;
@@ -460,6 +482,7 @@ pub enum StateChange {
     Blacking(BipolarFloat),
     PositionX(f64),
     PositionY(f64),
+    SpinSpeed(BipolarFloat),
 }
 pub enum ControlMessage {
     Set(StateChange),
@@ -470,6 +493,7 @@ pub enum ControlMessage {
     ResetPosition,
     ResetRotation,
     ResetMarquee,
+    ResetSpin,
 }
 
 pub trait EmitStateChange {
@@ -669,6 +693,50 @@ pub mod fixture {
     /// Render a saucer tunnel on a tall ellipse for snapshot testing.
     pub fn saucer_tall_ellipse_snapshot() -> Snapshot {
         let mut tunnel = saucer_tunnel(12, 0.1);
+        tunnel.handle_state_change(
+            StateChange::AspectRatio(UnipolarFloat::new(0.25)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Configure a saucer tunnel with spin animation on the first animator.
+    /// Sets target to Spin with full amplitude (size=1) using the default sine waveform.
+    fn saucer_spin_tunnel(segs: u8, thickness: f64) -> Tunnel {
+        let mut tunnel = saucer_tunnel(segs, thickness);
+        tunnel.anims[0].target = AnimationTarget::Spin;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::ONE)),
+            &mut NoopEmitter,
+        );
+        tunnel
+    }
+
+    /// Render a saucer tunnel with few thin segments and spin animation.
+    pub fn saucer_few_thin_spin_snapshot() -> Snapshot {
+        snapshot(render_default(&saucer_spin_tunnel(12, 0.1)))
+    }
+
+    /// Render a saucer tunnel with many thick segments and spin animation.
+    pub fn saucer_many_thick_spin_snapshot() -> Snapshot {
+        snapshot(render_default(&saucer_spin_tunnel(126, 0.5)))
+    }
+
+    /// Render a saucer tunnel on a wide ellipse with spin animation.
+    pub fn saucer_wide_ellipse_spin_snapshot() -> Snapshot {
+        let mut tunnel = saucer_spin_tunnel(12, 0.1);
+        tunnel.handle_state_change(
+            StateChange::AspectRatio(UnipolarFloat::new(0.75)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Render a saucer tunnel on a tall ellipse with spin animation.
+    pub fn saucer_tall_ellipse_spin_snapshot() -> Snapshot {
+        let mut tunnel = saucer_spin_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
             &mut NoopEmitter,

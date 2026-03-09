@@ -117,6 +117,8 @@ pub struct Shape {
     pub start: f64,
     pub stop: f64,
     pub rot_angle: f64,
+    #[serde(default)]
+    pub spin_angle: f64,
 }
 
 impl Hash for Shape {
@@ -135,6 +137,7 @@ impl Hash for Shape {
         OrderedFloat(self.start).hash(state);
         OrderedFloat(self.stop).hash(state);
         OrderedFloat(self.rot_angle).hash(state);
+        OrderedFloat(self.spin_angle).hash(state);
     }
 }
 
@@ -153,6 +156,7 @@ impl PartialEq for Shape {
             && angle_almost_eq(self.start, o.start)
             && angle_almost_eq(self.stop, o.stop)
             && angle_almost_eq(self.rot_angle, o.rot_angle)
+            && angle_almost_eq(self.spin_angle, o.spin_angle)
     }
 }
 
@@ -224,6 +228,7 @@ pub mod test {
             start: radial,
             stop: radial,
             rot_angle: radial,
+            spin_angle: 0.0,
         }
     }
 

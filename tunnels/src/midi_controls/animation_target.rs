@@ -20,6 +20,9 @@ const TARGET_COLOR_SATURATION: Mapping = note_on_ch0(42);
 const TARGET_POSITIONX: Mapping = note_on_ch0(43);
 const TARGET_POSITIONY: Mapping = note_on_ch0(44);
 
+// PLACEHOLDER: note assignment for spin target TBD
+// const TARGET_SPIN: Mapping = note_on_ch0(45);
+
 lazy_static! {
     static ref TARGET_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: vec!(
@@ -83,6 +86,11 @@ pub fn map_animation_target_controls(device: Device, map: &mut ControlMap) {
         TARGET_POSITIONY,
         Box::new(|_| Animation(AnimationTargetState::PositionY)),
     );
+    // PLACEHOLDER: uncomment when MIDI mapping is finalized
+    // add(
+    //     TARGET_SPIN,
+    //     Box::new(|_| Animation(AnimationTargetState::Spin)),
+    // );
 }
 
 /// Emit midi messages to update UIs given the provided state change.
@@ -104,6 +112,9 @@ pub fn update_animation_target_control(sc: AnimationTargetState, manager: &mut M
             MarqueeRotation => TARGET_MARQUEE,
             PositionX => TARGET_POSITIONX,
             PositionY => TARGET_POSITIONY,
+            // PLACEHOLDER: uncomment when MIDI mapping is finalized
+            // Spin => TARGET_SPIN,
+            Spin => return, // no MIDI mapping yet
         },
         send,
     );

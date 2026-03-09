@@ -20,5 +20,6 @@ pub enum AnimationTarget {
     MarqueeRotation,
     PositionX,
     PositionY,
+    Spin,
 }
 

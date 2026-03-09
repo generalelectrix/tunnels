@@ -163,7 +163,9 @@ impl<G: Graphics> Draw<G> for Shape {
                 // Center bound at origin, then transform: rotate by tangent, translate to centroid.
                 // This ensures rotation happens around the saucer's center, not around (0,0).
                 let bound = rectangle::centered([0.0, 0.0, chord_len, minor_radius]);
-                let local_transform = transform.trans(cx, cy).rot_rad(tangent_angle);
+                let local_transform = transform
+                    .trans(cx, cy)
+                    .rot_rad(tangent_angle + self.spin_angle * TWOPI);
                 ellipse::Ellipse::new(color).draw(
                     bound,
                     &Default::default(),

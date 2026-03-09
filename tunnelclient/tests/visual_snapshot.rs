@@ -128,6 +128,7 @@ fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> Shape {
         start,
         stop,
         rot_angle: 0.0,
+        spin_angle: 0.0,
     }
 }
 
@@ -286,4 +287,33 @@ fn saucer_tall_ellipse() {
     let snapshot = tunnels::tunnel::fixture::saucer_tall_ellipse_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_tall_ellipse.png");
+}
+
+#[test]
+fn saucer_few_thin_spin() {
+    let snapshot = tunnels::tunnel::fixture::saucer_few_thin_spin_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "saucer_few_thin_spin.png");
+}
+
+#[test]
+fn saucer_many_thick_spin() {
+    let snapshot = tunnels::tunnel::fixture::saucer_many_thick_spin_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "saucer_many_thick_spin.png");
+}
+
+#[test]
+fn saucer_wide_ellipse_spin() {
+    let snapshot = tunnels::tunnel::fixture::saucer_wide_ellipse_spin_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "saucer_wide_ellipse_spin.png");
+}
+
+#[test]
+fn saucer_tall_ellipse_spin() {
+    let snapshot = tunnels::tunnel::fixture::saucer_tall_ellipse_spin_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "saucer_tall_ellipse_spin.png");
 }
