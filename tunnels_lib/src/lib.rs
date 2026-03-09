@@ -117,7 +117,6 @@ pub struct Shape {
     pub start: f64,
     pub stop: f64,
     pub rot_angle: f64,
-    #[serde(default)]
     pub spin_angle: f64,
 }
 

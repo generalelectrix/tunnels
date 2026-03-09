@@ -231,3 +231,15 @@ impl RadioButtons {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn no_duplicate_midi_mappings() {
+        // ControlMap::new() calls every map_*_controls function for every device.
+        // If any (Device, Mapping) pair is registered twice, add() will panic.
+        let _map = ControlMap::new();
+    }
+}
