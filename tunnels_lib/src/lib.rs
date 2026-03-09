@@ -97,6 +97,8 @@ pub enum RenderMode {
     Arc,
     /// Render as a filled circle positioned at the arc segment centroid.
     Dot,
+    /// Render as a filled ellipse at the arc centroid, sized by chord and thickness.
+    Saucer,
 }
 
 /// A command to draw a single shape.
