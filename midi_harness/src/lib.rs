@@ -119,6 +119,25 @@ where
         slot.connect_input(id, self.handler.clone())
     }
 
+    /// Clear the device assignment from the named slot.
+    ///
+    /// The slot remains but with no input or output assigned.
+    /// Any active connections are dropped. After clearing, `try_reconnect`
+    /// will not match this slot.
+    pub fn clear_slot(&mut self, slot_name: &str) -> Result<()> {
+        let Some(slot) = self.slots.iter_mut().find(|s| s.name == slot_name) else {
+            bail!("unknown device slot {slot_name}");
+        };
+        slot.input = None;
+        slot.output = None;
+        Ok(())
+    }
+
+    /// Return the names of all slots.
+    pub fn slot_names(&self) -> Vec<String> {
+        self.slots.iter().map(|s| s.name.clone()).collect()
+    }
+
     /// Connect the provided device ID to the output in the named slot.
     pub fn connect_output(&mut self, slot: &str, id: DeviceId) -> Result<()> {
         let Some(slot) = self.slots.iter_mut().find(|s| s.name == slot) else {

@@ -38,7 +38,7 @@ pub fn install_midi_device_change_handler(handler: impl HandleDeviceChange) -> R
         // Run one initial cycle of device discovery and report the results.
         // This is sufficient for static device discovery at init.
         // TODO: decide if we can support this for other platforms
-        send.send(());
+        let _ = send.send(());
     }
 
     Ok(())
