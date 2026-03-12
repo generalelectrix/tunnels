@@ -64,3 +64,31 @@ impl StaticClockBank {
         &self.0[usize::from(index)]
     }
 }
+
+/// Info about a discovered clock provider.
+pub struct ClockProviderInfo {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+}
+
+/// Browse for clock providers on the current thread (blocks forever).
+/// Calls `on_appear` when a provider is discovered with its resolved address,
+/// and `on_drop` with the provider name when it disappears.
+pub fn browse_clock_providers(
+    mut on_appear: impl FnMut(ClockProviderInfo),
+    mut on_drop: impl FnMut(&str),
+) {
+    use zero_configure::bare::browse_forever;
+    browse_forever(
+        SERVICE_NAME,
+        move |(resolved, name)| {
+            on_appear(ClockProviderInfo {
+                name,
+                host: resolved.host_target.clone(),
+                port: resolved.port,
+            });
+        },
+        move |name| on_drop(name),
+    );
+}
