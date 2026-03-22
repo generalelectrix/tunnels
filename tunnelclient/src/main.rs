@@ -1,3 +1,4 @@
+mod admin_gui;
 mod remote;
 mod show;
 
@@ -5,16 +6,18 @@ use crate::remote::{administrate, run_remote};
 use crate::show::Show;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
+use std::process::ExitCode;
 use tunnelclient::config::ClientConfig;
 use tunnels_lib::RunFlag;
 use zmq::Context;
 
-fn main() {
-    // Check if running in remote mode.
+fn main() -> ExitCode {
     let first_arg = env::args().nth(1).expect(
         "First argument must be 'remote' to run in remote mode, \
-        'admin' to run the client administrator,
-         or the integer virtual video channel to listen to.",
+        'admin' to run the client administrator, \
+        'admin-gui' to run the graphical administrator, \
+        'monitor' to run a local monitor (config via stdin), \
+        or the integer virtual video channel to listen to.",
     );
 
     let ctx = Context::new();
@@ -25,6 +28,27 @@ fn main() {
     } else if first_arg == "admin" {
         init_logger(LevelFilter::Info);
         administrate();
+    } else if first_arg == "admin-gui" {
+        init_logger(LevelFilter::Info);
+        admin_gui::run();
+    } else if first_arg == "monitor" {
+        let cfg: ClientConfig = match rmp_serde::from_read(std::io::stdin()) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                println!("ERROR: failed to deserialize config: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match Show::new(cfg, ctx, RunFlag::default()) {
+            Ok(mut show) => {
+                println!("OK");
+                show.run();
+            }
+            Err(e) => {
+                println!("ERROR: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     } else {
         let video_channel: u64 = first_arg
             .parse()
@@ -43,6 +67,8 @@ fn main() {
 
         show.run();
     }
+
+    ExitCode::SUCCESS
 }
 
 fn init_logger(level: LevelFilter) {

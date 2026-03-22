@@ -36,7 +36,10 @@ zero_configure = { path = "../zero_configure" }
 tunnels_lib = { path = "../tunnels_lib" }
 
 hostname = "0.4"
+eframe = "0.33"
+stage_theme = { path = "../stage_theme" }
 
 [dev-dependencies]
 image = "0.24"
 tunnels = { path = "../tunnels" }
+egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }

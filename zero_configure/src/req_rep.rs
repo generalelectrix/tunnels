@@ -53,8 +53,16 @@ impl Controller {
     /// This is acceptable as this action will run once during startup and there's nothing to do
     /// except bail completely if this process fails.
     pub fn new(ctx: Context, name: String) -> Self {
+        Self::with_recv_timeout(ctx, name, None)
+    }
+
+    /// Start up a new service controller with an optional receive timeout.
+    /// If `recv_timeout` is `Some(ms)`, REQ sockets will time out after `ms` milliseconds
+    /// and be configured with REQ_RELAXED + REQ_CORRELATE to remain usable after a timeout.
+    /// If `None`, sockets block forever on receive (the default ZMQ behavior).
+    pub fn with_recv_timeout(ctx: Context, name: String, recv_timeout: Option<i32>) -> Self {
         Self(Browser::new(name, move |service| {
-            req_socket(&service.host_target, service.port, &ctx)
+            req_socket(&service.host_target, service.port, &ctx, recv_timeout)
         }))
     }
 
@@ -76,11 +84,22 @@ impl Controller {
 }
 
 /// Try to connect a REQ socket at this host and port.
-fn req_socket(host: &str, port: u16, ctx: &Context) -> Result<Socket> {
+/// If `recv_timeout` is `Some(ms)`, configure the socket with a receive timeout and
+/// REQ_RELAXED + REQ_CORRELATE so it remains usable after a timeout.
+fn req_socket(host: &str, port: u16, ctx: &Context, recv_timeout: Option<i32>) -> Result<Socket> {
     let addr = format!("tcp://{host}:{port}");
 
     // Connect a REQ socket.
     let socket = ctx.socket(zmq::REQ)?;
+    if let Some(ms) = recv_timeout {
+        socket.set_rcvtimeo(ms)?;
+        // REQ_RELAXED: allow sending a new request before receiving a reply (prevents EFSM
+        // error after a receive timeout).
+        socket.set_req_relaxed(true)?;
+        // REQ_CORRELATE: match replies to requests by ID, preventing stale replies from a
+        // timed-out request from being delivered to a subsequent request.
+        socket.set_req_correlate(true)?;
+    }
     socket.connect(&addr)?;
     Ok(socket)
 }

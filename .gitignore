@@ -13,3 +13,8 @@ tunnels_lib/Cargo.lock
 
 # saved shows
 saved_shows/
+
+# egui_kittest transient snapshot artifacts
+*.new.png
+*.diff.png
+*.old.png
