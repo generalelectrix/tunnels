@@ -26,6 +26,8 @@ pub struct AudioInput {
     gain: f64,
     /// Transient envelope clip indicator.
     clip_indicator: TransientIndicator,
+    /// Name of the audio device, or "Offline" if no device is connected.
+    device_name: String,
 }
 
 impl AudioInput {
@@ -50,6 +52,7 @@ impl AudioInput {
             monitor_update_age: Duration::ZERO,
             gain: 1.0,
             clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
+            device_name: "Offline".to_string(),
         }
     }
 
@@ -65,7 +68,7 @@ impl AudioInput {
 
         let processor_settings = ProcessorSettings::default();
 
-        let input = ReconnectingInput::new(device_name, processor_settings.clone());
+        let input = ReconnectingInput::new(device_name.clone(), processor_settings.clone());
 
         Ok(Self {
             _input: Some(input),
@@ -75,6 +78,7 @@ impl AudioInput {
             monitor_update_age: Duration::ZERO,
             gain: 1.0,
             clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
+            device_name,
         })
     }
 
@@ -172,6 +176,11 @@ impl AudioInput {
     /// Return the current value of the audio envelope.
     pub fn envelope(&self) -> UnipolarFloat {
         self.envelope_value
+    }
+
+    /// Return the name of the audio device.
+    pub fn device_name(&self) -> &str {
+        &self.device_name
     }
 }
 
