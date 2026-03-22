@@ -91,6 +91,17 @@ where
         Ok(())
     }
 
+    /// Remove a slot by name.
+    pub fn remove_slot(&mut self, name: &str) -> Result<()> {
+        let index = self
+            .slots
+            .iter()
+            .position(|s| s.name == name)
+            .ok_or_else(|| anyhow!("no MIDI device slot named \"{name}\""))?;
+        self.slots.remove(index);
+        Ok(())
+    }
+
     /// Call the provided closure on each connected output.
     /// The attached model and the MIDI output are provided.
     pub fn visit_outputs(&mut self, visitor: impl Fn(&D, &mut OutputPort)) {
@@ -407,4 +418,37 @@ pub trait Output {
 
     /// Get the name of the device associated with this port.
     fn name(&self) -> &str;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct TestDevice;
+    impl InitMidiDevice for TestDevice {}
+
+    #[derive(Clone)]
+    struct TestHandler;
+    impl MidiHandler<TestDevice> for TestHandler {
+        fn handle(&self, _event: Event, _device: &TestDevice) {}
+    }
+
+    #[test]
+    fn remove_slot_success() {
+        let mut mgr = DeviceManager::new(TestHandler);
+        mgr.add_slot("slot-a".into(), TestDevice).unwrap();
+        mgr.add_slot("slot-b".into(), TestDevice).unwrap();
+        assert_eq!(mgr.slot_names().len(), 2);
+
+        mgr.remove_slot("slot-a").unwrap();
+        assert_eq!(mgr.slot_names(), vec!["slot-b".to_string()]);
+    }
+
+    #[test]
+    fn remove_slot_unknown_name() {
+        let mut mgr = DeviceManager::new(TestHandler);
+        let err = mgr.remove_slot("nope").unwrap_err();
+        assert!(err.to_string().contains("nope"));
+    }
 }
