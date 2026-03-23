@@ -129,7 +129,6 @@ type Devices = HashSet<DeviceId>;
 /// Produced by the underlying support library. The exact semantics of what
 /// generates these is not clear.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-
 pub struct DeviceId(pub String);
 
 /// A device appeared or disappeared.
