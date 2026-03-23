@@ -1,5 +1,3 @@
-use tunnelclient::config::ClientConfig;
-use tunnelclient::draw::Draw;
 use anyhow::{anyhow, Result};
 use graphics::clear;
 use log::{error, info};
@@ -8,6 +6,8 @@ use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use tunnelclient::config::ClientConfig;
+use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_lib::Snapshot;
 use zero_configure::pub_sub::Receiver;

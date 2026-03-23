@@ -112,9 +112,7 @@ impl Processor {
         if new_envelope_attack != self.envelope_attack
             || new_envelope_release != self.envelope_release
         {
-            debug!(
-                "Updating envelope parameters to {new_envelope_attack}, {new_envelope_release}"
-            );
+            debug!("Updating envelope parameters to {new_envelope_attack}, {new_envelope_release}");
             self.envelope_attack = new_envelope_attack;
             self.envelope_release = new_envelope_release;
             let attack = Duration::from_secs_f32(new_envelope_attack);

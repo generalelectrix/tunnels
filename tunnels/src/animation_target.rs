@@ -6,8 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Tunnel parameters that can be targeted by animations.
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
-#[derive(Default)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, Default)]
 pub enum AnimationTarget {
     Rotation,
     Thickness,
@@ -22,4 +21,3 @@ pub enum AnimationTarget {
     PositionY,
     Spin,
 }
-

@@ -5,8 +5,6 @@
 //! parameters.
 //! Also provide the tools needed for simple remote administration.
 
-use tunnelclient::config::{ClientConfig, Resolution};
-use tunnelclient::draw::{Transform, TransformDirection};
 use crate::show::Show;
 use anyhow::Result;
 use lazy_static::lazy_static;
@@ -18,6 +16,8 @@ use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
+use tunnelclient::config::{ClientConfig, Resolution};
+use tunnelclient::draw::{Transform, TransformDirection};
 use tunnels_lib::RunFlag;
 use zero_configure::req_rep::{run_service_req_rep, Controller};
 use zmq::Context;
@@ -93,9 +93,7 @@ pub fn run_remote_service(ctx: Context, sender: Sender<(ClientConfig, RunFlag)>)
 
                 // Send the config and flag back to the show thread.
                 if let Err(e) = sender.send((config, new_run_flag)) {
-                    format!(
-                        "{show_stop_message}\nError trying to start new show: {e}."
-                    )
+                    format!("{show_stop_message}\nError trying to start new show: {e}.")
                 } else {
                     // everything is OK
                     format!("{show_stop_message}\nStarting a new show.")
