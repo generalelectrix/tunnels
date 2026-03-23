@@ -437,6 +437,7 @@ impl DeviceOutput {
             name: &self.name,
         })?;
         self.port = Some(conn);
+        self.name = name;
         Ok(())
     }
 }
