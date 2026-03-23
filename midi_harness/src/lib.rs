@@ -20,11 +20,15 @@ pub enum PortStatus {
     Unassigned,
     /// A device is assigned but not currently connected (e.g. unplugged).
     Disconnected {
+        /// Unique system identifier for the port.
+        id: DeviceId,
         /// Human-readable name of the port from last connection.
         name: String,
     },
     /// A device is assigned and actively connected.
     Connected {
+        /// Unique system identifier for the port.
+        id: DeviceId,
         /// Human-readable name of the port.
         name: String,
     },
@@ -43,13 +47,15 @@ pub struct SlotStatus {
     pub output: PortStatus,
 }
 
-fn port_status(name: &str, port_is_some: bool) -> PortStatus {
+fn port_status(id: &DeviceId, name: &str, port_is_some: bool) -> PortStatus {
     if port_is_some {
         PortStatus::Connected {
+            id: id.clone(),
             name: name.to_string(),
         }
     } else {
         PortStatus::Disconnected {
+            id: id.clone(),
             name: name.to_string(),
         }
     }
@@ -204,12 +210,12 @@ where
                 input: slot
                     .input
                     .as_ref()
-                    .map(|i| port_status(&i.name, i.port.is_some()))
+                    .map(|i| port_status(&i.id, &i.name, i.port.is_some()))
                     .unwrap_or(PortStatus::Unassigned),
                 output: slot
                     .output
                     .as_ref()
-                    .map(|o| port_status(&o.name, o.port.is_some()))
+                    .map(|o| port_status(&o.id, &o.name, o.port.is_some()))
                     .unwrap_or(PortStatus::Unassigned),
             })
             .collect()
