@@ -3,10 +3,10 @@ mod software_graphics;
 use std::path::Path;
 use std::sync::Arc;
 
-use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::config::ClientConfig;
 use tunnelclient::draw::Draw;
+use tunnelclient::render::RenderTarget;
 use tunnels_lib::{Shape, Snapshot, Timestamp};
 
 const WIDTH: u32 = 512;
@@ -36,17 +36,8 @@ fn render_snapshot_sized(
     height: u32,
 ) -> image::RgbaImage {
     let mut buffer = RenderBuffer::new(width, height);
-    // Clear to black
-    buffer.clear_color([0.0, 0.0, 0.0, 1.0]);
-
-    // Use identity transform so triangulated vertices stay in pixel coordinates.
-    // The draw code in draw.rs computes pixel positions directly (x * resolution + center),
-    // and the triangulation applies the context transform to produce output vertices.
-    // With OpenGL, abs_transform maps pixels to NDC for the GPU. For our software
-    // rasterizer, we want vertices in pixel space, so we use identity.
-    let context = graphics::Context::new();
-    snapshot.draw(&context, &mut buffer, cfg);
-
+    buffer.clear([0.0, 0.0, 0.0, 1.0]);
+    snapshot.draw(&mut buffer, cfg);
     buffer.into_image()
 }
 
@@ -55,9 +46,8 @@ fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage 
 }
 
 fn compare_to_fixture(actual: &image::RgbaImage, fixture_name: &str) {
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(fixture_name);
+    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let fixture_path = fixtures_dir.join(fixture_name);
 
     if std::env::var("UPDATE_FIXTURES").is_ok() {
         actual.save(&fixture_path).unwrap();
@@ -74,7 +64,40 @@ fn compare_to_fixture(actual: &image::RgbaImage, fixture_name: &str) {
         })
         .to_rgba8();
 
-    assert_images_match(actual, &expected, 2);
+    let tolerance = 2u8;
+    let mismatches: usize = actual
+        .pixels()
+        .zip(expected.pixels())
+        .filter(|(a, e)| {
+            a.0.iter()
+                .zip(e.0.iter())
+                .any(|(ac, ec)| ac.abs_diff(*ec) > tolerance)
+        })
+        .count();
+
+    if mismatches > 0 {
+        // Save actual render and visual diff for review
+        let stem = fixture_name.trim_end_matches(".png");
+        let diff_dir = fixtures_dir.join("diffs");
+        std::fs::create_dir_all(&diff_dir).ok();
+
+        let actual_path = diff_dir.join(format!("{stem}_actual.png"));
+        let diff_path = diff_dir.join(format!("{stem}_diff.png"));
+
+        actual.save(&actual_path).unwrap();
+        let diff_img = generate_diff_image(actual, &expected, tolerance);
+        diff_img.save(&diff_path).unwrap();
+
+        panic!(
+            "Image mismatch: {} pixels differ (out of {}). \
+             Visual diff saved to:\n  actual: {}\n  diff:   {}\n\
+             Run with UPDATE_FIXTURES=1 to accept new renders.",
+            mismatches,
+            actual.width() * actual.height(),
+            actual_path.display(),
+            diff_path.display(),
+        );
+    }
 }
 
 fn assert_images_match(actual: &image::RgbaImage, expected: &image::RgbaImage, tolerance: u8) {
@@ -111,6 +134,63 @@ fn assert_images_match_with_limit(
             max_mismatches,
         );
     }
+}
+
+/// Generate a visual diff image.
+/// - Black: identical pixels (within tolerance)
+/// - White: edge coverage difference (one side is near-black, or same hue different brightness)
+/// - Bright pink: actual hue shift (the color itself changed)
+fn generate_diff_image(
+    actual: &image::RgbaImage,
+    expected: &image::RgbaImage,
+    tolerance: u8,
+) -> image::RgbaImage {
+    let (w, h) = actual.dimensions();
+    let mut diff = image::RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let a = actual.get_pixel(x, y);
+            let e = expected.get_pixel(x, y);
+            let matches =
+                a.0.iter()
+                    .zip(e.0.iter())
+                    .all(|(ac, ec)| ac.abs_diff(*ec) <= tolerance);
+            if matches {
+                diff.put_pixel(x, y, image::Rgba([0, 0, 0, 255]));
+            } else if is_edge_difference(&a.0, &e.0) {
+                diff.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+            } else {
+                diff.put_pixel(x, y, image::Rgba([255, 0, 255, 255]));
+            }
+        }
+    }
+    diff
+}
+
+const NEAR_BLACK_THRESHOLD: f32 = 10.0;
+
+/// An "edge difference" is either:
+/// - One pixel is near-black and the other isn't (edge coverage shift)
+/// - Both are colored but with the same hue (brightness-only change)
+fn is_edge_difference(a: &[u8; 4], b: &[u8; 4]) -> bool {
+    let a_sum = a[0] as f32 + a[1] as f32 + a[2] as f32;
+    let b_sum = b[0] as f32 + b[1] as f32 + b[2] as f32;
+
+    // Either side is near-black → edge coverage difference
+    if a_sum < NEAR_BLACK_THRESHOLD || b_sum < NEAR_BLACK_THRESHOLD {
+        return true;
+    }
+
+    // Both have color — check if the hue is the same (ratio comparison)
+    let threshold = 0.1;
+    for i in 0..3 {
+        let a_ratio = a[i] as f32 / a_sum;
+        let b_ratio = b[i] as f32 / b_sum;
+        if (a_ratio - b_ratio).abs() > threshold {
+            return false;
+        }
+    }
+    true
 }
 
 fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> Shape {
@@ -207,6 +287,13 @@ fn flipped_horizontal() {
     // the final image is flipped, due to sub-pixel rounding at arc edges.
     let expected = image::imageops::flip_horizontal(&unflipped);
     assert_images_match_with_limit(&flipped, &expected, 2, 100);
+}
+
+#[test]
+fn solid_ring() {
+    let snapshot = tunnels::tunnel::fixture::solid_ring_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "solid_ring.png");
 }
 
 #[test]
@@ -316,4 +403,36 @@ fn saucer_tall_ellipse_spin() {
     let snapshot = tunnels::tunnel::fixture::saucer_tall_ellipse_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_tall_ellipse_spin.png");
+}
+
+#[test]
+fn empty_snapshot() {
+    let snapshot = Snapshot {
+        frame_number: 0,
+        time: Timestamp(0),
+        layers: vec![],
+    };
+    let image = render_snapshot(&snapshot, &test_config());
+    // Should be solid black
+    for pixel in image.pixels() {
+        assert_eq!(
+            pixel.0,
+            [0, 0, 0, 255],
+            "Empty snapshot should be solid black"
+        );
+    }
+}
+
+#[test]
+fn composited_layers() {
+    let snapshot = tunnels::tunnel::fixture::composited_layers_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "composited_layers.png");
+}
+
+#[test]
+fn mask_over_stress() {
+    let snapshot = tunnels::tunnel::fixture::mask_over_stress_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "mask_over_stress.png");
 }

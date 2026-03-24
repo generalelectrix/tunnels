@@ -548,11 +548,40 @@ pub mod fixture {
         )
     }
 
+    fn render_as_mask(tunnel: &Tunnel) -> Vec<super::Shape> {
+        tunnel.render(
+            UnipolarFloat::ONE,
+            true,
+            &ClockBank::default(),
+            &ColorPalette::default(),
+            &PositionBank::default(),
+            UnipolarFloat::ZERO,
+        )
+    }
+
+    fn with_brightness(shapes: Vec<super::Shape>, level: f64) -> Vec<super::Shape> {
+        shapes
+            .into_iter()
+            .map(|mut s| {
+                s.level *= level;
+                s
+            })
+            .collect()
+    }
+
     fn snapshot(shapes: Vec<super::Shape>) -> Snapshot {
         Snapshot {
             frame_number: 0,
             time: Timestamp(0),
             layers: vec![Arc::new(shapes)],
+        }
+    }
+
+    fn multi_layer_snapshot(layers: Vec<Vec<super::Shape>>) -> Snapshot {
+        Snapshot {
+            frame_number: 0,
+            time: Timestamp(0),
+            layers: layers.into_iter().map(Arc::new).collect(),
         }
     }
 
@@ -605,6 +634,14 @@ pub mod fixture {
     /// Render a default tunnel to a snapshot for use in test fixtures.
     pub fn default_tunnel_snapshot() -> Snapshot {
         snapshot(render_default(&Tunnel::default()))
+    }
+
+    /// Render a tunnel with blacking=0, producing a solid ring with no gaps.
+    /// All segments are drawn, and adjacent segments should be perfectly contiguous.
+    pub fn solid_ring_snapshot() -> Snapshot {
+        let mut tunnel = Tunnel::default();
+        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        snapshot(render_default(&tunnel))
     }
 
     /// Render a tunnel with aspect ratio set halfway towards max for elliptical shape.
@@ -771,5 +808,55 @@ pub mod fixture {
             time: Timestamp(frame_interval.as_millis() as i64 * n_frames as i64),
             layers: vec![Arc::new(arcs)],
         }
+    }
+
+    /// Multi-layer compositing test: stress tunnel background, dimmed evolved
+    /// stress tunnel in the middle, concentric rings on top.
+    pub fn composited_layers_snapshot() -> Snapshot {
+        // Bottom: colorful stress tunnel
+        let mut stress = Tunnel::default();
+        configure_stress(&mut stress, BipolarFloat::new(-1.0));
+        let bottom = render_default(&stress);
+
+        // Middle: evolved stress tunnel at 50% brightness
+        let frame_interval = Duration::from_micros(25_300);
+        for _ in 0..20 {
+            stress.update_state(frame_interval, UnipolarFloat::ZERO);
+        }
+        let middle = with_brightness(render_default(&stress), 0.5);
+
+        // Top: concentric rings (3 full-circle arcs at different radii/hues)
+        let top: Vec<super::Shape> = [(0.2, 0.0), (0.35, 0.33), (0.5, 0.66)]
+            .iter()
+            .map(|&(radius, hue)| super::Shape {
+                render_mode: RenderMode::Arc,
+                level: 1.0,
+                thickness: 0.1,
+                hue,
+                sat: 1.0,
+                val: 1.0,
+                x: 0.0,
+                y: 0.0,
+                rad_x: radius,
+                rad_y: radius,
+                start: 0.0,
+                stop: 1.0,
+                rot_angle: 0.0,
+                spin_angle: 0.0,
+            })
+            .collect();
+
+        multi_layer_snapshot(vec![bottom, middle, top])
+    }
+
+    /// Mask test: default tunnel rendered as opaque black mask over stress tunnel.
+    pub fn mask_over_stress_snapshot() -> Snapshot {
+        let mut stress = Tunnel::default();
+        configure_stress(&mut stress, BipolarFloat::new(-1.0));
+        let background = render_default(&stress);
+
+        let mask = render_as_mask(&Tunnel::default());
+
+        multi_layer_snapshot(vec![background, mask])
     }
 }

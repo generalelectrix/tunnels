@@ -10,7 +10,6 @@ use tunnels_lib::RunFlag;
 use zmq::Context;
 
 fn main() {
-    // Check if running in remote mode.
     let first_arg = env::args().nth(1).expect(
         "First argument must be 'remote' to run in remote mode, \
         'admin' to run the client administrator,
@@ -39,8 +38,7 @@ fn main() {
             LevelFilter::Info
         });
 
-        let mut show = Show::new(cfg, ctx, RunFlag::default()).expect("Failed to initialize show");
-
+        let show = Show::new(cfg, ctx, RunFlag::default()).expect("Failed to initialize show");
         show.run();
     }
 }

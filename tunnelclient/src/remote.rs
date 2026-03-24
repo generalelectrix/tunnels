@@ -5,10 +5,9 @@
 //! parameters.
 //! Also provide the tools needed for simple remote administration.
 
-use crate::show::Show;
 use anyhow::Result;
 use lazy_static::lazy_static;
-use log::{error, info};
+use log::info;
 use regex::Regex;
 use rmp_serde::decode::from_read;
 use rmp_serde::encode::write;
@@ -34,10 +33,8 @@ const PORT: u16 = 15000;
 /// channel.
 /// Panics if the remote service thread fails to spawn.
 pub fn run_remote(ctx: Context) {
-    // Create a channel to wait on config requests.
     let (send, recv) = channel();
 
-    // Spawn a thread to receive config requests.
     let ctx_remote = ctx.clone();
     thread::Builder::new()
         .name("remote_service".to_string())
@@ -46,26 +43,11 @@ pub fn run_remote(ctx: Context) {
         })
         .expect("Failed to spawn remote service thread");
 
-    loop {
-        info!("Waiting for show configuration.");
-        // Wait on a config from the remote service.
-        let (config, run_flag) = recv.recv().expect("Remote service thread hung up.");
+    info!("Waiting for show configuration.");
+    let (config, run_flag) = recv.recv().expect("Remote service hung up.");
+    info!("Starting first show with configuration: {config:?}");
 
-        info!("Starting a new show with configuration: {config:?}");
-        // Start up a fresh show.
-        match Show::new(config, ctx.clone(), run_flag) {
-            Ok(mut show) => {
-                info!("Show initialized, starting event loop.");
-                // Run the show until the remote thread tells us to quit.
-                show.run();
-                info!("Show exited.");
-            }
-
-            // TODO: enable some kind of remote logging so we can collect these messages at the
-            // controller.
-            Err(e) => error!("Failed to initialize show: {e}"),
-        }
-    }
+    crate::show::run_remote_show(ctx, config, run_flag, recv);
 }
 
 /// Run the remote discovery and configuration service, passing config states and cancellation
