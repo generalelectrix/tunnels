@@ -63,10 +63,14 @@ fn sign(p1: [f32; 2], p2: [f32; 2], p3: [f32; 2]) -> f32 {
 }
 
 fn triangle_contains(tri: &[[f32; 2]], point: [f32; 2]) -> bool {
-    let b1 = sign(point, tri[0], tri[1]) < 0.0;
-    let b2 = sign(point, tri[1], tri[2]) < 0.0;
-    let b3 = sign(point, tri[2], tri[0]) < 0.0;
-    b1 == b2 && b2 == b3
+    // Use <= (inclusive edges) to avoid gaps between adjacent triangles.
+    // This matches hardware rasterizer behavior more closely than strict <.
+    // Edge pixels may be claimed by both adjacent triangles, but since all
+    // triangles in a shape share the same color, the double-draw is invisible.
+    let b1 = sign(point, tri[0], tri[1]) <= 0.0;
+    let b2 = sign(point, tri[1], tri[2]) <= 0.0;
+    let b3 = sign(point, tri[2], tri[0]) <= 0.0;
+    (b1 && b2 && b3) || (!b1 && !b2 && !b3)
 }
 
 impl Graphics for RenderBuffer {
