@@ -4,6 +4,7 @@ members = [
     "tunnels_lib",
     "tunnels",
     "tunnelclient",
+    "tunnel-bootstrap",
     "zero_configure",
     "midi_harness",
     "stage_theme",

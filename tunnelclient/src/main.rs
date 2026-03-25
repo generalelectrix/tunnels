@@ -7,6 +7,9 @@ use crate::show::Show;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
 use std::process::ExitCode;
+use std::thread;
+use std::time::Duration;
+use tunnelclient::bootstrap_controller::BootstrapController;
 use tunnelclient::config::ClientConfig;
 use tunnels_lib::RunFlag;
 use zmq::Context;
@@ -22,7 +25,22 @@ fn main() -> ExitCode {
 
     let ctx = Context::new();
 
-    if first_arg == "remote" {
+    if first_arg == tunnelclient::ARG_SELF_TEST {
+        // Lightweight health check — no window, no graphics.
+        // Verify ZMQ context + socket creation.
+        let _ = ctx.socket(zmq::REP).expect("ZMQ socket creation failed");
+
+        // Verify DNS-SD is available.
+        let stop = zero_configure::bare::register_service("selftest", 0)
+            .expect("DNS-SD registration failed");
+        stop();
+
+        println!("self-test passed");
+        std::process::exit(0);
+    } else if first_arg == "push" {
+        init_logger(LevelFilter::Info);
+        push_to_first_bootstrapper(ctx);
+    } else if first_arg == tunnelclient::ARG_REMOTE {
         init_logger(LevelFilter::Info);
         run_remote(ctx);
     } else if first_arg == "admin" {
@@ -73,4 +91,31 @@ fn main() -> ExitCode {
 
 fn init_logger(level: LevelFilter) {
     SimpleLogger::init(level, LogConfig::default()).expect("Could not configure logger.");
+}
+
+/// Browse for the first available bootstrapper and push ourselves to it.
+fn push_to_first_bootstrapper(ctx: Context) {
+    let binary_path = env::current_exe().expect("Could not determine own binary path");
+    let controller = BootstrapController::new(ctx);
+
+    println!("Browsing for bootstrappers...");
+
+    let target = loop {
+        let targets = controller.list();
+        if let Some(name) = targets.first() {
+            break name.clone();
+        }
+        thread::sleep(Duration::from_secs(1));
+    };
+
+    println!("Pushing {} to {target}...", binary_path.display());
+    match controller.push_binary(
+        &target,
+        &binary_path,
+        &[tunnelclient::ARG_SELF_TEST],
+        &[tunnelclient::ARG_REMOTE],
+    ) {
+        Ok(msg) => println!("Success: {msg}"),
+        Err(e) => println!("Push failed: {e}"),
+    }
 }
