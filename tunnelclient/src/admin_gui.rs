@@ -73,7 +73,13 @@ impl ResolutionPreset {
         }
     }
 
-    const ALL: [Self; 5] = [Self::P1080, Self::P720, Self::Wuxga, Self::SxgaPlus, Self::Custom];
+    const ALL: [Self; 5] = [
+        Self::P1080,
+        Self::P720,
+        Self::Wuxga,
+        Self::SxgaPlus,
+        Self::Custom,
+    ];
 }
 
 struct AdminApp {
@@ -426,10 +432,7 @@ impl AdminApp {
             ui.horizontal(|ui| {
                 ui.label("Video Channel:");
                 let mut channel = self.video_channel as i32;
-                if ui
-                    .add(egui::Slider::new(&mut channel, 0..=7))
-                    .changed()
-                {
+                if ui.add(egui::Slider::new(&mut channel, 0..=7)).changed() {
                     self.video_channel = channel as u64;
                 }
             });
@@ -548,11 +551,7 @@ mod tests {
         fn clients(&self) -> Vec<String> {
             self.clients.clone()
         }
-        fn run_with_config(
-            &self,
-            _client: &str,
-            _config: ClientConfig,
-        ) -> anyhow::Result<String> {
+        fn run_with_config(&self, _client: &str, _config: ClientConfig) -> anyhow::Result<String> {
             Ok("Mock: configuration accepted.".to_string())
         }
     }
@@ -608,7 +607,9 @@ mod tests {
     fn remote_client_shows_send_button() {
         let clients = vec!["projector-1".to_string()];
         let mut harness = test_harness(clients);
-        harness.state_mut().select_target(Target::RemoteClient("projector-1".to_string()));
+        harness
+            .state_mut()
+            .select_target(Target::RemoteClient("projector-1".to_string()));
         harness.run();
         assert!(harness.query_by_label("Send Configuration").is_some());
     }
@@ -684,7 +685,9 @@ mod tests {
         let mut harness = test_harness(vec![]);
         harness.state_mut().selected_target = None;
         harness.run();
-        assert!(harness.query_by_label("Select a target to configure.").is_some());
+        assert!(harness
+            .query_by_label("Select a target to configure.")
+            .is_some());
     }
 
     // --- Disappearing client tests ---
@@ -739,7 +742,9 @@ mod tests {
         });
         harness.step();
         assert!(harness.query_by_label("Ok").is_some());
-        assert!(harness.query_by_label("Failed (test):\nConnection refused").is_some());
+        assert!(harness
+            .query_by_label("Failed (test):\nConnection refused")
+            .is_some());
     }
 
     // --- Snapshot tests ---
