@@ -13,8 +13,8 @@ const TARGET_THICKNESS: Mapping = note_on_ch0(36);
 const TARGET_SIZE: Mapping = note_on_ch0(37);
 const TARGET_ASPECT_RATIO: Mapping = note_on_ch0(38);
 const TARGET_MARQUEE: Mapping = note_on_ch0(39);
-const TARGET_COLOR: Mapping = note_on_ch0(40);
-const TARGET_COLOR_SPREAD: Mapping = note_on_ch0(41);
+const TARGET_SPIN: Mapping = note_on_ch0(40);
+const TARGET_COLOR: Mapping = note_on_ch0(41);
 const TARGET_COLOR_SATURATION: Mapping = note_on_ch0(42);
 
 const TARGET_POSITIONX: Mapping = note_on_ch0(43);
@@ -28,8 +28,8 @@ lazy_static! {
             TARGET_SIZE,
             TARGET_ASPECT_RATIO,
             TARGET_MARQUEE,
+            TARGET_SPIN,
             TARGET_COLOR,
-            TARGET_COLOR_SPREAD,
             TARGET_COLOR_SATURATION,
             TARGET_POSITIONX,
             TARGET_POSITIONY,
@@ -64,12 +64,12 @@ pub fn map_animation_target_controls(device: Device, map: &mut ControlMap) {
         Box::new(|_| Animation(AnimationTargetState::MarqueeRotation)),
     );
     add(
-        TARGET_COLOR,
-        Box::new(|_| Animation(AnimationTargetState::Color)),
+        TARGET_SPIN,
+        Box::new(|_| Animation(AnimationTargetState::Spin)),
     );
     add(
-        TARGET_COLOR_SPREAD,
-        Box::new(|_| Animation(AnimationTargetState::ColorSpread)),
+        TARGET_COLOR,
+        Box::new(|_| Animation(AnimationTargetState::Color)),
     );
     add(
         TARGET_COLOR_SATURATION,
@@ -99,11 +99,12 @@ pub fn update_animation_target_control(sc: AnimationTargetState, manager: &mut M
             Size => TARGET_SIZE,
             AspectRatio => TARGET_ASPECT_RATIO,
             Color => TARGET_COLOR,
-            ColorSpread => TARGET_COLOR_SPREAD,
             ColorSaturation => TARGET_COLOR_SATURATION,
             MarqueeRotation => TARGET_MARQUEE,
             PositionX => TARGET_POSITIONX,
             PositionY => TARGET_POSITIONY,
+            Spin => TARGET_SPIN,
+            ColorSpread => return,
         },
         send,
     );
