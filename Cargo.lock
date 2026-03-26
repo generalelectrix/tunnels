@@ -386,7 +386,7 @@ dependencies = [
  "futures-lite",
  "parking",
  "polling",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "slab",
  "windows-sys 0.61.2",
 ]
@@ -417,7 +417,7 @@ dependencies = [
  "cfg-if 1.0.1",
  "event-listener 5.4.1",
  "futures-lite",
- "rustix 1.1.4",
+ "rustix 1.1.2",
 ]
 
 [[package]]
@@ -443,7 +443,7 @@ dependencies = [
  "cfg-if 1.0.1",
  "futures-core",
  "futures-io",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "signal-hook-registry",
  "slab",
  "windows-sys 0.61.2",
@@ -661,6 +661,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
 
 [[package]]
+name = "block-buffer"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
 name = "block-sys"
 version = "0.1.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -797,7 +806,7 @@ checksum = "4dbf9978365bac10f54d1d4b04f7ce4427e51f71d61f2fe15e3fed5166474df7"
 dependencies = [
  "bitflags 2.11.0",
  "polling",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "slab",
  "tracing",
 ]
@@ -821,7 +830,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa"
 dependencies = [
  "calloop 0.14.4",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "wayland-backend",
  "wayland-client 0.31.12",
 ]
@@ -1151,6 +1160,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpufeatures"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1270,6 +1288,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 
 [[package]]
+name = "crypto-common"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
+dependencies = [
+ "generic-array",
+ "typenum",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1336,6 +1364,16 @@ dependencies = [
  "getopts",
  "image 0.25.6",
  "rayon",
+]
+
+[[package]]
+name = "digest"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+dependencies = [
+ "block-buffer",
+ "crypto-common",
 ]
 
 [[package]]
@@ -1695,7 +1733,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2007,12 +2045,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "generic-array"
+version = "0.14.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
+dependencies = [
+ "typenum",
+ "version_check",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
 dependencies = [
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "windows-link 0.2.1",
 ]
 
@@ -2920,9 +2968,9 @@ checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.12.1"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
 
 [[package]]
 name = "litemap"
@@ -4341,7 +4389,7 @@ dependencies = [
  "concurrent-queue",
  "hermit-abi",
  "pin-project-lite",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "windows-sys 0.61.2",
 ]
 
@@ -4824,20 +4872,20 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "cd15f8a2c5551a84d56efdc1cd049089e409ac19a3072d5037a17fd70719ff3e"
 dependencies = [
  "bitflags 2.11.0",
  "errno",
  "libc",
- "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "linux-raw-sys 0.11.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5004,6 +5052,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if 1.0.1",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "shader_version"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5163,7 +5222,7 @@ dependencies = [
  "libc",
  "log 0.4.29",
  "memmap2 0.9.10",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "thiserror 2.0.18",
  "wayland-backend",
  "wayland-client 0.31.12",
@@ -5320,15 +5379,15 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "tempfile"
-version = "3.27.0"
+version = "3.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+checksum = "2d31c77bdf42a745371d260a26ca7163f1e0924b64afa0b688e61b5a9fa02f16"
 dependencies = [
  "fastrand",
  "getrandom 0.3.3",
  "once_cell",
- "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "rustix 1.1.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5791,6 +5850,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
+name = "tunnel-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log 0.4.29",
+ "rmp-serde",
+ "serde",
+ "sha2",
+ "simplelog",
+ "tempfile",
+ "tunnels_lib",
+ "zero_configure",
+ "zmq",
+]
+
+[[package]]
 name = "tunnelclient"
 version = "0.1.0"
 dependencies = [
@@ -5810,6 +5885,7 @@ dependencies = [
  "regex",
  "rmp-serde",
  "serde",
+ "sha2",
  "simplelog",
  "stage_theme",
  "streaming-stats",
@@ -5882,6 +5958,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "typenum"
+version = "1.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
+
+[[package]]
 name = "uds_windows"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5889,7 +5971,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset 0.9.1",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6111,7 +6193,7 @@ checksum = "fee64194ccd96bf648f42a65a7e589547096dfa702f7cadef84347b66ad164f9"
 dependencies = [
  "cc",
  "downcast-rs",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "scoped-tls 1.0.1",
  "smallvec 1.15.1",
  "wayland-sys 0.31.8",
@@ -6140,7 +6222,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8e6faa537fbb6c186cb9f1d41f2f811a4120d1b57ec61f50da451a0c5122bec"
 dependencies = [
  "bitflags 2.11.0",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "wayland-backend",
  "wayland-scanner 0.31.9",
 ]
@@ -6185,7 +6267,7 @@ version = "0.31.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5864c4b5b6064b06b1e8b74ead4a98a6c45a285fe7a0e784d24735f011fdb078"
 dependencies = [
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "wayland-client 0.31.12",
  "xcursor",
 ]
@@ -7270,7 +7352,7 @@ dependencies = [
  "libc",
  "libloading 0.8.8",
  "once_cell",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "x11rb-protocol",
 ]
 
@@ -7376,7 +7458,7 @@ dependencies = [
  "hex",
  "libc",
  "ordered-stream",
- "rustix 1.1.4",
+ "rustix 1.1.2",
  "serde",
  "serde_repr",
  "tracing",

@@ -1,0 +1,21 @@
+[package]
+name = "tunnel-bootstrap"
+version = "0.1.0"
+authors = ["Chris Macklin <chris.macklin@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+zmq.workspace = true
+serde.workspace = true
+rmp-serde.workspace = true
+anyhow.workspace = true
+log.workspace = true
+simplelog.workspace = true
+
+sha2 = "0.10"
+
+zero_configure = { path = "../zero_configure" }
+tunnels_lib = { path = "../tunnels_lib" }
+
+[dev-dependencies]
+tempfile = "3"

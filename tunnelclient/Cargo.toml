@@ -38,6 +38,7 @@ tunnels_lib = { path = "../tunnels_lib" }
 hostname = "0.4"
 eframe = "0.33"
 stage_theme = { path = "../stage_theme" }
+sha2 = "0.10"
 
 [dev-dependencies]
 image = "0.24"
