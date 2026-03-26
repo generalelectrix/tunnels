@@ -6,6 +6,7 @@ members = [
     "tunnelclient",
     "zero_configure",
     "midi_harness",
+    "stage_theme",
 ]
 
 [workspace.dependencies]

@@ -7,19 +7,17 @@
 
 use crate::show::Show;
 use anyhow::Result;
-use lazy_static::lazy_static;
 use log::{error, info};
-use regex::Regex;
 use rmp_serde::decode::from_read;
-use rmp_serde::encode::write;
 use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
-use tunnelclient::config::{ClientConfig, Resolution};
+use tunnelclient::admin::{parse_resolution, Administrator};
+use tunnelclient::config::ClientConfig;
 use tunnelclient::draw::{Transform, TransformDirection};
 use tunnels_lib::RunFlag;
-use zero_configure::req_rep::{run_service_req_rep, Controller};
+use zero_configure::req_rep::run_service_req_rep;
 use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelclient";
@@ -112,39 +110,6 @@ fn deserialize_config(buffer: &[u8]) -> Result<ClientConfig, String> {
 
 // --- remote administration ---
 
-/// Provide an API for administering a flock of tunnel clients.
-pub struct Administrator {
-    /// zero_configure service controller.
-    controller: Controller,
-}
-
-impl Administrator {
-    pub fn new(ctx: Context) -> Self {
-        Administrator {
-            controller: Controller::new(ctx, SERVICE_NAME.to_string()),
-        }
-    }
-
-    /// Return the list of clients that are currently available.
-    pub fn clients(&self) -> Vec<String> {
-        self.controller.list()
-    }
-
-    /// Command a particular client to run using the provided configuration.
-    /// If the client is available, returns the string response from sending the config.
-    /// Returns Err if the specified client doesn't exist.
-    pub fn run_with_config(&self, client: &str, config: ClientConfig) -> Result<String> {
-        // Serialize the config.
-        let mut serialized = Vec::new();
-        write(&mut serialized, &config)?;
-
-        // Send the serialized command.
-        let response = self.controller.send(client, &serialized)?;
-        // Parse the string response.
-        Ok(String::from_utf8(response)?)
-    }
-}
-
 /// Read a single line from stdin and return it as a string.
 /// Panic if there's some IO-related error.
 fn read_input() -> String {
@@ -180,42 +145,6 @@ where
                 println!("{e}");
             }
         }
-    }
-}
-
-/// Parse an expression as a resolution.
-/// Understands some shorthand like 1080p but also parses widthxheight.
-pub fn parse_resolution(res_str: &str) -> Result<Resolution, String> {
-    lazy_static! {
-        static ref WIDESCREEN_RE: Regex = Regex::new(r"^(\d+)p$").unwrap();
-        static ref WIDTH_HEIGHT_RE: Regex = Regex::new(r"^(\d+)x(\d+)$").unwrap();
-    }
-    // Try matching against shorthand.
-    if let Some(caps) = WIDESCREEN_RE.captures(res_str) {
-        let height: u32 = caps[1]
-            .parse()
-            .expect("Regex should only have matched integers");
-        let width = height * 16 / 9;
-        return Ok((width, height));
-    }
-    // Try matching generic expression.
-    if let Some(caps) = WIDTH_HEIGHT_RE.captures(res_str) {
-        let width: u32 = caps[1]
-            .parse()
-            .expect("Regex should only have matched integers.");
-        let height: u32 = caps[2]
-            .parse()
-            .expect("Regex should only have matched integers.");
-        return Ok((width, height));
-    }
-    let res_str = res_str.to_lowercase();
-    // Normalize input and check against whitelist.
-    match res_str.as_ref() {
-        "wuxga" => Ok((1920, 1200)),
-        "sxga+" | "sx+" => Ok((1400, 1050)),
-        _ => Err(format!(
-            "Couldn't parse {res_str} as resolution expression."
-        )),
     }
 }
 
