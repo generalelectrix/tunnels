@@ -13,6 +13,54 @@ use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, Se
 
 use crate::event::{Event, EventType};
 
+/// Connection state for one direction (input or output) of a MIDI device slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortStatus {
+    /// No device has been assigned to this port direction.
+    Unassigned,
+    /// A device is assigned but not currently connected (e.g. unplugged).
+    Disconnected {
+        /// Unique system identifier for the port.
+        id: DeviceId,
+        /// Human-readable name of the port from last connection.
+        name: String,
+    },
+    /// A device is assigned and actively connected.
+    Connected {
+        /// Unique system identifier for the port.
+        id: DeviceId,
+        /// Human-readable name of the port.
+        name: String,
+    },
+}
+
+/// A serialization-friendly snapshot of a single MIDI device slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotStatus {
+    /// The slot name (e.g. "Submaster Wing 1", "Clock Wing").
+    pub name: String,
+    /// String representation of the device type expected by this slot.
+    pub model: String,
+    /// State of the MIDI input port.
+    pub input: PortStatus,
+    /// State of the MIDI output port.
+    pub output: PortStatus,
+}
+
+fn port_status(id: &DeviceId, name: &str, port_is_some: bool) -> PortStatus {
+    if port_is_some {
+        PortStatus::Connected {
+            id: id.clone(),
+            name: name.to_string(),
+        }
+    } else {
+        PortStatus::Disconnected {
+            id: id.clone(),
+            name: name.to_string(),
+        }
+    }
+}
+
 pub struct DeviceManager<D, H>
 where
     D: InitMidiDevice,
@@ -147,6 +195,30 @@ where
     /// Return the names of all slots.
     pub fn slot_names(&self) -> Vec<String> {
         self.slots.iter().map(|s| s.name.clone()).collect()
+    }
+
+    /// Return a snapshot of the status of every slot.
+    pub fn slot_statuses(&self) -> Vec<SlotStatus>
+    where
+        D: std::fmt::Display,
+    {
+        self.slots
+            .iter()
+            .map(|slot| SlotStatus {
+                name: slot.name.clone(),
+                model: slot.model.to_string(),
+                input: slot
+                    .input
+                    .as_ref()
+                    .map(|i| port_status(&i.id, &i.name, i.port.is_some()))
+                    .unwrap_or(PortStatus::Unassigned),
+                output: slot
+                    .output
+                    .as_ref()
+                    .map(|o| port_status(&o.id, &o.name, o.port.is_some()))
+                    .unwrap_or(PortStatus::Unassigned),
+            })
+            .collect()
     }
 
     /// Connect the provided device ID to the output in the named slot.
@@ -365,6 +437,7 @@ impl DeviceOutput {
             name: &self.name,
         })?;
         self.port = Some(conn);
+        self.name = name;
         Ok(())
     }
 }
@@ -428,6 +501,12 @@ mod tests {
     struct TestDevice;
     impl InitMidiDevice for TestDevice {}
 
+    impl std::fmt::Display for TestDevice {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("TestDevice")
+        }
+    }
+
     #[derive(Clone)]
     struct TestHandler;
     impl MidiHandler<TestDevice> for TestHandler {
@@ -450,5 +529,25 @@ mod tests {
         let mut mgr = DeviceManager::new(TestHandler);
         let err = mgr.remove_slot("nope").unwrap_err();
         assert!(err.to_string().contains("nope"));
+    }
+
+    #[test]
+    fn slot_statuses_returns_correct_data() {
+        let mut mgr = DeviceManager::new(TestHandler);
+        mgr.add_slot("Wing 1".into(), TestDevice).unwrap();
+        mgr.add_slot("Clock".into(), TestDevice).unwrap();
+
+        let statuses = mgr.slot_statuses();
+        assert_eq!(statuses.len(), 2);
+
+        assert_eq!(statuses[0].name, "Wing 1");
+        assert_eq!(statuses[0].model, "TestDevice");
+        assert_eq!(statuses[0].input, PortStatus::Unassigned);
+        assert_eq!(statuses[0].output, PortStatus::Unassigned);
+
+        assert_eq!(statuses[1].name, "Clock");
+        assert_eq!(statuses[1].model, "TestDevice");
+        assert_eq!(statuses[1].input, PortStatus::Unassigned);
+        assert_eq!(statuses[1].output, PortStatus::Unassigned);
     }
 }

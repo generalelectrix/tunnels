@@ -128,12 +128,7 @@ impl<G: Graphics> Draw<G> for Shape {
                 let cx = self.rad_x * cfg.critical_size * mid_angle.cos();
                 let cy = self.rad_y * cfg.critical_size * mid_angle.sin();
                 let bound = rectangle::centered([cx, cy, dot_radius, dot_radius]);
-                ellipse::Ellipse::new(color).draw(
-                    bound,
-                    &Default::default(),
-                    transform,
-                    gl,
-                );
+                ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
             }
             RenderMode::Saucer => {
                 // Centroid: same as Dot mode
@@ -153,8 +148,7 @@ impl<G: Graphics> Draw<G> for Shape {
                 let chord_len = ((p2x - p1x).powi(2) + (p2y - p1y).powi(2)).sqrt() / 2.0;
 
                 // Minor axis: thickness (same scaling as Dot mode radius)
-                let minor_radius =
-                    self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
+                let minor_radius = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
 
                 // Orientation: tangent to ellipse path at midpoint
                 // For parametric ellipse (rx*cos(t), ry*sin(t)), tangent at t is (-rx*sin(t), ry*cos(t))
@@ -166,12 +160,7 @@ impl<G: Graphics> Draw<G> for Shape {
                 let local_transform = transform
                     .trans(cx, cy)
                     .rot_rad(tangent_angle + self.spin_angle * TWOPI);
-                ellipse::Ellipse::new(color).draw(
-                    bound,
-                    &Default::default(),
-                    local_transform,
-                    gl,
-                );
+                ellipse::Ellipse::new(color).draw(bound, &Default::default(), local_transform, gl);
             }
         }
     }

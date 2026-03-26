@@ -1,11 +1,11 @@
 mod remote;
 mod show;
 
-use tunnelclient::config::ClientConfig;
 use crate::remote::{administrate, run_remote};
 use crate::show::Show;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
+use tunnelclient::config::ClientConfig;
 use tunnels_lib::RunFlag;
 use zmq::Context;
 

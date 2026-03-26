@@ -278,7 +278,7 @@ mod test {
         sync::{mpsc::channel, Arc},
     };
 
-    use tunnels_lib::{number::UnipolarFloat, Shape, LayerCollection};
+    use tunnels_lib::{number::UnipolarFloat, LayerCollection, Shape};
 
     use super::*;
     use crate::test_mode::stress;

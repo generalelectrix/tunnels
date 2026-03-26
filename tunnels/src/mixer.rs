@@ -6,7 +6,7 @@ use crate::{clock_bank::ClockBank, master_ui::EmitStateChange as EmitShowStateCh
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
-use tunnels_lib::{Shape, LayerCollection};
+use tunnels_lib::{LayerCollection, Shape};
 use typed_index_derive::TypedIndex;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
