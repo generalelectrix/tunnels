@@ -15,8 +15,6 @@ use std::thread;
 use std::time::Duration;
 use tunnelclient::admin::{parse_resolution, Administrator};
 use tunnelclient::config::ClientConfig;
-use tunnelclient::config::{ClientConfig, Resolution};
-use tunnelclient::draw::{Transform, TransformDirection};
 use tunnelclient::draw::{Transform, TransformDirection};
 use tunnels_lib::RunFlag;
 use zero_configure::req_rep::run_service_req_rep;
