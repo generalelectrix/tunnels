@@ -36,9 +36,9 @@ const RESET_MARQUEE: Mapping = note_on_ch0(121);
 const SPIN_SPEED: Mapping = cc_ch0(55);
 const RESET_SPIN: Mapping = note_on_ch0(122);
 
-const RENDER_MODE_ARC: Mapping = note_on(8, 62);
-const RENDER_MODE_DOT: Mapping = note_on(8, 63);
-const RENDER_MODE_SAUCER: Mapping = note_on(8, 64);
+const RENDER_MODE_ARC: Mapping = note_on(0, 62);
+const RENDER_MODE_DOT: Mapping = note_on(0, 63);
+const RENDER_MODE_SAUCER: Mapping = note_on(0, 64);
 
 // TouchOSC XY position pad.
 const POSITION_X: Mapping = cc(8, 1);
