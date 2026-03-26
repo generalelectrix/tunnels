@@ -951,6 +951,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4360,7 +4369,8 @@ dependencies = [
 [[package]]
 name = "pistoncore-sdl2_window"
 version = "0.71.0"
-source = "git+https://github.com/PistonDevelopers/sdl2_window#32d81a8b41296baddfcdf8189fcf77ec07fdcc9f"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a55932286299ac3b9aef1b97e2cfaa37b4daed00260da152736d9d435acd3a2"
 dependencies = [
  "gl 0.14.0",
  "pistoncore-input",
@@ -5047,6 +5057,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "951deab27af08ed9c6068b7b0d05a93c91f0a8eb16b6b816a5e73452a43521d3"
 dependencies = [
  "cfg-if 1.0.1",
+ "cmake",
  "libc",
  "version-compare 0.1.1",
 ]
@@ -5965,10 +5976,10 @@ dependencies = [
  "piston2d-graphics 0.45.0",
  "piston2d-opengl_graphics",
  "piston_window",
- "pistoncore-glutin_window",
  "pistoncore-sdl2_window",
  "regex",
  "rmp-serde",
+ "sdl2",
  "serde",
  "sha2",
  "simplelog",
