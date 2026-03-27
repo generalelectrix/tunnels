@@ -1,10 +1,11 @@
-use crate::midi::{Event, EventType, Mapping};
+use crate::midi::{Event, EventType, MidiOutput, Mapping};
+use crate::show::ControlMessage;
 use anyhow::Result;
 use log::debug;
 use midi_harness::{InitMidiDevice, Output};
 
 /// The input MIDI device types that tunnels can work with.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Device {
     AkaiApc40,
     AkaiApc20,
@@ -108,6 +109,63 @@ fn init_apc_40(out: &mut dyn Output) -> Result<()> {
         out.send(setting)?;
     }
     Ok(())
+}
+
+pub trait MidiHandler {
+    fn interpret(&self, event: &Event) -> Option<ControlMessage>;
+    fn emit_tunnel(&self, _sc: &crate::tunnel::StateChange, _output: &mut impl MidiOutput) {}
+    fn emit_animation(
+        &self,
+        _sc: &crate::animation::StateChange,
+        _output: &mut impl MidiOutput,
+    ) {
+    }
+    fn emit_animation_target(
+        &self,
+        _sc: &crate::animation_target::AnimationTarget,
+        _output: &mut impl MidiOutput,
+    ) {
+    }
+    fn emit_mixer(&self, _sc: &crate::mixer::StateChange, _output: &mut impl MidiOutput) {}
+    fn emit_clock(
+        &self,
+        _sc: &crate::clock_bank::StateChange,
+        _output: &mut impl MidiOutput,
+    ) {
+    }
+    fn emit_master_ui(
+        &self,
+        _sc: &crate::master_ui::StateChange,
+        _output: &mut impl MidiOutput,
+    ) {
+    }
+    fn emit_audio(&self, _sc: &crate::audio::StateChange, _output: &mut impl MidiOutput) {}
+}
+
+impl MidiHandler for Device {
+    fn interpret(&self, event: &Event) -> Option<ControlMessage> {
+        match self {
+            Device::AkaiApc40 => None
+                .or_else(|| super::tunnel::interpret(event))
+                .or_else(|| super::animation::interpret(event))
+                .or_else(|| super::mixer::interpret(event, 0))
+                .or_else(|| super::master_ui::interpret(event, 0)),
+            Device::AkaiApc20 => None
+                .or_else(|| super::mixer::interpret(event, 1))
+                .or_else(|| super::master_ui::interpret(event, 1)),
+            Device::TouchOsc => None
+                .or_else(|| super::tunnel::interpret(event))
+                .or_else(|| super::animation::interpret(event))
+                .or_else(|| super::animation_target::interpret(event))
+                .or_else(|| super::mixer::interpret(event, 0))
+                .or_else(|| super::master_ui::interpret(event, 0))
+                .or_else(|| super::clock::interpret_touchosc(event))
+                .or_else(|| super::audio::interpret_touchosc(event)),
+            Device::BehringerCmdMM1 => None
+                .or_else(|| super::clock::interpret_cmdmm1(event))
+                .or_else(|| super::audio::interpret_cmdmm1(event)),
+        }
+    }
 }
 
 pub fn init_apc_20(out: &mut dyn Output) -> Result<()> {

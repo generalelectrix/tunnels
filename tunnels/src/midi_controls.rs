@@ -9,127 +9,43 @@ pub(crate) mod tunnel;
 
 use log::debug;
 use midi_harness::DeviceChange;
-use std::{collections::HashMap, sync::mpsc::Sender};
+use std::sync::mpsc::Sender;
 
 use crate::{
     control::ControlEvent,
     master_ui::EmitStateChange,
     midi::{DeviceSpec, Event, Manager, Mapping},
-    midi_controls::audio::map_cmd_mm1_audio_controls,
     show::{ControlMessage, StateChange},
 };
 use anyhow::Result;
 
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
-use self::animation::{map_animation_controls, update_animation_control};
-use self::animation_target::{map_animation_target_controls, update_animation_target_control};
-use self::audio::{map_touch_osc_audio_controls, update_audio_control};
-use self::clock::{map_clock_controls, update_clock_control};
-use self::master_ui::{map_master_ui_controls, update_master_ui_control};
-use self::mixer::{map_mixer_controls, update_mixer_control};
-use self::tunnel::{map_tunnel_controls, update_tunnel_control};
+use self::animation::update_animation_control;
+use self::animation_target::update_animation_target_control;
+use self::audio::update_audio_control;
+use self::clock::update_clock_control;
+use self::master_ui::update_master_ui_control;
+use self::mixer::update_mixer_control;
+use self::tunnel::update_tunnel_control;
 
 pub use self::mixer::PAGE_SIZE as MIXER_CHANNELS_PER_PAGE;
-pub use crate::midi_controls::device::{init_apc_20, Device, MidiDevice};
-
-type ControlMessageCreator = Box<dyn Fn(u8) -> ControlMessage>;
-
-pub struct ControlMap(pub HashMap<(Device, Mapping), ControlMessageCreator>);
-
-impl ControlMap {
-    // Initialize a new instance of the control map.
-    pub(crate) fn new() -> Self {
-        let mut map = Self(HashMap::new());
-        map_tunnel_controls(Device::AkaiApc40, &mut map);
-        map_tunnel_controls(Device::TouchOsc, &mut map);
-
-        map_animation_controls(Device::AkaiApc40, &mut map);
-        map_animation_controls(Device::TouchOsc, &mut map);
-
-        map_animation_target_controls(Device::TouchOsc, &mut map);
-
-        map_mixer_controls(Device::AkaiApc40, 0, &mut map);
-        map_mixer_controls(Device::AkaiApc20, 1, &mut map);
-        map_mixer_controls(Device::TouchOsc, 0, &mut map);
-        // FIXME: need to split out the video controls from the mixer controls
-        // map_mixer_controls(Device::TouchOsc, 1, &mut map);
-
-        map_master_ui_controls(Device::AkaiApc40, 0, &mut map);
-        map_master_ui_controls(Device::AkaiApc20, 1, &mut map);
-        map_master_ui_controls(Device::TouchOsc, 0, &mut map);
-        // FIXME: need to split out the pagewise controls from the non-pagewise controls
-        // map_master_ui_controls(Device::TouchOsc, 1, &mut map);
-
-        map_clock_controls(Device::BehringerCmdMM1, &mut map);
-        map_clock_controls(Device::TouchOsc, &mut map);
-
-        map_touch_osc_audio_controls(&mut map);
-        map_cmd_mm1_audio_controls(&mut map);
-        map
-    }
-
-    pub fn add(&mut self, device: Device, mapping: Mapping, creator: ControlMessageCreator) {
-        if self.0.insert((device, mapping), creator).is_some() {
-            panic!("duplicate control definition: {device:?} {mapping:?}");
-        }
-    }
-
-    /// Map a midi source device and event into a tunnels control message.
-    /// Return None if no mapping is registered.
-    pub fn dispatch(&self, device: Device, event: Event) -> Option<ControlMessage> {
-        self.0.get(&(device, event.mapping)).map(|c| c(event.value))
-    }
-
-    #[allow(unused)]
-    // Produce a report describing all controls bound to all devices.
-    pub fn report(&self) -> String {
-        let mut controls: HashMap<Device, Vec<Mapping>> = HashMap::new();
-        for ((device, mapping), _) in self.0.iter() {
-            match controls.get_mut(device) {
-                Some(mappings) => {
-                    mappings.push(*mapping);
-                }
-                None => {
-                    controls.insert(*device, vec![*mapping]);
-                }
-            }
-        }
-
-        let mut report = Vec::new();
-
-        // Sort the mappings and produce the report.
-        for (device, mappings) in controls.iter_mut() {
-            mappings.sort();
-            report.push(format!("{device}"));
-            for mapping in mappings {
-                report.push(format!("{mapping}"))
-            }
-        }
-        report.join("\n")
-    }
-}
+pub use crate::midi_controls::device::{init_apc_20, Device, MidiDevice, MidiHandler};
 
 pub struct Dispatcher {
-    midi_map: ControlMap,
     midi_manager: Manager,
 }
 
 impl Dispatcher {
     /// Instantiate the master midi control dispatcher.
-    /// Create the midi control map and initialize midi inputs/outputs.
+    /// Initialize midi inputs/outputs.
     pub fn new(midi_devices: Vec<DeviceSpec<Device>>, send: Sender<ControlEvent>) -> Result<Self> {
-        let midi_map = ControlMap::new();
-
         let mut midi_manager = Manager::new(send);
         for device_spec in midi_devices.into_iter() {
             midi_manager.add_device(device_spec)?;
         }
 
-        Ok(Self {
-            midi_map,
-            midi_manager,
-        })
+        Ok(Self { midi_manager })
     }
 
     /// Map the provided midi event to a show control message.
@@ -139,7 +55,7 @@ impl Dispatcher {
         device: Device,
         event: Event,
     ) -> Option<ControlMessage> {
-        match self.midi_map.dispatch(device, event) {
+        match device.interpret(&event) {
             Some(cm) => Some(cm),
             None => {
                 debug!(
@@ -232,14 +148,3 @@ impl RadioButtons {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn no_duplicate_midi_mappings() {
-        // ControlMap::new() calls every map_*_controls function for every device.
-        // If any (Device, Mapping) pair is registered twice, add() will panic.
-        let _map = ControlMap::new();
-    }
-}

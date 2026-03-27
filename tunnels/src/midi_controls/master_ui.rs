@@ -1,10 +1,10 @@
-use super::{mixer::PAGE_SIZE, ControlMap, RadioButtons};
+use super::{mixer::PAGE_SIZE, RadioButtons};
 use crate::{
     beam_store::{BeamStore, BeamStoreAddr},
     master_ui::ControlMessage,
     master_ui::StateChange,
     master_ui::{BeamButtonState, BeamStoreState as BeamStoreStatePayload},
-    midi::{event, note_on, note_on_ch0, MidiOutput, Mapping},
+    midi::{event, note_on, note_on_ch0, Event, EventType, MidiOutput, Mapping},
     midi_controls::Device,
     mixer::ChannelIdx,
     show::ControlMessage::MasterUI,
@@ -59,58 +59,53 @@ lazy_static! {
     };
 }
 
-pub fn map_master_ui_controls(device: Device, page: usize, map: &mut ControlMap) {
+pub fn interpret(event: &Event, page: usize) -> Option<crate::show::ControlMessage> {
     use ControlMessage::*;
     use StateChange::*;
 
     let channel_offset = page * PAGE_SIZE;
+    let m = event.mapping;
 
-    let mut add = |mapping, creator| map.add(device, mapping, creator);
-    for aid in 0..N_ANIM {
-        add(
-            note_on_ch0(ANIM_0_BUTTON + aid as u8),
-            Box::new(move |_| MasterUI(Set(Animation(AnimationIdx(aid))))),
-        );
+    // Animation select buttons (channel 0, NoteOn)
+    if m.event_type == EventType::NoteOn
+        && m.channel == 0
+        && m.control >= ANIM_0_BUTTON
+        && m.control < ANIM_0_BUTTON + N_ANIM as u8
+    {
+        let aid = (m.control - ANIM_0_BUTTON) as usize;
+        return Some(MasterUI(Set(Animation(AnimationIdx(aid)))));
     }
-    for cid in 0..PAGE_SIZE {
-        add(
-            note_on(cid as u8, CHANNEL_SELECT),
-            Box::new(move |_| MasterUI(Set(Channel(ChannelIdx(cid + channel_offset))))),
-        );
-    }
-    add(ANIM_COPY, Box::new(|_| MasterUI(AnimationCopy)));
-    add(ANIM_PASTE, Box::new(|_| MasterUI(AnimationPaste)));
-    add(
-        BEAM_SAVE,
-        Box::new(|_| MasterUI(Set(BeamStoreState(BeamStoreStatePayload::BeamSave)))),
-    );
-    add(
-        LOOK_SAVE,
-        Box::new(|_| MasterUI(Set(BeamStoreState(BeamStoreStatePayload::LookSave)))),
-    );
-    add(
-        BEAM_DELETE,
-        Box::new(|_| MasterUI(Set(BeamStoreState(BeamStoreStatePayload::Delete)))),
-    );
-    add(
-        LOOK_EDIT,
-        Box::new(|_| MasterUI(Set(BeamStoreState(BeamStoreStatePayload::LookEdit)))),
-    );
 
-    let col_offset = BeamStore::COLS_PER_PAGE * page;
-    for row in 0..BeamStore::N_ROWS {
-        for col in 0..BeamStore::COLS_PER_PAGE {
-            add(
-                note_on(col as u8, row as u8 + BEAM_GRID_ROW_0),
-                Box::new(move |_| {
-                    MasterUI(BeamGridButtonPress(BeamStoreAddr {
-                        row,
-                        col: col + col_offset,
-                    }))
-                }),
-            )
-        }
+    // Channel select buttons (per-channel NoteOn)
+    if m.event_type == EventType::NoteOn
+        && m.control == CHANNEL_SELECT
+        && (m.channel as usize) < PAGE_SIZE
+    {
+        let cid = m.channel as usize;
+        return Some(MasterUI(Set(Channel(ChannelIdx(cid + channel_offset)))));
     }
+
+    // Beam grid buttons
+    if m.event_type == EventType::NoteOn
+        && m.control >= BEAM_GRID_ROW_0
+        && m.control < BEAM_GRID_ROW_0 + BeamStore::N_ROWS as u8
+        && (m.channel as usize) < BeamStore::COLS_PER_PAGE
+    {
+        let col_offset = BeamStore::COLS_PER_PAGE * page;
+        let row = (m.control - BEAM_GRID_ROW_0) as usize;
+        let col = m.channel as usize + col_offset;
+        return Some(MasterUI(BeamGridButtonPress(BeamStoreAddr { row, col })));
+    }
+
+    Some(match m {
+        _ if m == ANIM_COPY => MasterUI(AnimationCopy),
+        _ if m == ANIM_PASTE => MasterUI(AnimationPaste),
+        _ if m == BEAM_SAVE => MasterUI(Set(BeamStoreState(BeamStoreStatePayload::BeamSave))),
+        _ if m == LOOK_SAVE => MasterUI(Set(BeamStoreState(BeamStoreStatePayload::LookSave))),
+        _ if m == BEAM_DELETE => MasterUI(Set(BeamStoreState(BeamStoreStatePayload::Delete))),
+        _ if m == LOOK_EDIT => MasterUI(Set(BeamStoreState(BeamStoreStatePayload::LookEdit))),
+        _ => return None,
+    })
 }
 
 /// Emit midi messages to update UIs given the provided state change.

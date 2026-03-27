@@ -10,10 +10,9 @@ use crate::{
     midi::{cc, event, note_on, MidiOutput, Mapping},
     midi_controls::Device,
     midi_controls::{bipolar_to_midi, unipolar_to_midi},
-    show::ControlMessage::Clock,
 };
-
-use super::{bipolar_from_midi, unipolar_from_midi, ControlMap};
+use crate::midi::Event as MidiEvent;
+use super::{bipolar_from_midi, unipolar_from_midi};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Control {
@@ -67,100 +66,56 @@ fn mapping_touchosc(control: Control, channel: usize) -> Option<Mapping> {
     })
 }
 
-pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
+fn interpret_with_mapping_fn(
+    event: &MidiEvent,
+    get_mapping: fn(Control, usize) -> Option<Mapping>,
+) -> Option<crate::show::ControlMessage> {
     use ClockControlMessage::*;
     use ClockStateChange::*;
-
-    let mut add = |mapping: Option<Mapping>, creator| {
-        if let Some(mapping) = mapping {
-            map.add(device, mapping, creator)
-        }
-    };
-
-    let get_mapping = match device {
-        Device::BehringerCmdMM1 => mapping_cmd_mm1,
-        Device::TouchOsc => mapping_touchosc,
-        _ => panic!("No clock control mappings for {device}."),
-    };
-
-    // This is to catch a future change to N_CLOCKS.
-    #[allow(clippy::assertions_on_constants)]
-    (assert!(N_CLOCKS <= 4, "The CMD MM-1 only has 4 channel rows."));
+    let v = event.value;
 
     for channel in 0..N_CLOCKS {
-        add(
-            get_mapping(Control::Rate, channel),
-            Box::new(move |v| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: Set(Rate(bipolar_from_midi(v))),
-                })
-            }),
-        );
-        add(
-            get_mapping(Control::RateFine, channel),
-            Box::new(move |v| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: Set(RateFine(bipolar_from_midi(v))),
-                })
-            }),
-        );
-        add(
-            get_mapping(Control::Level, channel),
-            Box::new(move |v| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: Set(SubmasterLevel(unipolar_from_midi(v))),
-                })
-            }),
-        );
-        add(
-            get_mapping(Control::Tap, channel),
-            Box::new(move |_| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: Tap,
-                })
-            }),
-        );
-        add(
-            get_mapping(Control::OneShot, channel),
-            Box::new(move |_| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: ToggleOneShot,
-                })
-            }),
-        );
-        add(
-            get_mapping(Control::Retrigger, channel),
-            Box::new(move |_| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: Retrigger,
-                })
-            }),
-        );
-        add(
-            get_mapping(Control::AudioSize, channel),
-            Box::new(move |_| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: ToggleUseAudioSize,
-                })
-            }),
-        );
-        add(
-            get_mapping(Control::AudioSpeed, channel),
-            Box::new(move |_| {
-                Clock(ControlMessage {
-                    channel: ClockIdxExt(channel),
-                    msg: ToggleUseAudioSpeed,
-                })
-            }),
-        );
+        let mkmsg = |msg| {
+            crate::show::ControlMessage::Clock(ControlMessage {
+                channel: ClockIdxExt(channel),
+                msg,
+            })
+        };
+
+        if get_mapping(Control::Rate, channel) == Some(event.mapping) {
+            return Some(mkmsg(Set(Rate(bipolar_from_midi(v)))));
+        }
+        if get_mapping(Control::RateFine, channel) == Some(event.mapping) {
+            return Some(mkmsg(Set(RateFine(bipolar_from_midi(v)))));
+        }
+        if get_mapping(Control::Level, channel) == Some(event.mapping) {
+            return Some(mkmsg(Set(SubmasterLevel(unipolar_from_midi(v)))));
+        }
+        if get_mapping(Control::Tap, channel) == Some(event.mapping) {
+            return Some(mkmsg(Tap));
+        }
+        if get_mapping(Control::OneShot, channel) == Some(event.mapping) {
+            return Some(mkmsg(ToggleOneShot));
+        }
+        if get_mapping(Control::Retrigger, channel) == Some(event.mapping) {
+            return Some(mkmsg(Retrigger));
+        }
+        if get_mapping(Control::AudioSize, channel) == Some(event.mapping) {
+            return Some(mkmsg(ToggleUseAudioSize));
+        }
+        if get_mapping(Control::AudioSpeed, channel) == Some(event.mapping) {
+            return Some(mkmsg(ToggleUseAudioSpeed));
+        }
     }
+    None
+}
+
+pub fn interpret_touchosc(event: &MidiEvent) -> Option<crate::show::ControlMessage> {
+    interpret_with_mapping_fn(event, mapping_touchosc)
+}
+
+pub fn interpret_cmdmm1(event: &MidiEvent) -> Option<crate::show::ControlMessage> {
+    interpret_with_mapping_fn(event, mapping_cmd_mm1)
 }
 
 /// Emit midi messages to update UIs given the provided state change.
