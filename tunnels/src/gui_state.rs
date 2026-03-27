@@ -5,6 +5,16 @@ use midi_harness::SlotStatus;
 
 use crate::animation_visualizer::AnimationSnapshot;
 
+bitflags::bitflags! {
+    /// GUI state domains that may need re-snapshotting after a control event.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct GuiDirty: u8 {
+        const CLEAN        = 0b0000_0000;
+        const MIDI_SLOTS   = 0b0000_0001;
+        const AUDIO_DEVICE = 0b0000_0010;
+    }
+}
+
 pub struct GuiState {
     pub midi_slots: ArcSwap<Vec<SlotStatus>>,
     pub audio_device: ArcSwap<String>,

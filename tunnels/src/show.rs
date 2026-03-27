@@ -17,7 +17,7 @@ use crate::{
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
-    gui_state::SharedGuiState,
+    gui_state::{GuiDirty, SharedGuiState},
     master_ui::{self, MasterUI},
     midi::MidiDeviceInit,
     midi_controls::Device,
@@ -85,7 +85,7 @@ impl Show {
             gui_state,
         };
         // Push initial state to the GUI so it sees MIDI slots, audio device, etc.
-        show.snapshot_gui_state();
+        show.snapshot_gui_state(GuiDirty::all());
         Ok(show)
     }
 
@@ -235,7 +235,12 @@ impl Show {
             Ok(Some(ReceivedEvent::Meta(cmd, reply))) => {
                 let result = self.handle_meta_command(cmd);
                 if let Some(reply) = reply {
-                    let _ = reply.send(result.map_err(|e| format!("{e:#}")));
+                    let _ = reply.send(
+                        result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}"))
+                    );
+                }
+                if let Ok(dirty) = result {
+                    self.snapshot_gui_state(dirty);
                 }
             }
             Ok(Some(ReceivedEvent::Control(msg))) => self.state.ui.handle_control_message(
@@ -254,23 +259,20 @@ impl Show {
         }
     }
 
-    fn handle_meta_command(&mut self, cmd: MetaCommand) -> Result<()> {
+    fn handle_meta_command(&mut self, cmd: MetaCommand) -> Result<GuiDirty> {
         use MetaCommand::*;
-        match cmd {
+        Ok(match cmd {
             RefreshUI => {
-                self.state.ui.emit_state(
-                    &mut self.state.mixer,
-                    &mut self.state.clocks,
-                    &mut self.state.color_palette,
-                    &mut self.audio_input,
-                    &mut self.dispatcher,
-                );
+                self.refresh_ui();
+                GuiDirty::all()
             }
             AddMidiDevice(spec) => {
                 self.dispatcher.add_midi_device(spec)?;
+                GuiDirty::MIDI_SLOTS
             }
             ClearMidiDevice { slot_name } => {
                 self.dispatcher.clear_midi_device(&slot_name)?;
+                GuiDirty::MIDI_SLOTS
             }
             ConnectMidiPort {
                 slot_name,
@@ -279,31 +281,28 @@ impl Show {
             } => {
                 self.dispatcher
                     .connect_midi_port(&slot_name, device_id, kind)?;
-                // Sync the device's indicators to the current show state.
-                self.state.ui.emit_state(
-                    &mut self.state.mixer,
-                    &mut self.state.clocks,
-                    &mut self.state.color_palette,
-                    &mut self.audio_input,
-                    &mut self.dispatcher,
-                );
+                self.refresh_ui();
+                GuiDirty::MIDI_SLOTS
             }
             SetAudioDevice(name) => {
                 self.audio_input = AudioInput::new(name)?;
+                GuiDirty::AUDIO_DEVICE
             }
-        }
-        self.snapshot_gui_state();
-        Ok(())
+        })
     }
 
-    fn snapshot_gui_state(&self) {
+    fn snapshot_gui_state(&self, dirty: GuiDirty) {
         let Some(gui_state) = &self.gui_state else { return };
-        gui_state.midi_slots.store(Arc::new(
-            self.dispatcher.midi_slot_statuses()
-        ));
-        gui_state.audio_device.store(Arc::new(
-            self.audio_input.device_name().to_string()
-        ));
+        if dirty.contains(GuiDirty::MIDI_SLOTS) {
+            gui_state.midi_slots.store(Arc::new(
+                self.dispatcher.midi_slot_statuses()
+            ));
+        }
+        if dirty.contains(GuiDirty::AUDIO_DEVICE) {
+            gui_state.audio_device.store(Arc::new(
+                self.audio_input.device_name().to_string()
+            ));
+        }
     }
 }
 
@@ -849,7 +848,12 @@ mod test {
                     Ok(Some(ReceivedEvent::Meta(cmd, reply))) => {
                         let result = show.handle_meta_command(cmd);
                         if let Some(reply) = reply {
-                            let _ = reply.send(result.map_err(|e| format!("{e:#}")));
+                            let _ = reply.send(
+                                result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}"))
+                            );
+                        }
+                        if let Ok(dirty) = result {
+                            show.snapshot_gui_state(dirty);
                         }
                     }
                     Ok(Some(ReceivedEvent::Control(msg))) => {
