@@ -7,7 +7,7 @@ use crate::{
     clock_bank::ControlMessage,
     clock_bank::StateChange,
     clock_bank::N_CLOCKS,
-    midi::{cc, event, note_on, Manager, Mapping},
+    midi::{cc, event, note_on, MidiOutput, Mapping},
     midi_controls::Device,
     midi_controls::{bipolar_to_midi, unipolar_to_midi},
     show::ControlMessage::Clock,
@@ -164,7 +164,7 @@ pub fn map_clock_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_clock_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_clock_control(sc: StateChange, manager: &mut impl MidiOutput) {
     use ClockStateChange::*;
 
     let mut send = |control, value| {

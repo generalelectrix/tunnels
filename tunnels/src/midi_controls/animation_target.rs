@@ -1,6 +1,6 @@
 use crate::{
     animation_target::AnimationTarget as AnimationTargetState,
-    midi::{note_on_ch0, Manager, Mapping},
+    midi::{note_on_ch0, MidiOutput, Mapping},
     midi_controls::Device,
     show::ControlMessage::AnimationTarget as Animation,
 };
@@ -86,7 +86,7 @@ pub fn map_animation_target_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_animation_target_control(sc: AnimationTargetState, manager: &mut Manager) {
+pub fn update_animation_target_control(sc: AnimationTargetState, manager: &mut impl MidiOutput) {
     let send = |event| {
         manager.send(&Device::TouchOsc, event);
     };

@@ -1,11 +1,11 @@
-mod animation;
-mod animation_target;
+pub(crate) mod animation;
+pub(crate) mod animation_target;
 pub mod audio;
-mod clock;
+pub(crate) mod clock;
 mod device;
-mod master_ui;
-mod mixer;
-mod tunnel;
+pub(crate) mod master_ui;
+pub(crate) mod mixer;
+pub(crate) mod tunnel;
 
 use log::debug;
 use midi_harness::DeviceChange;
@@ -39,7 +39,7 @@ pub struct ControlMap(pub HashMap<(Device, Mapping), ControlMessageCreator>);
 
 impl ControlMap {
     // Initialize a new instance of the control map.
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut map = Self(HashMap::new());
         map_tunnel_controls(Device::AkaiApc40, &mut map);
         map_tunnel_controls(Device::TouchOsc, &mut map);

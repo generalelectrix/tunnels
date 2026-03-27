@@ -1,5 +1,5 @@
 use crate::{
-    midi::{cc, event, note_off, note_on, Manager},
+    midi::{cc, event, note_off, note_on, MidiOutput},
     midi_controls::Device,
     mixer::ControlMessage,
     mixer::StateChange,
@@ -67,7 +67,7 @@ pub fn map_mixer_controls(device: Device, page: usize, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_mixer_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_mixer_control(sc: StateChange, manager: &mut impl MidiOutput) {
     use ChannelStateChange::*;
 
     let page = sc.channel.0 / PAGE_SIZE;

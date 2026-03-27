@@ -1,6 +1,6 @@
 use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap};
 use crate::{
-    midi::{cc, cc_ch0, event, note_on, note_on_ch0, Manager, Mapping},
+    midi::{cc, cc_ch0, event, note_on, note_on_ch0, MidiOutput, Mapping},
     midi_controls::Device,
     midi_controls::RadioButtons,
     palette::ColorPaletteIdx,
@@ -167,7 +167,7 @@ pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.
-pub fn update_tunnel_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
     use StateChange::*;
 
     let mut send = |event| {

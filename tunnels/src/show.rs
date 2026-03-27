@@ -236,6 +236,7 @@ impl Show {
     }
 }
 
+#[derive(Debug)]
 pub enum ControlMessage {
     Tunnel(tunnel::ControlMessage),
     AnimationTarget(AnimationTarget),
@@ -250,6 +251,7 @@ pub enum ControlMessage {
     UIRefresh,
 }
 
+#[derive(Debug)]
 pub enum StateChange {
     Tunnel(tunnel::StateChange),
     Animation(animation::StateChange),
@@ -358,5 +360,390 @@ mod test {
     /// Truncate a unit-float to 15 decimal places.
     fn trunc_f64(v: f64) -> f64 {
         (v * 1_000_000_000_000_000.).trunc() / 1_000_000_000_000_000.
+    }
+
+    #[derive(Default)]
+    struct RecordingMidiOutput {
+        events: Vec<(crate::midi_controls::Device, crate::midi::Event)>,
+    }
+
+    impl crate::midi::MidiOutput for RecordingMidiOutput {
+        fn send(&mut self, device: &crate::midi_controls::Device, event: crate::midi::Event) {
+            self.events.push((*device, event));
+        }
+    }
+
+    /// Regression test for all MIDI control mappings.
+    ///
+    /// Brute-forces every possible (Device, EventType, channel, control)
+    /// combination through ControlMap::dispatch and captures the Debug
+    /// output of the resulting Option<ControlMessage>.
+    ///
+    /// To generate/update expectations:
+    ///   UPDATE_EXPECTATIONS=1 cargo test midi_interpret_regression
+    #[test]
+    fn midi_interpret_regression() {
+        use std::io::Write;
+        use crate::midi::{Event, EventType, Mapping};
+        use crate::midi_controls::{ControlMap, Device};
+
+        let expectations_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/snapshots/midi_interpret_expectations.yaml");
+        let generating = std::env::var("UPDATE_EXPECTATIONS").is_ok();
+
+        let control_map = ControlMap::new();
+        let devices = [Device::AkaiApc40, Device::AkaiApc20, Device::TouchOsc, Device::BehringerCmdMM1];
+        let event_types = [EventType::NoteOn, EventType::ControlChange];
+
+        // Build a map of device_name -> full debug string of all mappings
+        let mut results: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+
+        for device in &devices {
+            let mut output = String::new();
+            for &event_type in &event_types {
+                for channel in 0..16u8 {
+                    for control in 0..128u8 {
+                        let event = Event {
+                            mapping: Mapping { event_type, channel, control },
+                            value: 64,
+                        };
+                        let result = control_map.dispatch(*device, event);
+                        if let Some(ref msg) = result {
+                            output.push_str(&format!(
+                                "{} {}:{} -> {:?}\n",
+                                match event_type {
+                                    EventType::NoteOn => "NoteOn",
+                                    EventType::NoteOff => "NoteOff",
+                                    EventType::ControlChange => "CC",
+                                },
+                                channel, control, msg
+                            ));
+                        }
+                    }
+                }
+            }
+            results.insert(format!("{device}"), output);
+        }
+
+        if generating {
+            let yaml = serde_yaml::to_string(&results).unwrap();
+            let mut file = std::fs::File::create(&expectations_path).unwrap();
+            file.write_all(yaml.as_bytes()).unwrap();
+            println!("Wrote interpret expectations to {}", expectations_path.display());
+        } else {
+            let file = std::fs::File::open(&expectations_path).unwrap_or_else(|e| {
+                panic!(
+                    "Missing expectations file at {}: {e}\n\
+                     Run with UPDATE_EXPECTATIONS=1 to generate it.",
+                    expectations_path.display()
+                )
+            });
+            let expected: std::collections::BTreeMap<String, String> =
+                serde_yaml::from_reader(file).unwrap();
+
+            let mut failures: Vec<String> = Vec::new();
+            for (device, actual) in &results {
+                match expected.get(device) {
+                    Some(exp) if exp != actual => {
+                        failures.push(format!("{device}: output differs"));
+                        // Show first differing line for debugging
+                        for (i, (a, e)) in actual.lines().zip(exp.lines()).enumerate() {
+                            if a != e {
+                                failures.push(format!("  first diff at line {i}: got [{a}] expected [{e}]"));
+                                break;
+                            }
+                        }
+                        let a_lines = actual.lines().count();
+                        let e_lines = exp.lines().count();
+                        if a_lines != e_lines {
+                            failures.push(format!("  line count: got {a_lines}, expected {e_lines}"));
+                        }
+                    }
+                    None => {
+                        failures.push(format!("{device}: no expectation"));
+                    }
+                    _ => {} // match
+                }
+            }
+
+            if !failures.is_empty() {
+                panic!(
+                    "{} midi interpret regression failures:\n{}",
+                    failures.len(),
+                    failures.join("\n")
+                );
+            }
+        }
+    }
+
+    fn all_state_changes() -> Vec<(&'static str, StateChange)> {
+        use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
+        use tunnels_lib::RenderMode;
+
+        let uni = UnipolarFloat::new(0.5);
+        let bip = BipolarFloat::new(0.25);
+
+        let mut changes: Vec<(&str, StateChange)> = Vec::new();
+
+        // Tunnel state changes.
+        {
+            use crate::tunnel::StateChange as T;
+            use crate::palette::ColorPaletteIdx;
+            let mut t = |name, sc| changes.push((name, StateChange::Tunnel(sc)));
+            t("tunnel/thickness", T::Thickness(uni));
+            t("tunnel/size", T::Size(uni));
+            t("tunnel/aspect_ratio", T::AspectRatio(uni));
+            t("tunnel/color_center", T::ColorCenter(uni));
+            t("tunnel/color_width", T::ColorWidth(uni));
+            t("tunnel/color_spread", T::ColorSpread(uni));
+            t("tunnel/color_saturation", T::ColorSaturation(uni));
+            t("tunnel/palette_none", T::PaletteSelection(None));
+            t("tunnel/palette_0", T::PaletteSelection(Some(ColorPaletteIdx(0))));
+            t("tunnel/segments", T::Segments(4));
+            t("tunnel/blacking", T::Blacking(bip));
+            t("tunnel/marquee_speed", T::MarqueeSpeed(bip));
+            t("tunnel/rotation_speed", T::RotationSpeed(bip));
+            t("tunnel/position_x", T::PositionX(0.3));
+            t("tunnel/position_y", T::PositionY(-0.2));
+            t("tunnel/spin_speed", T::SpinSpeed(bip));
+            t("tunnel/render_arc", T::RenderMode(RenderMode::Arc));
+            t("tunnel/render_dot", T::RenderMode(RenderMode::Dot));
+            t("tunnel/render_saucer", T::RenderMode(RenderMode::Saucer));
+        }
+
+        // Animation state changes.
+        {
+            use crate::animation::StateChange as A;
+            use crate::animation::Waveform;
+            use crate::clock_bank::ClockIdxExt;
+            let mut a = |name, sc| changes.push((name, StateChange::Animation(sc)));
+            a("anim/speed", A::Speed(bip));
+            a("anim/size", A::Size(uni));
+            a("anim/duty_cycle", A::DutyCycle(uni));
+            a("anim/smoothing", A::Smoothing(uni));
+            a("anim/waveform_sine", A::Waveform(Waveform::Sine));
+            a("anim/waveform_triangle", A::Waveform(Waveform::Triangle));
+            a("anim/waveform_square", A::Waveform(Waveform::Square));
+            a("anim/waveform_sawtooth", A::Waveform(Waveform::Sawtooth));
+            a("anim/waveform_noise", A::Waveform(Waveform::Noise));
+            a("anim/waveform_constant", A::Waveform(Waveform::Constant));
+            a("anim/n_periods", A::NPeriods(3));
+            a("anim/pulse_on", A::Pulse(true));
+            a("anim/pulse_off", A::Pulse(false));
+            a("anim/invert_on", A::Invert(true));
+            a("anim/standing_on", A::Standing(true));
+            a("anim/clock_internal", A::ClockSource(None));
+            a("anim/clock_0", A::ClockSource(Some(ClockIdxExt(0).try_into().unwrap())));
+            a("anim/clock_1", A::ClockSource(Some(ClockIdxExt(1).try_into().unwrap())));
+            a("anim/use_audio_size_on", A::UseAudioSize(true));
+            a("anim/use_audio_speed_on", A::UseAudioSpeed(true));
+        }
+
+        // AnimationTarget state changes.
+        {
+            use crate::animation_target::AnimationTarget as AT;
+            let mut at = |name, sc| changes.push((name, StateChange::AnimationTarget(sc)));
+            at("anim_target/rotation", AT::Rotation);
+            at("anim_target/thickness", AT::Thickness);
+            at("anim_target/size", AT::Size);
+            at("anim_target/aspect_ratio", AT::AspectRatio);
+            at("anim_target/color", AT::Color);
+            at("anim_target/color_spread", AT::ColorSpread);
+            at("anim_target/color_saturation", AT::ColorSaturation);
+            at("anim_target/marquee", AT::MarqueeRotation);
+            at("anim_target/position_x", AT::PositionX);
+            at("anim_target/position_y", AT::PositionY);
+            at("anim_target/spin", AT::Spin);
+        }
+
+        // Mixer state changes -- test page 0 and page 1 channels.
+        {
+            use crate::mixer::{
+                ChannelIdx, ChannelStateChange as CS, StateChange as MS, VideoChannel,
+            };
+            let mut m = |name, sc| changes.push((name, StateChange::Mixer(sc)));
+            // Page 0, channel 0.
+            m("mixer/p0_ch0_level", MS { channel: ChannelIdx(0), change: CS::Level(uni) });
+            m("mixer/p0_ch0_bump_on", MS { channel: ChannelIdx(0), change: CS::Bump(true) });
+            m("mixer/p0_ch0_mask_on", MS { channel: ChannelIdx(0), change: CS::Mask(true) });
+            m("mixer/p0_ch0_vc0_on", MS { channel: ChannelIdx(0), change: CS::VideoChannel((VideoChannel(0), true)) });
+            m("mixer/p0_ch0_contains_look", MS { channel: ChannelIdx(0), change: CS::ContainsLook(true) });
+            // Page 0, channel 3.
+            m("mixer/p0_ch3_level", MS { channel: ChannelIdx(3), change: CS::Level(uni) });
+            // Page 1, channel 8.
+            m("mixer/p1_ch8_level", MS { channel: ChannelIdx(8), change: CS::Level(uni) });
+            m("mixer/p1_ch8_bump_on", MS { channel: ChannelIdx(8), change: CS::Bump(true) });
+            m("mixer/p1_ch8_vc1_on", MS { channel: ChannelIdx(8), change: CS::VideoChannel((VideoChannel(1), true)) });
+        }
+
+        // Clock state changes -- test multiple clock channels.
+        {
+            use crate::clock::StateChange as CS;
+            use crate::clock_bank::{ClockIdxExt, StateChange as CBS};
+            let mut c = |name, ch: usize, sc| changes.push((name, StateChange::Clock(CBS { channel: ClockIdxExt(ch).try_into().unwrap(), change: sc })));
+            c("clock/ch0_rate", 0, CS::Rate(bip));
+            c("clock/ch0_rate_fine", 0, CS::RateFine(bip));
+            c("clock/ch0_oneshot_on", 0, CS::OneShot(true));
+            c("clock/ch0_level", 0, CS::SubmasterLevel(uni));
+            c("clock/ch0_use_audio_size_on", 0, CS::UseAudioSize(true));
+            c("clock/ch0_use_audio_speed_on", 0, CS::UseAudioSpeed(true));
+            c("clock/ch0_ticked", 0, CS::Ticked(true));
+            c("clock/ch2_rate", 2, CS::Rate(bip));
+        }
+
+        // MasterUI state changes.
+        {
+            use crate::master_ui::{BeamButtonState, BeamStoreState, StateChange as MU};
+            use crate::beam_store::BeamStoreAddr;
+            use crate::mixer::ChannelIdx;
+            use crate::tunnel::AnimationIdx;
+            let mut mu = |name, sc| changes.push((name, StateChange::MasterUI(sc)));
+            mu("master_ui/channel_0", MU::Channel(ChannelIdx(0)));
+            mu("master_ui/channel_3", MU::Channel(ChannelIdx(3)));
+            mu("master_ui/channel_8", MU::Channel(ChannelIdx(8)));
+            mu("master_ui/animation_0", MU::Animation(AnimationIdx(0)));
+            mu("master_ui/animation_2", MU::Animation(AnimationIdx(2)));
+            mu("master_ui/beam_button_empty", MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Empty)));
+            mu("master_ui/beam_button_beam", MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Beam)));
+            mu("master_ui/beam_button_look", MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Look)));
+            mu("master_ui/beam_button_p1", MU::BeamButton((BeamStoreAddr { row: 0, col: 8 }, BeamButtonState::Beam)));
+            mu("master_ui/beam_store_idle", MU::BeamStoreState(BeamStoreState::Idle));
+            mu("master_ui/beam_store_beam_save", MU::BeamStoreState(BeamStoreState::BeamSave));
+            mu("master_ui/beam_store_look_save", MU::BeamStoreState(BeamStoreState::LookSave));
+            mu("master_ui/beam_store_delete", MU::BeamStoreState(BeamStoreState::Delete));
+            mu("master_ui/beam_store_look_edit", MU::BeamStoreState(BeamStoreState::LookEdit));
+        }
+
+        // Audio state changes.
+        {
+            use crate::audio::StateChange as AU;
+            let mut au = |name, sc| changes.push((name, StateChange::Audio(sc)));
+            au("audio/monitor_on", AU::Monitor(true));
+            au("audio/monitor_off", AU::Monitor(false));
+            au("audio/envelope", AU::EnvelopeValue(uni));
+            au("audio/filter_cutoff", AU::FilterCutoff(440.0));
+            au("audio/envelope_attack", AU::EnvelopeAttack(Duration::from_millis(10)));
+            au("audio/envelope_release", AU::EnvelopeRelease(Duration::from_millis(50)));
+            au("audio/gain", AU::Gain(2.0));
+            au("audio/is_clipping", AU::IsClipping(true));
+        }
+
+        changes
+    }
+
+    /// Regression test for the MIDI emit path (StateChange -> MIDI output).
+    ///
+    /// For each StateChange variant, calls the current update_*_control()
+    /// functions with a RecordingMidiOutput, captures the Debug output of
+    /// all emitted events, and compares against a YAML expectations file.
+    ///
+    /// To generate/update expectations:
+    ///   UPDATE_EXPECTATIONS=1 cargo test midi_emit_regression
+    #[test]
+    fn midi_emit_regression() {
+        use std::collections::BTreeMap;
+        use std::io::Write;
+
+        use crate::midi_controls::audio::update_audio_control;
+
+        let expectations_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/snapshots/midi_emit_expectations.yaml");
+        let generating = std::env::var("UPDATE_EXPECTATIONS").is_ok();
+
+        let state_changes = all_state_changes();
+        let mut results: BTreeMap<String, String> = BTreeMap::new();
+
+        let n_state_changes = state_changes.len();
+        for (name, sc) in state_changes {
+            let mut recorder = RecordingMidiOutput::default();
+
+            // Route through the same dispatch the Dispatcher uses.
+            match sc {
+                StateChange::Tunnel(sc) => {
+                    crate::midi_controls::tunnel::update_tunnel_control(sc, &mut recorder);
+                }
+                StateChange::Animation(sc) => {
+                    crate::midi_controls::animation::update_animation_control(sc, &mut recorder);
+                }
+                StateChange::AnimationTarget(sc) => {
+                    crate::midi_controls::animation_target::update_animation_target_control(sc, &mut recorder);
+                }
+                StateChange::Mixer(sc) => {
+                    crate::midi_controls::mixer::update_mixer_control(sc, &mut recorder);
+                }
+                StateChange::Clock(sc) => {
+                    crate::midi_controls::clock::update_clock_control(sc, &mut recorder);
+                }
+                StateChange::ColorPalette(_) => {
+                    // No MIDI emit for color palette currently.
+                }
+                StateChange::MasterUI(sc) => {
+                    crate::midi_controls::master_ui::update_master_ui_control(sc, &mut recorder);
+                }
+                StateChange::Audio(sc) => {
+                    update_audio_control(sc, &mut recorder);
+                }
+            }
+
+            // Format events as debug output.
+            let mut output = String::new();
+            for (device, event) in &recorder.events {
+                output.push_str(&format!("{device}: {:?}\n", event));
+            }
+            results.insert(name.to_string(), output);
+        }
+
+        if generating {
+            let yaml = serde_yaml::to_string(&results).unwrap();
+            let mut file = std::fs::File::create(&expectations_path).unwrap();
+            file.write_all(yaml.as_bytes()).unwrap();
+            println!(
+                "Wrote emit expectations for {} state changes to {}",
+                n_state_changes,
+                expectations_path.display()
+            );
+        } else {
+            let file = std::fs::File::open(&expectations_path).unwrap_or_else(|e| {
+                panic!(
+                    "Missing expectations file at {}: {e}\n\
+                     Run with UPDATE_EXPECTATIONS=1 to generate it.",
+                    expectations_path.display()
+                )
+            });
+            let expected: BTreeMap<String, String> =
+                serde_yaml::from_reader(file).unwrap();
+
+            let mut failures: Vec<String> = Vec::new();
+            for (name, actual) in &results {
+                match expected.get(name) {
+                    Some(exp) if exp != actual => {
+                        failures.push(format!("{name}: output differs"));
+                        for (i, (a, e)) in actual.lines().zip(exp.lines()).enumerate() {
+                            if a != e {
+                                failures.push(format!("  first diff at line {i}: got [{a}] expected [{e}]"));
+                                break;
+                            }
+                        }
+                        let a_lines = actual.lines().count();
+                        let e_lines = exp.lines().count();
+                        if a_lines != e_lines {
+                            failures.push(format!("  line count: got {a_lines}, expected {e_lines}"));
+                        }
+                    }
+                    None => {
+                        failures.push(format!("{name}: no expectation"));
+                    }
+                    _ => {} // match
+                }
+            }
+
+            if !failures.is_empty() {
+                panic!(
+                    "{} midi emit regression failures:\n{}",
+                    failures.len(),
+                    failures.join("\n")
+                );
+            }
+        }
     }
 }
