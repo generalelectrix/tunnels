@@ -24,8 +24,6 @@ pub struct ClientConfig {
     pub render_delay: Duration,
     /// UNUSED - preserved until client machines are updated
     pub snapshot_management: SnapshotManagement,
-    /// UNUSED - preserved until client machines are updated.
-    pub timesync_interval: Duration,
     pub x_resolution: u32,
     pub y_resolution: u32,
     /// If true, set the window to fullscreen on creation.
@@ -64,7 +62,6 @@ impl ClientConfig {
             server_hostname: host,
             video_channel,
             render_delay: Default::default(),
-            timesync_interval: Default::default(),
             x_resolution,
             y_resolution,
             fullscreen,

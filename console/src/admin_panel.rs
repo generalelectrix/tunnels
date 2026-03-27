@@ -1,10 +1,11 @@
 //! egui-based panel for administering tunnel clients.
 
-use client_lib::admin::Administrator;
+use crate::bootstrap_controller::BootstrapController;
 use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
 use eframe::egui;
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -12,15 +13,26 @@ use std::thread;
 /// Abstraction over the network admin operations so we can mock them in tests.
 pub trait AdminService: Send + Sync {
     fn clients(&self) -> Vec<String>;
-    fn run_with_config(&self, client: &str, config: ClientConfig) -> anyhow::Result<String>;
+    fn push_config(
+        &self,
+        name: &str,
+        binary_path: &Path,
+        config: ClientConfig,
+    ) -> anyhow::Result<String>;
 }
 
-impl AdminService for Administrator {
+impl AdminService for BootstrapController {
     fn clients(&self) -> Vec<String> {
-        self.clients()
+        self.list()
     }
-    fn run_with_config(&self, client: &str, config: ClientConfig) -> anyhow::Result<String> {
-        self.run_with_config(client, config)
+    fn push_config(
+        &self,
+        name: &str,
+        binary_path: &Path,
+        config: ClientConfig,
+    ) -> anyhow::Result<String> {
+        let stdin_payload = rmp_serde::to_vec(&config)?;
+        self.push_binary(name, binary_path, &["monitor"], &stdin_payload)
     }
 }
 
@@ -80,6 +92,7 @@ impl ResolutionPreset {
 
 /// Find the tunnelclient binary, either as a sibling of the current executable or on PATH.
 fn tunnelclient_path() -> Result<std::path::PathBuf, String> {
+    return Ok("/Users/macklin/src/tunnels-always-bootstrap/dist/tunnelclient".into());
     if let Ok(exe) = std::env::current_exe() {
         let sibling = exe
             .parent()
@@ -318,7 +331,10 @@ impl AdminPanelState {
         let state = self.config_send_state.clone();
         let name = client_name.clone();
         thread::spawn(move || {
-            let result = admin.run_with_config(&name, config);
+            let result = (|| -> anyhow::Result<String> {
+                let exe = tunnelclient_path().map_err(|e| anyhow::anyhow!(e))?;
+                admin.push_config(&name, &exe, config)
+            })();
             let mut guard = state.lock().unwrap();
             *guard = Some(match result {
                 Ok(msg) => ConfigSendState::Success {
@@ -529,7 +545,12 @@ mod tests {
         fn clients(&self) -> Vec<String> {
             self.clients.clone()
         }
-        fn run_with_config(&self, _client: &str, _config: ClientConfig) -> anyhow::Result<String> {
+        fn push_config(
+            &self,
+            _name: &str,
+            _binary_path: &Path,
+            _config: ClientConfig,
+        ) -> anyhow::Result<String> {
             Ok("Mock: configuration accepted.".to_string())
         }
     }

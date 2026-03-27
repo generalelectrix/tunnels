@@ -20,7 +20,6 @@ mod position_bank;
 mod send;
 pub mod show;
 pub mod test_mode;
-mod timesync;
 pub mod transient_indicator;
 pub mod tunnel;
 mod waveforms;

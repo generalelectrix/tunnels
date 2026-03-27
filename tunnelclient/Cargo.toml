@@ -20,8 +20,6 @@ log.workspace = true
 simplelog.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
-zmq.workspace = true
-
 piston_window = "0.132"
 piston2d-graphics = "0.45"
 piston2d-opengl_graphics = "0.89"
@@ -30,16 +28,13 @@ sdl2 = { version = "0.37", features = ["bundled", "static-link"] }
 yaml-rust = "0.4"
 
 streaming-stats = "0.2"
-regex = "1"
 
-zero_configure = { path = "../zero_configure" }
 tunnels_lib = { path = "../tunnels_lib" }
 client_lib = { path = "../client_lib" }
+minusmq = { path = "../minusmq" }
 
-hostname = "0.4"
 eframe = "0.33"
 stage_theme = { path = "../stage_theme" }
-sha2 = "0.10"
 
 [dev-dependencies]
 image = "0.24"

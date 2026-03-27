@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 pub struct PushBinaryRequest {
     pub sha256: [u8; 32],
     pub payload: Vec<u8>,
-    /// Args to pass for the health check (e.g. `["self-test"]`).
-    pub health_check_args: Vec<String>,
-    /// Args to pass when launching the binary (e.g. `["remote"]`).
+    /// Args to pass when launching the binary (e.g. `["monitor"]`).
     pub run_args: Vec<String>,
+    /// Data to pipe into the child's stdin after launch (e.g. serialized config).
+    pub stdin_payload: Vec<u8>,
 }
 
 /// Response from the bootstrapper: Ok(message) on success, Err(reason) on failure.

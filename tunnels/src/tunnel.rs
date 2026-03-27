@@ -517,7 +517,7 @@ pub mod fixture {
     use std::time::Duration;
 
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-    use tunnels_lib::{RenderMode, Snapshot, Timestamp};
+    use tunnels_lib::{RenderMode, Snapshot};
 
     use crate::animation::{
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
@@ -553,7 +553,6 @@ pub mod fixture {
     fn snapshot(shapes: Vec<super::Shape>) -> Snapshot {
         Snapshot {
             frame_number: 0,
-            time: Timestamp(0),
             layers: vec![Arc::new(shapes)],
         }
     }
@@ -770,7 +769,6 @@ pub mod fixture {
         );
         Snapshot {
             frame_number: n_frames,
-            time: Timestamp(frame_interval.as_millis() as i64 * n_frames as i64),
             layers: vec![Arc::new(arcs)],
         }
     }
