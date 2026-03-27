@@ -17,7 +17,7 @@ use zero_configure::req_rep::run_service_req_rep;
 use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelbootstrap";
-const PORT: u16 = 15001;
+const PORT: u16 = 15000;
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())
@@ -40,6 +40,7 @@ fn main() {
 }
 
 fn handle_request(buffer: &[u8], child_manager: &Mutex<ChildManager>) -> PushBinaryResponse {
+    info!("Deserialzing request buffer of {} bytes.", buffer.len());
     let request: PushBinaryRequest = match rmp_serde::from_slice(buffer) {
         Ok(req) => req,
         Err(e) => return Err(format!("Failed to deserialize request: {e}")),
@@ -48,13 +49,20 @@ fn handle_request(buffer: &[u8], child_manager: &Mutex<ChildManager>) -> PushBin
 }
 
 fn handle_push(request: PushBinaryRequest, child_manager: &Mutex<ChildManager>) -> Result<String> {
-    info!("Received push: payload={} bytes", request.payload.len());
+    let t0 = std::time::Instant::now();
+    info!(
+        "Received push: payload={} bytes, stdin_payload={} bytes, run_args={:?}",
+        request.payload.len(),
+        request.stdin_payload.len(),
+        request.run_args,
+    );
 
     // Verify SHA-256.
     let mut hasher = Sha256::new();
     hasher.update(&request.payload);
     let computed: [u8; 32] = hasher.finalize().into();
     anyhow::ensure!(computed == request.sha256, "SHA-256 mismatch");
+    info!("SHA-256 verified in {:?}", t0.elapsed());
 
     let mut manager = child_manager.lock().unwrap();
 
@@ -62,17 +70,23 @@ fn handle_push(request: PushBinaryRequest, child_manager: &Mutex<ChildManager>) 
     if manager.is_running() {
         info!("Stopping existing child before update");
         manager.stop();
+        info!("Child stopped in {:?}", t0.elapsed());
     }
 
     let binary_path = manager.binary_path().to_path_buf();
 
     write_binary(&binary_path, &request.payload).context("Failed to write binary")?;
+    info!("Binary written in {:?}", t0.elapsed());
+
     let run_args: Vec<&str> = request.run_args.iter().map(|s| s.as_str()).collect();
     let confirmation = manager
         .launch(&run_args, &request.stdin_payload)
         .context("Failed to launch")?;
 
-    info!("Deployed successfully: {confirmation}");
+    info!(
+        "Deployed successfully in {:?}: {confirmation}",
+        t0.elapsed()
+    );
     Ok(format!("Deployed successfully: {confirmation}"))
 }
 

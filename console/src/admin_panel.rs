@@ -92,6 +92,7 @@ impl ResolutionPreset {
 
 /// Find the tunnelclient binary, either as a sibling of the current executable or on PATH.
 fn tunnelclient_path() -> Result<std::path::PathBuf, String> {
+    return Ok("/Users/macklin/src/tunnels-always-bootstrap/dist/tunnelclient".into());
     if let Ok(exe) = std::env::current_exe() {
         let sibling = exe
             .parent()

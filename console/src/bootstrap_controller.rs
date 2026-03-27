@@ -1,6 +1,7 @@
 //! Host-side controller for discovering and pushing binaries to bootstrappers.
 
 use anyhow::Result;
+use log::info;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -25,11 +26,7 @@ impl BootstrapController {
 
     pub fn with_recv_timeout(ctx: Context, timeout: Duration) -> Self {
         Self {
-            controller: Controller::with_recv_timeout(
-                ctx,
-                SERVICE_NAME.to_string(),
-                Some(timeout),
-            ),
+            controller: Controller::with_recv_timeout(ctx, SERVICE_NAME.to_string(), Some(timeout)),
         }
     }
 
