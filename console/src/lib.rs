@@ -1,6 +1,7 @@
 pub mod admin_panel;
 mod animation_panel;
 mod audio_panel;
+pub mod bootstrap_controller;
 mod midi_panel;
 mod ui_util;
 

@@ -3,6 +3,7 @@
 
 use anyhow::bail;
 use async_dnssd::{register_extended, RegisterData, RegisterFlags};
+use std::time::Duration;
 use tokio_core::reactor::Core;
 
 use zmq::{Context, Socket};
@@ -57,10 +58,10 @@ impl Controller {
     }
 
     /// Start up a new service controller with an optional receive timeout.
-    /// If `recv_timeout` is `Some(ms)`, REQ sockets will time out after `ms` milliseconds
+    /// If `recv_timeout` is `Some(duration)`, REQ sockets will time out after that duration
     /// and be configured with REQ_RELAXED + REQ_CORRELATE to remain usable after a timeout.
     /// If `None`, sockets block forever on receive (the default ZMQ behavior).
-    pub fn with_recv_timeout(ctx: Context, name: String, recv_timeout: Option<i32>) -> Self {
+    pub fn with_recv_timeout(ctx: Context, name: String, recv_timeout: Option<Duration>) -> Self {
         Self(Browser::new(name, move |service| {
             req_socket(&service.host_target, service.port, &ctx, recv_timeout)
         }))
@@ -84,15 +85,15 @@ impl Controller {
 }
 
 /// Try to connect a REQ socket at this host and port.
-/// If `recv_timeout` is `Some(ms)`, configure the socket with a receive timeout and
+/// If `recv_timeout` is `Some(duration)`, configure the socket with a receive timeout and
 /// REQ_RELAXED + REQ_CORRELATE so it remains usable after a timeout.
-fn req_socket(host: &str, port: u16, ctx: &Context, recv_timeout: Option<i32>) -> Result<Socket> {
+fn req_socket(host: &str, port: u16, ctx: &Context, recv_timeout: Option<Duration>) -> Result<Socket> {
     let addr = format!("tcp://{host}:{port}");
 
     // Connect a REQ socket.
     let socket = ctx.socket(zmq::REQ)?;
-    if let Some(ms) = recv_timeout {
-        socket.set_rcvtimeo(ms)?;
+    if let Some(timeout) = recv_timeout {
+        socket.set_rcvtimeo(timeout.as_millis() as i32)?;
         // REQ_RELAXED: allow sending a new request before receiving a reply (prevents EFSM
         // error after a receive timeout).
         socket.set_req_relaxed(true)?;

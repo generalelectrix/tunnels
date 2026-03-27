@@ -5,16 +5,20 @@
 
 use anyhow::{Context, Result};
 use log::{error, info, warn};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const BACKOFF_CAP: Duration = Duration::from_secs(30);
 const STABILITY_THRESHOLD: Duration = Duration::from_secs(60);
+const STDOUT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct ChildManager {
     child: Option<Child>,
     args: Vec<String>,
+    stdin_payload: Vec<u8>,
     /// Path to the managed binary.
     binary_path: PathBuf,
     /// When the current child was launched.
@@ -28,6 +32,7 @@ impl ChildManager {
         Self {
             child: None,
             args: Vec::new(),
+            stdin_payload: Vec::new(),
             binary_path: binary_path.to_path_buf(),
             launched_at: None,
             backoff: Duration::from_secs(1),
@@ -53,27 +58,58 @@ impl ChildManager {
         self.launched_at = None;
     }
 
-    /// Launch the managed binary with the given arguments.
-    pub fn launch(&mut self, args: &[&str]) -> Result<()> {
+    /// Launch the managed binary with the given arguments, piping `stdin_payload`
+    /// to its stdin and reading the first line of stdout as a status response.
+    pub fn launch(&mut self, args: &[&str], stdin_payload: &[u8]) -> Result<String> {
         self.args = args.iter().map(|s| s.to_string()).collect();
+        self.stdin_payload = stdin_payload.to_vec();
         self.spawn()
     }
 
-    fn spawn(&mut self) -> Result<()> {
+    fn spawn(&mut self) -> Result<String> {
         info!(
             "Launching {} {}",
             self.binary_path.display(),
             self.args.join(" ")
         );
-        let child = Command::new(&self.binary_path)
+        let mut child = Command::new(&self.binary_path)
             .args(&self.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .spawn()
             .context("Failed to spawn managed binary")?;
 
         info!("Child started (pid {})", child.id());
+
+        // Write stdin payload and close the pipe.
+        {
+            let mut stdin = child.stdin.take().unwrap();
+            stdin
+                .write_all(&self.stdin_payload)
+                .context("Failed to write stdin payload to child")?;
+        }
+
+        // Read the first line of stdout with a timeout.
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            let _ = tx.send(line);
+        });
+
+        let line = rx
+            .recv_timeout(STDOUT_TIMEOUT)
+            .context("Timed out waiting for child status on stdout")?;
+
+        let line = line.trim().to_string();
+        info!("Child status: {line}");
+
         self.child = Some(child);
         self.launched_at = Some(Instant::now());
-        Ok(())
+
+        Ok(line)
     }
 
     /// Check if the child is still running. If it has exited, attempt a restart

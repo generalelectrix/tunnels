@@ -6,9 +6,5 @@ edition = "2021"
 [dependencies]
 serde.workspace = true
 anyhow.workspace = true
-lazy_static.workspace = true
 rmp-serde.workspace = true
-zmq.workspace = true
-zero_configure = { path = "../zero_configure" }
 yaml-rust = "0.4"
-regex = "1"
