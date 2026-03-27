@@ -1,6 +1,4 @@
-pub mod admin;
 pub mod bootstrap_controller;
-pub mod config;
 pub mod draw;
 
 /// Subcommand arg that runs the lightweight health check.

@@ -12,6 +12,7 @@ use tunnels::audio::prompt_audio;
 use tunnels::midi::list_ports;
 use tunnels::midi::prompt_midi;
 use tunnels::midi::ControlEventHandler;
+use tunnels::midi::MidiDeviceInit;
 use tunnels::midi_controls::Device as MidiDevice;
 use tunnels::osc::Device as OscDevice;
 use tunnels::osc::DeviceSpec as OscDeviceSpec;
@@ -33,10 +34,13 @@ fn main() -> Result<()> {
 
     let test_mode = prompt_test_mode()?;
 
-    let midi_devices = if test_mode.is_some() {
+    let midi_devices: Vec<MidiDeviceInit> = if test_mode.is_some() {
         Vec::new()
     } else {
         prompt_midi(&inputs, &outputs, MidiDevice::all())?
+            .into_iter()
+            .map(MidiDeviceInit::Connected)
+            .collect()
     };
 
     let osc_devices = if test_mode.is_some() {
@@ -74,6 +78,7 @@ fn main() -> Result<()> {
         audio_input_device,
         run_clock_service,
         paths.save_path,
+        None,
     )?;
 
     if let Some(setup_test) = test_mode {

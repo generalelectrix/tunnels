@@ -270,6 +270,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a07d1f37ff60921c83bdfc7407723bdefe89b44b98a9b772f225c8f9d67141a6"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -910,6 +919,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "client_lib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lazy_static",
+ "regex",
+ "rmp-serde",
+ "serde",
+ "yaml-rust",
+ "zero_configure",
+ "zmq",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -971,6 +994,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils 0.8.21",
+]
+
+[[package]]
+name = "console"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "client_lib",
+ "eframe",
+ "egui_kittest",
+ "egui_plot",
+ "gui_common",
+ "hostname",
+ "log 0.4.29",
+ "midi_harness",
+ "rmp-serde",
+ "simplelog",
+ "stage_theme",
+ "tunnels",
+ "tunnels_lib",
+ "zmq",
 ]
 
 [[package]]
@@ -1626,6 +1671,17 @@ dependencies = [
  "pollster",
  "tempfile",
  "wgpu",
+]
+
+[[package]]
+name = "egui_plot"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67fc9b427a837264e55381a5cade6e28fe83ac5b165a61b9c888548c732a9c95"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
 ]
 
 [[package]]
@@ -2392,6 +2448,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gui_common"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui_kittest",
+ "midi_harness",
+]
+
+[[package]]
 name = "half"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2654,7 +2719,7 @@ version = "1.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "154934ea70c58054b556dd430b99a98c2a7ff5309ac9891597e339b5c28f4371"
 dependencies = [
- "console",
+ "console 0.15.11",
  "once_cell",
  "serde",
  "similar",
@@ -5889,6 +5954,7 @@ name = "tunnelclient"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client_lib",
  "derive_more 2.0.1",
  "eframe",
  "egui_kittest",
@@ -5920,12 +5986,16 @@ name = "tunnels"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "audio-processor-analysis",
  "audio-processor-traits",
  "augmented-atomics",
  "augmented-dsp-filters",
+ "bitflags 2.11.0",
  "cpal",
  "derive_more 2.0.1",
+ "eframe",
+ "egui_plot",
  "insta",
  "itertools 0.14.0",
  "lazy_static",

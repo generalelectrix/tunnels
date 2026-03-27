@@ -1,6 +1,6 @@
 use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi};
 use crate::{
-    midi::{cc, cc_ch0, event, note_on, note_on_ch0, MidiOutput, Event, Mapping},
+    midi::{cc, cc_ch0, event, note_on, note_on_ch0, Event, Mapping, MidiOutput},
     midi_controls::Device,
     midi_controls::RadioButtons,
     palette::ColorPaletteIdx,

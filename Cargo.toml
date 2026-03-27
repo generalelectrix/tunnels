@@ -8,6 +8,9 @@ members = [
     "zero_configure",
     "midi_harness",
     "stage_theme",
+    "gui_common",
+    "console",
+    "client_lib",
 ]
 
 [workspace.dependencies]

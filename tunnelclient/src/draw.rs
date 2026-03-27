@@ -1,30 +1,14 @@
 use std::sync::Arc;
 
-use crate::config::ClientConfig;
+use client_lib::config::ClientConfig;
+use client_lib::transform::{Transform, TransformDirection};
 use graphics::types::Color;
 use graphics::Context;
 use graphics::{ellipse, rectangle, CircleArc, Graphics, Transformed};
-use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 use tunnels_lib::{RenderMode, Shape, Snapshot};
 
 const TWOPI: f64 = 2.0 * PI;
-
-/// The axis along which to perform a transformation.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-pub enum TransformDirection {
-    Vertical,
-    Horizontal,
-}
-
-/// Action and direction of a geometric transformation to perform.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-pub enum Transform {
-    /// Flip the image in the specified direction.
-    Flip(TransformDirection),
-    // /// Mirror the image in the specified direction.
-    //Mirror(TransformDirection),
-}
 
 pub trait Draw<G: Graphics> {
     /// Given a context and gl instance, draw this entity to the screen.

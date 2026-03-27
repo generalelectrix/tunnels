@@ -34,6 +34,7 @@ regex = "1"
 
 zero_configure = { path = "../zero_configure" }
 tunnels_lib = { path = "../tunnels_lib" }
+client_lib = { path = "../client_lib" }
 
 hostname = "0.4"
 eframe = "0.33"

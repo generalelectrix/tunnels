@@ -4,8 +4,8 @@
 //! while remaining legible. Features ultra-dark backgrounds, muted accent colors that
 //! won't be confused with stage lighting, and large touch targets for chaotic environments.
 
-use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, TextStyle, Vec2};
 use eframe::egui::style::{Selection, WidgetVisuals};
+use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, TextStyle, Vec2};
 use eframe::epaint::Shadow;
 
 // --- Color palette ---
@@ -139,10 +139,9 @@ pub fn apply(ctx: &egui::Context) {
             TextStyle::Heading,
             FontId::new(24.0, FontFamily::Proportional),
         );
-        style.text_styles.insert(
-            TextStyle::Body,
-            FontId::new(16.0, FontFamily::Proportional),
-        );
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::new(16.0, FontFamily::Proportional));
         style.text_styles.insert(
             TextStyle::Button,
             FontId::new(15.0, FontFamily::Proportional),

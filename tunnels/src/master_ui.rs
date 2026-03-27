@@ -11,7 +11,6 @@ use crate::{
     tunnel::{AnimationIdx, TargetedAnimation},
 };
 
-use log::info;
 use serde::{Deserialize, Serialize};
 
 /// Manage stateful aspects of the UI.
@@ -50,7 +49,10 @@ impl MasterUI {
         mixer.beam(self.current_channel)
     }
 
-    fn current_animation<'m>(&self, mixer: &'m mut Mixer) -> Option<&'m mut TargetedAnimation> {
+    pub(crate) fn current_animation<'m>(
+        &self,
+        mixer: &'m mut Mixer,
+    ) -> Option<&'m mut TargetedAnimation> {
         match self.current_beam(mixer) {
             Beam::Look(_) => None,
             Beam::Tunnel(t) => Some(t.animation(self.current_animation_idx())),
@@ -106,10 +108,6 @@ impl MasterUI {
                 audio_input.control(cm, emitter);
             }
             MasterUI(uim) => self.control(uim, mixer, emitter),
-            UIRefresh => {
-                info!("Full UI refresh.");
-                self.emit_state(mixer, clocks, color_palette, audio_input, emitter);
-            }
         }
     }
 
