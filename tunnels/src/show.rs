@@ -6,7 +6,10 @@ use std::{
     fs::File,
     io::BufWriter,
     path::{Path, PathBuf},
-    sync::{mpsc::{Receiver, Sender}, Arc},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use tunnels_lib::Timestamp;
@@ -235,11 +238,18 @@ impl Show {
 
     /// Push the current animation state to the GUI, if the visualizer is active.
     fn snapshot_animation_state(&mut self) {
-        let Some(gui_state) = &self.gui_state else { return };
-        if !gui_state.visualizer_active.load(std::sync::atomic::Ordering::Relaxed) {
+        let Some(gui_state) = &self.gui_state else {
+            return;
+        };
+        if !gui_state
+            .visualizer_active
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             return;
         }
-        let animation = self.state.ui
+        let animation = self
+            .state
+            .ui
             .current_animation(&mut self.state.mixer)
             .map(|a| a.animation.clone())
             .unwrap_or_default();
@@ -258,9 +268,7 @@ impl Show {
             Ok(Some(ReceivedEvent::Meta(cmd, reply))) => {
                 let result = self.handle_meta_command(cmd);
                 if let Some(reply) = reply {
-                    let _ = reply.send(
-                        result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}"))
-                    );
+                    let _ = reply.send(result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}")));
                 }
                 if let Ok(dirty) = result {
                     self.snapshot_gui_state(dirty);
@@ -315,16 +323,18 @@ impl Show {
     }
 
     fn snapshot_gui_state(&self, dirty: GuiDirty) {
-        let Some(gui_state) = &self.gui_state else { return };
+        let Some(gui_state) = &self.gui_state else {
+            return;
+        };
         if dirty.contains(GuiDirty::MIDI_SLOTS) {
-            gui_state.midi_slots.store(Arc::new(
-                self.dispatcher.midi_slot_statuses()
-            ));
+            gui_state
+                .midi_slots
+                .store(Arc::new(self.dispatcher.midi_slot_statuses()));
         }
         if dirty.contains(GuiDirty::AUDIO_DEVICE) {
-            gui_state.audio_device.store(Arc::new(
-                self.audio_input.device_name().to_string()
-            ));
+            gui_state
+                .audio_device
+                .store(Arc::new(self.audio_input.device_name().to_string()));
         }
     }
 }
@@ -385,7 +395,16 @@ mod test {
     fn test_render() -> Result<()> {
         use crate::midi::default_midi_slots;
         let (send, recv) = channel();
-        let mut show = Show::new(default_midi_slots(), Vec::new(), send, recv, None, false, None, None)?;
+        let mut show = Show::new(
+            default_midi_slots(),
+            Vec::new(),
+            send,
+            recv,
+            None,
+            false,
+            None,
+            None,
+        )?;
 
         show.test_mode(stress);
 
@@ -476,19 +495,25 @@ mod test {
     ///   UPDATE_EXPECTATIONS=1 cargo test midi_interpret_regression
     #[test]
     fn midi_interpret_regression() {
-        use std::io::Write;
         use crate::midi::{Event, EventType, Mapping};
         use crate::midi_controls::{Device, MidiHandler};
+        use std::io::Write;
 
         let expectations_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src/snapshots/midi_interpret_expectations.yaml");
         let generating = std::env::var("UPDATE_EXPECTATIONS").is_ok();
 
-        let devices = [Device::AkaiApc40, Device::AkaiApc20, Device::TouchOsc, Device::BehringerCmdMM1];
+        let devices = [
+            Device::AkaiApc40,
+            Device::AkaiApc20,
+            Device::TouchOsc,
+            Device::BehringerCmdMM1,
+        ];
         let event_types = [EventType::NoteOn, EventType::ControlChange];
 
         // Build a map of device_name -> full debug string of all mappings
-        let mut results: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+        let mut results: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
 
         for device in &devices {
             let mut output = String::new();
@@ -496,7 +521,11 @@ mod test {
                 for channel in 0..16u8 {
                     for control in 0..128u8 {
                         let event = Event {
-                            mapping: Mapping { event_type, channel, control },
+                            mapping: Mapping {
+                                event_type,
+                                channel,
+                                control,
+                            },
                             value: 64,
                         };
                         let result = device.interpret(&event);
@@ -508,7 +537,9 @@ mod test {
                                     EventType::NoteOff => "NoteOff",
                                     EventType::ControlChange => "CC",
                                 },
-                                channel, control, msg
+                                channel,
+                                control,
+                                msg
                             ));
                         }
                     }
@@ -521,7 +552,10 @@ mod test {
             let yaml = serde_yaml::to_string(&results).unwrap();
             let mut file = std::fs::File::create(&expectations_path).unwrap();
             file.write_all(yaml.as_bytes()).unwrap();
-            println!("Wrote interpret expectations to {}", expectations_path.display());
+            println!(
+                "Wrote interpret expectations to {}",
+                expectations_path.display()
+            );
         } else {
             let file = std::fs::File::open(&expectations_path).unwrap_or_else(|e| {
                 panic!(
@@ -541,14 +575,17 @@ mod test {
                         // Show first differing line for debugging
                         for (i, (a, e)) in actual.lines().zip(exp.lines()).enumerate() {
                             if a != e {
-                                failures.push(format!("  first diff at line {i}: got [{a}] expected [{e}]"));
+                                failures.push(format!(
+                                    "  first diff at line {i}: got [{a}] expected [{e}]"
+                                ));
                                 break;
                             }
                         }
                         let a_lines = actual.lines().count();
                         let e_lines = exp.lines().count();
                         if a_lines != e_lines {
-                            failures.push(format!("  line count: got {a_lines}, expected {e_lines}"));
+                            failures
+                                .push(format!("  line count: got {a_lines}, expected {e_lines}"));
                         }
                     }
                     None => {
@@ -579,8 +616,8 @@ mod test {
 
         // Tunnel state changes.
         {
-            use crate::tunnel::StateChange as T;
             use crate::palette::ColorPaletteIdx;
+            use crate::tunnel::StateChange as T;
             let mut t = |name, sc| changes.push((name, StateChange::Tunnel(sc)));
             t("tunnel/thickness", T::Thickness(uni));
             t("tunnel/size", T::Size(uni));
@@ -590,7 +627,10 @@ mod test {
             t("tunnel/color_spread", T::ColorSpread(uni));
             t("tunnel/color_saturation", T::ColorSaturation(uni));
             t("tunnel/palette_none", T::PaletteSelection(None));
-            t("tunnel/palette_0", T::PaletteSelection(Some(ColorPaletteIdx(0))));
+            t(
+                "tunnel/palette_0",
+                T::PaletteSelection(Some(ColorPaletteIdx(0))),
+            );
             t("tunnel/segments", T::Segments(4));
             t("tunnel/blacking", T::Blacking(bip));
             t("tunnel/marquee_speed", T::MarqueeSpeed(bip));
@@ -625,8 +665,14 @@ mod test {
             a("anim/invert_on", A::Invert(true));
             a("anim/standing_on", A::Standing(true));
             a("anim/clock_internal", A::ClockSource(None));
-            a("anim/clock_0", A::ClockSource(Some(ClockIdxExt(0).try_into().unwrap())));
-            a("anim/clock_1", A::ClockSource(Some(ClockIdxExt(1).try_into().unwrap())));
+            a(
+                "anim/clock_0",
+                A::ClockSource(Some(ClockIdxExt(0).try_into().unwrap())),
+            );
+            a(
+                "anim/clock_1",
+                A::ClockSource(Some(ClockIdxExt(1).try_into().unwrap())),
+            );
             a("anim/use_audio_size_on", A::UseAudioSize(true));
             a("anim/use_audio_speed_on", A::UseAudioSpeed(true));
         }
@@ -655,24 +701,86 @@ mod test {
             };
             let mut m = |name, sc| changes.push((name, StateChange::Mixer(sc)));
             // Page 0, channel 0.
-            m("mixer/p0_ch0_level", MS { channel: ChannelIdx(0), change: CS::Level(uni) });
-            m("mixer/p0_ch0_bump_on", MS { channel: ChannelIdx(0), change: CS::Bump(true) });
-            m("mixer/p0_ch0_mask_on", MS { channel: ChannelIdx(0), change: CS::Mask(true) });
-            m("mixer/p0_ch0_vc0_on", MS { channel: ChannelIdx(0), change: CS::VideoChannel((VideoChannel(0), true)) });
-            m("mixer/p0_ch0_contains_look", MS { channel: ChannelIdx(0), change: CS::ContainsLook(true) });
+            m(
+                "mixer/p0_ch0_level",
+                MS {
+                    channel: ChannelIdx(0),
+                    change: CS::Level(uni),
+                },
+            );
+            m(
+                "mixer/p0_ch0_bump_on",
+                MS {
+                    channel: ChannelIdx(0),
+                    change: CS::Bump(true),
+                },
+            );
+            m(
+                "mixer/p0_ch0_mask_on",
+                MS {
+                    channel: ChannelIdx(0),
+                    change: CS::Mask(true),
+                },
+            );
+            m(
+                "mixer/p0_ch0_vc0_on",
+                MS {
+                    channel: ChannelIdx(0),
+                    change: CS::VideoChannel((VideoChannel(0), true)),
+                },
+            );
+            m(
+                "mixer/p0_ch0_contains_look",
+                MS {
+                    channel: ChannelIdx(0),
+                    change: CS::ContainsLook(true),
+                },
+            );
             // Page 0, channel 3.
-            m("mixer/p0_ch3_level", MS { channel: ChannelIdx(3), change: CS::Level(uni) });
+            m(
+                "mixer/p0_ch3_level",
+                MS {
+                    channel: ChannelIdx(3),
+                    change: CS::Level(uni),
+                },
+            );
             // Page 1, channel 8.
-            m("mixer/p1_ch8_level", MS { channel: ChannelIdx(8), change: CS::Level(uni) });
-            m("mixer/p1_ch8_bump_on", MS { channel: ChannelIdx(8), change: CS::Bump(true) });
-            m("mixer/p1_ch8_vc1_on", MS { channel: ChannelIdx(8), change: CS::VideoChannel((VideoChannel(1), true)) });
+            m(
+                "mixer/p1_ch8_level",
+                MS {
+                    channel: ChannelIdx(8),
+                    change: CS::Level(uni),
+                },
+            );
+            m(
+                "mixer/p1_ch8_bump_on",
+                MS {
+                    channel: ChannelIdx(8),
+                    change: CS::Bump(true),
+                },
+            );
+            m(
+                "mixer/p1_ch8_vc1_on",
+                MS {
+                    channel: ChannelIdx(8),
+                    change: CS::VideoChannel((VideoChannel(1), true)),
+                },
+            );
         }
 
         // Clock state changes -- test multiple clock channels.
         {
             use crate::clock::StateChange as CS;
             use crate::clock_bank::{ClockIdxExt, StateChange as CBS};
-            let mut c = |name, ch: usize, sc| changes.push((name, StateChange::Clock(CBS { channel: ClockIdxExt(ch).try_into().unwrap(), change: sc })));
+            let mut c = |name, ch: usize, sc| {
+                changes.push((
+                    name,
+                    StateChange::Clock(CBS {
+                        channel: ClockIdxExt(ch).try_into().unwrap(),
+                        change: sc,
+                    }),
+                ))
+            };
             c("clock/ch0_rate", 0, CS::Rate(bip));
             c("clock/ch0_rate_fine", 0, CS::RateFine(bip));
             c("clock/ch0_oneshot_on", 0, CS::OneShot(true));
@@ -685,8 +793,8 @@ mod test {
 
         // MasterUI state changes.
         {
-            use crate::master_ui::{BeamButtonState, BeamStoreState, StateChange as MU};
             use crate::beam_store::BeamStoreAddr;
+            use crate::master_ui::{BeamButtonState, BeamStoreState, StateChange as MU};
             use crate::mixer::ChannelIdx;
             use crate::tunnel::AnimationIdx;
             let mut mu = |name, sc| changes.push((name, StateChange::MasterUI(sc)));
@@ -695,15 +803,42 @@ mod test {
             mu("master_ui/channel_8", MU::Channel(ChannelIdx(8)));
             mu("master_ui/animation_0", MU::Animation(AnimationIdx(0)));
             mu("master_ui/animation_2", MU::Animation(AnimationIdx(2)));
-            mu("master_ui/beam_button_empty", MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Empty)));
-            mu("master_ui/beam_button_beam", MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Beam)));
-            mu("master_ui/beam_button_look", MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Look)));
-            mu("master_ui/beam_button_p1", MU::BeamButton((BeamStoreAddr { row: 0, col: 8 }, BeamButtonState::Beam)));
-            mu("master_ui/beam_store_idle", MU::BeamStoreState(BeamStoreState::Idle));
-            mu("master_ui/beam_store_beam_save", MU::BeamStoreState(BeamStoreState::BeamSave));
-            mu("master_ui/beam_store_look_save", MU::BeamStoreState(BeamStoreState::LookSave));
-            mu("master_ui/beam_store_delete", MU::BeamStoreState(BeamStoreState::Delete));
-            mu("master_ui/beam_store_look_edit", MU::BeamStoreState(BeamStoreState::LookEdit));
+            mu(
+                "master_ui/beam_button_empty",
+                MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Empty)),
+            );
+            mu(
+                "master_ui/beam_button_beam",
+                MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Beam)),
+            );
+            mu(
+                "master_ui/beam_button_look",
+                MU::BeamButton((BeamStoreAddr { row: 0, col: 0 }, BeamButtonState::Look)),
+            );
+            mu(
+                "master_ui/beam_button_p1",
+                MU::BeamButton((BeamStoreAddr { row: 0, col: 8 }, BeamButtonState::Beam)),
+            );
+            mu(
+                "master_ui/beam_store_idle",
+                MU::BeamStoreState(BeamStoreState::Idle),
+            );
+            mu(
+                "master_ui/beam_store_beam_save",
+                MU::BeamStoreState(BeamStoreState::BeamSave),
+            );
+            mu(
+                "master_ui/beam_store_look_save",
+                MU::BeamStoreState(BeamStoreState::LookSave),
+            );
+            mu(
+                "master_ui/beam_store_delete",
+                MU::BeamStoreState(BeamStoreState::Delete),
+            );
+            mu(
+                "master_ui/beam_store_look_edit",
+                MU::BeamStoreState(BeamStoreState::LookEdit),
+            );
         }
 
         // Audio state changes.
@@ -714,8 +849,14 @@ mod test {
             au("audio/monitor_off", AU::Monitor(false));
             au("audio/envelope", AU::EnvelopeValue(uni));
             au("audio/filter_cutoff", AU::FilterCutoff(440.0));
-            au("audio/envelope_attack", AU::EnvelopeAttack(Duration::from_millis(10)));
-            au("audio/envelope_release", AU::EnvelopeRelease(Duration::from_millis(50)));
+            au(
+                "audio/envelope_attack",
+                AU::EnvelopeAttack(Duration::from_millis(10)),
+            );
+            au(
+                "audio/envelope_release",
+                AU::EnvelopeRelease(Duration::from_millis(50)),
+            );
             au("audio/gain", AU::Gain(2.0));
             au("audio/is_clipping", AU::IsClipping(true));
         }
@@ -758,7 +899,10 @@ mod test {
                     crate::midi_controls::animation::update_animation_control(sc, &mut recorder);
                 }
                 StateChange::AnimationTarget(sc) => {
-                    crate::midi_controls::animation_target::update_animation_target_control(sc, &mut recorder);
+                    crate::midi_controls::animation_target::update_animation_target_control(
+                        sc,
+                        &mut recorder,
+                    );
                 }
                 StateChange::Mixer(sc) => {
                     crate::midi_controls::mixer::update_mixer_control(sc, &mut recorder);
@@ -802,8 +946,7 @@ mod test {
                     expectations_path.display()
                 )
             });
-            let expected: BTreeMap<String, String> =
-                serde_yaml::from_reader(file).unwrap();
+            let expected: BTreeMap<String, String> = serde_yaml::from_reader(file).unwrap();
 
             let mut failures: Vec<String> = Vec::new();
             for (name, actual) in &results {
@@ -812,14 +955,17 @@ mod test {
                         failures.push(format!("{name}: output differs"));
                         for (i, (a, e)) in actual.lines().zip(exp.lines()).enumerate() {
                             if a != e {
-                                failures.push(format!("  first diff at line {i}: got [{a}] expected [{e}]"));
+                                failures.push(format!(
+                                    "  first diff at line {i}: got [{a}] expected [{e}]"
+                                ));
                                 break;
                             }
                         }
                         let a_lines = actual.lines().count();
                         let e_lines = exp.lines().count();
                         if a_lines != e_lines {
-                            failures.push(format!("  line count: got {a_lines}, expected {e_lines}"));
+                            failures
+                                .push(format!("  line count: got {a_lines}, expected {e_lines}"));
                         }
                     }
                     None => {
@@ -871,9 +1017,8 @@ mod test {
                     Ok(Some(ReceivedEvent::Meta(cmd, reply))) => {
                         let result = show.handle_meta_command(cmd);
                         if let Some(reply) = reply {
-                            let _ = reply.send(
-                                result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}"))
-                            );
+                            let _ = reply
+                                .send(result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}")));
                         }
                         if let Ok(dirty) = result {
                             show.snapshot_gui_state(dirty);

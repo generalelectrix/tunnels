@@ -80,7 +80,9 @@ impl AudioPanel<'_> {
 
         if self.state.selected_audio != prev_audio {
             let device_name = self.state.current_audio_device();
-            let _ = self.ctx.send_command(MetaCommand::SetAudioDevice(device_name));
+            let _ = self
+                .ctx
+                .send_command(MetaCommand::SetAudioDevice(device_name));
         }
     }
 

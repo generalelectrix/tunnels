@@ -23,14 +23,11 @@ pub(crate) fn ui(
         });
     } else {
         ui.horizontal(|ui| {
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    if ui.button("Detach").clicked() {
-                        detached.store(true, Ordering::Relaxed);
-                    }
-                },
-            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Detach").clicked() {
+                    detached.store(true, Ordering::Relaxed);
+                }
+            });
         });
         let snapshot = gui_state.animation_state.load();
         if let Ok(mut panel) = panel.lock() {

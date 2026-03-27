@@ -46,7 +46,10 @@ pub fn interpret(event: &Event, page: usize) -> Option<ShowControlMessage> {
         EventType::NoteOn if control == BUMP => mkmsg(Set(Bump(true))),
         EventType::NoteOff if control == BUMP => mkmsg(Set(Bump(false))),
         EventType::NoteOn if control == MASK => mkmsg(ToggleMask),
-        EventType::NoteOn if control >= VIDEO_CHAN_0 && control < VIDEO_CHAN_0 + Mixer::N_VIDEO_CHANNELS as u8 => {
+        EventType::NoteOn
+            if control >= VIDEO_CHAN_0
+                && control < VIDEO_CHAN_0 + Mixer::N_VIDEO_CHANNELS as u8 =>
+        {
             let vc = (control - VIDEO_CHAN_0) as usize;
             mkmsg(ToggleVideoChannel(VideoChannelIdx(vc)))
         }

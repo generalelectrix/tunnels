@@ -4,7 +4,7 @@ use crate::{
     master_ui::ControlMessage,
     master_ui::StateChange,
     master_ui::{BeamButtonState, BeamStoreState as BeamStoreStatePayload},
-    midi::{event, note_on, note_on_ch0, Event, EventType, MidiOutput, Mapping},
+    midi::{event, note_on, note_on_ch0, Event, EventType, Mapping, MidiOutput},
     midi_controls::Device,
     mixer::ChannelIdx,
     show::ControlMessage::MasterUI,

@@ -7,15 +7,15 @@
 
 use crate::show::Show;
 use anyhow::Result;
+use client_lib::admin::{parse_resolution, Administrator};
+use client_lib::config::ClientConfig;
+use client_lib::transform::{Transform, TransformDirection};
 use log::{error, info};
 use rmp_serde::decode::from_read;
 use std::io::{stdin, stdout, Write};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time::Duration;
-use client_lib::admin::{parse_resolution, Administrator};
-use client_lib::config::ClientConfig;
-use client_lib::transform::{Transform, TransformDirection};
 use tunnels_lib::RunFlag;
 use zero_configure::req_rep::run_service_req_rep;
 use zmq::Context;

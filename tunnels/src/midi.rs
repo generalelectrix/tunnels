@@ -24,9 +24,18 @@ pub enum MidiDeviceInit {
 /// The standard set of MIDI device slots for a tunnels show.
 pub fn default_midi_slots() -> Vec<MidiDeviceInit> {
     vec![
-        MidiDeviceInit::Slot { name: "APC-40".into(), device: Device::AkaiApc40 },
-        MidiDeviceInit::Slot { name: "TouchOSC".into(), device: Device::TouchOsc },
-        MidiDeviceInit::Slot { name: "Clock Wing".into(), device: Device::BehringerCmdMM1 },
+        MidiDeviceInit::Slot {
+            name: "APC-40".into(),
+            device: Device::AkaiApc40,
+        },
+        MidiDeviceInit::Slot {
+            name: "TouchOSC".into(),
+            device: Device::TouchOsc,
+        },
+        MidiDeviceInit::Slot {
+            name: "Clock Wing".into(),
+            device: Device::BehringerCmdMM1,
+        },
     ]
 }
 

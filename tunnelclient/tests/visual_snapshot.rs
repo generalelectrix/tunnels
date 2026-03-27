@@ -3,9 +3,9 @@ mod software_graphics;
 use std::path::Path;
 use std::sync::Arc;
 
+use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
-use client_lib::config::ClientConfig;
 use tunnelclient::draw::Draw;
 use tunnels_lib::{Shape, Snapshot, Timestamp};
 

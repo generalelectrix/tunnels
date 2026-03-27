@@ -3,13 +3,13 @@ mod show;
 
 use crate::remote::{administrate, run_remote};
 use crate::show::Show;
+use client_lib::config::ClientConfig;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
 use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 use tunnelclient::bootstrap_controller::BootstrapController;
-use client_lib::config::ClientConfig;
 use tunnels_lib::RunFlag;
 use zmq::Context;
 

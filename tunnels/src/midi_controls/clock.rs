@@ -1,5 +1,7 @@
 //! Midi control declarations for clocks.
 
+use super::{bipolar_from_midi, unipolar_from_midi};
+use crate::midi::Event as MidiEvent;
 use crate::{
     clock::ControlMessage as ClockControlMessage,
     clock::StateChange as ClockStateChange,
@@ -7,12 +9,10 @@ use crate::{
     clock_bank::ControlMessage,
     clock_bank::StateChange,
     clock_bank::N_CLOCKS,
-    midi::{cc, event, note_on, MidiOutput, Mapping},
+    midi::{cc, event, note_on, Mapping, MidiOutput},
     midi_controls::Device,
     midi_controls::{bipolar_to_midi, unipolar_to_midi},
 };
-use crate::midi::Event as MidiEvent;
-use super::{bipolar_from_midi, unipolar_from_midi};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Control {

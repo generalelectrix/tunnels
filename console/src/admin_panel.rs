@@ -1,13 +1,13 @@
 //! egui-based panel for administering tunnel clients.
 
+use client_lib::admin::Administrator;
+use client_lib::config::ClientConfig;
+use client_lib::transform::{Transform, TransformDirection};
 use eframe::egui;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use client_lib::admin::Administrator;
-use client_lib::config::ClientConfig;
-use client_lib::transform::{Transform, TransformDirection};
 
 /// Abstraction over the network admin operations so we can mock them in tests.
 pub trait AdminService: Send + Sync {
@@ -81,7 +81,8 @@ impl ResolutionPreset {
 /// Find the tunnelclient binary, either as a sibling of the current executable or on PATH.
 fn tunnelclient_path() -> Result<std::path::PathBuf, String> {
     if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.parent()
+        let sibling = exe
+            .parent()
             .unwrap_or(std::path::Path::new("."))
             .join("tunnelclient");
         if sibling.exists() {

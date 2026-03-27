@@ -1,5 +1,5 @@
 use eframe::egui;
-use midi_harness::{DeviceId, DeviceKind, MidiPortSpec, PortStatus, SlotStatus, list_ports};
+use midi_harness::{list_ports, DeviceId, DeviceKind, MidiPortSpec, PortStatus, SlotStatus};
 
 use crate::STATUS_COLORS;
 

@@ -4,13 +4,13 @@ use tunnels_lib::number::UnipolarFloat;
 
 use crate::{
     audio::{ControlMessage, StateChange},
-    midi::{cc, event, note_on, note_on_ch1, MidiOutput, Mapping},
+    midi::{cc, event, note_on, note_on_ch1, Mapping, MidiOutput},
     midi_controls::Device,
     show::ControlMessage::Audio,
 };
 
-use crate::midi::Event as MidiEvent;
 use super::{unipolar_from_midi, unipolar_to_midi};
+use crate::midi::Event as MidiEvent;
 
 // Midi mappings for touch OSC.
 const MONITOR: Mapping = cc(1, 0);

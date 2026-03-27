@@ -1,7 +1,7 @@
 use crate::{
     animation::{ControlMessage, StateChange, Waveform as WaveformType},
     clock_bank::{ClockIdxExt, N_CLOCKS},
-    midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Event, EventType, MidiOutput, Mapping},
+    midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Event, EventType, Mapping, MidiOutput},
     midi_controls::Device,
     show::ControlMessage::Animation,
 };
@@ -72,10 +72,7 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         STANDING => Animation(ToggleStanding),
         USE_AUDIO_SIZE => Animation(ToggleUseAudioSize),
         USE_AUDIO_SPEED => Animation(ToggleUseAudioSpeed),
-        m if m.event_type == EventType::NoteOn
-            && m.channel == 0
-            && m.control < 16 =>
-        {
+        m if m.event_type == EventType::NoteOn && m.channel == 0 && m.control < 16 => {
             Animation(Set(NPeriods(m.control as u16)))
         }
         m if m.event_type == EventType::NoteOn

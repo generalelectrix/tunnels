@@ -1,4 +1,4 @@
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;

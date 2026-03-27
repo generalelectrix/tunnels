@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use client_lib::config::ClientConfig;
+use client_lib::transform::{Transform, TransformDirection};
 use graphics::types::Color;
 use graphics::Context;
 use graphics::{ellipse, rectangle, CircleArc, Graphics, Transformed};
-use client_lib::transform::{Transform, TransformDirection};
 use std::f64::consts::PI;
 use tunnels_lib::{RenderMode, Shape, Snapshot};
 

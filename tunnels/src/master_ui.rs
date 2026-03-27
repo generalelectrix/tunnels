@@ -49,7 +49,10 @@ impl MasterUI {
         mixer.beam(self.current_channel)
     }
 
-    pub(crate) fn current_animation<'m>(&self, mixer: &'m mut Mixer) -> Option<&'m mut TargetedAnimation> {
+    pub(crate) fn current_animation<'m>(
+        &self,
+        mixer: &'m mut Mixer,
+    ) -> Option<&'m mut TargetedAnimation> {
         match self.current_beam(mixer) {
             Beam::Look(_) => None,
             Beam::Tunnel(t) => Some(t.animation(self.current_animation_idx())),

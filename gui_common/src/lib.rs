@@ -88,8 +88,11 @@ pub fn dnd_reorder(
         } else {
             response.rect.top()
         };
-        ui.painter()
-            .hline(indicator_x_range, y, egui::Stroke::new(2.0, selection_color));
+        ui.painter().hline(
+            indicator_x_range,
+            y,
+            egui::Stroke::new(2.0, selection_color),
+        );
     }
 
     DndReorderResult { swap }
@@ -107,7 +110,9 @@ impl MessageModal {
     }
 
     pub fn ui(&mut self, ctx: &egui::Context) {
-        let Some((title, message)) = &self.pending else { return };
+        let Some((title, message)) = &self.pending else {
+            return;
+        };
         let response = egui::Modal::new(egui::Id::new("message_modal")).show(ctx, |ui| {
             ui.set_width(300.0);
             ui.heading(title.as_str());
