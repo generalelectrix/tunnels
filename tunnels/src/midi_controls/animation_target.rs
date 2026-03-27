@@ -1,12 +1,12 @@
 use crate::{
     animation_target::AnimationTarget as AnimationTargetState,
-    midi::{note_on_ch0, MidiOutput, Mapping},
+    midi::{note_on_ch0, Event, MidiOutput, Mapping},
     midi_controls::Device,
     show::ControlMessage::AnimationTarget as Animation,
 };
 use lazy_static::lazy_static;
 
-use super::{ControlMap, RadioButtons};
+use super::RadioButtons;
 
 const TARGET_ROTATION: Mapping = note_on_ch0(35);
 const TARGET_THICKNESS: Mapping = note_on_ch0(36);
@@ -39,50 +39,20 @@ lazy_static! {
     };
 }
 
-pub fn map_animation_target_controls(device: Device, map: &mut ControlMap) {
-    let mut add = |mapping, creator| map.add(device, mapping, creator);
-
-    // target select
-    add(
-        TARGET_ROTATION,
-        Box::new(|_| Animation(AnimationTargetState::Rotation)),
-    );
-    add(
-        TARGET_THICKNESS,
-        Box::new(|_| Animation(AnimationTargetState::Thickness)),
-    );
-    add(
-        TARGET_SIZE,
-        Box::new(|_| Animation(AnimationTargetState::Size)),
-    );
-    add(
-        TARGET_ASPECT_RATIO,
-        Box::new(|_| Animation(AnimationTargetState::AspectRatio)),
-    );
-    add(
-        TARGET_MARQUEE,
-        Box::new(|_| Animation(AnimationTargetState::MarqueeRotation)),
-    );
-    add(
-        TARGET_SPIN,
-        Box::new(|_| Animation(AnimationTargetState::Spin)),
-    );
-    add(
-        TARGET_COLOR,
-        Box::new(|_| Animation(AnimationTargetState::Color)),
-    );
-    add(
-        TARGET_COLOR_SATURATION,
-        Box::new(|_| Animation(AnimationTargetState::ColorSaturation)),
-    );
-    add(
-        TARGET_POSITIONX,
-        Box::new(|_| Animation(AnimationTargetState::PositionX)),
-    );
-    add(
-        TARGET_POSITIONY,
-        Box::new(|_| Animation(AnimationTargetState::PositionY)),
-    );
+pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
+    Some(match event.mapping {
+        TARGET_ROTATION => Animation(AnimationTargetState::Rotation),
+        TARGET_THICKNESS => Animation(AnimationTargetState::Thickness),
+        TARGET_SIZE => Animation(AnimationTargetState::Size),
+        TARGET_ASPECT_RATIO => Animation(AnimationTargetState::AspectRatio),
+        TARGET_MARQUEE => Animation(AnimationTargetState::MarqueeRotation),
+        TARGET_SPIN => Animation(AnimationTargetState::Spin),
+        TARGET_COLOR => Animation(AnimationTargetState::Color),
+        TARGET_COLOR_SATURATION => Animation(AnimationTargetState::ColorSaturation),
+        TARGET_POSITIONX => Animation(AnimationTargetState::PositionX),
+        TARGET_POSITIONY => Animation(AnimationTargetState::PositionY),
+        _ => return None,
+    })
 }
 
 /// Emit midi messages to update UIs given the provided state change.
