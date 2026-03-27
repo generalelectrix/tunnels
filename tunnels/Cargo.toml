@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["general electrix <general.electrix@gmail.com>"]
 edition = "2021"
 
+[features]
+test-support = []
+
 [lib]
 name = "tunnels"
 path = "src/lib.rs"

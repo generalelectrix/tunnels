@@ -7,7 +7,7 @@ mod beam_store;
 pub mod clock;
 pub mod clock_bank;
 pub mod clock_server;
-mod control;
+pub mod control;
 pub mod gui_state;
 mod look;
 mod master_ui;

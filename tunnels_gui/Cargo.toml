@@ -1,0 +1,20 @@
+[package]
+name = "tunnels_gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tunnels = { path = "../tunnels" }
+tunnels_lib = { path = "../tunnels_lib" }
+midi_harness = { path = "../midi_harness" }
+stage_theme = { path = "../stage_theme" }
+gui_common = { path = "../gui_common" }
+eframe = "0.33"
+egui_plot = "0.34"
+arc-swap = "1"
+anyhow = "1"
+log = "0.4"
+
+[dev-dependencies]
+egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }
+tunnels = { path = "../tunnels", features = ["test-support"] }

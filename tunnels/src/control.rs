@@ -151,6 +151,22 @@ impl Dispatcher {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock {
+    use super::*;
+
+    /// Create a CommandClient that auto-responds Ok(()) to every command.
+    pub fn auto_respond_client() -> CommandClient {
+        let (send, recv) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            while let Ok(ControlEvent::Meta(_, Some(reply))) = recv.recv() {
+                let _ = reply.send(Ok(()));
+            }
+        });
+        CommandClient::new(send)
+    }
+}
+
 impl EmitStateChange for Dispatcher {
     /// Map application state changes into UI update messages.
     fn emit(&mut self, sc: StateChange) {
