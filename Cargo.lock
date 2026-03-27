@@ -5987,6 +5987,7 @@ dependencies = [
  "gui_common",
  "log 0.4.29",
  "midi_harness",
+ "simplelog",
  "stage_theme",
  "tunnels",
  "tunnels_lib",

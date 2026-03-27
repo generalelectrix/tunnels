@@ -14,6 +14,11 @@ egui_plot = "0.34"
 arc-swap = "1"
 anyhow = "1"
 log = "0.4"
+simplelog = "0.12"
+
+[[bin]]
+name = "tunnels-gui"
+path = "src/main.rs"
 
 [dev-dependencies]
 egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }
