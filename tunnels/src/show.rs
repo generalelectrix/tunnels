@@ -89,8 +89,6 @@ impl Show {
             last_save: None,
             gui_state,
         };
-        // Push initial state to the GUI so it sees MIDI slots, audio device, etc.
-        show.snapshot_gui_state(GuiDirty::all());
         Ok(show)
     }
 
@@ -162,6 +160,7 @@ impl Show {
 
         // Emit initial UI state.
         self.refresh_ui();
+        self.snapshot_gui_state(GuiDirty::all());
 
         let mut frame_number = 0;
         let ctx = zmq::Context::new();
