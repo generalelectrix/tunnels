@@ -19,10 +19,10 @@ pub fn serve<F>(listener: TcpListener, mut handler: F) -> Result<()>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
-    log::info!(
-        "req_rep server listening on {}",
-        listener.local_addr().unwrap()
-    );
+    match listener.local_addr() {
+        Ok(addr) => log::debug!("req_rep server listening on {addr}"),
+        Err(e) => log::warn!("req_rep server started but could not determine local address: {e}"),
+    }
 
     for stream in listener.incoming() {
         match stream {

@@ -66,12 +66,16 @@ impl Controller {
 }
 
 /// Resolve a hostname:port to a SocketAddr at discovery time.
+/// Prefers IPv4 addresses since our listeners bind to 0.0.0.0.
 fn resolve_addr(host: &str, port: u16) -> Result<SocketAddr> {
-    let addr = (host, port)
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Could not resolve {host}:{port}"))?;
-    Ok(addr)
+    let addrs: Vec<SocketAddr> = (host, port).to_socket_addrs()?.collect();
+    // Prefer IPv4 since our listeners bind to 0.0.0.0.
+    addrs
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or(addrs.first())
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("Could not resolve {host}:{port}"))
 }
 
 #[cfg(test)]
@@ -115,15 +119,24 @@ mod tests {
             .unwrap();
         });
 
-        // Give the service a moment to get situated.
-        sleep(2000);
+        // Give the service a moment to register via DNS-SD and start listening.
+        sleep(3000);
 
         let names = controller.list();
         assert_eq!(1, names.len());
 
-        // Test sending a message.
-        let response = controller.send(&names[0], &testbytes()).unwrap();
-
-        assert_eq!(deadbeef(), response);
+        // Send with a retry — the TCP listener might not be fully ready
+        // even after DNS-SD discovery succeeds.
+        let mut response = None;
+        for _ in 0..5 {
+            match controller.send(&names[0], &testbytes()) {
+                Ok(r) => {
+                    response = Some(r);
+                    break;
+                }
+                Err(_) => sleep(500),
+            }
+        }
+        assert_eq!(response.unwrap(), deadbeef());
     }
 }

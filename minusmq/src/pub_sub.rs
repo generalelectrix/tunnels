@@ -7,7 +7,7 @@
 //! Subscribers automatically reconnect on connection loss.
 
 use anyhow::{Context, Result};
-use log::{error, info, warn};
+use log::{error, warn};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -37,7 +37,7 @@ impl Publisher {
     /// Spawns a background thread to accept subscriber connections.
     pub fn new(listener: TcpListener) -> Result<Self> {
         let local_addr = listener.local_addr()?;
-        info!("pub_sub publisher listening on {local_addr}");
+        log::debug!("pub_sub publisher listening on {local_addr}");
 
         let clients: Arc<Mutex<Vec<Client>>> = Arc::new(Mutex::new(Vec::new()));
         let clients_accept = clients.clone();
@@ -90,7 +90,7 @@ fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Vec<Client>>>) {
                         if let Err(e) = stream.set_nodelay(true) {
                             warn!("Failed to set TCP_NODELAY: {e}");
                         }
-                        info!("Subscriber connected (channel {channel})");
+                        log::debug!("Subscriber connected (channel {channel})");
                         clients.lock().unwrap().push(Client { stream, channel });
                     }
                     Err(e) => {
@@ -161,7 +161,7 @@ impl Subscriber {
             let addr = format!("{}:{}", self.host, self.port);
             match self.try_connect(&addr) {
                 Ok(stream) => {
-                    info!(
+                    log::debug!(
                         "Subscriber connected to {addr} (channel {})",
                         self.channel
                     );
