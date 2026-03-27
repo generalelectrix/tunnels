@@ -78,7 +78,6 @@ pub enum ReceivedEvent {
 pub struct Dispatcher {
     midi_dispatcher: MidiDispatcher,
     recv: Receiver<ControlEvent>,
-    send: Sender<ControlEvent>,
 }
 
 impl Dispatcher {
@@ -93,11 +92,9 @@ impl Dispatcher {
             osc::listen(osc_device, send.clone())?;
         }
 
-        let dispatcher_send = send.clone();
         Ok(Self {
             midi_dispatcher: MidiDispatcher::new(midi_devices, send)?,
             recv,
-            send: dispatcher_send,
         })
     }
 
