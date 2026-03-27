@@ -984,6 +984,24 @@ dependencies = [
 
 [[package]]
 name = "console"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "eframe",
+ "egui_kittest",
+ "egui_plot",
+ "gui_common",
+ "log 0.4.29",
+ "midi_harness",
+ "simplelog",
+ "stage_theme",
+ "tunnels",
+ "tunnels_lib",
+]
+
+[[package]]
+name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "054ccb5b10f9f2cbf51eb355ca1d05c2d279ce1804688d0db74b4733a5aeafd8"
@@ -2683,7 +2701,7 @@ version = "1.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "154934ea70c58054b556dd430b99a98c2a7ff5309ac9891597e339b5c28f4371"
 dependencies = [
- "console",
+ "console 0.15.11",
  "once_cell",
  "serde",
  "similar",
@@ -5975,24 +5993,6 @@ dependencies = [
  "typed_index_derive",
  "zero_configure",
  "zmq",
-]
-
-[[package]]
-name = "tunnels_gui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "eframe",
- "egui_kittest",
- "egui_plot",
- "gui_common",
- "log 0.4.29",
- "midi_harness",
- "simplelog",
- "stage_theme",
- "tunnels",
- "tunnels_lib",
 ]
 
 [[package]]

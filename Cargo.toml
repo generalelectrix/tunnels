@@ -9,7 +9,7 @@ members = [
     "midi_harness",
     "stage_theme",
     "gui_common",
-    "tunnels_gui",
+    "console",
 ]
 
 [workspace.dependencies]

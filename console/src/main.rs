@@ -52,5 +52,5 @@ fn main() -> Result<()> {
         }
     });
 
-    tunnels_gui::run_config_gui(client, gui_state)
+    console::run_config_gui(client, gui_state)
 }
