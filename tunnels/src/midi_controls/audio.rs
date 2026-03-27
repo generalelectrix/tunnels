@@ -4,7 +4,7 @@ use tunnels_lib::number::UnipolarFloat;
 
 use crate::{
     audio::{ControlMessage, StateChange},
-    midi::{cc, event, note_on, note_on_ch1, Manager, Mapping},
+    midi::{cc, event, note_on, note_on_ch1, MidiOutput, Mapping},
     midi_controls::Device,
     show::ControlMessage::Audio,
 };
@@ -57,7 +57,7 @@ pub(crate) fn map_cmd_mm1_audio_controls(map: &mut ControlMap) {
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub(crate) fn update_audio_control(sc: StateChange, manager: &mut Manager) {
+pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutput) {
     use StateChange::*;
 
     let mut send = |event| {

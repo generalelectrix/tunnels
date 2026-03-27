@@ -4,7 +4,7 @@ use crate::{
     master_ui::ControlMessage,
     master_ui::StateChange,
     master_ui::{BeamButtonState, BeamStoreState as BeamStoreStatePayload},
-    midi::{event, note_on, note_on_ch0, Manager, Mapping},
+    midi::{event, note_on, note_on_ch0, MidiOutput, Mapping},
     midi_controls::Device,
     mixer::ChannelIdx,
     show::ControlMessage::MasterUI,
@@ -114,7 +114,7 @@ pub fn map_master_ui_controls(device: Device, page: usize, map: &mut ControlMap)
 }
 
 /// Emit midi messages to update UIs given the provided state change.
-pub fn update_master_ui_control(sc: StateChange, manager: &mut Manager) {
+pub fn update_master_ui_control(sc: StateChange, manager: &mut impl MidiOutput) {
     use StateChange::*;
 
     let mut send_main = |event| {

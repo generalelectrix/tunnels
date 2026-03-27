@@ -297,6 +297,7 @@ impl<T: EmitStateChange> EmitMasterUIStateChange for T {
     }
 }
 
+#[derive(Debug)]
 pub enum ControlMessage {
     Set(StateChange),
     AnimationCopy,
@@ -304,6 +305,7 @@ pub enum ControlMessage {
     BeamGridButtonPress(BeamStoreAddr),
 }
 
+#[derive(Debug)]
 pub enum StateChange {
     Channel(ChannelIdx),
     Animation(AnimationIdx),
@@ -313,7 +315,7 @@ pub enum StateChange {
     BeamStoreState(BeamStoreState),
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum BeamStoreState {
     Idle,
     BeamSave,
@@ -322,7 +324,7 @@ pub enum BeamStoreState {
     LookEdit,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BeamButtonState {
     Empty,
     Beam,

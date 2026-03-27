@@ -59,10 +59,12 @@ impl Default for ColorPalette {
     }
 }
 
+#[derive(Debug)]
 pub enum ControlMessage {
     Set(StateChange),
 }
 
+#[derive(Debug)]
 pub enum StateChange {
     Contents(Vec<Hsv>),
 }

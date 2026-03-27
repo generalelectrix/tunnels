@@ -242,20 +242,24 @@ pub struct ChannelIdx(pub usize);
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct VideoChannel(pub usize);
 
+#[derive(Debug)]
 pub struct ControlMessage {
     pub channel: ChannelIdx,
     pub msg: ChannelControlMessage,
 }
+#[derive(Debug)]
 pub enum ChannelControlMessage {
     Set(ChannelStateChange),
     ToggleMask,
     ToggleVideoChannel(VideoChannel),
 }
 
+#[derive(Debug)]
 pub struct StateChange {
     pub channel: ChannelIdx,
     pub change: ChannelStateChange,
 }
+#[derive(Debug)]
 pub enum ChannelStateChange {
     Level(UnipolarFloat),
     Bump(bool),

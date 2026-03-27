@@ -39,6 +39,11 @@ impl HandleDeviceChange for ControlEventHandler {
         }
     }
 }
+/// Trait for sending MIDI events to devices.
+pub trait MidiOutput {
+    fn send(&mut self, device: &Device, event: Event);
+}
+
 /// Maintain midi inputs and outputs.
 /// Provide synchronous dispatch for outgoing messages based on device type.
 pub struct Manager {
@@ -59,18 +64,6 @@ impl Manager {
             .add_from_spec(spec.device, spec.input_id, spec.output_id)
     }
 
-    /// Send a message to the specified device type.
-    /// Error conditions are logged rather than returned.
-    pub fn send(&mut self, device: &Device, event: Event) {
-        self.manager.visit_outputs(|d, output| {
-            if d == device {
-                if let Err(e) = output.send(event) {
-                    error!("Failed to send midi event to {}: {}.", output.name(), e);
-                }
-            }
-        });
-    }
-
     /// Handle a device appearing or disappearing.
     ///
     /// Return true if we should trigger a UI refresh due to a device reconnecting.
@@ -79,6 +72,20 @@ impl Manager {
             return Ok(false);
         };
         Ok(reconnected_kind == DeviceKind::Output)
+    }
+}
+
+impl MidiOutput for Manager {
+    /// Send a message to the specified device type.
+    /// Error conditions are logged rather than returned.
+    fn send(&mut self, device: &Device, event: Event) {
+        self.manager.visit_outputs(|d, output| {
+            if d == device {
+                if let Err(e) = output.send(event) {
+                    error!("Failed to send midi event to {}: {}.", output.name(), e);
+                }
+            }
+        });
     }
 }
 

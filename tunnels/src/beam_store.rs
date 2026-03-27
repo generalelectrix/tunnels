@@ -48,7 +48,7 @@ impl BeamStore {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct BeamStoreAddr {
     pub row: usize,
     pub col: usize,

@@ -469,6 +469,7 @@ const Y_NUDGE: f64 = 0.025;
 const THICKNESS_SCALE: f64 = 0.5;
 const MAX_ASPECT_RATIO: f64 = 2.0;
 
+#[derive(Debug)]
 pub enum StateChange {
     MarqueeSpeed(BipolarFloat),
     RotationSpeed(BipolarFloat),
@@ -487,6 +488,7 @@ pub enum StateChange {
     SpinSpeed(BipolarFloat),
     RenderMode(RenderMode),
 }
+#[derive(Debug)]
 pub enum ControlMessage {
     Set(StateChange),
     NudgeLeft,
