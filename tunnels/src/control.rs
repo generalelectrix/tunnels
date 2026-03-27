@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use midi_harness::DeviceChange;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
@@ -15,16 +15,69 @@ use crate::{
 use anyhow::bail;
 use rosc::OscMessage;
 
+/// The result of processing a MetaCommand.
+pub type CommandResponse = Result<(), String>;
+
+/// Commands for show-level meta-control: configuration changes,
+/// system actions, and lifecycle events.
+#[derive(Debug)]
+pub enum MetaCommand {
+    RefreshUI,
+    AddMidiDevice(MidiDeviceSpec<MidiDevice>),
+    ClearMidiDevice { slot_name: String },
+    ConnectMidiPort {
+        slot_name: String,
+        device_id: midi_harness::DeviceId,
+        kind: midi_harness::DeviceKind,
+    },
+    SetAudioDevice(Option<String>),
+    SetClockPublisher(bool),
+}
+
+/// A handle for sending commands to the show and waiting for responses.
+#[derive(Clone)]
+pub struct CommandClient {
+    send: Sender<ControlEvent>,
+}
+
+impl CommandClient {
+    pub fn new(send: Sender<ControlEvent>) -> Self {
+        Self { send }
+    }
+
+    /// Send a command and block until the show responds.
+    pub fn send_command(&self, cmd: MetaCommand) -> Result<()> {
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        self.send
+            .send(ControlEvent::Meta(cmd, Some(reply_tx)))
+            .map_err(|_| anyhow::anyhow!("show control channel disconnected"))?;
+        reply_rx
+            .recv()
+            .context("show did not send a response")?
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+}
+
 /// Top-level enum for the types of control messages the show can receive.
 pub enum ControlEvent {
     MidiDevice(DeviceChange),
     Midi((MidiDevice, MidiEvent)),
     Osc((OscDevice, OscMessage)),
+    Meta(MetaCommand, Option<Sender<CommandResponse>>),
+}
+
+/// What the show receives from the dispatcher after event processing.
+pub enum ReceivedEvent {
+    /// A real-time show control message (MIDI knob, OSC, etc.).
+    Control(ControlMessage),
+    /// A meta-command with an optional reply channel.
+    Meta(MetaCommand, Option<Sender<CommandResponse>>),
 }
 
 pub struct Dispatcher {
     midi_dispatcher: MidiDispatcher,
     recv: Receiver<ControlEvent>,
+    send: Sender<ControlEvent>,
 }
 
 impl Dispatcher {
@@ -39,13 +92,15 @@ impl Dispatcher {
             osc::listen(osc_device, send.clone())?;
         }
 
+        let dispatcher_send = send.clone();
         Ok(Self {
             midi_dispatcher: MidiDispatcher::new(midi_devices, send)?,
             recv,
+            send: dispatcher_send,
         })
     }
 
-    pub fn receive(&mut self, timeout: Duration) -> Result<Option<ControlMessage>> {
+    pub fn receive(&mut self, timeout: Duration) -> Result<Option<ReceivedEvent>> {
         let event = match self.recv.recv_timeout(timeout) {
             Ok(e) => e,
             Err(RecvTimeoutError::Timeout) => {
@@ -59,13 +114,41 @@ impl Dispatcher {
         match event {
             MidiDevice(event) => {
                 let needs_ui_refresh = self.midi_dispatcher.handle_device_change(event)?;
-                Ok(needs_ui_refresh.then_some(ControlMessage::UIRefresh))
+                if needs_ui_refresh {
+                    // Fire-and-forget — no reply needed for device-reconnect refresh.
+                    let _ = self.send.send(ControlEvent::Meta(MetaCommand::RefreshUI, None));
+                }
+                Ok(None)
             }
             Midi((device, event)) => Ok(self
                 .midi_dispatcher
-                .map_event_to_show_control(device, event)),
-            Osc((device, event)) => osc::map_event_to_show_control(device, event),
+                .map_event_to_show_control(device, event)
+                .map(ReceivedEvent::Control)),
+            Osc((device, event)) => Ok(osc::map_event_to_show_control(device, event)?
+                .map(ReceivedEvent::Control)),
+            Meta(cmd, reply) => Ok(Some(ReceivedEvent::Meta(cmd, reply))),
         }
+    }
+
+    pub fn add_midi_device(&mut self, spec: MidiDeviceSpec<MidiDevice>) -> Result<()> {
+        self.midi_dispatcher.add_midi_device(spec)
+    }
+
+    pub fn clear_midi_device(&mut self, slot_name: &str) -> Result<()> {
+        self.midi_dispatcher.clear_midi_device(slot_name)
+    }
+
+    pub fn connect_midi_port(
+        &mut self,
+        slot_name: &str,
+        device_id: midi_harness::DeviceId,
+        kind: midi_harness::DeviceKind,
+    ) -> Result<()> {
+        self.midi_dispatcher.connect_midi_port(slot_name, device_id, kind)
+    }
+
+    pub fn midi_slot_statuses(&self) -> Vec<midi_harness::SlotStatus> {
+        self.midi_dispatcher.midi_slot_statuses()
     }
 }
 

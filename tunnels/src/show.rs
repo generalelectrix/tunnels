@@ -16,7 +16,7 @@ use crate::{
     animation_target::AnimationTarget,
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
-    control::{ControlEvent, Dispatcher},
+    control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
     master_ui::{self, MasterUI},
     midi::DeviceSpec as MidiDeviceSpec,
     midi_controls::Device,
@@ -219,7 +219,13 @@ impl Show {
 
     fn service_control_event(&mut self, timeout: Duration) {
         match self.dispatcher.receive(timeout) {
-            Ok(Some(msg)) => self.state.ui.handle_control_message(
+            Ok(Some(ReceivedEvent::Meta(cmd, reply))) => {
+                let result = self.handle_meta_command(cmd);
+                if let Some(reply) = reply {
+                    let _ = reply.send(result.map_err(|e| format!("{e:#}")));
+                }
+            }
+            Ok(Some(ReceivedEvent::Control(msg))) => self.state.ui.handle_control_message(
                 msg,
                 &mut self.state.mixer,
                 &mut self.state.clocks,
@@ -234,6 +240,42 @@ impl Show {
             }
         }
     }
+
+    fn handle_meta_command(&mut self, cmd: MetaCommand) -> Result<()> {
+        use MetaCommand::*;
+        match cmd {
+            RefreshUI => {
+                self.state.ui.emit_state(
+                    &mut self.state.mixer,
+                    &mut self.state.clocks,
+                    &mut self.state.color_palette,
+                    &mut self.audio_input,
+                    &mut self.dispatcher,
+                );
+            }
+            AddMidiDevice(spec) => {
+                self.dispatcher.add_midi_device(spec)?;
+            }
+            ClearMidiDevice { slot_name } => {
+                self.dispatcher.clear_midi_device(&slot_name)?;
+            }
+            ConnectMidiPort {
+                slot_name,
+                device_id,
+                kind,
+            } => {
+                self.dispatcher
+                    .connect_midi_port(&slot_name, device_id, kind)?;
+            }
+            SetAudioDevice(name) => {
+                self.audio_input = AudioInput::new(name)?;
+            }
+            SetClockPublisher(run) => {
+                self.run_clock_service = run;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -247,8 +289,6 @@ pub enum ControlMessage {
     Position(position_bank::ControlMessage),
     Audio(audio::ControlMessage),
     MasterUI(master_ui::ControlMessage),
-    /// Force a full UI refresh.
-    UIRefresh,
 }
 
 #[derive(Debug)]
@@ -283,6 +323,7 @@ mod test {
     use tunnels_lib::{number::UnipolarFloat, LayerCollection, Shape};
 
     use super::*;
+    use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
     use crate::test_mode::stress;
     use insta::assert_yaml_snapshot;
 
@@ -744,5 +785,114 @@ mod test {
                 );
             }
         }
+    }
+
+    impl Show {
+        /// Create a minimal test Show with no devices.
+        fn test_new() -> (Self, Sender<ControlEvent>) {
+            let (send, recv) = channel();
+            let show = Show::new(
+                Vec::new(),
+                Vec::new(),
+                send.clone(),
+                recv,
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+            (show, send)
+        }
+    }
+
+    /// Stand up a test Show on a background thread, return a CommandClient.
+    fn test_show_client() -> CommandClient {
+        let (client_tx, client_rx) = std::sync::mpsc::sync_channel(0);
+        std::thread::spawn(move || {
+            let (mut show, send) = Show::test_new();
+            client_tx.send(CommandClient::new(send)).unwrap();
+            // Process events until the client disconnects.
+            loop {
+                match show.dispatcher.receive(Duration::from_millis(50)) {
+                    Ok(Some(ReceivedEvent::Meta(cmd, reply))) => {
+                        let result = show.handle_meta_command(cmd);
+                        if let Some(reply) = reply {
+                            let _ = reply.send(result.map_err(|e| format!("{e:#}")));
+                        }
+                    }
+                    Ok(Some(ReceivedEvent::Control(msg))) => {
+                        show.state.ui.handle_control_message(
+                            msg,
+                            &mut show.state.mixer,
+                            &mut show.state.clocks,
+                            &mut show.state.color_palette,
+                            &mut show.state.positions,
+                            &mut show.audio_input,
+                            &mut show.dispatcher,
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+        client_rx.recv().unwrap()
+    }
+
+    #[test]
+    fn meta_refresh_ui() {
+        let client = test_show_client();
+        client.send_command(MetaCommand::RefreshUI).unwrap();
+    }
+
+    #[test]
+    fn meta_set_audio_device_offline() {
+        let client = test_show_client();
+        client
+            .send_command(MetaCommand::SetAudioDevice(None))
+            .unwrap();
+    }
+
+    #[test]
+    fn meta_set_clock_publisher() {
+        let client = test_show_client();
+        client
+            .send_command(MetaCommand::SetClockPublisher(true))
+            .unwrap();
+    }
+
+    #[test]
+    fn meta_connect_midi_port_unknown_slot() {
+        let client = test_show_client();
+        let result = client.send_command(MetaCommand::ConnectMidiPort {
+            slot_name: "nonexistent".to_string(),
+            device_id: midi_harness::DeviceId("fake".into()),
+            kind: midi_harness::DeviceKind::Input,
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn meta_clear_midi_device_unknown_slot() {
+        let client = test_show_client();
+        let result = client.send_command(MetaCommand::ClearMidiDevice {
+            slot_name: "nonexistent".to_string(),
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn meta_round_trip_response() {
+        let client = test_show_client();
+        // Valid command should succeed.
+        assert!(client.send_command(MetaCommand::RefreshUI).is_ok());
+        // Invalid command should return error.
+        assert!(client
+            .send_command(MetaCommand::ClearMidiDevice {
+                slot_name: "nope".to_string(),
+            })
+            .is_err());
+        // Should still work after error.
+        assert!(client.send_command(MetaCommand::RefreshUI).is_ok());
     }
 }

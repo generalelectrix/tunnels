@@ -73,6 +73,27 @@ impl Dispatcher {
     pub fn handle_device_change(&mut self, change: DeviceChange) -> Result<bool> {
         self.midi_manager.handle_device_change(change)
     }
+
+    pub fn add_midi_device(&mut self, spec: DeviceSpec<Device>) -> Result<()> {
+        self.midi_manager.add_device(spec)
+    }
+
+    pub fn clear_midi_device(&mut self, slot_name: &str) -> Result<()> {
+        self.midi_manager.clear_device(slot_name)
+    }
+
+    pub fn connect_midi_port(
+        &mut self,
+        slot_name: &str,
+        device_id: midi_harness::DeviceId,
+        kind: midi_harness::DeviceKind,
+    ) -> Result<()> {
+        self.midi_manager.connect_port(slot_name, device_id, kind)
+    }
+
+    pub fn midi_slot_statuses(&self) -> Vec<midi_harness::SlotStatus> {
+        self.midi_manager.slot_statuses()
+    }
 }
 
 impl EmitStateChange for Dispatcher {

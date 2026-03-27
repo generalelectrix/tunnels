@@ -73,6 +73,26 @@ impl Manager {
         };
         Ok(reconnected_kind == DeviceKind::Output)
     }
+
+    pub fn slot_statuses(&self) -> Vec<midi_harness::SlotStatus> {
+        self.manager.slot_statuses()
+    }
+
+    pub fn connect_port(
+        &mut self,
+        slot_name: &str,
+        device_id: DeviceId,
+        kind: DeviceKind,
+    ) -> Result<()> {
+        match kind {
+            DeviceKind::Input => self.manager.connect_input(slot_name, device_id),
+            DeviceKind::Output => self.manager.connect_output(slot_name, device_id),
+        }
+    }
+
+    pub fn clear_device(&mut self, slot_name: &str) -> Result<()> {
+        self.manager.clear_slot(slot_name)
+    }
 }
 
 impl MidiOutput for Manager {
