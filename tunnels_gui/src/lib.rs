@@ -76,11 +76,12 @@ impl eframe::App for ConfigApp {
         egui::CentralPanel::default().show(ctx, |ui| match self.active_tab {
             Tab::Midi => {
                 let midi_slots = self.gui_state.midi_slots.load();
+                let mut ctx = GuiContext {
+                    modal: &mut self.modal,
+                    client: &self.client,
+                };
                 MidiPanel {
-                    ctx: GuiContext {
-                        modal: &mut self.modal,
-                        client: &self.client,
-                    },
+                    commands: &mut ctx,
                     state: &mut self.midi_panel,
                     slots: &midi_slots,
                 }

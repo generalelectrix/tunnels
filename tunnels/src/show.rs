@@ -19,7 +19,7 @@ use crate::{
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
     gui_state::SharedGuiState,
     master_ui::{self, MasterUI},
-    midi::DeviceSpec as MidiDeviceSpec,
+    midi::MidiDeviceInit,
     midi_controls::Device,
     mixer::{self, Mixer},
     osc::DeviceSpec as OscDeviceSpec,
@@ -47,7 +47,7 @@ pub struct Show {
 impl Show {
     /// Create a new show from the provided config.
     pub fn new(
-        midi_devices: Vec<MidiDeviceSpec<Device>>,
+        midi_devices: Vec<MidiDeviceInit>,
         osc_devices: Vec<OscDeviceSpec>,
         send_control_event: Sender<ControlEvent>,
         recv_control_event: Receiver<ControlEvent>,
@@ -57,13 +57,14 @@ impl Show {
         gui_state: Option<SharedGuiState>,
     ) -> Result<Self> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
-        let use_wing = midi_devices
-            .iter()
-            .any(|spec| spec.device == Device::AkaiApc20);
+        let use_wing = midi_devices.iter().any(|init| match init {
+            MidiDeviceInit::Connected(spec) => spec.device == Device::AkaiApc20,
+            MidiDeviceInit::Slot { device, .. } => *device == Device::AkaiApc20,
+        });
 
         let n_pages = if use_wing { 2 } else { 1 };
 
-        Ok(Self {
+        let show = Self {
             dispatcher: Dispatcher::new(
                 midi_devices,
                 osc_devices,
@@ -82,7 +83,10 @@ impl Show {
             save_path,
             last_save: None,
             gui_state,
-        })
+        };
+        // Push initial state to the GUI so it sees MIDI slots, audio device, etc.
+        show.snapshot_gui_state();
+        Ok(show)
     }
 
     /// Load the saved show at file into self.
@@ -152,13 +156,7 @@ impl Show {
         info!("Show is starting.");
 
         // Emit initial UI state.
-        self.state.ui.emit_state(
-            &mut self.state.mixer,
-            &mut self.state.clocks,
-            &mut self.state.color_palette,
-            &mut self.audio_input,
-            &mut self.dispatcher,
-        );
+        self.refresh_ui();
 
         let mut frame_number = 0;
         let ctx = zmq::Context::new();
@@ -221,6 +219,17 @@ impl Show {
         self.state.mixer.update_state(delta_t, audio_envelope);
     }
 
+    /// Push the full show state to all connected MIDI devices.
+    fn refresh_ui(&mut self) {
+        self.state.ui.emit_state(
+            &mut self.state.mixer,
+            &mut self.state.clocks,
+            &mut self.state.color_palette,
+            &mut self.audio_input,
+            &mut self.dispatcher,
+        );
+    }
+
     fn service_control_event(&mut self, timeout: Duration) {
         match self.dispatcher.receive(timeout) {
             Ok(Some(ReceivedEvent::Meta(cmd, reply))) => {
@@ -270,6 +279,14 @@ impl Show {
             } => {
                 self.dispatcher
                     .connect_midi_port(&slot_name, device_id, kind)?;
+                // Sync the device's indicators to the current show state.
+                self.state.ui.emit_state(
+                    &mut self.state.mixer,
+                    &mut self.state.clocks,
+                    &mut self.state.color_palette,
+                    &mut self.audio_input,
+                    &mut self.dispatcher,
+                );
             }
             SetAudioDevice(name) => {
                 self.audio_input = AudioInput::new(name)?;
@@ -344,8 +361,9 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<()> {
+        use crate::midi::default_midi_slots;
         let (send, recv) = channel();
-        let mut show = Show::new(Vec::new(), Vec::new(), send, recv, None, false, None, None)?;
+        let mut show = Show::new(default_midi_slots(), Vec::new(), send, recv, None, false, None, None)?;
 
         show.test_mode(stress);
 
@@ -800,11 +818,12 @@ mod test {
     }
 
     impl Show {
-        /// Create a minimal test Show with no devices.
+        /// Create a minimal test Show with default MIDI slots but no hardware.
         fn test_new() -> (Self, Sender<ControlEvent>) {
+            use crate::midi::default_midi_slots;
             let (send, recv) = channel();
             let show = Show::new(
-                Vec::new(),
+                default_midi_slots(),
                 Vec::new(),
                 send.clone(),
                 recv,

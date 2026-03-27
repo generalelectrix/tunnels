@@ -14,7 +14,7 @@ use std::sync::mpsc::Sender;
 use crate::{
     control::ControlEvent,
     master_ui::EmitStateChange,
-    midi::{DeviceSpec, Event, Manager, Mapping},
+    midi::{DeviceSpec, Event, Manager, Mapping, MidiDeviceInit},
     show::{ControlMessage, StateChange},
 };
 use anyhow::Result;
@@ -39,10 +39,13 @@ pub struct Dispatcher {
 impl Dispatcher {
     /// Instantiate the master midi control dispatcher.
     /// Initialize midi inputs/outputs.
-    pub fn new(midi_devices: Vec<DeviceSpec<Device>>, send: Sender<ControlEvent>) -> Result<Self> {
+    pub fn new(midi_devices: Vec<MidiDeviceInit>, send: Sender<ControlEvent>) -> Result<Self> {
         let mut midi_manager = Manager::new(send);
-        for device_spec in midi_devices.into_iter() {
-            midi_manager.add_device(device_spec)?;
+        for init in midi_devices {
+            match init {
+                MidiDeviceInit::Connected(spec) => midi_manager.add_device(spec)?,
+                MidiDeviceInit::Slot { name, device } => midi_manager.add_slot(name, device)?,
+            }
         }
 
         Ok(Self { midi_manager })

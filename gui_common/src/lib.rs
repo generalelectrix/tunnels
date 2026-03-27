@@ -1,3 +1,5 @@
+pub mod midi_panel;
+
 use eframe::egui::{self, Color32};
 
 /// Semantic status colors for consistent theming across panels.

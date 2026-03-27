@@ -5,3 +5,7 @@ edition = "2021"
 
 [dependencies]
 eframe = "0.33"
+midi_harness = { path = "../midi_harness" }
+
+[dev-dependencies]
+egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }

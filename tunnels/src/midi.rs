@@ -12,6 +12,24 @@ use crate::{
     midi_controls::{Device, MidiDevice},
 };
 
+/// How to initialize a MIDI device slot: either with hardware already
+/// identified, or as an empty slot awaiting connection.
+pub enum MidiDeviceInit {
+    /// Slot with hardware already identified by port IDs.
+    Connected(DeviceSpec<Device>),
+    /// Slot registered for a device type, no hardware connected yet.
+    Slot { name: String, device: Device },
+}
+
+/// The standard set of MIDI device slots for a tunnels show.
+pub fn default_midi_slots() -> Vec<MidiDeviceInit> {
+    vec![
+        MidiDeviceInit::Slot { name: "APC-40".into(), device: Device::AkaiApc40 },
+        MidiDeviceInit::Slot { name: "TouchOSC".into(), device: Device::TouchOsc },
+        MidiDeviceInit::Slot { name: "Clock Wing".into(), device: Device::BehringerCmdMM1 },
+    ]
+}
+
 pub use midi_harness::event::*;
 pub use midi_harness::list_ports;
 
@@ -88,6 +106,11 @@ impl Manager {
             DeviceKind::Input => self.manager.connect_input(slot_name, device_id),
             DeviceKind::Output => self.manager.connect_output(slot_name, device_id),
         }
+    }
+
+    /// Register an empty slot for a device type, with no hardware connected.
+    pub fn add_slot(&mut self, name: String, device: Device) -> Result<()> {
+        self.manager.add_slot(name, device)
     }
 
     pub fn clear_device(&mut self, slot_name: &str) -> Result<()> {

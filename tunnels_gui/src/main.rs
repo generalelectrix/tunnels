@@ -8,7 +8,7 @@ use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 
 use tunnels::control::CommandClient;
 use tunnels::gui_state::GuiState;
-use tunnels::midi::ControlEventHandler;
+use tunnels::midi::{default_midi_slots, ControlEventHandler};
 use tunnels::show::Show;
 
 use std::time::Duration;
@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     // Show worker thread — starts with empty config, GUI sends MetaCommands.
     std::thread::spawn(move || {
         let show = Show::new(
-            vec![],
+            default_midi_slots(),
             vec![],
             send_control_event,
             recv_control_event,

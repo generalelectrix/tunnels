@@ -8,7 +8,7 @@ use crate::midi_controls::Dispatcher as MidiDispatcher;
 use crate::osc;
 use crate::show::{ControlMessage, StateChange};
 use crate::{
-    midi::{DeviceSpec as MidiDeviceSpec, Event as MidiEvent},
+    midi::{DeviceSpec as MidiDeviceSpec, Event as MidiEvent, MidiDeviceInit},
     midi_controls::Device as MidiDevice,
     osc::{Device as OscDevice, DeviceSpec as OscDeviceSpec},
 };
@@ -82,7 +82,7 @@ pub struct Dispatcher {
 impl Dispatcher {
     /// Instantiate the master control dispatcher.
     pub fn new(
-        midi_devices: Vec<MidiDeviceSpec<MidiDevice>>,
+        midi_devices: Vec<MidiDeviceInit>,
         osc_devices: Vec<OscDeviceSpec>,
         send: Sender<ControlEvent>,
         recv: Receiver<ControlEvent>,

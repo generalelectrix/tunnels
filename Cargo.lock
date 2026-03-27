@@ -2416,6 +2416,8 @@ name = "gui_common"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "egui_kittest",
+ "midi_harness",
 ]
 
 [[package]]
