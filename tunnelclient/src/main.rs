@@ -1,4 +1,3 @@
-mod admin_gui;
 mod remote;
 mod show;
 
@@ -10,7 +9,7 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 use tunnelclient::bootstrap_controller::BootstrapController;
-use tunnelclient::config::ClientConfig;
+use client_lib::config::ClientConfig;
 use tunnels_lib::RunFlag;
 use zmq::Context;
 
@@ -18,7 +17,6 @@ fn main() -> ExitCode {
     let first_arg = env::args().nth(1).expect(
         "First argument must be 'remote' to run in remote mode, \
         'admin' to run the client administrator, \
-        'admin-gui' to run the graphical administrator, \
         'monitor' to run a local monitor (config via stdin), \
         or the integer virtual video channel to listen to.",
     );
@@ -46,9 +44,6 @@ fn main() -> ExitCode {
     } else if first_arg == "admin" {
         init_logger(LevelFilter::Info);
         administrate();
-    } else if first_arg == "admin-gui" {
-        init_logger(LevelFilter::Info);
-        admin_gui::run();
     } else if first_arg == "monitor" {
         let cfg: ClientConfig = match rmp_serde::from_read(std::io::stdin()) {
             Ok(cfg) => cfg,

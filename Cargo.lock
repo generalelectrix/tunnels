@@ -919,6 +919,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "client_lib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lazy_static",
+ "regex",
+ "rmp-serde",
+ "serde",
+ "yaml-rust",
+ "zero_configure",
+ "zmq",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -988,16 +1002,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "client_lib",
  "eframe",
  "egui_kittest",
  "egui_plot",
  "gui_common",
+ "hostname",
  "log 0.4.29",
  "midi_harness",
+ "rmp-serde",
  "simplelog",
  "stage_theme",
  "tunnels",
  "tunnels_lib",
+ "zmq",
 ]
 
 [[package]]
@@ -5936,6 +5954,7 @@ name = "tunnelclient"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client_lib",
  "derive_more 2.0.1",
  "eframe",
  "egui_kittest",

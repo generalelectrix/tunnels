@@ -1,20 +1,16 @@
-//! egui-based GUI for administering tunnel clients.
+//! egui-based panel for administering tunnel clients.
 
 use eframe::egui;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tunnelclient::admin::Administrator;
-use tunnelclient::config::ClientConfig;
-use tunnelclient::draw::{Transform, TransformDirection};
-use zmq::Context;
-
-/// Receive timeout for ZMQ requests to tunnel clients, in milliseconds.
-const RECV_TIMEOUT_MS: i32 = 5000;
+use client_lib::admin::Administrator;
+use client_lib::config::ClientConfig;
+use client_lib::transform::{Transform, TransformDirection};
 
 /// Abstraction over the network admin operations so we can mock them in tests.
-trait AdminService: Send + Sync {
+pub trait AdminService: Send + Sync {
     fn clients(&self) -> Vec<String>;
     fn run_with_config(&self, client: &str, config: ClientConfig) -> anyhow::Result<String>;
 }
@@ -82,7 +78,21 @@ impl ResolutionPreset {
     ];
 }
 
-struct AdminApp {
+/// Find the tunnelclient binary, either as a sibling of the current executable or on PATH.
+fn tunnelclient_path() -> Result<std::path::PathBuf, String> {
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("tunnelclient");
+        if sibling.exists() {
+            return Ok(sibling);
+        }
+    }
+    // Fall back to PATH.
+    Ok(std::path::PathBuf::from("tunnelclient"))
+}
+
+pub struct AdminPanelState {
     admin_service: Arc<dyn AdminService>,
     hostname: String,
 
@@ -101,8 +111,8 @@ struct AdminApp {
     config_send_state: Arc<Mutex<Option<ConfigSendState>>>,
 }
 
-impl AdminApp {
-    fn new(admin_service: Arc<dyn AdminService>, hostname: String) -> Self {
+impl AdminPanelState {
+    pub fn new(admin_service: Arc<dyn AdminService>, hostname: String) -> Self {
         let (w, h) = ResolutionPreset::P1080.resolution().unwrap();
         Self {
             admin_service,
@@ -230,8 +240,7 @@ impl AdminApp {
                 let serialized = rmp_serde::to_vec(&config)
                     .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
-                let exe = std::env::current_exe()
-                    .map_err(|e| format!("Failed to find current executable: {e}"))?;
+                let exe = tunnelclient_path()?;
 
                 let mut child = Command::new(exe)
                     .arg("monitor")
@@ -368,8 +377,8 @@ impl AdminApp {
             });
     }
 
-    /// Render the full admin UI. Called by `eframe::App::update` and by test harnesses.
-    fn render(&mut self, ctx: &egui::Context, clients: &[String]) {
+    /// Render the full admin UI. Called by `ConfigApp::update` and by test harnesses.
+    pub fn render(&mut self, ctx: &egui::Context, clients: &[String]) {
         let is_sending = self.config_send_state.lock().unwrap().is_some();
 
         if is_sending {
@@ -487,7 +496,7 @@ impl AdminApp {
 
             ui.add_space(16.0);
 
-            // Action button — label depends on target type
+            // Action button -- label depends on target type
             let button_label = match &target {
                 Target::Monitor => "Launch Monitor",
                 Target::RemoteClient(_) => "Send Configuration",
@@ -503,38 +512,6 @@ impl AdminApp {
         // Modal overlay
         self.draw_modal(ctx);
     }
-}
-
-impl eframe::App for AdminApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let clients = self.admin_service.clients();
-        self.render(ctx, &clients);
-    }
-}
-
-/// Launch the admin GUI.
-pub fn run() {
-    let host = hostname::get()
-        .expect("Couldn't get hostname for this machine")
-        .into_string()
-        .unwrap();
-
-    let admin = Administrator::with_recv_timeout(Context::new(), RECV_TIMEOUT_MS);
-
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 600.0]),
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "Tunnel Client Administrator",
-        options,
-        Box::new(move |cc| {
-            stage_theme::apply(&cc.egui_ctx);
-            Ok(Box::new(AdminApp::new(Arc::new(admin), host)))
-        }),
-    )
-    .expect("Failed to run admin GUI");
 }
 
 #[cfg(test)]
@@ -556,22 +533,22 @@ mod tests {
         }
     }
 
-    impl AdminApp {
+    impl AdminPanelState {
         fn test_new(clients: Vec<String>) -> Self {
             let admin: Arc<dyn AdminService> = Arc::new(MockAdminService {
                 clients: clients.clone(),
             });
-            AdminApp::new(admin, "test-host".to_string())
+            AdminPanelState::new(admin, "test-host".to_string())
         }
     }
 
-    fn test_harness(clients: Vec<String>) -> Harness<'static, AdminApp> {
+    fn test_harness(clients: Vec<String>) -> Harness<'static, AdminPanelState> {
         let clients_for_render = clients.clone();
         let harness = Harness::new_ui_state(
-            move |ui, app: &mut AdminApp| {
+            move |ui, app: &mut AdminPanelState| {
                 app.render(ui.ctx(), &clients_for_render);
             },
-            AdminApp::test_new(clients),
+            AdminPanelState::test_new(clients),
         );
         stage_theme::apply(&harness.ctx);
         harness
@@ -581,7 +558,7 @@ mod tests {
 
     #[test]
     fn default_state_selects_monitor() {
-        let app = AdminApp::test_new(vec![]);
+        let app = AdminPanelState::test_new(vec![]);
         assert_eq!(app.selected_target, Some(Target::Monitor));
         assert!(!app.fullscreen);
         assert!(!app.capture_mouse);
@@ -590,7 +567,7 @@ mod tests {
 
     #[test]
     fn default_resolution_is_half_1080p() {
-        let app = AdminApp::test_new(vec![]);
+        let app = AdminPanelState::test_new(vec![]);
         assert_eq!(app.custom_width, "960");
         assert_eq!(app.custom_height, "540");
     }
@@ -618,7 +595,7 @@ mod tests {
 
     #[test]
     fn switching_to_remote_sets_defaults() {
-        let mut app = AdminApp::test_new(vec!["client-a".to_string()]);
+        let mut app = AdminPanelState::test_new(vec!["client-a".to_string()]);
         app.select_target(Target::RemoteClient("client-a".to_string()));
         assert!(app.fullscreen);
         assert!(app.capture_mouse);
@@ -629,7 +606,7 @@ mod tests {
 
     #[test]
     fn switching_to_monitor_sets_defaults() {
-        let mut app = AdminApp::test_new(vec!["client-a".to_string()]);
+        let mut app = AdminPanelState::test_new(vec!["client-a".to_string()]);
         // First switch to remote, then back to monitor.
         app.select_target(Target::RemoteClient("client-a".to_string()));
         app.select_target(Target::Monitor);
@@ -644,7 +621,7 @@ mod tests {
 
     #[test]
     fn half_size_halves_displayed_resolution() {
-        let mut app = AdminApp::test_new(vec![]);
+        let mut app = AdminPanelState::test_new(vec![]);
         app.half_size = true;
         app.update_displayed_resolution();
         assert_eq!(app.custom_width, "960");
@@ -653,7 +630,7 @@ mod tests {
 
     #[test]
     fn half_size_off_shows_full_resolution() {
-        let mut app = AdminApp::test_new(vec![]);
+        let mut app = AdminPanelState::test_new(vec![]);
         app.half_size = false;
         app.update_displayed_resolution();
         assert_eq!(app.custom_width, "1920");
@@ -662,14 +639,14 @@ mod tests {
 
     #[test]
     fn half_size_halves_resolved_resolution() {
-        let mut app = AdminApp::test_new(vec![]);
+        let mut app = AdminPanelState::test_new(vec![]);
         app.half_size = true;
         assert_eq!(app.resolve_resolution().unwrap(), (960, 540));
     }
 
     #[test]
     fn half_size_ignored_for_custom() {
-        let mut app = AdminApp::test_new(vec![]);
+        let mut app = AdminPanelState::test_new(vec![]);
         app.resolution_preset = ResolutionPreset::Custom;
         app.custom_width = "800".to_string();
         app.custom_height = "600".to_string();
@@ -694,14 +671,14 @@ mod tests {
 
     #[test]
     fn disappeared_client_clears_selection() {
-        let mut app = AdminApp::test_new(vec!["client-a".to_string()]);
+        let mut app = AdminPanelState::test_new(vec!["client-a".to_string()]);
         app.select_target(Target::RemoteClient("client-a".to_string()));
         assert_eq!(
             app.selected_target,
             Some(Target::RemoteClient("client-a".to_string()))
         );
 
-        // Render with empty client list — should invalidate.
+        // Render with empty client list -- should invalidate.
         let ctx = egui::Context::default();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             app.render(ctx, &[]);

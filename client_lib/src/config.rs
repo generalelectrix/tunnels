@@ -1,5 +1,5 @@
 //! Loading and parsing client configurations.
-use crate::draw::{Transform, TransformDirection};
+use crate::transform::{Transform, TransformDirection};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::cmp;

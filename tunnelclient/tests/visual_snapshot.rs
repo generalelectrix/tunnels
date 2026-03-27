@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
-use tunnelclient::config::ClientConfig;
+use client_lib::config::ClientConfig;
 use tunnelclient::draw::Draw;
 use tunnels_lib::{Shape, Snapshot, Timestamp};
 
@@ -174,7 +174,7 @@ fn rotated_arc() {
 
 #[test]
 fn flipped_horizontal() {
-    use tunnelclient::draw::{Transform, TransformDirection};
+    use client_lib::transform::{Transform, TransformDirection};
 
     let mut seg = test_arc(0.0, 0.25, 0.0, 0.4);
     seg.x = 0.3; // offset from center so flip is visually distinct

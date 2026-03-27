@@ -2,6 +2,7 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 
 use anyhow::Result;
+use client_lib::admin::Administrator;
 use log::error;
 use midi_harness::install_midi_device_change_handler;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
@@ -52,5 +53,13 @@ fn main() -> Result<()> {
         }
     });
 
-    console::run_config_gui(client, gui_state)
+    let admin: Arc<dyn console::admin_panel::AdminService> = Arc::new(
+        Administrator::with_recv_timeout(zmq::Context::new(), 5000),
+    );
+
+    let hostname = hostname::get()
+        .map(|h| h.into_string().unwrap_or_else(|_| "unknown".to_string()))
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    console::run_config_gui(client, gui_state, admin, hostname)
 }

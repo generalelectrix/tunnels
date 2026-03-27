@@ -6,7 +6,7 @@ use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tunnelclient::config::ClientConfig;
+use client_lib::config::ClientConfig;
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_lib::Snapshot;
