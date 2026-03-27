@@ -1,5 +1,5 @@
 use crate::{
-    midi::{cc, event, note_off, note_on, MidiOutput},
+    midi::{cc, event, note_on, Event, EventType, MidiOutput},
     midi_controls::Device,
     mixer::ControlMessage,
     mixer::StateChange,
@@ -10,7 +10,7 @@ use crate::{
     show::ControlMessage as ShowControlMessage,
 };
 
-use super::{unipolar_from_midi, unipolar_to_midi, ControlMap};
+use super::{unipolar_from_midi, unipolar_to_midi};
 
 const FADER: u8 = 0x7;
 const BUMP: u8 = 0x32;
@@ -23,47 +23,35 @@ const VIDEO_CHAN_0: u8 = 66;
 /// The number of mixer channels on a single mixer page.
 pub const PAGE_SIZE: usize = 8;
 
-pub fn map_mixer_controls(device: Device, page: usize, map: &mut ControlMap) {
+pub fn interpret(event: &Event, page: usize) -> Option<ShowControlMessage> {
     use ChannelControlMessage::*;
     use ChannelStateChange::*;
 
-    let mut add = |mapping, creator| map.add(device, mapping, creator);
-
-    // Offset the mixer channels to correspond to this page.
     let channel_offset = page * PAGE_SIZE;
-
-    for chan in 0..PAGE_SIZE {
-        let mkmsg = move |ccm: ChannelControlMessage| -> ShowControlMessage {
-            ShowControlMessage::Mixer(ControlMessage {
-                channel: ChannelIdx(chan + channel_offset),
-                msg: ccm,
-            })
-        };
-        add(
-            cc(chan as u8, FADER),
-            Box::new(move |v| mkmsg(Set(Level(unipolar_from_midi(v))))),
-        );
-        add(
-            note_on(chan as u8, BUMP),
-            Box::new(move |_| mkmsg(Set(Bump(true)))),
-        );
-        add(
-            note_off(chan as u8, BUMP),
-            Box::new(move |_| mkmsg(Set(Bump(false)))),
-        );
-        add(
-            note_on(chan as u8, MASK),
-            Box::new(move |_| mkmsg(ToggleMask)),
-        );
-
-        // Configure the video channel selectors.
-        for vc in 0..Mixer::N_VIDEO_CHANNELS {
-            add(
-                note_on(chan as u8, vc as u8 + VIDEO_CHAN_0),
-                Box::new(move |_| mkmsg(ToggleVideoChannel(VideoChannelIdx(vc)))),
-            );
-        }
+    let chan = event.mapping.channel as usize;
+    if chan >= PAGE_SIZE {
+        return None;
     }
+    let v = event.value;
+    let mkmsg = |ccm: ChannelControlMessage| -> ShowControlMessage {
+        ShowControlMessage::Mixer(ControlMessage {
+            channel: ChannelIdx(chan + channel_offset),
+            msg: ccm,
+        })
+    };
+
+    let control = event.mapping.control;
+    Some(match event.mapping.event_type {
+        EventType::ControlChange if control == FADER => mkmsg(Set(Level(unipolar_from_midi(v)))),
+        EventType::NoteOn if control == BUMP => mkmsg(Set(Bump(true))),
+        EventType::NoteOff if control == BUMP => mkmsg(Set(Bump(false))),
+        EventType::NoteOn if control == MASK => mkmsg(ToggleMask),
+        EventType::NoteOn if control >= VIDEO_CHAN_0 && control < VIDEO_CHAN_0 + Mixer::N_VIDEO_CHANNELS as u8 => {
+            let vc = (control - VIDEO_CHAN_0) as usize;
+            mkmsg(ToggleVideoChannel(VideoChannelIdx(vc)))
+        }
+        _ => return None,
+    })
 }
 
 /// Emit midi messages to update UIs given the provided state change.

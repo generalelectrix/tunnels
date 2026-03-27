@@ -9,7 +9,8 @@ use crate::{
     show::ControlMessage::Audio,
 };
 
-use super::{unipolar_from_midi, unipolar_to_midi, ControlMap};
+use crate::midi::Event as MidiEvent;
+use super::{unipolar_from_midi, unipolar_to_midi};
 
 // Midi mappings for touch OSC.
 const MONITOR: Mapping = cc(1, 0);
@@ -25,35 +26,27 @@ const IS_CLIPPING: Mapping = note_on_ch1(6);
 const CMD_MM1_VU_METER: Mapping = cc(4, 81);
 const CMD_MM1_MONITOR_TOGGLE: Mapping = note_on(4, 18);
 
-pub(crate) fn map_touch_osc_audio_controls(map: &mut ControlMap) {
+pub fn interpret_touchosc(event: &MidiEvent) -> Option<crate::show::ControlMessage> {
     use ControlMessage::*;
     use StateChange::*;
-
-    let mut add = |mapping, creator| map.add(Device::TouchOsc, mapping, creator);
-
-    add(MONITOR_TOGGLE, Box::new(|_| Audio(ToggleMonitor)));
-    add(
-        FILTER_CUTOFF,
-        Box::new(|v| Audio(Set(FilterCutoff(filter_from_midi(v))))),
-    );
-    add(
-        ENVELOPE_ATTACK,
-        Box::new(|v| Audio(Set(EnvelopeAttack(envelope_edge_from_midi(v))))),
-    );
-    add(
-        ENVELOPE_RELEASE,
-        Box::new(|v| Audio(Set(EnvelopeRelease(envelope_edge_from_midi(v))))),
-    );
-    add(RESET, Box::new(|_| Audio(ResetParameters)));
-    add(GAIN, Box::new(|v| Audio(Set(Gain(gain_from_midi(v))))));
+    let v = event.value;
+    Some(match event.mapping {
+        MONITOR_TOGGLE => Audio(ToggleMonitor),
+        FILTER_CUTOFF => Audio(Set(FilterCutoff(filter_from_midi(v)))),
+        ENVELOPE_ATTACK => Audio(Set(EnvelopeAttack(envelope_edge_from_midi(v)))),
+        ENVELOPE_RELEASE => Audio(Set(EnvelopeRelease(envelope_edge_from_midi(v)))),
+        RESET => Audio(ResetParameters),
+        GAIN => Audio(Set(Gain(gain_from_midi(v)))),
+        _ => return None,
+    })
 }
 
-pub(crate) fn map_cmd_mm1_audio_controls(map: &mut ControlMap) {
+pub fn interpret_cmdmm1(event: &MidiEvent) -> Option<crate::show::ControlMessage> {
     use ControlMessage::*;
-
-    let mut add = |mapping, creator| map.add(Device::BehringerCmdMM1, mapping, creator);
-
-    add(CMD_MM1_MONITOR_TOGGLE, Box::new(|_| Audio(ToggleMonitor)));
+    Some(match event.mapping {
+        CMD_MM1_MONITOR_TOGGLE => Audio(ToggleMonitor),
+        _ => return None,
+    })
 }
 
 /// Emit midi messages to update UIs given the provided state change.

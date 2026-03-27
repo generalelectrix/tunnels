@@ -1,6 +1,6 @@
-use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap};
+use super::{bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi};
 use crate::{
-    midi::{cc, cc_ch0, event, note_on, note_on_ch0, MidiOutput, Mapping},
+    midi::{cc, cc_ch0, event, note_on, note_on_ch0, MidiOutput, Event, Mapping},
     midi_controls::Device,
     midi_controls::RadioButtons,
     palette::ColorPaletteIdx,
@@ -67,103 +67,52 @@ lazy_static! {
     };
 }
 
-pub fn map_tunnel_controls(device: Device, map: &mut ControlMap) {
+pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
     use ControlMessage::*;
     use StateChange::*;
-    let mut add = |mapping, creator| map.add(device, mapping, creator);
-
-    // unipolar knobs
-    add(
-        THICKNESS,
-        Box::new(|v| Tunnel(Set(Thickness(unipolar_from_midi(v))))),
-    );
-    add(SIZE, Box::new(|v| Tunnel(Set(Size(unipolar_from_midi(v))))));
-    add(
-        COL_CENTER,
-        Box::new(|v| Tunnel(Set(ColorCenter(unipolar_from_midi(v))))),
-    );
-    add(
-        COL_WIDTH,
-        Box::new(|v| Tunnel(Set(ColorWidth(unipolar_from_midi(v))))),
-    );
-    add(
-        COL_SPREAD,
-        Box::new(|v| Tunnel(Set(ColorSpread(unipolar_from_midi(v))))),
-    );
-    add(
-        COL_SAT,
-        Box::new(|v| Tunnel(Set(ColorSaturation(unipolar_from_midi(v))))),
-    );
-    add(
-        ASPECT_RATIO,
-        Box::new(|v| Tunnel(Set(AspectRatio(unipolar_from_midi(v))))),
-    );
-    // bipolar knobs
-    add(
-        ROT_SPEED,
-        Box::new(|v| Tunnel(Set(RotationSpeed(bipolar_from_midi(v))))),
-    );
-    add(
-        MARQUEE_SPEED,
-        Box::new(|v| Tunnel(Set(MarqueeSpeed(bipolar_from_midi(v))))),
-    );
-    add(
-        BLACKING,
-        Box::new(|v| Tunnel(Set(Blacking(bipolar_from_midi(v))))),
-    );
-    // FIXME segments tied to midi value
-    add(SEGMENTS, Box::new(|v| Tunnel(Set(Segments(v + 1)))));
-
-    add(NUDGE_RIGHT, Box::new(|_| Tunnel(NudgeRight)));
-    add(NUDGE_LEFT, Box::new(|_| Tunnel(NudgeLeft)));
-    add(NUDGE_UP, Box::new(|_| Tunnel(NudgeUp)));
-    add(NUDGE_DOWN, Box::new(|_| Tunnel(NudgeDown)));
-    add(RESET_POSITION, Box::new(|_| Tunnel(ResetPosition)));
-    add(RESET_ROTATION, Box::new(|_| Tunnel(ResetRotation)));
-    add(RESET_MARQUEE, Box::new(|_| Tunnel(ResetMarquee)));
-    add(
-        SPIN_SPEED,
-        Box::new(|v| Tunnel(Set(SpinSpeed(bipolar_from_midi(v))))),
-    );
-    add(RESET_SPIN, Box::new(|_| Tunnel(ResetSpin)));
-    add(
-        POSITION_X,
-        Box::new(|v| Tunnel(Set(PositionX(bipolar_from_midi(v).val())))),
-    );
-    add(
-        POSITION_Y,
-        Box::new(|v| Tunnel(Set(PositionY(bipolar_from_midi(v).val())))),
-    );
-
-    // render mode select
-    add(
-        RENDER_MODE_ARC,
-        Box::new(|_| Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Arc)))),
-    );
-    add(
-        RENDER_MODE_DOT,
-        Box::new(|_| Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Dot)))),
-    );
-    add(
-        RENDER_MODE_SAUCER,
-        Box::new(|_| Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Saucer)))),
-    );
-
-    // palette select
-    add(
-        note_on_ch0((PALETTE_SELECT_CONTROL_OFFSET - 1) as u8),
-        Box::new(|_| Tunnel(Set(PaletteSelection(None)))),
-    );
-    for palette_num in 0..N_PALETTE_SELECTS {
-        add(
-            note_on_ch0((PALETTE_SELECT_CONTROL_OFFSET + palette_num) as u8),
-            Box::new(move |_| {
+    let v = event.value;
+    Some(match event.mapping {
+        THICKNESS => Tunnel(Set(Thickness(unipolar_from_midi(v)))),
+        SIZE => Tunnel(Set(Size(unipolar_from_midi(v)))),
+        COL_CENTER => Tunnel(Set(ColorCenter(unipolar_from_midi(v)))),
+        COL_WIDTH => Tunnel(Set(ColorWidth(unipolar_from_midi(v)))),
+        COL_SPREAD => Tunnel(Set(ColorSpread(unipolar_from_midi(v)))),
+        COL_SAT => Tunnel(Set(ColorSaturation(unipolar_from_midi(v)))),
+        ASPECT_RATIO => Tunnel(Set(AspectRatio(unipolar_from_midi(v)))),
+        ROT_SPEED => Tunnel(Set(RotationSpeed(bipolar_from_midi(v)))),
+        MARQUEE_SPEED => Tunnel(Set(MarqueeSpeed(bipolar_from_midi(v)))),
+        BLACKING => Tunnel(Set(Blacking(bipolar_from_midi(v)))),
+        SEGMENTS => Tunnel(Set(Segments(v + 1))),
+        NUDGE_RIGHT => Tunnel(NudgeRight),
+        NUDGE_LEFT => Tunnel(NudgeLeft),
+        NUDGE_UP => Tunnel(NudgeUp),
+        NUDGE_DOWN => Tunnel(NudgeDown),
+        RESET_POSITION => Tunnel(ResetPosition),
+        RESET_ROTATION => Tunnel(ResetRotation),
+        RESET_MARQUEE => Tunnel(ResetMarquee),
+        SPIN_SPEED => Tunnel(Set(SpinSpeed(bipolar_from_midi(v)))),
+        RESET_SPIN => Tunnel(ResetSpin),
+        POSITION_X => Tunnel(Set(PositionX(bipolar_from_midi(v).val()))),
+        POSITION_Y => Tunnel(Set(PositionY(bipolar_from_midi(v).val()))),
+        RENDER_MODE_ARC => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Arc))),
+        RENDER_MODE_DOT => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Dot))),
+        RENDER_MODE_SAUCER => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Saucer))),
+        m if m.event_type == crate::midi::EventType::NoteOn
+            && m.channel == 0
+            && m.control >= (PALETTE_SELECT_CONTROL_OFFSET - 1) as u8
+            && m.control < (PALETTE_SELECT_CONTROL_OFFSET + N_PALETTE_SELECTS) as u8 =>
+        {
+            let palette_id = m.control as i32 - PALETTE_SELECT_CONTROL_OFFSET;
+            if palette_id < 0 {
+                Tunnel(Set(PaletteSelection(None)))
+            } else {
                 Tunnel(Set(PaletteSelection(Some(ColorPaletteIdx(
-                    palette_num as usize,
+                    palette_id as usize,
                 )))))
-            }),
-        );
-    }
+            }
+        }
+        _ => return None,
+    })
 }
 
 /// Emit midi messages to update UIs given the provided tunnel state change.

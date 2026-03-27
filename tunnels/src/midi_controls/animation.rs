@@ -1,15 +1,14 @@
 use crate::{
     animation::{ControlMessage, StateChange, Waveform as WaveformType},
     clock_bank::{ClockIdxExt, N_CLOCKS},
-    midi::{cc_ch0, event, note_on_ch0, note_on_ch1, MidiOutput, Mapping},
+    midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Event, EventType, MidiOutput, Mapping},
     midi_controls::Device,
     show::ControlMessage::Animation,
 };
 use lazy_static::lazy_static;
 
 use super::{
-    bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, ControlMap,
-    RadioButtons,
+    bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, RadioButtons,
 };
 
 // knobs
@@ -52,68 +51,47 @@ lazy_static! {
     };
 }
 
-pub fn map_animation_controls(device: Device, map: &mut ControlMap) {
+pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
     use ControlMessage::*;
     use StateChange::*;
     use WaveformType::*;
-
-    let mut add = |mapping, creator| map.add(device, mapping, creator);
-
-    add(
-        SPEED,
-        Box::new(|v| Animation(Set(Speed(bipolar_from_midi(v))))),
-    );
-    add(
-        SIZE,
-        Box::new(|v| Animation(Set(Size(unipolar_from_midi(v))))),
-    );
-    add(
-        DUTY_CYCLE,
-        Box::new(|v| Animation(Set(DutyCycle(unipolar_from_midi(v))))),
-    );
-    add(
-        SMOOTHING,
-        Box::new(|v| Animation(Set(Smoothing(unipolar_from_midi(v))))),
-    );
-
-    // waveform select
-    add(SINE, Box::new(|_| Animation(Set(Waveform(Sine)))));
-    add(TRIANGLE, Box::new(|_| Animation(Set(Waveform(Triangle)))));
-    add(SQUARE, Box::new(|_| Animation(Set(Waveform(Square)))));
-    add(SAWTOOTH, Box::new(|_| Animation(Set(Waveform(Sawtooth)))));
-    add(NOISE, Box::new(|_| Animation(Set(Waveform(Noise)))));
-    add(CONSTANT, Box::new(|_| Animation(Set(Waveform(Constant)))));
-
-    // n periods select
-    for n_periods in 0..16 {
-        add(
-            note_on_ch0(n_periods as u8),
-            Box::new(move |_| Animation(Set(NPeriods(n_periods)))),
-        );
-    }
-
-    // pulse/invert/standing wave
-    add(PULSE, Box::new(|_| Animation(TogglePulse)));
-    add(INVERT, Box::new(|_| Animation(ToggleInvert)));
-    add(STANDING, Box::new(|_| Animation(ToggleStanding)));
-
-    // clock select
-    add(
-        note_on_ch0((CLOCK_SELECT_CONTROL_OFFSET - 1) as u8),
-        Box::new(|_| Animation(Set(ClockSource(None)))),
-    );
-    for clock_num in 0..N_CLOCKS as i32 {
-        add(
-            note_on_ch0((CLOCK_SELECT_CONTROL_OFFSET + clock_num) as u8),
-            Box::new(move |_| Animation(SetClockSource(Some(ClockIdxExt(clock_num as usize))))),
-        );
-    }
-
-    add(USE_AUDIO_SIZE, Box::new(|_| Animation(ToggleUseAudioSize)));
-    add(
-        USE_AUDIO_SPEED,
-        Box::new(|_| Animation(ToggleUseAudioSpeed)),
-    );
+    let v = event.value;
+    Some(match event.mapping {
+        SPEED => Animation(Set(Speed(bipolar_from_midi(v)))),
+        SIZE => Animation(Set(Size(unipolar_from_midi(v)))),
+        DUTY_CYCLE => Animation(Set(DutyCycle(unipolar_from_midi(v)))),
+        SMOOTHING => Animation(Set(Smoothing(unipolar_from_midi(v)))),
+        SINE => Animation(Set(Waveform(Sine))),
+        TRIANGLE => Animation(Set(Waveform(Triangle))),
+        SQUARE => Animation(Set(Waveform(Square))),
+        SAWTOOTH => Animation(Set(Waveform(Sawtooth))),
+        NOISE => Animation(Set(Waveform(Noise))),
+        CONSTANT => Animation(Set(Waveform(Constant))),
+        PULSE => Animation(TogglePulse),
+        INVERT => Animation(ToggleInvert),
+        STANDING => Animation(ToggleStanding),
+        USE_AUDIO_SIZE => Animation(ToggleUseAudioSize),
+        USE_AUDIO_SPEED => Animation(ToggleUseAudioSpeed),
+        m if m.event_type == EventType::NoteOn
+            && m.channel == 0
+            && m.control < 16 =>
+        {
+            Animation(Set(NPeriods(m.control as u16)))
+        }
+        m if m.event_type == EventType::NoteOn
+            && m.channel == 0
+            && m.control >= (CLOCK_SELECT_CONTROL_OFFSET - 1) as u8
+            && m.control < (CLOCK_SELECT_CONTROL_OFFSET + N_CLOCKS as i32) as u8 =>
+        {
+            let clock_id = m.control as i32 - CLOCK_SELECT_CONTROL_OFFSET;
+            if clock_id < 0 {
+                Animation(Set(ClockSource(None)))
+            } else {
+                Animation(SetClockSource(Some(ClockIdxExt(clock_id as usize))))
+            }
+        }
+        _ => return None,
+    })
 }
 
 /// Emit midi messages to update UIs given the provided state change.

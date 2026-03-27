@@ -376,7 +376,7 @@ mod test {
     /// Regression test for all MIDI control mappings.
     ///
     /// Brute-forces every possible (Device, EventType, channel, control)
-    /// combination through ControlMap::dispatch and captures the Debug
+    /// combination through Device::interpret and captures the Debug
     /// output of the resulting Option<ControlMessage>.
     ///
     /// To generate/update expectations:
@@ -385,13 +385,12 @@ mod test {
     fn midi_interpret_regression() {
         use std::io::Write;
         use crate::midi::{Event, EventType, Mapping};
-        use crate::midi_controls::{ControlMap, Device};
+        use crate::midi_controls::{Device, MidiHandler};
 
         let expectations_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src/snapshots/midi_interpret_expectations.yaml");
         let generating = std::env::var("UPDATE_EXPECTATIONS").is_ok();
 
-        let control_map = ControlMap::new();
         let devices = [Device::AkaiApc40, Device::AkaiApc20, Device::TouchOsc, Device::BehringerCmdMM1];
         let event_types = [EventType::NoteOn, EventType::ControlChange];
 
@@ -407,7 +406,7 @@ mod test {
                             mapping: Mapping { event_type, channel, control },
                             value: 64,
                         };
-                        let result = control_map.dispatch(*device, event);
+                        let result = device.interpret(&event);
                         if let Some(ref msg) = result {
                             output.push_str(&format!(
                                 "{} {}:{} -> {:?}\n",
