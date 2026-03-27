@@ -14,8 +14,10 @@ use tunnels_lib::Timestamp;
 use crate::{
     animation,
     animation_target::AnimationTarget,
+    animation_visualizer::AnimationSnapshot,
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
+    clock_server::{SharedClockData, StaticClockBank},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
     gui_state::{GuiDirty, SharedGuiState},
     master_ui::{self, MasterUI},
@@ -190,6 +192,7 @@ impl Show {
                     bail!("Render server hung up.  Aborting show.");
                 }
                 frame_number += 1;
+                self.snapshot_animation_state();
             }
 
             // Consider autosaving the show.
@@ -228,6 +231,26 @@ impl Show {
             &mut self.audio_input,
             &mut self.dispatcher,
         );
+    }
+
+    /// Push the current animation state to the GUI, if the visualizer is active.
+    fn snapshot_animation_state(&mut self) {
+        let Some(gui_state) = &self.gui_state else { return };
+        if !gui_state.visualizer_active.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let animation = self.state.ui
+            .current_animation(&mut self.state.mixer)
+            .map(|a| a.animation.clone())
+            .unwrap_or_default();
+        gui_state.animation_state.store(Arc::new(AnimationSnapshot {
+            animation,
+            clocks: SharedClockData {
+                clock_bank: StaticClockBank(self.state.clocks.as_static()),
+                audio_envelope: self.audio_input.envelope(),
+            },
+            fixture_count: 0,
+        }));
     }
 
     fn service_control_event(&mut self, timeout: Duration) {
