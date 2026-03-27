@@ -24,7 +24,9 @@ pub type CommandResponse = Result<(), String>;
 pub enum MetaCommand {
     RefreshUI,
     AddMidiDevice(MidiDeviceSpec<MidiDevice>),
-    ClearMidiDevice { slot_name: String },
+    ClearMidiDevice {
+        slot_name: String,
+    },
     ConnectMidiPort {
         slot_name: String,
         device_id: midi_harness::DeviceId,
@@ -113,18 +115,15 @@ impl Dispatcher {
         match event {
             MidiDevice(event) => {
                 let needs_ui_refresh = self.midi_dispatcher.handle_device_change(event)?;
-                if needs_ui_refresh {
-                    // Fire-and-forget — no reply needed for device-reconnect refresh.
-                    let _ = self.send.send(ControlEvent::Meta(MetaCommand::RefreshUI, None));
-                }
-                Ok(None)
+                Ok(needs_ui_refresh.then_some(ReceivedEvent::Meta(MetaCommand::RefreshUI, None)))
             }
             Midi((device, event)) => Ok(self
                 .midi_dispatcher
                 .map_event_to_show_control(device, event)
                 .map(ReceivedEvent::Control)),
-            Osc((device, event)) => Ok(osc::map_event_to_show_control(device, event)?
-                .map(ReceivedEvent::Control)),
+            Osc((device, event)) => {
+                Ok(osc::map_event_to_show_control(device, event)?.map(ReceivedEvent::Control))
+            }
             Meta(cmd, reply) => Ok(Some(ReceivedEvent::Meta(cmd, reply))),
         }
     }
@@ -143,7 +142,8 @@ impl Dispatcher {
         device_id: midi_harness::DeviceId,
         kind: midi_harness::DeviceKind,
     ) -> Result<()> {
-        self.midi_dispatcher.connect_midi_port(slot_name, device_id, kind)
+        self.midi_dispatcher
+            .connect_midi_port(slot_name, device_id, kind)
     }
 
     pub fn midi_slot_statuses(&self) -> Vec<midi_harness::SlotStatus> {
