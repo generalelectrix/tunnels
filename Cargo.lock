@@ -270,6 +270,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a07d1f37ff60921c83bdfc7407723bdefe89b44b98a9b772f225c8f9d67141a6"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1629,6 +1638,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_plot"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67fc9b427a837264e55381a5cade6e28fe83ac5b165a61b9c888548c732a9c95"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2389,6 +2409,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdf242682df893b86f33a73828fb09ca4b2d3bb6cc95249707fc684d27484b91"
 dependencies = [
  "bitflags 2.11.0",
+]
+
+[[package]]
+name = "gui_common"
+version = "0.1.0"
+dependencies = [
+ "eframe",
 ]
 
 [[package]]
@@ -5920,12 +5947,15 @@ name = "tunnels"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "audio-processor-analysis",
  "audio-processor-traits",
  "augmented-atomics",
  "augmented-dsp-filters",
  "cpal",
  "derive_more 2.0.1",
+ "eframe",
+ "egui_plot",
  "insta",
  "itertools 0.14.0",
  "lazy_static",

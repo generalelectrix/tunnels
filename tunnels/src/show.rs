@@ -6,7 +6,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::{Path, PathBuf},
-    sync::mpsc::{Receiver, Sender},
+    sync::{mpsc::{Receiver, Sender}, Arc},
     time::{Duration, Instant},
 };
 use tunnels_lib::Timestamp;
@@ -17,6 +17,7 @@ use crate::{
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
+    gui_state::SharedGuiState,
     master_ui::{self, MasterUI},
     midi::DeviceSpec as MidiDeviceSpec,
     midi_controls::Device,
@@ -40,6 +41,7 @@ pub struct Show {
     state: ShowState,
     save_path: Option<PathBuf>,
     last_save: Option<Instant>,
+    gui_state: Option<SharedGuiState>,
 }
 
 impl Show {
@@ -52,6 +54,7 @@ impl Show {
         audio_input_device: Option<String>,
         run_clock_service: bool,
         save_path: Option<PathBuf>,
+        gui_state: Option<SharedGuiState>,
     ) -> Result<Self> {
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices
@@ -78,6 +81,7 @@ impl Show {
             },
             save_path,
             last_save: None,
+            gui_state,
         })
     }
 
@@ -270,11 +274,19 @@ impl Show {
             SetAudioDevice(name) => {
                 self.audio_input = AudioInput::new(name)?;
             }
-            SetClockPublisher(run) => {
-                self.run_clock_service = run;
-            }
         }
+        self.snapshot_gui_state();
         Ok(())
+    }
+
+    fn snapshot_gui_state(&self) {
+        let Some(gui_state) = &self.gui_state else { return };
+        gui_state.midi_slots.store(Arc::new(
+            self.dispatcher.midi_slot_statuses()
+        ));
+        gui_state.audio_device.store(Arc::new(
+            self.audio_input.device_name().to_string()
+        ));
     }
 }
 
@@ -333,7 +345,7 @@ mod test {
     #[test]
     fn test_render() -> Result<()> {
         let (send, recv) = channel();
-        let mut show = Show::new(Vec::new(), Vec::new(), send, recv, None, false, None)?;
+        let mut show = Show::new(Vec::new(), Vec::new(), send, recv, None, false, None, None)?;
 
         show.test_mode(stress);
 
@@ -799,6 +811,7 @@ mod test {
                 None,
                 false,
                 None,
+                None,
             )
             .unwrap();
             (show, send)
@@ -850,14 +863,6 @@ mod test {
         let client = test_show_client();
         client
             .send_command(MetaCommand::SetAudioDevice(None))
-            .unwrap();
-    }
-
-    #[test]
-    fn meta_set_clock_publisher() {
-        let client = test_show_client();
-        client
-            .send_command(MetaCommand::SetClockPublisher(true))
             .unwrap();
     }
 

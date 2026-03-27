@@ -74,6 +74,7 @@ fn main() -> Result<()> {
         audio_input_device,
         run_clock_service,
         paths.save_path,
+        None,
     )?;
 
     if let Some(setup_test) = test_mode {
