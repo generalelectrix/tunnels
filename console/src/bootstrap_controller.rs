@@ -1,14 +1,12 @@
 //! Host-side controller for discovering and pushing binaries to bootstrappers.
 
 use anyhow::Result;
-use log::info;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use tunnels_lib::bootstrap::{PushBinaryRequest, PushBinaryResponse};
 use zero_configure::req_rep::Controller;
-use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelbootstrap";
 
@@ -18,15 +16,15 @@ pub struct BootstrapController {
 }
 
 impl BootstrapController {
-    pub fn new(ctx: Context) -> Self {
+    pub fn new() -> Self {
         Self {
-            controller: Controller::new(ctx, SERVICE_NAME.to_string()),
+            controller: Controller::new(SERVICE_NAME.to_string()),
         }
     }
 
-    pub fn with_recv_timeout(ctx: Context, timeout: Duration) -> Self {
+    pub fn with_recv_timeout(timeout: Duration) -> Self {
         Self {
-            controller: Controller::with_recv_timeout(ctx, SERVICE_NAME.to_string(), Some(timeout)),
+            controller: Controller::with_recv_timeout(SERVICE_NAME.to_string(), Some(timeout)),
         }
     }
 

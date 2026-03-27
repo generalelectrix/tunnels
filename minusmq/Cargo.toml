@@ -1,0 +1,8 @@
+[package]
+name = "minusmq"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+log = "0.4"

@@ -1,9 +1,11 @@
+//! DNS-SD-integrated publish-subscribe using minusmq TCP pub/sub.
+
 use std::marker::PhantomData;
+use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
 
 use anyhow::{bail, Result};
 use rmp_serde::Serializer;
 use serde::{de::DeserializeOwned, Serialize};
-use zmq::{Context, Socket, DONTWAIT};
 
 use crate::{
     bare::{register_service, Browser, StopFn},
@@ -14,20 +16,19 @@ use crate::{
 /// The service will be advertised until dropped.
 pub struct PublisherService<T: Serialize> {
     stop: Option<StopFn>,
-    socket: Socket,
+    publisher: minusmq::pub_sub::Publisher,
     send_buf: Vec<u8>,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: Serialize> PublisherService<T> {
-    pub fn new(ctx: &Context, name: &str, port: u16) -> Result<Self> {
+    pub fn new(name: &str, port: u16) -> Result<Self> {
         let stop = register_service(name, port)?;
-        let socket = ctx.socket(zmq::PUB)?;
-        let addr = format!("tcp://*:{port}");
-        socket.bind(&addr)?;
+        let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+        let publisher = minusmq::pub_sub::Publisher::new(listener)?;
         Ok(Self {
             stop: Some(stop),
-            socket,
+            publisher,
             send_buf: Vec::new(),
             _msg_type: PhantomData,
         })
@@ -36,8 +37,21 @@ impl<T: Serialize> PublisherService<T> {
     pub fn send(&mut self, val: &T) -> Result<()> {
         self.send_buf.clear();
         val.serialize(&mut Serializer::new(&mut self.send_buf))?;
-        self.socket.send(&self.send_buf, 0)?;
+        // Use channel 0 for topic-less broadcast (clock service).
+        self.publisher.send(0, &self.send_buf);
         Ok(())
+    }
+
+    pub fn send_on_channel(&mut self, channel: u8, val: &T) -> Result<()> {
+        self.send_buf.clear();
+        val.serialize(&mut Serializer::new(&mut self.send_buf))?;
+        self.publisher.send(channel, &self.send_buf);
+        Ok(())
+    }
+
+    /// Send raw bytes on a channel (for frame broadcast which serializes externally).
+    pub fn send_raw(&self, channel: u8, data: &[u8]) {
+        self.publisher.send(channel, data);
     }
 }
 
@@ -56,14 +70,13 @@ struct SubConfig {
 
 pub struct SubscriberService<T: DeserializeOwned> {
     browser: Browser<SubConfig>,
-    ctx: Context,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> SubscriberService<T> {
     /// Browse for publishers of the named service.
-    /// Connect SUB sockets upon request.
-    pub fn new(ctx: Context, name: String) -> Self {
+    /// Connect subscribers upon request.
+    pub fn new(name: String) -> Self {
         Self {
             browser: Browser::new(name, |service| {
                 Ok(SubConfig {
@@ -71,7 +84,6 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     port: service.port,
                 })
             }),
-            ctx,
             _msg_type: PhantomData,
         }
     }
@@ -81,38 +93,36 @@ impl<T: DeserializeOwned> SubscriberService<T> {
         self.browser.list()
     }
 
-    /// Connect a SUB socket to a service.
-    /// Optionally filter to the provided topic.
-    pub fn subscribe(&self, name: &str, topic: Option<&[u8]>) -> Result<Receiver<T>> {
+    /// Connect a subscriber to a service on the given channel.
+    pub fn subscribe(&self, name: &str, channel: u8) -> Result<Receiver<T>> {
         self.browser
             .use_service(name, move |cfg| {
-                Receiver::new(&self.ctx, &cfg.hostname, cfg.port, topic)
+                // Resolve hostname to IP at subscribe time.
+                let addr: SocketAddr = (&*cfg.hostname, cfg.port)
+                    .to_socket_addrs()?
+                    .next()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Could not resolve {}:{}", cfg.hostname, cfg.port)
+                    })?;
+                Ok(Receiver::new(&addr.ip().to_string(), addr.port(), channel))
             })
             .unwrap_or_else(|| bail!("no instance of service {} found", self.browser.name()))
     }
 }
 
-/// A strongly-typed 0mq SUB socket that expects messages to be encoded using msgpack.
+/// A strongly-typed TCP subscriber that expects messages to be encoded using msgpack.
 pub struct Receiver<T: DeserializeOwned> {
-    socket: Socket,
-    has_topic: bool,
+    subscriber: minusmq::pub_sub::Subscriber,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> Receiver<T> {
-    /// Create a new 0mq SUB connected to the provided socket addr.
-    /// Expect a multipart message if a topic is provided.
-    pub fn new(ctx: &Context, host: &str, port: u16, topic: Option<&[u8]>) -> Result<Self> {
-        let socket = ctx.socket(zmq::SUB)?;
-        let addr = format!("tcp://{host}:{port}");
-        socket.connect(&addr)?;
-        socket.set_subscribe(topic.unwrap_or(&[]))?;
-
-        Ok(Self {
-            socket,
-            has_topic: topic.is_some(),
+    /// Create a new subscriber connected to the provided host:port on the given channel.
+    pub fn new(host: &str, port: u16, channel: u8) -> Self {
+        Self {
+            subscriber: minusmq::pub_sub::Subscriber::new(host, port, channel),
             _msg_type: PhantomData,
-        })
+        }
     }
 
     pub fn receive_msg(&mut self, block: bool) -> ReceiveResult<Option<T>> {
@@ -121,32 +131,9 @@ impl<T: DeserializeOwned> Receiver<T> {
 }
 
 impl<T: DeserializeOwned> Receive for Receiver<T> {
-    fn receive_buffer(&mut self, block: bool) -> ReceiveResult<Option<Vec<u8>>> {
-        let flag = if block { 0 } else { DONTWAIT };
-
-        if self.has_topic {
-            // The frame messages are two parts; the first part is the topic filter.
-            // Discard the topic filter, leaving just the msgpacked data as the
-            // second part of the message.
-            match self.socket.recv_multipart(flag) {
-                Ok(mut parts) => {
-                    if parts.len() != 2 {
-                        bail!("buffer receieve error, expected a 2-part message but got {} parts: {:?}", parts.len(), parts);
-                    }
-                    Ok(parts.pop())
-                }
-                Err(zmq::Error::EAGAIN) => {
-                    // No message was available.
-                    Ok(None)
-                }
-                Err(other_err) => bail!("buffer receieve error: {other_err}"),
-            }
-        } else {
-            match self.socket.recv_bytes(flag) {
-                Ok(msg) => Ok(Some(msg)),
-                Err(zmq::Error::EAGAIN) => Ok(None),
-                Err(other_err) => bail!("buffer receieve error: {other_err}"),
-            }
-        }
+    fn receive_buffer(&mut self, _block: bool) -> ReceiveResult<Option<Vec<u8>>> {
+        // minusmq subscriber always blocks. The `block` parameter is preserved
+        // for API compatibility but is effectively always true.
+        Ok(Some(self.subscriber.recv()))
     }
 }

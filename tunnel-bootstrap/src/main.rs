@@ -1,4 +1,4 @@
-//! Tunnel bootstrapper — receives binary pushes over ZMQ, writes them to disk,
+//! Tunnel bootstrapper — receives binary pushes over TCP, writes them to disk,
 //! and launches them as managed child processes.
 
 mod child;
@@ -14,7 +14,6 @@ use std::path::Path;
 use std::sync::Mutex;
 use tunnels_lib::bootstrap::{PushBinaryRequest, PushBinaryResponse};
 use zero_configure::req_rep::run_service_req_rep;
-use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelbootstrap";
 const PORT: u16 = 15000;
@@ -25,11 +24,10 @@ fn main() {
 
     info!("tunnel-bootstrap starting on port {PORT}");
 
-    let ctx = Context::new();
     let managed_path = Path::new("./managed");
     let child_manager = Mutex::new(ChildManager::new(managed_path));
 
-    run_service_req_rep(ctx, SERVICE_NAME, PORT, |request_buffer| {
+    run_service_req_rep(SERVICE_NAME, PORT, |request_buffer| {
         let response = handle_request(request_buffer, &child_manager);
         rmp_serde::to_vec(&response).unwrap_or_else(|e| {
             error!("Failed to serialize response: {e}");

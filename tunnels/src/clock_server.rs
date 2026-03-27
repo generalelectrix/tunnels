@@ -1,13 +1,11 @@
 //! Advertise a clock bank stream over DNSSD.
 //! Provide a strongly-typed receiver.
-//! FIXME: would be nice to clean up deserialization to avoid so many allocations.
 
 use anyhow::Result;
 
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 use zero_configure::pub_sub::{PublisherService, SubscriberService};
-use zmq::Context;
 
 use crate::{
     clock::StaticClock,
@@ -18,13 +16,13 @@ const SERVICE_NAME: &str = "global_show_clocks";
 const PORT: u16 = 9090;
 
 /// Launch clock publisher service.
-pub fn clock_publisher(ctx: &Context) -> Result<ClockPublisher> {
-    PublisherService::new(ctx, SERVICE_NAME, PORT)
+pub fn clock_publisher() -> Result<ClockPublisher> {
+    PublisherService::new(SERVICE_NAME, PORT)
 }
 
 /// Launch clock subscriber service.
-pub fn clock_subscriber(ctx: Context) -> ClockSubscriber {
-    SubscriberService::new(ctx, SERVICE_NAME.to_string())
+pub fn clock_subscriber() -> ClockSubscriber {
+    SubscriberService::new(SERVICE_NAME.to_string())
 }
 
 /// A collection of static clock state data with audio envelope.

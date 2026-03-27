@@ -8,7 +8,8 @@ edition = "2021"
 async-dnssd = "^0.4"
 tokio-core = "^0.1"
 futures = "^0.1"
-zmq.workspace = true
 serde.workspace = true
 rmp-serde.workspace = true
 anyhow.workspace = true
+minusmq = { path = "../minusmq" }
+log = "0.4"

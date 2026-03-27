@@ -52,9 +52,8 @@ fn main() -> Result<()> {
         }
     });
 
-    let admin: Arc<dyn console::admin_panel::AdminService> = Arc::new(
-        BootstrapController::with_recv_timeout(zmq::Context::new(), Duration::from_secs(10)),
-    );
+    let admin: Arc<dyn console::admin_panel::AdminService> =
+        Arc::new(BootstrapController::with_recv_timeout(Duration::from_secs(10)));
 
     let hostname = hostname::get()
         .map(|h| h.into_string().unwrap_or_else(|_| "unknown".to_string()))

@@ -7,7 +7,7 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::draw::Draw;
-use tunnels_lib::{Shape, Snapshot, Timestamp};
+use tunnels_lib::{Shape, Snapshot};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -136,7 +136,7 @@ fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> Shape {
 fn single_arc() {
     let snapshot = Snapshot {
         frame_number: 0,
-        time: Timestamp(0),
+
         layers: vec![Arc::new(vec![test_arc(0.0, 0.25, 0.0, 0.4)])],
     };
     let image = render_snapshot(&snapshot, &test_config());
@@ -152,7 +152,7 @@ fn concentric_rings() {
     ])];
     let snapshot = Snapshot {
         frame_number: 0,
-        time: Timestamp(0),
+
         layers,
     };
     let image = render_snapshot(&snapshot, &test_config());
@@ -165,7 +165,7 @@ fn rotated_arc() {
     seg.rot_angle = 0.125; // 45 degrees
     let snapshot = Snapshot {
         frame_number: 0,
-        time: Timestamp(0),
+
         layers: vec![Arc::new(vec![seg])],
     };
     let image = render_snapshot(&snapshot, &test_config());
@@ -181,7 +181,7 @@ fn flipped_horizontal() {
 
     let snapshot = Snapshot {
         frame_number: 0,
-        time: Timestamp(0),
+
         layers: vec![Arc::new(vec![seg])],
     };
 

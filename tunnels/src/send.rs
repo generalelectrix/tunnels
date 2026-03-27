@@ -2,10 +2,10 @@ use anyhow::Result;
 use log::{error, info, warn};
 use rmp_serde::Serializer;
 use serde::Serialize;
+use std::net::TcpListener;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
-use tunnels_lib::{number::UnipolarFloat, Snapshot, Timestamp};
-use zmq::{Context, Socket};
+use tunnels_lib::{number::UnipolarFloat, Snapshot};
 
 use crate::clock_server::SharedClockData;
 use crate::{
@@ -21,13 +21,12 @@ const PORT: u16 = 6000;
 /// Renders the show state and sends it to all connected clients.
 /// Returns a channel for sending frames to be rendered.
 /// The service runs until the channel is dropped.
-pub fn start_render_service(ctx: &Context, run_clock_service: bool) -> Result<Sender<Frame>> {
-    let socket = ctx.socket(zmq::PUB)?;
-    let addr = format!("tcp://*:{PORT}");
-    socket.bind(&addr)?;
+pub fn start_render_service(run_clock_service: bool) -> Result<Sender<Frame>> {
+    let listener = TcpListener::bind(format!("0.0.0.0:{PORT}"))?;
+    let publisher = minusmq::pub_sub::Publisher::new(listener)?;
 
     let mut clock_service = if run_clock_service {
-        Some(clock_publisher(ctx)?)
+        Some(clock_publisher()?)
     } else {
         None
     };
@@ -57,10 +56,9 @@ pub fn start_render_service(ctx: &Context, run_clock_service: bool) -> Result<Se
                     for (video_chan, draw_commands) in video_outs.into_iter().enumerate() {
                         let snapshot = Snapshot {
                             frame_number: frame.number,
-                            time: frame.timestamp,
                             layers: draw_commands,
                         };
-                        send_snapshot(&mut send_buf, &socket, video_chan, snapshot);
+                        send_snapshot(&mut send_buf, &publisher, video_chan, snapshot);
                     }
 
                     if let Some(ref mut clock_service) = clock_service {
@@ -112,15 +110,14 @@ fn get_frame(recv: &mut Receiver<Frame>) -> Option<(u32, Frame)> {
 /// Serialize the provided snapshot and send it to the specified video channel.
 /// Error conditions are logged.
 fn send_snapshot(
-    mut send_buf: &mut Vec<u8>,
-    socket: &Socket,
+    send_buf: &mut Vec<u8>,
+    publisher: &minusmq::pub_sub::Publisher,
     video_channel: usize,
     snapshot: Snapshot,
 ) {
-    let topic = [video_channel as u8; 1];
     send_buf.clear();
 
-    if let Err(e) = snapshot.serialize(&mut Serializer::new(&mut send_buf)) {
+    if let Err(e) = snapshot.serialize(&mut Serializer::new(&mut *send_buf)) {
         error!(
             "Snapshot serialization error for frame {} channel {}: {}.",
             snapshot.frame_number, video_channel, e,
@@ -128,18 +125,11 @@ fn send_snapshot(
         return;
     }
 
-    let messages: [&[u8]; 2] = [&topic, send_buf];
-    if let Err(e) = socket.send_multipart(messages.iter(), 0) {
-        error!(
-            "Snapshot send error for frame {} channel {}: {}.",
-            snapshot.frame_number, video_channel, e,
-        );
-    }
+    publisher.send(video_channel as u8, send_buf);
 }
 
 pub struct Frame {
     pub number: u64,
-    pub timestamp: Timestamp,
     pub mixer: Mixer,
     pub clocks: ClockBank,
     pub color_palette: ColorPalette,

@@ -6,15 +6,12 @@ use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
 use std::process::ExitCode;
 use tunnels_lib::RunFlag;
-use zmq::Context;
 
 fn main() -> ExitCode {
     let first_arg = env::args().nth(1).expect(
         "First argument must be 'monitor' to run a local monitor (config via stdin), \
         or the integer virtual video channel to listen to.",
     );
-
-    let ctx = Context::new();
 
     if first_arg == "monitor" {
         let cfg: ClientConfig = match rmp_serde::from_read(std::io::stdin()) {
@@ -24,7 +21,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        match Show::new(cfg, ctx, RunFlag::default()) {
+        match Show::new(cfg, RunFlag::default()) {
             Ok(mut show) => {
                 println!("OK");
                 show.run();
@@ -48,7 +45,7 @@ fn main() -> ExitCode {
             LevelFilter::Info
         });
 
-        let mut show = Show::new(cfg, ctx, RunFlag::default()).expect("Failed to initialize show");
+        let mut show = Show::new(cfg, RunFlag::default()).expect("Failed to initialize show");
 
         show.run();
     }

@@ -24,7 +24,6 @@ log.workspace = true
 simplelog.workspace = true
 derive_more.workspace = true
 lazy_static.workspace = true
-zmq.workspace = true
 anyhow.workspace = true
 rmp-serde.workspace = true
 
@@ -42,6 +41,7 @@ arc-swap = "1"
 midi_harness = { path = "../midi_harness" }
 tunnels_lib = { path = "../tunnels_lib" }
 zero_configure = { path = "../zero_configure" }
+minusmq = { path = "../minusmq" }
 
 # Audio subsystem
 cpal = "0.16"

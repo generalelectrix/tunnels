@@ -11,6 +11,7 @@ members = [
     "gui_common",
     "console",
     "client_lib",
+    "minusmq",
 ]
 
 [workspace.dependencies]
@@ -19,6 +20,5 @@ log = "0.4"
 derive_more = { version = "2", features = ["full"] }
 simplelog = "0.12"
 lazy_static = "1"
-zmq = "0.10"
 rmp-serde = "1"
 anyhow = "1"

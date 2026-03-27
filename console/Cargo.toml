@@ -19,7 +19,6 @@ simplelog = "0.12"
 rmp-serde = { workspace = true }
 sha2 = "0.10"
 zero_configure = { path = "../zero_configure" }
-zmq = { workspace = true }
 hostname = "0.4"
 
 [dev-dependencies]

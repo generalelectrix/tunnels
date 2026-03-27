@@ -6,7 +6,6 @@ pub mod number;
 pub mod prompt;
 pub mod smooth;
 
-use derive_more::{Add, AddAssign, Display, Div, Mul, Sub};
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,57 +14,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
 };
-
-/// Timestamp used for expressing moments in time, has units of microseconds.
-/// Normally computed by the show controller as the number of microseconds since
-/// the show launched.
-/// Signed type to support possible situations where we need to subtract one
-/// timestamp from another and end up with a negative result.
-#[derive(
-    Copy,
-    Eq,
-    PartialEq,
-    Hash,
-    Serialize,
-    Deserialize,
-    Debug,
-    Display,
-    Clone,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Ord,
-    AddAssign,
-    PartialOrd,
-    Default,
-)]
-pub struct Timestamp(pub i64);
-
-impl Timestamp {
-    pub fn since(start: Instant) -> Self {
-        Self::from_duration(start.elapsed())
-    }
-
-    pub fn from_duration(d: Duration) -> Self {
-        Self(d.as_micros() as i64)
-    }
-}
-
-impl num_traits::cast::ToPrimitive for Timestamp {
-    fn to_i64(&self) -> Option<i64> {
-        Some(self.0)
-    }
-
-    fn to_u64(&self) -> Option<u64> {
-        if self.0 >= 0 {
-            return Some(self.0 as u64);
-        }
-        None
-    }
-}
 
 /// A helper wrapper around an atomically-reference-counted atomic boolean.
 /// Used to control program flow across multiple threads.
@@ -169,7 +118,6 @@ pub type LayerCollection = Vec<Arc<Vec<Shape>>>;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub frame_number: u64,
-    pub time: Timestamp,
     pub layers: LayerCollection,
 }
 
