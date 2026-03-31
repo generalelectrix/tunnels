@@ -101,6 +101,10 @@ impl eframe::App for ConfigApp {
                 }
                 Tab::Audio => {
                     let audio_device = self.gui_state.audio_device.load();
+                    let clock_service_running = self
+                        .gui_state
+                        .clock_service_running
+                        .load(Ordering::Relaxed);
                     AudioPanel {
                         ctx: GuiContext {
                             modal: &mut self.modal,
@@ -108,6 +112,7 @@ impl eframe::App for ConfigApp {
                         },
                         state: &mut self.audio_panel,
                         current_device: &audio_device,
+                        clock_service_running,
                     }
                     .ui(ui);
                 }

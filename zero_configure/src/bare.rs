@@ -2,10 +2,15 @@
 
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+/// Maximum service name length per RFC 6763.
+/// mdns-sd only validates this asynchronously on its daemon thread, so we check
+/// eagerly at registration time to surface errors immediately.
+const SERVICE_NAME_LEN_MAX: usize = 15;
 
 pub type StopFn = Box<dyn FnOnce() + Send>;
 
@@ -101,6 +106,15 @@ fn mdns_service_hostname(service_name: &str) -> String {
 /// Returns the daemon (which must be kept alive to maintain the registration) and
 /// the fullname needed for later unregistration.
 pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemon, String)> {
+    if name.len() > SERVICE_NAME_LEN_MAX {
+        bail!(
+            "Service name {:?} is {} bytes, max is {}",
+            name,
+            name.len(),
+            SERVICE_NAME_LEN_MAX,
+        );
+    }
+
     let service_type = service_type_fq(name);
     let daemon = ServiceDaemon::new()?;
 
@@ -277,6 +291,22 @@ mod tests {
     fn test_register_and_stop() {
         let stop = register_service("regtest", 19990).unwrap();
         stop();
+    }
+
+    #[test]
+    fn name_at_max_length_accepted() {
+        // 15 chars, right at the RFC 6763 limit.
+        let stop = register_service("exactly15chrsss", 0).unwrap();
+        stop();
+    }
+
+    #[test]
+    fn name_too_long_rejected() {
+        // 16 chars, one over the limit.
+        match register_service("toolongservicenm", 0) {
+            Err(e) => assert!(e.to_string().contains("max is"), "{e}"),
+            Ok(_) => panic!("should have rejected name longer than 15 chars"),
+        }
     }
 
     #[test]

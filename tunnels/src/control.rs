@@ -33,6 +33,8 @@ pub enum MetaCommand {
         kind: midi_harness::DeviceKind,
     },
     SetAudioDevice(Option<String>),
+    StartClockService,
+    StopClockService,
 }
 
 /// A handle for sending commands to the show and waiting for responses.

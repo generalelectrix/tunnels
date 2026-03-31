@@ -59,3 +59,16 @@ impl BootstrapController {
         response.map_err(|e| anyhow::anyhow!(e))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_name_registers() {
+        // Use an arbitrary port; we only need to verify the service name is valid.
+        let stop = zero_configure::bare::register_service(SERVICE_NAME, 0)
+            .expect("should register");
+        stop();
+    }
+}

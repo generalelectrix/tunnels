@@ -12,7 +12,7 @@ use crate::{
     clock_bank::{ClockIdx, ClockStore, N_CLOCKS},
 };
 
-const SERVICE_NAME: &str = "global_show_clocks";
+const SERVICE_NAME: &str = "showclocks";
 const PORT: u16 = 9090;
 
 /// Launch clock publisher service.
@@ -60,5 +60,25 @@ impl ClockStore for StaticClockBank {
 impl StaticClockBank {
     fn get(&self, index: ClockIdx) -> &StaticClock {
         &self.0[usize::from(index)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_name_registers() {
+        let stop = zero_configure::bare::register_service(SERVICE_NAME, 0)
+            .expect("should register");
+        stop();
+    }
+
+    #[test]
+    fn too_long_service_name_rejected() {
+        match zero_configure::bare::register_service("this_name_is_too_long", 0) {
+            Err(e) => assert!(e.to_string().contains("max is"), "{e}"),
+            Ok(_) => panic!("should have rejected name longer than 15 chars"),
+        }
     }
 }

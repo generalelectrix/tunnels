@@ -19,8 +19,6 @@ const RENDER_INTERVAL: Duration = Duration::from_nanos(16666667 / 4);
 fn main() -> Result<()> {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
 
-    let run_clock_service = std::env::args().any(|a| a == "--run-clock-service");
-
     let (send_control_event, recv_control_event) = channel();
     install_midi_device_change_handler(ControlEventHandler(send_control_event.clone()))?;
 
@@ -36,7 +34,7 @@ fn main() -> Result<()> {
             send_control_event,
             recv_control_event,
             None,
-            run_clock_service,
+            false,
             None,
             Some(show_gui_state),
         );
