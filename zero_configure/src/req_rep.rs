@@ -2,14 +2,14 @@
 //! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
 
 use anyhow::bail;
-use async_dnssd::{register_extended, RegisterData, RegisterFlags};
-use tokio_core::reactor::Core;
+use mdns_sd::{ServiceDaemon, ServiceInfo};
 
 use zmq::{Context, Socket};
 
 use anyhow::Result;
+use std::collections::HashMap;
 
-use crate::bare::{reg_type, Browser};
+use crate::bare::{mdns_hostname, service_type_fq, Browser};
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
@@ -23,15 +23,22 @@ where
     let addr = format!("tcp://*:{port}");
     socket.bind(&addr)?;
 
-    // Create a tokio core just to run this one future.
-    let core = Core::new()?;
-
     // Start advertising this service over DNS-SD.
-    let register_data = RegisterData {
-        flags: RegisterFlags::SHARED,
-        ..Default::default()
-    };
-    let _registration = register_extended(&reg_type(name), port, register_data, &core.handle())?;
+    let service_type = service_type_fq(name);
+    let daemon = ServiceDaemon::new()?;
+
+    let hostname = mdns_hostname();
+
+    let service_info = ServiceInfo::new(
+        &service_type,
+        name,
+        &hostname,
+        "",
+        port,
+        None::<HashMap<String, String>>,
+    )?
+    .enable_addr_auto();
+    daemon.register(service_info)?;
 
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {
@@ -62,7 +69,7 @@ impl Controller {
     /// If `None`, sockets block forever on receive (the default ZMQ behavior).
     pub fn with_recv_timeout(ctx: Context, name: String, recv_timeout: Option<i32>) -> Self {
         Self(Browser::new(name, move |service| {
-            req_socket(&service.host_target, service.port, &ctx, recv_timeout)
+            req_socket(&service.hostname, service.port, &ctx, recv_timeout)
         }))
     }
 
@@ -126,8 +133,8 @@ mod tests {
     /// Test that we can advertise a single service and successfully connect to it.
     #[test]
     fn test_pair() {
-        let name = "test";
-        let port = 10000;
+        let name = "reqreptest";
+        let port = 19992;
 
         let controller = Controller::new(Context::new(), name.to_string());
 

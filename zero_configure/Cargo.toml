@@ -5,9 +5,8 @@ authors = ["Chris Macklin <chris.macklin@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-async-dnssd = "^0.4"
-tokio-core = "^0.1"
-futures = "^0.1"
+mdns-sd = "0.18"
+hostname = "0.4"
 zmq.workspace = true
 serde.workspace = true
 rmp-serde.workspace = true
