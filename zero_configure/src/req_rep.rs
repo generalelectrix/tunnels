@@ -1,15 +1,11 @@
 //! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
 //! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
 
-use anyhow::bail;
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use anyhow::{bail, Result};
 
 use zmq::{Context, Socket};
 
-use anyhow::Result;
-use std::collections::HashMap;
-
-use crate::bare::{mdns_hostname, service_type_fq, Browser};
+use crate::bare::{create_and_register, Browser};
 
 /// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
 /// Pass each message received on the socket to the action callback.  Send the byte buffer returned
@@ -24,21 +20,8 @@ where
     socket.bind(&addr)?;
 
     // Start advertising this service over DNS-SD.
-    let service_type = service_type_fq(name);
-    let daemon = ServiceDaemon::new()?;
-
-    let hostname = mdns_hostname();
-
-    let service_info = ServiceInfo::new(
-        &service_type,
-        name,
-        &hostname,
-        "",
-        port,
-        None::<HashMap<String, String>>,
-    )?
-    .enable_addr_auto();
-    daemon.register(service_info)?;
+    // Keep _daemon alive on the stack; dropping it would end the registration.
+    let (_daemon, _fullname) = create_and_register(name, port)?;
 
     loop {
         if let Ok(msg) = socket.recv_bytes(0) {

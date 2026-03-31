@@ -9,18 +9,15 @@ use std::thread;
 
 pub type StopFn = Box<dyn FnOnce() + Send>;
 
-/// A resolved DNS-SD service instance, containing just the hostname and port.
-pub struct ServiceEndpoint {
-    pub hostname: String,
-    pub port: u16,
+/// A resolved DNS-SD service instance: the address and port to connect to.
+pub(crate) struct ServiceEndpoint {
+    pub(crate) hostname: String,
+    pub(crate) port: u16,
 }
 
-/// Format a service name into a DNS-SD TCP registration type.
-pub fn reg_type(name: &str) -> String {
-    format!("_{name}._tcp")
-}
-
-/// Format a service name into the fully-qualified type required by mdns-sd.
+/// Format a service name into the fully-qualified mDNS service type (e.g. `"_foo._tcp.local."`).
+///
+/// mdns-sd requires the `.local.` suffix on all service types.
 pub(crate) fn service_type_fq(name: &str) -> String {
     format!("_{name}._tcp.local.")
 }
@@ -42,7 +39,7 @@ fn strip_trailing_dot(hostname: &str) -> String {
 }
 
 /// Get the local hostname in mDNS format (ending with ".local.").
-pub(crate) fn mdns_hostname() -> String {
+fn mdns_hostname() -> String {
     let raw = hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
@@ -57,9 +54,10 @@ pub(crate) fn mdns_hostname() -> String {
     }
 }
 
-/// Register a vanilla service over DNS-SD.
-/// Return a callback that will deregister the service.
-pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
+/// Create a `ServiceDaemon` and register a service with automatic address resolution.
+/// Returns the daemon (which must be kept alive to maintain the registration) and
+/// the fullname needed for later unregistration.
+pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemon, String)> {
     let service_type = service_type_fq(name);
     let daemon = ServiceDaemon::new()?;
 
@@ -78,6 +76,14 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
     let fullname = service_info.get_fullname().to_string();
     daemon.register(service_info)?;
 
+    Ok((daemon, fullname))
+}
+
+/// Register a vanilla service over DNS-SD.
+/// Return a callback that will deregister the service.
+pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
+    let (daemon, fullname) = create_and_register(name, port)?;
+
     Ok(Box::new(move || {
         let _ = daemon.unregister(&fullname);
         let _ = daemon.shutdown();
@@ -87,7 +93,7 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
 /// Maintain a collection of service instances we can remotely interact with.
 /// FIXME: there's currently no way to stop the browse thread, it will run until
 /// the process terminates even if we drop this struct.
-pub struct Browser<S: Send + 'static> {
+pub(crate) struct Browser<S: Send + 'static> {
     service_name: String,
     services: Arc<Mutex<HashMap<String, S>>>,
 }
@@ -98,7 +104,7 @@ impl<S: Send> Browser<S> {
     /// For the moment, panic if anything goes wrong during initialization.
     /// This is acceptable as this action will run once during startup and there's nothing to do
     /// except bail completely if this process fails.
-    pub fn new<F>(name: String, open_service: F) -> Self
+    pub(crate) fn new<F>(name: String, open_service: F) -> Self
     where
         F: Fn(&ServiceEndpoint) -> Result<S> + Send + 'static,
     {
@@ -115,7 +121,10 @@ impl<S: Send> Browser<S> {
                         services_remote.lock().unwrap().insert(name, service);
                     }
                     Err(e) => {
-                        println!("Could not connect to '{}:{}':\n{}", endpoint.hostname, endpoint.port, e);
+                        println!(
+                            "Could not connect to '{}:{}':\n{}",
+                            endpoint.hostname, endpoint.port, e
+                        );
                     }
                 },
                 |name| {
@@ -131,17 +140,17 @@ impl<S: Send> Browser<S> {
     }
 
     /// List the service instances currently available.
-    pub fn list(&self) -> Vec<String> {
+    pub(crate) fn list(&self) -> Vec<String> {
         self.services.lock().unwrap().keys().cloned().collect()
     }
 
     /// Get the name of the service we are browsing.
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.service_name
     }
 
     /// Borrow a service to perform an action.
-    pub fn use_service<A, R>(&self, name: &str, action: A) -> Option<R>
+    pub(crate) fn use_service<A, R>(&self, name: &str, action: A) -> Option<R>
     where
         A: FnOnce(&S) -> R,
     {
@@ -150,9 +159,8 @@ impl<S: Send> Browser<S> {
     }
 }
 
-/// Use the current thread to browse for services.
-/// Continues browsing forever.
-pub fn browse_forever<A, D>(name: &str, mut on_service_appear: A, mut on_service_drop: D)
+/// Block the current thread browsing for services until the daemon shuts down.
+fn browse_forever<A, D>(name: &str, mut on_service_appear: A, mut on_service_drop: D)
 where
     A: FnMut((ServiceEndpoint, String)),
     D: FnMut(&str),
@@ -185,8 +193,7 @@ where
                     on_service_appear((endpoint, instance_name));
                 }
                 ServiceEvent::ServiceRemoved(_, fullname) => {
-                    let instance_name =
-                        instance_name_from_fullname(&fullname, &service_type);
+                    let instance_name = instance_name_from_fullname(&fullname, &service_type);
                     on_service_drop(&instance_name);
                 }
                 _ => {}
@@ -203,12 +210,6 @@ where
 mod tests {
     use super::*;
     use std::time::Duration;
-
-    #[test]
-    fn test_reg_type() {
-        assert_eq!(reg_type("foo"), "_foo._tcp");
-        assert_eq!(reg_type("myservice"), "_myservice._tcp");
-    }
 
     #[test]
     fn test_service_type_fq() {
@@ -250,7 +251,10 @@ mod tests {
         thread::sleep(Duration::from_secs(3));
 
         let services = browser.list();
-        assert!(!services.is_empty(), "Browser should have discovered at least one service");
+        assert!(
+            !services.is_empty(),
+            "Browser should have discovered at least one service"
+        );
         stop();
     }
 }
