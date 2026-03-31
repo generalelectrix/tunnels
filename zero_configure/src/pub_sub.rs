@@ -67,7 +67,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
         Self {
             browser: Browser::new(name, |service| {
                 Ok(SubConfig {
-                    hostname: service.host_target.clone(),
+                    hostname: service.hostname.clone(),
                     port: service.port,
                 })
             }),
