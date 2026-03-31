@@ -11,7 +11,7 @@ objects encoding the tunnels, and rendering those tunnels to a compact binary
 format to send over a LAN to clients. The clients run a program
 that exposes them to the server via DNSSD (aka Bonjour), which then subscribe to
 a virtual video stream broadcast by the server and render the feeds to video.
-Interaction between the server and clients is mediated by 0MQ and msgpack.
+Interaction between the server and clients is mediated by minusmq and msgpack.
 
 ## Hardware requirements
 
