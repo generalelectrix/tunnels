@@ -90,6 +90,11 @@ fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Vec<Client>>>) {
                         if let Err(e) = stream.set_nodelay(true) {
                             warn!("Failed to set TCP_NODELAY: {e}");
                         }
+                        if let Err(e) =
+                            stream.set_write_timeout(Some(Duration::from_millis(100)))
+                        {
+                            warn!("Failed to set write timeout: {e}");
+                        }
                         log::debug!("Subscriber connected (channel {channel})");
                         clients.lock().unwrap().push(Client { stream, channel });
                     }
