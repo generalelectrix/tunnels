@@ -33,6 +33,7 @@ pub(crate) struct AudioPanel<'a> {
     pub ctx: GuiContext<'a>,
     pub state: &'a mut AudioPanelState,
     pub current_device: &'a str,
+    pub clock_service_running: bool,
 }
 
 impl AudioPanel<'_> {
@@ -84,6 +85,34 @@ impl AudioPanel<'_> {
                 .ctx
                 .send_command(MetaCommand::SetAudioDevice(device_name));
         }
+
+        // Clock service controls.
+        ui.add_space(16.0);
+        ui.separator();
+        ui.heading("Clock Service");
+        ui.add_space(4.0);
+
+        let (status_label, status_color) = if self.clock_service_running {
+            ("Running", STATUS_COLORS.active)
+        } else {
+            ("Stopped", STATUS_COLORS.inactive)
+        };
+        ui.colored_label(status_color, status_label);
+        ui.add_space(4.0);
+
+        let button_label = if self.clock_service_running {
+            "Stop"
+        } else {
+            "Start"
+        };
+        if ui.button(button_label).clicked() {
+            let cmd = if self.clock_service_running {
+                MetaCommand::StopClockService
+            } else {
+                MetaCommand::StartClockService
+            };
+            let _ = self.ctx.send_command(cmd);
+        }
     }
 
     fn refresh_audio_devices(&mut self) {
@@ -129,6 +158,7 @@ mod tests {
                 },
                 state: &mut state,
                 current_device: "Offline",
+                clock_service_running: false,
             }
             .ui(ui);
         });
@@ -153,10 +183,32 @@ mod tests {
                 },
                 state: &mut state,
                 current_device: "Scarlett 2i2 USB",
+                clock_service_running: false,
             }
             .ui(ui);
         });
         harness.run();
         harness.snapshot("audio_panel_with_devices");
+    }
+
+    #[test]
+    fn render_clock_service_running() {
+        let client = auto_respond_client();
+        let mut modal = MessageModal::default();
+        let mut state = test_audio_state(vec![], None);
+        let mut harness = Harness::new_ui(|ui| {
+            AudioPanel {
+                ctx: GuiContext {
+                    modal: &mut modal,
+                    client: &client,
+                },
+                state: &mut state,
+                current_device: "Offline",
+                clock_service_running: true,
+            }
+            .ui(ui);
+        });
+        harness.run();
+        harness.snapshot("audio_panel_clock_service_running");
     }
 }

@@ -9,15 +9,17 @@ bitflags::bitflags! {
     /// GUI state domains that may need re-snapshotting after a control event.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct GuiDirty: u8 {
-        const CLEAN        = 0b0000_0000;
-        const MIDI_SLOTS   = 0b0000_0001;
-        const AUDIO_DEVICE = 0b0000_0010;
+        const CLEAN         = 0b0000_0000;
+        const MIDI_SLOTS    = 0b0000_0001;
+        const AUDIO_DEVICE  = 0b0000_0010;
+        const CLOCK_SERVICE = 0b0000_0100;
     }
 }
 
 pub struct GuiState {
     pub midi_slots: ArcSwap<Vec<SlotStatus>>,
     pub audio_device: ArcSwap<String>,
+    pub clock_service_running: AtomicBool,
     pub visualizer_active: AtomicBool,
     pub animation_state: ArcSwap<AnimationSnapshot>,
 }
@@ -29,6 +31,7 @@ impl Default for GuiState {
         Self {
             midi_slots: ArcSwap::from_pointee(Vec::new()),
             audio_device: ArcSwap::from_pointee("Offline".to_string()),
+            clock_service_running: AtomicBool::new(false),
             visualizer_active: AtomicBool::new(false),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),
         }

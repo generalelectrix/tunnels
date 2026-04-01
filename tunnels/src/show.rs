@@ -4,7 +4,7 @@ use crate::{
     animation_visualizer::AnimationSnapshot,
     audio::{self, AudioInput},
     clock_bank::{self, ClockBank},
-    clock_server::{SharedClockData, StaticClockBank},
+    clock_server::{self, ClockPublisher, SharedClockData, StaticClockBank},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
     gui_state::{GuiDirty, SharedGuiState},
     master_ui::{self, MasterUI},
@@ -39,7 +39,7 @@ pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
 pub struct Show {
     dispatcher: Dispatcher,
     audio_input: AudioInput,
-    run_clock_service: bool,
+    clock_publisher: Option<ClockPublisher>,
     state: ShowState,
     save_path: Option<PathBuf>,
     last_save: Option<Instant>,
@@ -75,7 +75,17 @@ impl Show {
                 recv_control_event,
             )?,
             audio_input: AudioInput::new(audio_input_device)?,
-            run_clock_service,
+            clock_publisher: if run_clock_service {
+                match clock_server::clock_publisher() {
+                    Ok(publisher) => Some(publisher),
+                    Err(e) => {
+                        error!("Failed to start clock service: {e:#}");
+                        None
+                    }
+                }
+            } else {
+                None
+            },
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
@@ -161,7 +171,7 @@ impl Show {
         self.snapshot_gui_state(GuiDirty::all());
 
         let mut frame_number = 0;
-        let frame_sender = start_render_service(self.run_clock_service)?;
+        let frame_sender = start_render_service()?;
 
         let mut last_update = Instant::now();
 
@@ -186,6 +196,7 @@ impl Show {
                     bail!("Render server hung up.  Aborting show.");
                 }
                 frame_number += 1;
+                self.send_clock_data();
                 self.snapshot_animation_state();
             }
 
@@ -203,6 +214,18 @@ impl Show {
                 // control event.
                 let timeout = time_to_next_update.mul_f64(0.8);
                 self.service_control_event(timeout);
+            }
+        }
+    }
+
+    fn send_clock_data(&mut self) {
+        if let Some(ref mut publisher) = self.clock_publisher {
+            let data = SharedClockData {
+                clock_bank: StaticClockBank(self.state.clocks.as_static()),
+                audio_envelope: self.audio_input.envelope(),
+            };
+            if let Err(e) = publisher.send(&data) {
+                error!("Failed to send clock data: {e}");
             }
         }
     }
@@ -310,6 +333,23 @@ impl Show {
                 self.audio_input = AudioInput::new(name)?;
                 GuiDirty::AUDIO_DEVICE
             }
+            StartClockService => {
+                if self.clock_publisher.is_some() {
+                    bail!("Clock service is already running.");
+                }
+                self.clock_publisher =
+                    Some(clock_server::clock_publisher()?);
+                info!("Clock service started.");
+                GuiDirty::CLOCK_SERVICE
+            }
+            StopClockService => {
+                if self.clock_publisher.is_none() {
+                    bail!("Clock service is not running.");
+                }
+                self.clock_publisher = None;
+                info!("Clock service stopped.");
+                GuiDirty::CLOCK_SERVICE
+            }
         })
     }
 
@@ -326,6 +366,12 @@ impl Show {
             gui_state
                 .audio_device
                 .store(Arc::new(self.audio_input.device_name().to_string()));
+        }
+        if dirty.contains(GuiDirty::CLOCK_SERVICE) {
+            gui_state.clock_service_running.store(
+                self.clock_publisher.is_some(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
     }
 }
@@ -1051,35 +1097,40 @@ mod test {
     #[test]
     fn meta_connect_midi_port_unknown_slot() {
         let client = test_show_client();
-        let result = client.send_command(MetaCommand::ConnectMidiPort {
-            slot_name: "nonexistent".to_string(),
-            device_id: midi_harness::DeviceId("fake".into()),
-            kind: midi_harness::DeviceKind::Input,
-        });
-        assert!(result.is_err());
+        let err = client
+            .send_command(MetaCommand::ConnectMidiPort {
+                slot_name: "nonexistent".to_string(),
+                device_id: midi_harness::DeviceId("fake".into()),
+                kind: midi_harness::DeviceKind::Input,
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown device slot"), "{err}");
     }
 
     #[test]
     fn meta_clear_midi_device_unknown_slot() {
         let client = test_show_client();
-        let result = client.send_command(MetaCommand::ClearMidiDevice {
-            slot_name: "nonexistent".to_string(),
-        });
-        assert!(result.is_err());
+        let err = client
+            .send_command(MetaCommand::ClearMidiDevice {
+                slot_name: "nonexistent".to_string(),
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown device slot"), "{err}");
     }
 
     #[test]
     fn meta_round_trip_response() {
         let client = test_show_client();
         // Valid command should succeed.
-        assert!(client.send_command(MetaCommand::RefreshUI).is_ok());
-        // Invalid command should return error.
-        assert!(client
+        client.send_command(MetaCommand::RefreshUI).unwrap();
+        // Invalid command should return the right error.
+        let err = client
             .send_command(MetaCommand::ClearMidiDevice {
                 slot_name: "nope".to_string(),
             })
-            .is_err());
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown device slot"), "{err}");
         // Should still work after error.
-        assert!(client.send_command(MetaCommand::RefreshUI).is_ok());
+        client.send_command(MetaCommand::RefreshUI).unwrap();
     }
 }
