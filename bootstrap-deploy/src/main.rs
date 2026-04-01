@@ -100,7 +100,9 @@ fn open_session(target: &SshTarget, username: &str, password: &str) -> Result<ss
 
 /// Run a command over SSH and return its stdout.
 fn ssh_exec(session: &ssh2::Session, command: &str) -> Result<String> {
-    let mut channel = session.channel_session().context("Failed to open channel")?;
+    let mut channel = session
+        .channel_session()
+        .context("Failed to open channel")?;
     channel.exec(command)?;
     let mut output = String::new();
     channel.read_to_string(&mut output)?;
@@ -114,12 +116,17 @@ fn ssh_exec(session: &ssh2::Session, command: &str) -> Result<String> {
     Ok(output)
 }
 
-
 /// Send a local file to a remote path via SCP.
-fn scp_send(session: &ssh2::Session, local_path: &Path, remote_path: &str, mode: i32) -> Result<()> {
+fn scp_send(
+    session: &ssh2::Session,
+    local_path: &Path,
+    remote_path: &str,
+    mode: i32,
+) -> Result<()> {
     let data = std::fs::read(local_path)
         .with_context(|| format!("Read local file {}", local_path.display()))?;
-    let mut channel = session.scp_send(Path::new(remote_path), mode, data.len() as u64, None)
+    let mut channel = session
+        .scp_send(Path::new(remote_path), mode, data.len() as u64, None)
         .with_context(|| format!("SCP open {remote_path}"))?;
     channel.write_all(&data)?;
     channel.send_eof()?;
@@ -129,8 +136,14 @@ fn scp_send(session: &ssh2::Session, local_path: &Path, remote_path: &str, mode:
 }
 
 /// Send raw bytes to a remote path via SCP.
-fn scp_send_bytes(session: &ssh2::Session, data: &[u8], remote_path: &str, mode: i32) -> Result<()> {
-    let mut channel = session.scp_send(Path::new(remote_path), mode, data.len() as u64, None)
+fn scp_send_bytes(
+    session: &ssh2::Session,
+    data: &[u8],
+    remote_path: &str,
+    mode: i32,
+) -> Result<()> {
+    let mut channel = session
+        .scp_send(Path::new(remote_path), mode, data.len() as u64, None)
         .with_context(|| format!("SCP open {remote_path}"))?;
     channel.write_all(data)?;
     channel.send_eof()?;
@@ -166,7 +179,10 @@ fn deploy(
     );
 
     // Upload the binary.
-    println!("  Uploading binary ({:.1} MB)...", binary_path.metadata()?.len() as f64 / 1_000_000.0);
+    println!(
+        "  Uploading binary ({:.1} MB)...",
+        binary_path.metadata()?.len() as f64 / 1_000_000.0
+    );
     scp_send(&session, binary_path, &remote_binary, 0o755)?;
 
     // Read the plist template and replace __HOME__ with the actual home directory.
@@ -180,7 +196,9 @@ fn deploy(
     scp_send_bytes(&session, plist_content.as_bytes(), tmp_plist, 0o644)?;
     ssh_exec(
         &session,
-        &format!("mkdir -p ~/Library/LaunchAgents && mv {tmp_plist} ~/Library/LaunchAgents/{PLIST_FILENAME}"),
+        &format!(
+            "mkdir -p ~/Library/LaunchAgents && mv {tmp_plist} ~/Library/LaunchAgents/{PLIST_FILENAME}"
+        ),
     )?;
 
     // Load the daemon.
@@ -192,8 +210,14 @@ fn deploy(
 
     // Verify it's running.
     println!("  Verifying...");
-    let status = ssh_exec(&session, "launchctl print gui/$(id -u)/local.tunnelbootstrap 2>&1 | head -5")?;
-    println!("  {}", status.trim().lines().next().unwrap_or("(no output)"));
+    let status = ssh_exec(
+        &session,
+        "launchctl print gui/$(id -u)/local.tunnelbootstrap 2>&1 | head -5",
+    )?;
+    println!(
+        "  {}",
+        status.trim().lines().next().unwrap_or("(no output)")
+    );
 
     Ok(())
 }
@@ -227,13 +251,14 @@ fn main() -> Result<()> {
         .context("Expected a number")?
         .checked_sub(1)
         .context("Selection out of range")?;
-    let target = targets
-        .get(index)
-        .context("Selection out of range")?;
+    let target = targets.get(index).context("Selection out of range")?;
 
     println!();
     let username = prompt_line(&format!("Username for {}: ", target.instance_name))?;
-    let password = rpassword::prompt_password(format!("Password for {username}@{}: ", target.instance_name))?;
+    let password = rpassword::prompt_password(format!(
+        "Password for {username}@{}: ",
+        target.instance_name
+    ))?;
     println!();
 
     let binary_path_str = prompt_line("Path to tunnel-bootstrap binary [dist/tunnel-bootstrap]: ")?;
@@ -242,10 +267,18 @@ fn main() -> Result<()> {
     } else {
         Path::new(&binary_path_str)
     };
-    anyhow::ensure!(binary_path.exists(), "Binary not found: {}", binary_path.display());
+    anyhow::ensure!(
+        binary_path.exists(),
+        "Binary not found: {}",
+        binary_path.display()
+    );
 
     let plist_path = Path::new("bootstrap-deploy/local.tunnelbootstrap.plist");
-    anyhow::ensure!(plist_path.exists(), "Plist not found: {}", plist_path.display());
+    anyhow::ensure!(
+        plist_path.exists(),
+        "Plist not found: {}",
+        plist_path.display()
+    );
 
     println!("Deploying to {}...\n", target.instance_name);
     deploy(target, &username, &password, binary_path, plist_path)?;

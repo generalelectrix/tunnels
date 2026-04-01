@@ -90,9 +90,7 @@ fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Vec<Client>>>) {
                         if let Err(e) = stream.set_nodelay(true) {
                             warn!("Failed to set TCP_NODELAY: {e}");
                         }
-                        if let Err(e) =
-                            stream.set_write_timeout(Some(Duration::from_millis(100)))
-                        {
+                        if let Err(e) = stream.set_write_timeout(Some(Duration::from_millis(100))) {
                             warn!("Failed to set write timeout: {e}");
                         }
                         log::debug!("Subscriber connected (channel {channel})");
@@ -166,17 +164,12 @@ impl Subscriber {
             let addr = format!("{}:{}", self.host, self.port);
             match self.try_connect(&addr) {
                 Ok(stream) => {
-                    log::debug!(
-                        "Subscriber connected to {addr} (channel {})",
-                        self.channel
-                    );
+                    log::debug!("Subscriber connected to {addr} (channel {})", self.channel);
                     self.stream = Some(stream);
                     return;
                 }
                 Err(e) => {
-                    warn!(
-                        "Subscriber connect to {addr} failed: {e}. Retrying in {backoff:?}."
-                    );
+                    warn!("Subscriber connect to {addr} failed: {e}. Retrying in {backoff:?}.");
                     thread::sleep(backoff);
                     backoff = (backoff * 2).min(max_backoff);
                 }

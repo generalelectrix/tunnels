@@ -101,11 +101,8 @@ fn receive_snapshots(
     snapshot_manager: SnapshotManagerHandle,
     run_flag: RunFlag,
 ) {
-    let mut subscriber = minusmq::pub_sub::Subscriber::new(
-        &cfg.server_hostname,
-        6000,
-        cfg.video_channel as u8,
-    );
+    let mut subscriber =
+        minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000, cfg.video_channel as u8);
     thread::Builder::new()
         .name("snapshot_receiver".to_string())
         .spawn(move || loop {
