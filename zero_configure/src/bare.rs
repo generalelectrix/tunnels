@@ -9,6 +9,14 @@ use std::thread;
 
 pub type StopFn = Box<dyn FnOnce() + Send>;
 
+/// Maximum length of a single DNS label (RFC 1035).
+const MAX_DNS_LABEL_LEN: usize = 63;
+
+/// Truncate a string to fit within a DNS label.
+fn truncate_to_dns_label(s: &str) -> &str {
+    &s[..s.len().min(MAX_DNS_LABEL_LEN)]
+}
+
 /// A resolved DNS-SD service instance: the address and port to connect to.
 pub(crate) struct ServiceEndpoint {
     pub(crate) hostname: String,
@@ -50,7 +58,7 @@ fn machine_hostname() -> String {
         if output.status.success() {
             let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !name.is_empty() {
-                return name;
+                return truncate_to_dns_label(&name).to_string();
             }
         }
     }
@@ -59,7 +67,8 @@ fn machine_hostname() -> String {
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
-    raw.split('.').next().unwrap_or(&raw).to_string()
+    let short = raw.split('.').next().unwrap_or(&raw);
+    truncate_to_dns_label(short).to_string()
 }
 
 /// Build a service-scoped mDNS hostname that won't collide with the system hostname.
@@ -80,9 +89,8 @@ fn mdns_service_hostname(service_name: &str) -> String {
         .strip_suffix(".local.")
         .or_else(|| raw.strip_suffix(".local"))
         .unwrap_or(&raw);
-    // DNS labels are limited to 63 bytes. The label is "{stem}-{service_name}",
-    // so truncate the stem to leave room for the hyphen and service name.
-    let max_stem = 63 - 1 - service_name.len();
+    // Truncate the stem so "{stem}-{service_name}" fits in a DNS label.
+    let max_stem = MAX_DNS_LABEL_LEN - 1 - service_name.len();
     let stem = &stem[..stem.len().min(max_stem)];
     format!("{stem}-{service_name}.local.")
 }
