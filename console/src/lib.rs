@@ -149,7 +149,7 @@ pub fn run_config_gui(
         Box::new(move |cc| {
             stage_theme::apply(&cc.egui_ctx);
             Ok(Box::new(ConfigApp {
-                midi_panel: MidiPanelState::new(),
+                midi_panel: MidiPanelState::default(),
                 audio_panel,
                 admin_panel,
                 admin_service,

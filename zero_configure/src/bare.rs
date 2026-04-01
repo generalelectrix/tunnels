@@ -205,37 +205,30 @@ where
         .browse(&service_type)
         .expect("Failed to start mDNS browse");
 
-    loop {
-        match receiver.recv() {
-            Ok(event) => match event {
-                ServiceEvent::ServiceResolved(info) => {
-                    let instance_name =
-                        instance_name_from_fullname(info.get_fullname(), &service_type);
-                    // Prefer a resolved IPv4 address over the mDNS hostname, since the
-                    // hostname (e.g. "myhost.local") may not be resolvable by the
-                    // system DNS resolver.
-                    let host = info
-                        .get_addresses_v4()
-                        .into_iter()
-                        .next()
-                        .map(|addr| addr.to_string())
-                        .unwrap_or_else(|| strip_trailing_dot(info.get_hostname()));
-                    let endpoint = ServiceEndpoint {
-                        hostname: host,
-                        port: info.get_port(),
-                    };
-                    on_service_appear((endpoint, instance_name));
-                }
-                ServiceEvent::ServiceRemoved(_, fullname) => {
-                    let instance_name = instance_name_from_fullname(&fullname, &service_type);
-                    on_service_drop(&instance_name);
-                }
-                _ => {}
-            },
-            Err(_) => {
-                // The daemon has shut down; stop browsing.
-                break;
+    while let Ok(event) = receiver.recv() {
+        match event {
+            ServiceEvent::ServiceResolved(info) => {
+                let instance_name = instance_name_from_fullname(info.get_fullname(), &service_type);
+                // Prefer a resolved IPv4 address over the mDNS hostname, since the
+                // hostname (e.g. "myhost.local") may not be resolvable by the
+                // system DNS resolver.
+                let host = info
+                    .get_addresses_v4()
+                    .into_iter()
+                    .next()
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| strip_trailing_dot(info.get_hostname()));
+                let endpoint = ServiceEndpoint {
+                    hostname: host,
+                    port: info.get_port(),
+                };
+                on_service_appear((endpoint, instance_name));
             }
+            ServiceEvent::ServiceRemoved(_, fullname) => {
+                let instance_name = instance_name_from_fullname(&fullname, &service_type);
+                on_service_drop(&instance_name);
+            }
+            _ => {}
         }
     }
 }

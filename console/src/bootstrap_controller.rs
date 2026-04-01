@@ -16,15 +16,12 @@ pub struct BootstrapController {
 }
 
 impl BootstrapController {
-    pub fn new() -> Self {
+    /// Create a bootstrap controller using the provided timeout.
+    ///
+    /// If None, push actions will block until they complete or explicitly fail.
+    pub fn new(timeout: Option<Duration>) -> Self {
         Self {
-            controller: Controller::new(SERVICE_NAME.to_string()),
-        }
-    }
-
-    pub fn with_recv_timeout(timeout: Duration) -> Self {
-        Self {
-            controller: Controller::with_recv_timeout(SERVICE_NAME.to_string(), Some(timeout)),
+            controller: Controller::with_recv_timeout(SERVICE_NAME.to_string(), timeout),
         }
     }
 

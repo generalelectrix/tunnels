@@ -25,7 +25,7 @@ fn main() -> Result<()> {
     install_midi_device_change_handler(ControlEventHandler(send_control_event.clone()))?;
 
     let client = CommandClient::new(send_control_event.clone());
-    let gui_state = Arc::new(GuiState::new());
+    let gui_state = Arc::new(GuiState::default());
     let show_gui_state = gui_state.clone();
 
     // Show worker thread — starts with empty config, GUI sends MetaCommands.
@@ -52,9 +52,8 @@ fn main() -> Result<()> {
         }
     });
 
-    let admin: Arc<dyn console::admin_panel::AdminService> = Arc::new(
-        BootstrapController::with_recv_timeout(Duration::from_secs(10)),
-    );
+    let admin: Arc<dyn console::admin_panel::AdminService> =
+        Arc::new(BootstrapController::new(Some(Duration::from_secs(10))));
 
     let hostname = hostname::get()
         .map(|h| h.into_string().unwrap_or_else(|_| "unknown".to_string()))

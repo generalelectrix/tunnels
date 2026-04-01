@@ -24,8 +24,8 @@ pub struct GuiState {
 
 pub type SharedGuiState = Arc<GuiState>;
 
-impl GuiState {
-    pub fn new() -> Self {
+impl Default for GuiState {
+    fn default() -> Self {
         Self {
             midi_slots: ArcSwap::from_pointee(Vec::new()),
             audio_device: ArcSwap::from_pointee("Offline".to_string()),

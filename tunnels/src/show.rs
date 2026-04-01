@@ -47,6 +47,7 @@ pub struct Show {
 }
 
 impl Show {
+    #[expect(clippy::too_many_arguments)]
     /// Create a new show from the provided config.
     pub fn new(
         midi_devices: Vec<MidiDeviceInit>,
