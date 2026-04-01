@@ -61,8 +61,7 @@ rustup target add x86_64-apple-darwin aarch64-apple-darwin
 ### App bundle
 
 ```
-scripts/build-universal.sh
-VERSION=2026.04.01-1 scripts/bundle-app.sh
+VERSION=2026.04.01-1 scripts/build-app.sh
 ```
 
 This produces `dist/Tunnels.app` and `dist/Tunnels.dmg`.
