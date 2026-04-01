@@ -101,10 +101,8 @@ impl eframe::App for ConfigApp {
                 }
                 Tab::Audio => {
                     let audio_device = self.gui_state.audio_device.load();
-                    let clock_service_running = self
-                        .gui_state
-                        .clock_service_running
-                        .load(Ordering::Relaxed);
+                    let clock_service_running =
+                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
                     AudioPanel {
                         ctx: GuiContext {
                             modal: &mut self.modal,
@@ -139,7 +137,9 @@ pub fn run_config_gui(
     hostname: String,
 ) -> Result<()> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 500.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([600.0, 500.0])
+            .with_icon(std::sync::Arc::new(egui::IconData::default())),
         ..Default::default()
     };
     let audio_device = gui_state.audio_device.load();

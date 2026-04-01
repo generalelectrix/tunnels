@@ -16,10 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust targets
+      - name: Install dependencies
         run: |
+          brew install cmake librsvg create-dmg
           rustup target add x86_64-apple-darwin
           rustup target add aarch64-apple-darwin
+
+      - name: Generate icon
+        run: scripts/generate-icon.sh
 
       - name: Build universal binaries
         run: scripts/build-universal.sh

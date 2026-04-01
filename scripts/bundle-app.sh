@@ -15,11 +15,21 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 
-# Copy universal binaries.
-for bin in console tunnelclient tunnel-bootstrap bootstrap-deploy; do
+# Copy universal binaries. Rename console -> tunnels for the main executable
+# so that macOS displays "Tunnels" in the menu bar and About dialog.
+cp "$PROJECT_DIR/dist/console" "$APP/Contents/MacOS/Tunnels"
+chmod +x "$APP/Contents/MacOS/Tunnels"
+for bin in tunnelclient tunnel-bootstrap bootstrap-deploy; do
   cp "$PROJECT_DIR/dist/$bin" "$APP/Contents/MacOS/$bin"
   chmod +x "$APP/Contents/MacOS/$bin"
 done
+
+# Helper script for viewing logs.
+cat > "$APP/Contents/MacOS/view-logs.sh" <<'LOGSCRIPT'
+#!/bin/bash
+log stream --predicate 'subsystem == "com.generalelectrix.tunnels"'
+LOGSCRIPT
+chmod +x "$APP/Contents/MacOS/view-logs.sh"
 
 # Copy icon.
 cp "$PROJECT_DIR/resources/Tunnels.icns" "$APP/Contents/Resources/Tunnels.icns"
@@ -32,7 +42,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>console</string>
+    <string>Tunnels</string>
     <key>CFBundleIdentifier</key>
     <string>com.generalelectrix.tunnels</string>
     <key>CFBundleName</key>
@@ -59,9 +69,21 @@ PLIST
 
 echo "Tunnels.app assembled at $APP (version $VERSION)"
 
-# Create DMG.
+# Convert background SVG to PNG for the DMG.
+BG_PNG="$PROJECT_DIR/dist/dmg-background.png"
+rsvg-convert -w 600 -h 400 "$PROJECT_DIR/resources/dmg-background.svg" > "$BG_PNG"
+
+# Create DMG with background, icon layout, and Applications shortcut.
 DMG="$PROJECT_DIR/dist/Tunnels.dmg"
 rm -f "$DMG"
-hdiutil create -volname "Tunnels" -srcfolder "$APP" -ov -format UDZO "$DMG"
+create-dmg \
+  --volname "Tunnels" \
+  --background "$BG_PNG" \
+  --window-size 600 400 \
+  --icon-size 128 \
+  --icon "Tunnels.app" 150 210 \
+  --app-drop-link 450 210 \
+  "$DMG" "$APP"
+rm -f "$BG_PNG"
 
 echo "DMG created at $DMG"

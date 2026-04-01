@@ -19,6 +19,11 @@ sha2 = "0.10"
 zero_configure = { path = "../zero_configure" }
 hostname = "0.4"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-app-kit = "0.2"
+objc2-foundation = "0.2"
+
 [dev-dependencies]
 egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }
 tunnels = { path = "../tunnels", features = ["test-support"] }

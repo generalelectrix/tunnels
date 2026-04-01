@@ -15,11 +15,48 @@ use tunnels::show::Show;
 /// Approximately 240 fps.
 const RENDER_INTERVAL: Duration = Duration::from_nanos(16666667 / 4);
 
+/// Override NSApplication's terminate: to send performClose: to the key
+/// window instead of killing the process. This converts Cmd+Q into the
+/// same close event as clicking the red window button, which our
+/// CloseHandler can intercept with a confirmation dialog.
+#[cfg(target_os = "macos")]
+fn install_terminate_override() {
+    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+    use objc2::sel;
+
+    unsafe extern "C" fn terminate_override(
+        _this: *mut AnyObject,
+        _cmd: Sel,
+        _sender: *mut AnyObject,
+    ) {
+        use objc2_app_kit::NSApplication;
+        use objc2_foundation::MainThreadMarker;
+
+        let mtm = MainThreadMarker::new_unchecked();
+        let app = NSApplication::sharedApplication(mtm);
+        if let Some(window) = app.keyWindow() {
+            window.performClose(None);
+        }
+    }
+
+    unsafe {
+        let class = AnyClass::get("NSApplication").expect("NSApplication class not found");
+        let method = class
+            .instance_method(sel!(terminate:))
+            .expect("terminate: method not found");
+        let imp: Imp = std::mem::transmute(terminate_override as *mut ());
+        method.set_implementation(imp);
+    }
+}
+
 fn main() -> Result<()> {
     oslog::OsLogger::new("com.generalelectrix.tunnels")
         .level_filter(log::LevelFilter::Info)
         .init()
         .expect("failed to initialize os_log");
+
+    #[cfg(target_os = "macos")]
+    install_terminate_override();
 
     let (send_control_event, recv_control_event) = channel();
     install_midi_device_change_handler(ControlEventHandler(send_control_event.clone()))?;

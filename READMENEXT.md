@@ -50,7 +50,7 @@ The app is unsigned — on first launch, right-click > Open (or run `xattr -cr /
 
 - [Rust](https://www.rust-lang.org/tools/install)
 - [Homebrew](https://brew.sh/)
-- `brew install cmake` (needed for the bundled SDL2 build)
+- `brew install cmake librsvg create-dmg`
 
 For universal (Intel + Apple Silicon) builds, install both targets:
 

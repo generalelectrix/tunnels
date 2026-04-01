@@ -5,9 +5,10 @@ import colorsys
 import os
 
 cx, cy = 256, 256
-r_circle = 200
-r_beams = 240
+r_circle = 256  # fills entire viewBox
+r_beams = 362   # sqrt(256^2 + 256^2), reaches corners
 r_hole = 10.0
+hole_color = "#b3b3b3"  # 70% white, mimics finite projector contrast
 n_triangles = 32
 slice_deg = 360.0 / (n_triangles * 2)
 
@@ -30,9 +31,9 @@ for i in range(n_triangles):
 
 svg = "\n".join([
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">',
-    f'  <circle cx="{cx}" cy="{cy}" r="{r_circle}" fill="black"/>',
+    '  <rect width="512" height="512" fill="black"/>',
     *paths,
-    f'  <circle cx="{cx}" cy="{cy}" r="{r_hole}" fill="black"/>',
+    f'  <circle cx="{cx}" cy="{cy}" r="{r_hole}" fill="{hole_color}"/>',
     "</svg>",
     "",
 ])
