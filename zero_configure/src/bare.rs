@@ -262,6 +262,27 @@ mod tests {
     }
 
     #[test]
+    fn debug_hostname_lengths() {
+        let instance = machine_hostname();
+        let svc_hostname = mdns_service_hostname("browsetest");
+        let raw = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "(failed)".to_string());
+        eprintln!("raw hostname:          {raw:?} (len={})", raw.len());
+        eprintln!("machine_hostname():    {instance:?} (len={})", instance.len());
+        eprintln!(
+            "mdns_service_hostname: {svc_hostname:?} (len={})",
+            svc_hostname.len()
+        );
+        // Print the label (part before .local.)
+        if let Some(label) = svc_hostname.strip_suffix(".local.") {
+            eprintln!("service hostname label: {label:?} (len={})", label.len());
+        }
+        panic!("intentional failure to surface debug output in CI");
+    }
+
+    #[test]
     fn test_register_and_stop() {
         let stop = register_service("regtest", 19990).unwrap();
         stop();
