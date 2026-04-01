@@ -6,7 +6,7 @@ use client_lib::transform::{Transform, TransformDirection};
 use eframe::egui;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -120,6 +120,9 @@ pub struct AdminPanelState {
 
     // Async config send / monitor launch
     config_send_state: Arc<Mutex<Option<ConfigSendState>>>,
+
+    // Local monitor child processes, killed on drop.
+    monitor_children: Arc<Mutex<Vec<Child>>>,
 }
 
 impl AdminPanelState {
@@ -138,6 +141,7 @@ impl AdminPanelState {
             flip_horizontal: false,
             capture_mouse: false,
             config_send_state: Arc::new(Mutex::new(None)),
+            monitor_children: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -246,6 +250,7 @@ impl AdminPanelState {
         });
 
         let state = self.config_send_state.clone();
+        let children = self.monitor_children.clone();
         thread::spawn(move || {
             let result = (|| -> Result<String, String> {
                 let serialized = rmp_serde::to_vec(&config)
@@ -278,6 +283,8 @@ impl AdminPanelState {
 
                 let line = line.trim();
                 if line == "OK" {
+                    // Track the child so it gets killed when the console exits.
+                    children.lock().unwrap().push(child);
                     Ok("Monitor launched successfully.".to_string())
                 } else if let Some(err) = line.strip_prefix("ERROR: ") {
                     Err(err.to_string())
@@ -525,6 +532,15 @@ impl AdminPanelState {
 
         // Modal overlay
         self.draw_modal(ctx);
+    }
+}
+
+impl Drop for AdminPanelState {
+    fn drop(&mut self) {
+        let mut children = self.monitor_children.lock().unwrap();
+        for child in children.iter_mut() {
+            let _ = child.kill();
+        }
     }
 }
 
