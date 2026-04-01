@@ -13,7 +13,7 @@ gui_common = { path = "../gui_common" }
 eframe = "0.33"
 anyhow = "1"
 log = "0.4"
-simplelog = "0.12"
+oslog = "0.2"
 rmp-serde = { workspace = true }
 sha2 = "0.10"
 zero_configure = { path = "../zero_configure" }

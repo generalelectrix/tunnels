@@ -7,3 +7,7 @@ Tunnels is a live performance system for projecting immersive tunnels of light. 
 All components of this system run live. A crash stops the show. Code running after initialization must not panic. If an operation can fail, log the error and recover gracefully — skip a frame, skip a shape, drop a message. Use `.unwrap()` and `.expect()` only during startup initialization where there is no meaningful recovery (e.g. GPU device creation, window creation, config parsing).
 
 Mutex `.lock().unwrap()` is acceptable when there is no recovery path from a poisoned mutex.
+
+## Prefer vendored C dependencies
+
+When a crate wraps a C library (OpenSSL, SDL2, libssh2, etc.), prefer the `vendored` or `bundled` feature so the library is built from source. This keeps builds self-contained and avoids cross-compilation failures from missing system libraries. Use judgment — if vendoring introduces significant downsides (massive build times, licensing issues, etc.), discuss the tradeoff first.

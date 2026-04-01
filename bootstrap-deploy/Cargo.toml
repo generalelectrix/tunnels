@@ -9,6 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 mdns-sd = "0.18"
-ssh2 = "0.9"
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 anyhow.workspace = true
 rpassword = "7"

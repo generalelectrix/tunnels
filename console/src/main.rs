@@ -6,7 +6,6 @@ use anyhow::Result;
 use console::bootstrap_controller::BootstrapController;
 use log::error;
 use midi_harness::install_midi_device_change_handler;
-use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 
 use tunnels::control::CommandClient;
 use tunnels::gui_state::GuiState;
@@ -17,7 +16,10 @@ use tunnels::show::Show;
 const RENDER_INTERVAL: Duration = Duration::from_nanos(16666667 / 4);
 
 fn main() -> Result<()> {
-    SimpleLogger::init(LevelFilter::Info, LogConfig::default())?;
+    oslog::OsLogger::new("com.generalelectrix.tunnels")
+        .level_filter(log::LevelFilter::Info)
+        .init()
+        .expect("failed to initialize os_log");
 
     let (send_control_event, recv_control_event) = channel();
     install_midi_device_change_handler(ControlEventHandler(send_control_event.clone()))?;

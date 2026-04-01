@@ -90,19 +90,17 @@ impl ResolutionPreset {
     ];
 }
 
-/// Find the tunnelclient binary, either as a sibling of the current executable or on PATH.
+/// Find the tunnelclient binary as a sibling of the current executable.
 fn tunnelclient_path() -> Result<std::path::PathBuf, String> {
-    if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join("tunnelclient");
-        if sibling.exists() {
-            return Ok(sibling);
-        }
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to determine current executable path: {e}"))?;
+    let dir = exe.parent().unwrap_or(std::path::Path::new("."));
+    let sibling = dir.join("tunnelclient");
+    if sibling.exists() {
+        Ok(sibling)
+    } else {
+        Err(format!("tunnelclient not found at {}", sibling.display()))
     }
-    // Fall back to PATH.
-    Ok(std::path::PathBuf::from("tunnelclient"))
 }
 
 pub struct AdminPanelState {

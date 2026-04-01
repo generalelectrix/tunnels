@@ -1,26 +1,22 @@
 #!/bin/bash
-# Build universal (fat) binaries for tunnelclient and tunnel-bootstrap.
+# Build universal (fat) binaries for all tunnels executables.
 # Combines x86_64 (Intel) and aarch64 (Apple Silicon) slices via lipo.
 set -e
 
 export MACOSX_DEPLOYMENT_TARGET=10.13
 
-cargo build --release --target x86_64-apple-darwin -p tunnelclient
-cargo build --release --target aarch64-apple-darwin -p tunnelclient
+PACKAGES="-p console -p tunnelclient -p tunnel-bootstrap -p bootstrap-deploy"
 
-cargo build --release --target x86_64-apple-darwin -p tunnel-bootstrap
-cargo build --release --target aarch64-apple-darwin -p tunnel-bootstrap
+cargo build --release --target x86_64-apple-darwin $PACKAGES
+cargo build --release --target aarch64-apple-darwin $PACKAGES
 
 mkdir -p dist
 
-lipo -create \
-  target/x86_64-apple-darwin/release/tunnelclient \
-  target/aarch64-apple-darwin/release/tunnelclient \
-  -output dist/tunnelclient
-
-lipo -create \
-  target/x86_64-apple-darwin/release/tunnel-bootstrap \
-  target/aarch64-apple-darwin/release/tunnel-bootstrap \
-  -output dist/tunnel-bootstrap
+for bin in console tunnelclient tunnel-bootstrap bootstrap-deploy; do
+  lipo -create \
+    "target/x86_64-apple-darwin/release/$bin" \
+    "target/aarch64-apple-darwin/release/$bin" \
+    -output "dist/$bin"
+done
 
 echo "Universal binaries written to dist/"
