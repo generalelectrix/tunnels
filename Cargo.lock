@@ -891,7 +891,6 @@ name = "client_lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "rmp-serde",
  "serde",
  "yaml-rust",
 ]
@@ -965,11 +964,9 @@ name = "console"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "client_lib",
  "eframe",
  "egui_kittest",
- "egui_plot",
  "gui_common",
  "hostname",
  "log",
@@ -2652,15 +2649,6 @@ name = "itertools"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -4488,7 +4476,7 @@ dependencies = [
  "built",
  "cfg-if",
  "interpolate_name",
- "itertools 0.12.1",
+ "itertools",
  "libc",
  "libfuzzer-sys",
  "log",
@@ -5165,15 +5153,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "streaming-stats"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0d670ce4e348a2081843569e0f79b21c99c91bb9028b3b3ecb0f050306de547"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "strength_reduce"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5526,7 +5505,6 @@ dependencies = [
  "anyhow",
  "log",
  "rmp-serde",
- "serde",
  "sha2",
  "simplelog",
  "tempfile",
@@ -5540,11 +5518,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client_lib",
- "derive_more 2.0.1",
- "eframe",
- "egui_kittest",
  "image 0.24.9",
- "lazy_static",
  "log",
  "minusmq",
  "piston2d-graphics 0.45.0",
@@ -5553,13 +5527,9 @@ dependencies = [
  "pistoncore-sdl2_window",
  "rmp-serde",
  "sdl2",
- "serde",
  "simplelog",
- "stage_theme",
- "streaming-stats",
  "tunnels",
  "tunnels_lib",
- "yaml-rust",
 ]
 
 [[package]]
@@ -5570,7 +5540,6 @@ dependencies = [
  "arc-swap",
  "audio-processor-analysis",
  "audio-processor-traits",
- "augmented-atomics",
  "augmented-dsp-filters",
  "bitflags 2.11.0",
  "cpal",
@@ -5578,11 +5547,9 @@ dependencies = [
  "eframe",
  "egui_plot",
  "insta",
- "itertools 0.14.0",
  "lazy_static",
  "log",
  "midi_harness",
- "midir",
  "minusmq",
  "noise",
  "plotters",
@@ -5601,8 +5568,6 @@ name = "tunnels_lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "derive_more 2.0.1",
- "num-traits",
  "number",
  "ordered-float",
  "serde",
@@ -7200,7 +7165,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hostname",
- "log",
  "mdns-sd",
  "minusmq",
  "rmp-serde",

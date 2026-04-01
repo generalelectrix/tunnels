@@ -11,4 +11,3 @@ serde.workspace = true
 rmp-serde.workspace = true
 anyhow.workspace = true
 minusmq = { path = "../minusmq" }
-log = "0.4"

@@ -14,29 +14,18 @@ name = "tunnelclient"
 
 [dependencies]
 rmp-serde.workspace = true
-serde.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 simplelog.workspace = true
 anyhow.workspace = true
-derive_more.workspace = true
 piston_window = "0.132"
 piston2d-graphics = "0.45"
 piston2d-opengl_graphics = "0.89"
 pistoncore-sdl2_window = "0.71"
 sdl2 = { version = "0.37", features = ["bundled", "static-link"] }
-yaml-rust = "0.4"
-
-streaming-stats = "0.2"
-
 tunnels_lib = { path = "../tunnels_lib" }
 client_lib = { path = "../client_lib" }
 minusmq = { path = "../minusmq" }
 
-eframe = "0.33"
-stage_theme = { path = "../stage_theme" }
-
 [dev-dependencies]
 image = "0.24"
 tunnels = { path = "../tunnels" }
-egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }

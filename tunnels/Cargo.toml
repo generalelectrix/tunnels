@@ -27,12 +27,10 @@ lazy_static.workspace = true
 anyhow.workspace = true
 rmp-serde.workspace = true
 
-midir = "0.10"
 rosc = "0.11"
 noise = "0.9.0"
 
 typed_index_derive = "0.1.4"
-itertools = "0.14"
 
 egui_plot = "0.34"
 eframe = "0.33"
@@ -48,8 +46,6 @@ cpal = "0.16"
 augmented-dsp-filters = "2"
 audio-processor-analysis = "2"
 audio-processor-traits = "4"
-augmented-atomics = "0.2"
-
 
 [dev-dependencies]
 insta = { version = "1.28.0", features = ["yaml"] }

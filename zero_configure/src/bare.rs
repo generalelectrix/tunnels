@@ -80,6 +80,10 @@ fn mdns_service_hostname(service_name: &str) -> String {
         .strip_suffix(".local.")
         .or_else(|| raw.strip_suffix(".local"))
         .unwrap_or(&raw);
+    // DNS labels are limited to 63 bytes. The label is "{stem}-{service_name}",
+    // so truncate the stem to leave room for the hyphen and service name.
+    let max_stem = 63 - 1 - service_name.len();
+    let stem = &stem[..stem.len().min(max_stem)];
     format!("{stem}-{service_name}.local.")
 }
 
@@ -259,27 +263,6 @@ mod tests {
     fn test_strip_trailing_dot() {
         assert_eq!(strip_trailing_dot("myhost.local."), "myhost.local");
         assert_eq!(strip_trailing_dot("myhost.local"), "myhost.local");
-    }
-
-    #[test]
-    fn debug_hostname_lengths() {
-        let instance = machine_hostname();
-        let svc_hostname = mdns_service_hostname("browsetest");
-        let raw = hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok())
-            .unwrap_or_else(|| "(failed)".to_string());
-        eprintln!("raw hostname:          {raw:?} (len={})", raw.len());
-        eprintln!("machine_hostname():    {instance:?} (len={})", instance.len());
-        eprintln!(
-            "mdns_service_hostname: {svc_hostname:?} (len={})",
-            svc_hostname.len()
-        );
-        // Print the label (part before .local.)
-        if let Some(label) = svc_hostname.strip_suffix(".local.") {
-            eprintln!("service hostname label: {label:?} (len={})", label.len());
-        }
-        panic!("intentional failure to surface debug output in CI");
     }
 
     #[test]
