@@ -9,6 +9,14 @@ use std::thread;
 
 pub type StopFn = Box<dyn FnOnce() + Send>;
 
+/// Maximum length of a single DNS label (RFC 1035).
+const MAX_DNS_LABEL_LEN: usize = 63;
+
+/// Truncate a string to fit within a DNS label.
+fn truncate_to_dns_label(s: &str) -> &str {
+    &s[..s.len().min(MAX_DNS_LABEL_LEN)]
+}
+
 /// A resolved DNS-SD service instance: the address and port to connect to.
 pub(crate) struct ServiceEndpoint {
     pub(crate) hostname: String,
@@ -38,34 +46,72 @@ fn strip_trailing_dot(hostname: &str) -> String {
     hostname.strip_suffix('.').unwrap_or(hostname).to_string()
 }
 
-/// Get the local hostname in mDNS format (ending with ".local.").
-fn mdns_hostname() -> String {
+/// Get the machine's display name for use as a DNS-SD instance name.
+/// On macOS, uses the Computer Name (e.g. "Bore A") to match Apple's native DNS-SD behavior.
+/// Falls back to the short hostname.
+fn machine_hostname() -> String {
+    // Try macOS Computer Name first.
+    if let Ok(output) = std::process::Command::new("scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+    {
+        if output.status.success() {
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !name.is_empty() {
+                return truncate_to_dns_label(&name).to_string();
+            }
+        }
+    }
+    // Fall back to short hostname.
+    let raw = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    let short = raw.split('.').next().unwrap_or(&raw);
+    truncate_to_dns_label(short).to_string()
+}
+
+/// Build a service-scoped mDNS hostname that won't collide with the system hostname.
+///
+/// macOS's built-in mDNS responder already advertises A/AAAA records for the system
+/// hostname (e.g. "bore-b.local."). The mdns-sd library also publishes A/AAAA records
+/// for whatever hostname we give it, so using the bare system hostname causes a
+/// collision — macOS detects the duplicate and renames itself (e.g. "bore-b-2.local").
+///
+/// By appending the service name to the hostname stem (e.g. "bore-b-tunnelbootstrap.local."),
+/// we avoid the collision while still getting correct IP resolution via enable_addr_auto().
+fn mdns_service_hostname(service_name: &str) -> String {
     let raw = hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "localhost".to_string());
-    // mdns-sd requires hostnames ending in ".local."
-    if raw.ends_with(".local.") {
-        raw
-    } else if raw.ends_with(".local") {
-        format!("{raw}.")
-    } else {
-        format!("{raw}.local.")
-    }
+    let stem = raw
+        .strip_suffix(".local.")
+        .or_else(|| raw.strip_suffix(".local"))
+        .unwrap_or(&raw);
+    // Truncate the stem so "{stem}-{service_name}" fits in a DNS label.
+    let max_stem = MAX_DNS_LABEL_LEN - 1 - service_name.len();
+    let stem = &stem[..stem.len().min(max_stem)];
+    format!("{stem}-{service_name}.local.")
 }
 
 /// Create a `ServiceDaemon` and register a service with automatic address resolution.
+/// Uses the machine's hostname as the instance name, matching the behavior of Apple's
+/// native DNS-SD API (async-dnssd).
 /// Returns the daemon (which must be kept alive to maintain the registration) and
 /// the fullname needed for later unregistration.
 pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemon, String)> {
     let service_type = service_type_fq(name);
     let daemon = ServiceDaemon::new()?;
 
-    let hostname = mdns_hostname();
+    let hostname = mdns_service_hostname(name);
+    // Use the raw hostname (without .local. suffix) as the instance name,
+    // so each machine advertises with its own name rather than the service type.
+    let instance_name = machine_hostname();
 
     let service_info = ServiceInfo::new(
         &service_type,
-        name,
+        &instance_name,
         &hostname,
         "",
         port,
@@ -171,37 +217,30 @@ where
         .browse(&service_type)
         .expect("Failed to start mDNS browse");
 
-    loop {
-        match receiver.recv() {
-            Ok(event) => match event {
-                ServiceEvent::ServiceResolved(info) => {
-                    let instance_name =
-                        instance_name_from_fullname(info.get_fullname(), &service_type);
-                    // Prefer a resolved IPv4 address over the mDNS hostname, since the
-                    // hostname (e.g. "myhost.local") may not be resolvable by the
-                    // system DNS resolver.
-                    let host = info
-                        .get_addresses_v4()
-                        .into_iter()
-                        .next()
-                        .map(|addr| addr.to_string())
-                        .unwrap_or_else(|| strip_trailing_dot(info.get_hostname()));
-                    let endpoint = ServiceEndpoint {
-                        hostname: host,
-                        port: info.get_port(),
-                    };
-                    on_service_appear((endpoint, instance_name));
-                }
-                ServiceEvent::ServiceRemoved(_, fullname) => {
-                    let instance_name = instance_name_from_fullname(&fullname, &service_type);
-                    on_service_drop(&instance_name);
-                }
-                _ => {}
-            },
-            Err(_) => {
-                // The daemon has shut down; stop browsing.
-                break;
+    while let Ok(event) = receiver.recv() {
+        match event {
+            ServiceEvent::ServiceResolved(info) => {
+                let instance_name = instance_name_from_fullname(info.get_fullname(), &service_type);
+                // Prefer a resolved IPv4 address over the mDNS hostname, since the
+                // hostname (e.g. "myhost.local") may not be resolvable by the
+                // system DNS resolver.
+                let host = info
+                    .get_addresses_v4()
+                    .into_iter()
+                    .next()
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| strip_trailing_dot(info.get_hostname()));
+                let endpoint = ServiceEndpoint {
+                    hostname: host,
+                    port: info.get_port(),
+                };
+                on_service_appear((endpoint, instance_name));
             }
+            ServiceEvent::ServiceRemoved(_, fullname) => {
+                let instance_name = instance_name_from_fullname(&fullname, &service_type);
+                on_service_drop(&instance_name);
+            }
+            _ => {}
         }
     }
 }

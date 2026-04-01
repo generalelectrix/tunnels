@@ -1,19 +1,3 @@
-use anyhow::{bail, Result};
-use log::{self, error, info, warn};
-use rmp_serde::{Deserializer, Serializer};
-use serde::{Deserialize, Serialize};
-use std::{
-    fs::File,
-    io::BufWriter,
-    path::{Path, PathBuf},
-    sync::{
-        mpsc::{Receiver, Sender},
-        Arc,
-    },
-    time::{Duration, Instant},
-};
-use tunnels_lib::Timestamp;
-
 use crate::{
     animation,
     animation_target::AnimationTarget,
@@ -32,8 +16,21 @@ use crate::{
     position_bank::{self, PositionBank},
     send::{start_render_service, Frame},
     test_mode::TestModeSetup,
-    timesync::TimesyncServer,
     tunnel,
+};
+use anyhow::{bail, Result};
+use log::{self, error, info, warn};
+use rmp_serde::{Deserializer, Serializer};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
 
 /// How often should we autosave the show?
@@ -50,6 +47,7 @@ pub struct Show {
 }
 
 impl Show {
+    #[expect(clippy::too_many_arguments)]
     /// Create a new show from the provided config.
     pub fn new(
         midi_devices: Vec<MidiDeviceInit>,
@@ -163,13 +161,9 @@ impl Show {
         self.snapshot_gui_state(GuiDirty::all());
 
         let mut frame_number = 0;
-        let ctx = zmq::Context::new();
-        let start = Instant::now();
+        let frame_sender = start_render_service(self.run_clock_service)?;
 
-        let _timesync = TimesyncServer::start(&ctx, start)?;
-        let frame_sender = start_render_service(&ctx, self.run_clock_service)?;
-
-        let mut last_update = start;
+        let mut last_update = Instant::now();
 
         loop {
             let now = Instant::now();
@@ -177,12 +171,10 @@ impl Show {
             if time_since_update >= update_interval {
                 self.update_state(time_since_update);
                 last_update = now;
-                let timestamp = Timestamp::since(start);
 
                 if frame_sender
                     .send(Frame {
                         number: frame_number,
-                        timestamp,
                         mixer: self.state.mixer.clone(),
                         clocks: self.state.clocks.clone(),
                         color_palette: self.state.color_palette.clone(),

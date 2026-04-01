@@ -11,13 +11,12 @@ midi_harness = { path = "../midi_harness" }
 stage_theme = { path = "../stage_theme" }
 gui_common = { path = "../gui_common" }
 eframe = "0.33"
-egui_plot = "0.34"
-arc-swap = "1"
 anyhow = "1"
 log = "0.4"
 simplelog = "0.12"
 rmp-serde = { workspace = true }
-zmq = { workspace = true }
+sha2 = "0.10"
+zero_configure = { path = "../zero_configure" }
 hostname = "0.4"
 
 [dev-dependencies]

@@ -1,97 +1,82 @@
-//! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
-//! Interact with one or more instances of this service, using 0mq REQ/REP sockets.
+//! Advertise a service over DNS-SD. Browse for and agglomerate instances of this service.
+//! Interact with one or more instances of this service, using TCP request-response.
 
-use anyhow::{bail, Result};
+use anyhow::bail;
+use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
+use std::time::Duration;
 
-use zmq::{Context, Socket};
+use anyhow::Result;
 
 use crate::bare::{create_and_register, Browser};
 
-/// Advertise a service over DNS-SD, using a 0mq REQ/REP socket as the subsequent transport.
-/// Pass each message received on the socket to the action callback.  Send the byte buffer returned
-/// by the action callback back to the requester.
-pub fn run_service_req_rep<F>(ctx: Context, name: &str, port: u16, mut action: F) -> Result<()>
+/// Advertise a service over DNS-SD, using TCP request-response as the transport.
+/// Pass each message received on the socket to the action callback. Send the byte
+/// buffer returned by the action callback back to the requester.
+pub fn run_service_req_rep<F>(name: &str, port: u16, action: F) -> Result<()>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
-    // Open the 0mq socket we'll use to service requests.
-    let socket = ctx.socket(zmq::REP)?;
-    let addr = format!("tcp://*:{port}");
-    socket.bind(&addr)?;
-
-    // Start advertising this service over DNS-SD.
+    let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
     // Keep _daemon alive on the stack; dropping it would end the registration.
     let (_daemon, _fullname) = create_and_register(name, port)?;
-
-    loop {
-        if let Ok(msg) = socket.recv_bytes(0) {
-            if let Err(e) = socket.send(action(&msg), 0) {
-                println!("Failed to send response: {e}");
-            }
-        }
-    }
+    minusmq::req_rep::serve(listener, action)
 }
 
 /// Maintain a collection of service instances we can remotely interact with.
-/// Communication is performed via 0mq REQ/REP pairs.
-pub struct Controller(Browser<Socket>);
+/// Communication is performed via TCP request-response pairs.
+pub struct Controller {
+    browser: Browser<SocketAddr>,
+    timeout: Option<Duration>,
+}
 
 impl Controller {
     /// Start up a new service controller at the given service name.
     /// Asynchronously browse for new services, and remove them if they deregister.
-    /// For the moment, panic if anything goes wrong during initialization.
-    /// This is acceptable as this action will run once during startup and there's nothing to do
-    /// except bail completely if this process fails.
-    pub fn new(ctx: Context, name: String) -> Self {
-        Self::with_recv_timeout(ctx, name, None)
+    pub fn new(name: String) -> Self {
+        Self::with_recv_timeout(name, None)
     }
 
-    /// Start up a new service controller with an optional receive timeout.
-    /// If `recv_timeout` is `Some(ms)`, REQ sockets will time out after `ms` milliseconds
-    /// and be configured with REQ_RELAXED + REQ_CORRELATE to remain usable after a timeout.
-    /// If `None`, sockets block forever on receive (the default ZMQ behavior).
-    pub fn with_recv_timeout(ctx: Context, name: String, recv_timeout: Option<i32>) -> Self {
-        Self(Browser::new(name, move |service| {
-            req_socket(&service.hostname, service.port, &ctx, recv_timeout)
-        }))
+    /// Start up a new service controller with an optional timeout.
+    pub fn with_recv_timeout(name: String, timeout: Option<Duration>) -> Self {
+        Self {
+            browser: Browser::new(name, |service| {
+                resolve_addr(&service.hostname, service.port)
+            }),
+            timeout,
+        }
     }
 
     /// List the services currently available.
     pub fn list(&self) -> Vec<String> {
-        self.0.list()
+        self.browser.list()
     }
 
     /// Send a message to one of the services on this controller, returning the response.
     pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>> {
-        self.0
-            .use_service(name, |socket| {
-                socket.send(msg, 0)?;
-                let response = socket.recv_bytes(0)?;
-                Ok(response)
+        let timeout = self.timeout;
+        self.browser
+            .use_service(name, |addr| {
+                if let Some(t) = timeout {
+                    minusmq::req_rep::send_with_timeout(*addr, msg, t)
+                } else {
+                    minusmq::req_rep::send(*addr, msg)
+                }
             })
             .unwrap_or_else(|| bail!(format!("No service named '{}' available.", name)))
     }
 }
 
-/// Try to connect a REQ socket at this host and port.
-/// If `recv_timeout` is `Some(ms)`, configure the socket with a receive timeout and
-/// REQ_RELAXED + REQ_CORRELATE so it remains usable after a timeout.
-fn req_socket(host: &str, port: u16, ctx: &Context, recv_timeout: Option<i32>) -> Result<Socket> {
-    let addr = format!("tcp://{host}:{port}");
-
-    // Connect a REQ socket.
-    let socket = ctx.socket(zmq::REQ)?;
-    if let Some(ms) = recv_timeout {
-        socket.set_rcvtimeo(ms)?;
-        // REQ_RELAXED: allow sending a new request before receiving a reply (prevents EFSM
-        // error after a receive timeout).
-        socket.set_req_relaxed(true)?;
-        // REQ_CORRELATE: match replies to requests by ID, preventing stale replies from a
-        // timed-out request from being delivered to a subsequent request.
-        socket.set_req_correlate(true)?;
-    }
-    socket.connect(&addr)?;
-    Ok(socket)
+/// Resolve a hostname:port to a SocketAddr at discovery time.
+/// Prefers IPv4 addresses since our listeners bind to 0.0.0.0.
+fn resolve_addr(host: &str, port: u16) -> Result<SocketAddr> {
+    let addrs: Vec<SocketAddr> = (host, port).to_socket_addrs()?.collect();
+    // Prefer IPv4 since our listeners bind to 0.0.0.0.
+    addrs
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or(addrs.first())
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("Could not resolve {host}:{port}"))
 }
 
 #[cfg(test)]
@@ -119,7 +104,7 @@ mod tests {
         let name = "reqreptest";
         let port = 19992;
 
-        let controller = Controller::new(Context::new(), name.to_string());
+        let controller = Controller::new(name.to_string());
 
         // Wait a moment, and assert that we can't see any services.
         sleep(500);
@@ -128,22 +113,31 @@ mod tests {
 
         // Start up the service; return DEADBEEF as a response.
         thread::spawn(move || {
-            run_service_req_rep(Context::new(), name, port, |buffer| {
+            run_service_req_rep(name, port, |buffer| {
                 assert_eq!(testbytes(), buffer);
                 deadbeef()
             })
             .unwrap();
         });
 
-        // Give the service a moment to get situated.
-        sleep(2000);
+        // Give the service a moment to register via DNS-SD and start listening.
+        sleep(3000);
 
         let names = controller.list();
         assert_eq!(1, names.len());
 
-        // Test sending a message.
-        let response = controller.send(&names[0], &testbytes()).unwrap();
-
-        assert_eq!(deadbeef(), response);
+        // Send with a retry — the TCP listener might not be fully ready
+        // even after DNS-SD discovery succeeds.
+        let mut response = None;
+        for _ in 0..5 {
+            match controller.send(&names[0], &testbytes()) {
+                Ok(r) => {
+                    response = Some(r);
+                    break;
+                }
+                Err(_) => sleep(500),
+            }
+        }
+        assert_eq!(response.unwrap(), deadbeef());
     }
 }

@@ -1,5 +1,5 @@
 //! Advertise services over DNS-SD.
-//! Use 0mq for transport.
+//! Use TCP (via minusmq) for transport.
 
 pub mod bare;
 pub mod msgpack;

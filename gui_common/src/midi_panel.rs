@@ -15,15 +15,17 @@ pub struct MidiPanelState {
     output_ports: Vec<MidiPortSpec>,
 }
 
-impl MidiPanelState {
-    pub fn new() -> Self {
+impl Default for MidiPanelState {
+    fn default() -> Self {
         let (input_ports, output_ports) = list_ports().unwrap_or_default();
         Self {
             input_ports,
             output_ports,
         }
     }
+}
 
+impl MidiPanelState {
     fn refresh_ports(&mut self) {
         if let Ok((inputs, outputs)) = list_ports() {
             self.input_ports = inputs;

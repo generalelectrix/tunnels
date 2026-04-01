@@ -10,8 +10,6 @@ use std::thread;
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_lib::Snapshot;
-use zero_configure::pub_sub::Receiver;
-use zmq::Context;
 
 pub type SnapshotManagerHandle = Arc<Mutex<Option<SnapshotHandle>>>;
 pub type SnapshotHandle = Arc<Snapshot>;
@@ -26,12 +24,12 @@ pub struct Show {
 }
 
 impl Show {
-    pub fn new(cfg: ClientConfig, ctx: Context, run_flag: RunFlag) -> Result<Self> {
+    pub fn new(cfg: ClientConfig, run_flag: RunFlag) -> Result<Self> {
         info!("Running on video channel {}.", cfg.video_channel);
 
         // Set up snapshot reception and management.
         let snapshot_manager = Arc::new(Mutex::new(None));
-        receive_snapshots(&ctx, &cfg, snapshot_manager.clone(), run_flag.clone())?;
+        receive_snapshots(&cfg, snapshot_manager.clone(), run_flag.clone());
 
         let opengl = OpenGL::V3_2;
 
@@ -51,9 +49,6 @@ impl Show {
         window.set_capture_cursor(cfg.capture_mouse);
         // This has no effect if vsync is properly enabled, but on machines with
         // broken vsync this does work to make rendering a lot smoother.
-        // Note that with vsync enabled, this causes Piston to send incorrect
-        // timesteps to update args; since we only use this for interpolating
-        // timesync, it isn't a big deal.
         window.set_max_fps(120);
 
         Ok(Show {
@@ -79,9 +74,6 @@ impl Show {
             }
         }
 
-        // If the window is closed, the event loop will exit normally.  Flip the run flag to stop
-        // to ensure all of the services close down and we don't leak a timesync thread.
-        // TODO: hold onto the join handle for the timesync service?
         self.run_flag.stop();
     }
 
@@ -105,17 +97,12 @@ impl Show {
 /// Inject them into the provided manager.
 /// The thread runs until the run flag is tripped.
 fn receive_snapshots(
-    ctx: &Context,
     cfg: &ClientConfig,
     snapshot_manager: SnapshotManagerHandle,
     run_flag: RunFlag,
-) -> Result<()> {
-    let mut receiver: Receiver<Snapshot> = Receiver::new(
-        ctx,
-        &cfg.server_hostname,
-        6000,
-        Some(&[cfg.video_channel as u8]),
-    )?;
+) {
+    let mut subscriber =
+        minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000, cfg.video_channel as u8);
     thread::Builder::new()
         .name("snapshot_receiver".to_string())
         .spawn(move || loop {
@@ -123,13 +110,13 @@ fn receive_snapshots(
                 info!("Snapshot receiver shutting down.");
                 break;
             }
-            match receiver.receive_msg(true) {
-                Ok(Some(msg)) => {
+            let buf = subscriber.recv();
+            match rmp_serde::from_slice::<Snapshot>(&buf) {
+                Ok(msg) => {
                     *snapshot_manager.lock().unwrap() = Some(Arc::new(msg));
                 }
-                Ok(None) => continue,
                 Err(e) => error!("receive error: {e}"),
             }
-        })?;
-    Ok(())
+        })
+        .expect("Failed to spawn snapshot receiver thread");
 }

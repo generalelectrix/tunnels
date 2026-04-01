@@ -4,9 +4,9 @@ use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 use tunnels_lib::bootstrap::{PushBinaryRequest, PushBinaryResponse};
 use zero_configure::req_rep::Controller;
-use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelbootstrap";
 
@@ -16,9 +16,12 @@ pub struct BootstrapController {
 }
 
 impl BootstrapController {
-    pub fn new(ctx: Context) -> Self {
+    /// Create a bootstrap controller using the provided timeout.
+    ///
+    /// If None, push actions will block until they complete or explicitly fail.
+    pub fn new(timeout: Option<Duration>) -> Self {
         Self {
-            controller: Controller::new(ctx, SERVICE_NAME.to_string()),
+            controller: Controller::with_recv_timeout(SERVICE_NAME.to_string(), timeout),
         }
     }
 
@@ -28,14 +31,14 @@ impl BootstrapController {
     }
 
     /// Push a binary to a named bootstrapper instance.
-    /// `health_check_args`: args for the health check (empty to skip).
     /// `run_args`: args to launch the binary with.
+    /// `stdin_payload`: data to pipe into the child's stdin after launch.
     pub fn push_binary(
         &self,
         name: &str,
         binary_path: &Path,
-        health_check_args: &[&str],
         run_args: &[&str],
+        stdin_payload: &[u8],
     ) -> Result<String> {
         let payload = fs::read(binary_path)?;
 
@@ -46,8 +49,8 @@ impl BootstrapController {
         let request = PushBinaryRequest {
             sha256,
             payload,
-            health_check_args: health_check_args.iter().map(|s| s.to_string()).collect(),
             run_args: run_args.iter().map(|s| s.to_string()).collect(),
+            stdin_payload: stdin_payload.to_vec(),
         };
 
         let serialized = rmp_serde::to_vec(&request)?;

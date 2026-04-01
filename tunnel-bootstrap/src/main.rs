@@ -1,4 +1,4 @@
-//! Tunnel bootstrapper — receives binary pushes over ZMQ, health-checks them,
+//! Tunnel bootstrapper — receives binary pushes over TCP, writes them to disk,
 //! and launches them as managed child processes.
 
 mod child;
@@ -11,16 +11,12 @@ use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
-use std::time::Duration;
 use tunnels_lib::bootstrap::{PushBinaryRequest, PushBinaryResponse};
 use zero_configure::req_rep::run_service_req_rep;
-use zmq::Context;
 
 const SERVICE_NAME: &str = "tunnelbootstrap";
-const PORT: u16 = 15001;
-const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+const PORT: u16 = 15000;
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, LogConfig::default())
@@ -28,11 +24,10 @@ fn main() {
 
     info!("tunnel-bootstrap starting on port {PORT}");
 
-    let ctx = Context::new();
     let managed_path = Path::new("./managed");
     let child_manager = Mutex::new(ChildManager::new(managed_path));
 
-    run_service_req_rep(ctx, SERVICE_NAME, PORT, |request_buffer| {
+    run_service_req_rep(SERVICE_NAME, PORT, |request_buffer| {
         let response = handle_request(request_buffer, &child_manager);
         rmp_serde::to_vec(&response).unwrap_or_else(|e| {
             error!("Failed to serialize response: {e}");
@@ -43,6 +38,7 @@ fn main() {
 }
 
 fn handle_request(buffer: &[u8], child_manager: &Mutex<ChildManager>) -> PushBinaryResponse {
+    info!("Deserialzing request buffer of {} bytes.", buffer.len());
     let request: PushBinaryRequest = match rmp_serde::from_slice(buffer) {
         Ok(req) => req,
         Err(e) => return Err(format!("Failed to deserialize request: {e}")),
@@ -51,13 +47,20 @@ fn handle_request(buffer: &[u8], child_manager: &Mutex<ChildManager>) -> PushBin
 }
 
 fn handle_push(request: PushBinaryRequest, child_manager: &Mutex<ChildManager>) -> Result<String> {
-    info!("Received push: payload={} bytes", request.payload.len());
+    let t0 = std::time::Instant::now();
+    info!(
+        "Received push: payload={} bytes, stdin_payload={} bytes, run_args={:?}",
+        request.payload.len(),
+        request.stdin_payload.len(),
+        request.run_args,
+    );
 
     // Verify SHA-256.
     let mut hasher = Sha256::new();
     hasher.update(&request.payload);
     let computed: [u8; 32] = hasher.finalize().into();
     anyhow::ensure!(computed == request.sha256, "SHA-256 mismatch");
+    info!("SHA-256 verified in {:?}", t0.elapsed());
 
     let mut manager = child_manager.lock().unwrap();
 
@@ -65,20 +68,24 @@ fn handle_push(request: PushBinaryRequest, child_manager: &Mutex<ChildManager>) 
     if manager.is_running() {
         info!("Stopping existing child before update");
         manager.stop();
+        info!("Child stopped in {:?}", t0.elapsed());
     }
 
     let binary_path = manager.binary_path().to_path_buf();
 
     write_binary(&binary_path, &request.payload).context("Failed to write binary")?;
-    if !request.health_check_args.is_empty() {
-        run_health_check(&binary_path, &request.health_check_args)
-            .context("Health check failed")?;
-    }
-    let run_args: Vec<&str> = request.run_args.iter().map(|s| s.as_str()).collect();
-    manager.launch(&run_args).context("Failed to launch")?;
+    info!("Binary written in {:?}", t0.elapsed());
 
-    info!("Deployed successfully");
-    Ok("Deployed successfully".to_string())
+    let run_args: Vec<&str> = request.run_args.iter().map(|s| s.as_str()).collect();
+    let confirmation = manager
+        .launch(&run_args, &request.stdin_payload)
+        .context("Failed to launch")?;
+
+    info!(
+        "Deployed successfully in {:?}: {confirmation}",
+        t0.elapsed()
+    );
+    Ok(format!("Deployed successfully: {confirmation}"))
 }
 
 fn write_binary(path: &Path, payload: &[u8]) -> Result<()> {
@@ -88,35 +95,6 @@ fn write_binary(path: &Path, payload: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn run_health_check(binary_path: &Path, args: &[String]) -> Result<()> {
-    info!(
-        "Running health check: {} {}",
-        binary_path.display(),
-        args.join(" ")
-    );
-    let mut child = Command::new(binary_path).args(args).spawn()?;
-
-    let deadline = std::time::Instant::now() + HEALTH_CHECK_TIMEOUT;
-    loop {
-        match child.try_wait()? {
-            Some(status) if status.success() => {
-                info!("Health check passed");
-                return Ok(());
-            }
-            Some(status) => {
-                anyhow::bail!("self-test exited with {status}");
-            }
-            None => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    anyhow::bail!("self-test timed out after {HEALTH_CHECK_TIMEOUT:?}");
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,27 +102,33 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    /// Write a shell script that reads stdin, then prints "OK" and sleeps.
     fn write_fake_managed(dir: &Path) -> PathBuf {
         let path = dir.join("managed");
         let mut f = fs::File::create(&path).unwrap();
         writeln!(
             f,
             r#"#!/bin/sh
-case "$1" in
-    self-test) exit 0 ;;
-    remote) sleep 3600 ;;
-    *) exit 1 ;;
-esac"#
+cat > /dev/null
+echo "OK"
+sleep 3600"#
         )
         .unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         path
     }
 
+    /// Write a shell script that always reports an error.
     fn write_failing_managed(dir: &Path) -> PathBuf {
         let path = dir.join("managed");
         let mut f = fs::File::create(&path).unwrap();
-        writeln!(f, "#!/bin/sh\nexit 1").unwrap();
+        writeln!(
+            f,
+            r#"#!/bin/sh
+cat > /dev/null
+echo "ERROR: something went wrong""#
+        )
+        .unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         path
     }
@@ -160,8 +144,8 @@ esac"#
         let request = PushBinaryRequest {
             sha256,
             payload: payload.to_vec(),
-            health_check_args: vec!["self-test".to_string()],
-            run_args: vec!["remote".to_string()],
+            run_args: vec!["monitor".to_string()],
+            stdin_payload: vec![],
         };
         rmp_serde::to_vec(&request).unwrap()
     }
@@ -170,8 +154,8 @@ esac"#
         let request = PushBinaryRequest {
             sha256: [0u8; 32],
             payload: payload.to_vec(),
-            health_check_args: vec!["self-test".to_string()],
-            run_args: vec!["remote".to_string()],
+            run_args: vec!["monitor".to_string()],
+            stdin_payload: vec![],
         };
         rmp_serde::to_vec(&request).unwrap()
     }
@@ -186,16 +170,16 @@ esac"#
         let request = PushBinaryRequest {
             sha256,
             payload: payload.to_vec(),
-            health_check_args: vec!["self-test".to_string()],
-            run_args: vec!["remote".to_string()],
+            run_args: vec!["monitor".to_string()],
+            stdin_payload: vec![1, 2, 3],
         };
 
         let serialized = rmp_serde::to_vec(&request).unwrap();
         let deserialized: PushBinaryRequest = rmp_serde::from_slice(&serialized).unwrap();
         assert_eq!(deserialized.sha256, sha256);
         assert_eq!(deserialized.payload, payload);
-        assert_eq!(deserialized.health_check_args, ["self-test"]);
-        assert_eq!(deserialized.run_args, ["remote"]);
+        assert_eq!(deserialized.run_args, ["monitor"]);
+        assert_eq!(deserialized.stdin_payload, [1, 2, 3]);
 
         // Round-trip Ok and Err responses.
         let ok: PushBinaryResponse = Ok("deployed".to_string());
@@ -239,26 +223,65 @@ esac"#
 
         let manager = new_manager(&managed_path);
         let msg = handle_request(&buffer, &manager).unwrap();
-        assert!(msg.contains("Deployed"));
+        assert!(msg.contains("Deployed"), "Unexpected message: {msg}");
+        assert!(msg.contains("OK"), "Unexpected message: {msg}");
 
         assert!(manager.lock().unwrap().is_running());
     }
 
     #[test]
-    fn test_health_check_failure_rejects_push() {
+    fn test_child_error_response() {
         let dir = TempDir::new().unwrap();
         let managed_path = write_failing_managed(dir.path());
         let payload = fs::read(&managed_path).unwrap();
         let buffer = make_push_request(&payload);
 
         let manager = new_manager(&managed_path);
-        let err = handle_request(&buffer, &manager).unwrap_err();
+        let msg = handle_request(&buffer, &manager).unwrap();
+        // The child prints "ERROR: ..." on stdout, which gets included in the response.
         assert!(
-            err.contains("Health check failed"),
-            "Unexpected error: {err}"
+            msg.contains("ERROR: something went wrong"),
+            "Unexpected message: {msg}"
         );
+    }
 
-        assert!(!manager.lock().unwrap().is_running());
+    #[test]
+    fn test_stdin_payload_piped_to_child() {
+        let dir = TempDir::new().unwrap();
+        let marker_path = dir.path().join("stdin_received");
+
+        // Script that dumps stdin to a marker file, then prints OK.
+        let managed_path = dir.path().join("managed");
+        let mut f = fs::File::create(&managed_path).unwrap();
+        writeln!(
+            f,
+            "#!/bin/sh\ncat > {}\necho OK\nsleep 3600",
+            marker_path.display()
+        )
+        .unwrap();
+        fs::set_permissions(&managed_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let payload = fs::read(&managed_path).unwrap();
+        let stdin_data = b"hello from admin";
+
+        let mut hasher = Sha256::new();
+        hasher.update(&payload);
+        let sha256: [u8; 32] = hasher.finalize().into();
+        let request = PushBinaryRequest {
+            sha256,
+            payload: payload.to_vec(),
+            run_args: vec![],
+            stdin_payload: stdin_data.to_vec(),
+        };
+        let buffer = rmp_serde::to_vec(&request).unwrap();
+
+        let manager = new_manager(&managed_path);
+        let msg = handle_request(&buffer, &manager).unwrap();
+        assert!(msg.contains("OK"), "Unexpected message: {msg}");
+
+        // Verify the stdin payload was received by the child.
+        let received = fs::read_to_string(&marker_path).unwrap();
+        assert_eq!(received, "hello from admin");
     }
 
     #[test]
@@ -274,7 +297,7 @@ esac"#
 
         let buffer = make_push_request(&payload);
         let msg = handle_request(&buffer, &manager).unwrap();
-        assert!(msg.contains("Deployed"));
+        assert!(msg.contains("Deployed"), "Unexpected message: {msg}");
 
         assert!(manager.lock().unwrap().is_running());
     }

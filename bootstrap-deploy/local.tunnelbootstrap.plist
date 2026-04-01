@@ -7,17 +7,17 @@
     <string>local.tunnelbootstrap</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/tunnels/tunnel-bootstrap</string>
+        <string>__HOME__/tunnels/tunnel-bootstrap</string>
     </array>
     <key>KeepAlive</key>
     <true/>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardErrorPath</key>
-    <string>/usr/local/tunnels/bootstrap.log</string>
+    <string>__HOME__/tunnels/bootstrap.log</string>
     <key>StandardOutPath</key>
-    <string>/usr/local/tunnels/bootstrap.log</string>
+    <string>__HOME__/tunnels/bootstrap.log</string>
     <key>WorkingDirectory</key>
-    <string>/usr/local/tunnels</string>
+    <string>__HOME__/tunnels</string>
 </dict>
 </plist>

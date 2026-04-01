@@ -1,9 +1,8 @@
 [package]
-name = "client_lib"
+name = "minusmq"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde.workspace = true
 anyhow.workspace = true
-yaml-rust = "0.4"
+log = "0.4"
