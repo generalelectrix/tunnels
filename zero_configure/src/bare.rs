@@ -38,6 +38,30 @@ fn strip_trailing_dot(hostname: &str) -> String {
     hostname.strip_suffix('.').unwrap_or(hostname).to_string()
 }
 
+/// Get the machine's display name for use as a DNS-SD instance name.
+/// On macOS, uses the Computer Name (e.g. "Bore A") to match Apple's native DNS-SD behavior.
+/// Falls back to the short hostname.
+fn machine_hostname() -> String {
+    // Try macOS Computer Name first.
+    if let Ok(output) = std::process::Command::new("scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+    {
+        if output.status.success() {
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+    }
+    // Fall back to short hostname.
+    let raw = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    raw.split('.').next().unwrap_or(&raw).to_string()
+}
+
 /// Get the local hostname in mDNS format (ending with ".local.").
 fn mdns_hostname() -> String {
     let raw = hostname::get()
@@ -55,6 +79,8 @@ fn mdns_hostname() -> String {
 }
 
 /// Create a `ServiceDaemon` and register a service with automatic address resolution.
+/// Uses the machine's hostname as the instance name, matching the behavior of Apple's
+/// native DNS-SD API (async-dnssd).
 /// Returns the daemon (which must be kept alive to maintain the registration) and
 /// the fullname needed for later unregistration.
 pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemon, String)> {
@@ -62,10 +88,13 @@ pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemo
     let daemon = ServiceDaemon::new()?;
 
     let hostname = mdns_hostname();
+    // Use the raw hostname (without .local. suffix) as the instance name,
+    // so each machine advertises with its own name rather than the service type.
+    let instance_name = machine_hostname();
 
     let service_info = ServiceInfo::new(
         &service_type,
-        name,
+        &instance_name,
         &hostname,
         "",
         port,

@@ -12,6 +12,7 @@ members = [
     "console",
     "client_lib",
     "minusmq",
+    "bootstrap-deploy",
 ]
 
 [workspace.dependencies]

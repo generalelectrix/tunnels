@@ -1,0 +1,14 @@
+[package]
+name = "bootstrap-deploy"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "bootstrap-deploy"
+path = "src/main.rs"
+
+[dependencies]
+mdns-sd = "0.18"
+ssh2 = "0.9"
+anyhow.workspace = true
+rpassword = "7"
