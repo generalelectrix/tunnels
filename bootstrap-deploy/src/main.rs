@@ -11,6 +11,31 @@ const REMOTE_DIR: &str = "tunnels";
 const REMOTE_BINARY: &str = "tunnels/tunnel-bootstrap";
 const PLIST_FILENAME: &str = "local.tunnelbootstrap.plist";
 
+const PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.tunnelbootstrap</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/tunnels/tunnel-bootstrap</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/tunnels/bootstrap.log</string>
+    <key>StandardOutPath</key>
+    <string>__HOME__/tunnels/bootstrap.log</string>
+    <key>WorkingDirectory</key>
+    <string>__HOME__/tunnels</string>
+</dict>
+</plist>
+"#;
+
 struct SshTarget {
     instance_name: String,
     hostname: String,
@@ -158,7 +183,6 @@ fn deploy(
     username: &str,
     password: &str,
     binary_path: &Path,
-    plist_path: &Path,
 ) -> Result<()> {
     let session = open_session(target, username, password)?;
 
@@ -185,10 +209,8 @@ fn deploy(
     );
     scp_send(&session, binary_path, &remote_binary, 0o755)?;
 
-    // Read the plist template and replace __HOME__ with the actual home directory.
-    let plist_template = std::fs::read_to_string(plist_path)
-        .with_context(|| format!("Read plist {}", plist_path.display()))?;
-    let plist_content = plist_template.replace("__HOME__", &home);
+    // Resolve the embedded plist template with the remote home directory.
+    let plist_content = PLIST_TEMPLATE.replace("__HOME__", &home);
 
     // Write the resolved plist to a temp file, then SCP it.
     let tmp_plist = "/tmp/local.tunnelbootstrap.plist";
@@ -261,9 +283,17 @@ fn main() -> Result<()> {
     ))?;
     println!();
 
-    let binary_path_str = prompt_line("Path to tunnel-bootstrap binary [dist/tunnel-bootstrap]: ")?;
+    let default_binary_path = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("tunnel-bootstrap")))
+        .unwrap_or_else(|| Path::new("tunnel-bootstrap").to_path_buf());
+    let prompt_msg = format!(
+        "Path to tunnel-bootstrap binary [{}]: ",
+        default_binary_path.display()
+    );
+    let binary_path_str = prompt_line(&prompt_msg)?;
     let binary_path = if binary_path_str.is_empty() {
-        Path::new("dist/tunnel-bootstrap")
+        default_binary_path.as_path()
     } else {
         Path::new(&binary_path_str)
     };
@@ -273,15 +303,8 @@ fn main() -> Result<()> {
         binary_path.display()
     );
 
-    let plist_path = Path::new("bootstrap-deploy/local.tunnelbootstrap.plist");
-    anyhow::ensure!(
-        plist_path.exists(),
-        "Plist not found: {}",
-        plist_path.display()
-    );
-
     println!("Deploying to {}...\n", target.instance_name);
-    deploy(target, &username, &password, binary_path, plist_path)?;
+    deploy(target, &username, &password, binary_path)?;
     println!("\nDone. Bootstrapper should appear in the console shortly.");
 
     Ok(())

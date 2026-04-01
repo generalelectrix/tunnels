@@ -16,7 +16,8 @@ jobs:
       matrix:
         os: [macos-latest, macos-15-intel]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
       - name: Build and test
         run: |
           cargo build --workspace
