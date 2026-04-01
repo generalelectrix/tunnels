@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, app-build]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
