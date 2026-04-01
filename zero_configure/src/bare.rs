@@ -62,20 +62,25 @@ fn machine_hostname() -> String {
     raw.split('.').next().unwrap_or(&raw).to_string()
 }
 
-/// Get the local hostname in mDNS format (ending with ".local.").
-fn mdns_hostname() -> String {
+/// Build a service-scoped mDNS hostname that won't collide with the system hostname.
+///
+/// macOS's built-in mDNS responder already advertises A/AAAA records for the system
+/// hostname (e.g. "bore-b.local."). The mdns-sd library also publishes A/AAAA records
+/// for whatever hostname we give it, so using the bare system hostname causes a
+/// collision — macOS detects the duplicate and renames itself (e.g. "bore-b-2.local").
+///
+/// By appending the service name to the hostname stem (e.g. "bore-b-tunnelbootstrap.local."),
+/// we avoid the collision while still getting correct IP resolution via enable_addr_auto().
+fn mdns_service_hostname(service_name: &str) -> String {
     let raw = hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "localhost".to_string());
-    // mdns-sd requires hostnames ending in ".local."
-    if raw.ends_with(".local.") {
-        raw
-    } else if raw.ends_with(".local") {
-        format!("{raw}.")
-    } else {
-        format!("{raw}.local.")
-    }
+    let stem = raw
+        .strip_suffix(".local.")
+        .or_else(|| raw.strip_suffix(".local"))
+        .unwrap_or(&raw);
+    format!("{stem}-{service_name}.local.")
 }
 
 /// Create a `ServiceDaemon` and register a service with automatic address resolution.
@@ -87,7 +92,7 @@ pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemo
     let service_type = service_type_fq(name);
     let daemon = ServiceDaemon::new()?;
 
-    let hostname = mdns_hostname();
+    let hostname = mdns_service_hostname(name);
     // Use the raw hostname (without .local. suffix) as the instance name,
     // so each machine advertises with its own name rather than the service type.
     let instance_name = machine_hostname();
