@@ -12,8 +12,8 @@ stage_theme = { path = "../stage_theme" }
 gui_common = { path = "../gui_common" }
 eframe = "0.33"
 anyhow = "1"
-log = "0.4"
-simplelog = "0.12"
+log.workspace = true
+simplelog.workspace = true
 rmp-serde = { workspace = true }
 sha2 = "0.10"
 zero_configure = { path = "../zero_configure" }

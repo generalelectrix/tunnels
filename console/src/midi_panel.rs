@@ -6,7 +6,7 @@ use tunnels::control::MetaCommand;
 
 use crate::ui_util::GuiContext;
 
-impl MidiCommands for GuiContext<'_> {
+impl<App: 'static> MidiCommands for GuiContext<'_, App> {
     fn connect_port(&mut self, slot_name: &str, device_id: DeviceId, kind: DeviceKind) {
         let _ = self.send_command(MetaCommand::ConnectMidiPort {
             slot_name: slot_name.to_string(),

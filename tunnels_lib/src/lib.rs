@@ -3,6 +3,7 @@
 pub mod bootstrap;
 pub mod color;
 pub mod number;
+pub mod projector;
 pub mod prompt;
 pub mod smooth;
 

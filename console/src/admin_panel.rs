@@ -1,6 +1,7 @@
 //! egui-based panel for administering tunnel clients.
 
 use crate::bootstrap_controller::BootstrapController;
+use crate::ui_util::GuiContext;
 use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
 use eframe::egui;
@@ -8,7 +9,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 /// Abstraction over the network admin operations so we can mock them in tests.
 pub trait AdminService: Send + Sync {
@@ -41,13 +41,6 @@ impl AdminService for BootstrapController {
 enum Target {
     Monitor,
     RemoteClient(String),
-}
-
-/// State of an in-progress or completed config send / monitor launch.
-enum ConfigSendState {
-    Sending { label: String },
-    Success { label: String, message: String },
-    Error { label: String, message: String },
 }
 
 /// Pre-baked resolution presets.
@@ -118,9 +111,6 @@ pub struct AdminPanelState {
     flip_horizontal: bool,
     capture_mouse: bool,
 
-    // Async config send / monitor launch
-    config_send_state: Arc<Mutex<Option<ConfigSendState>>>,
-
     // Local monitor child processes, killed on drop.
     monitor_children: Arc<Mutex<Vec<Child>>>,
 }
@@ -140,7 +130,6 @@ impl AdminPanelState {
             fullscreen: false,
             flip_horizontal: false,
             capture_mouse: false,
-            config_send_state: Arc::new(Mutex::new(None)),
             monitor_children: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -224,93 +213,77 @@ impl AdminPanelState {
     }
 
     /// Perform the action for the current target selection.
-    fn perform_action(&self) {
+    fn perform_action<App>(&mut self, gui: &mut GuiContext<'_, App>)
+    where
+        App: gui_common::background_task::Project<Self> + gui_common::UserNotify + 'static,
+    {
         match &self.selected_target {
-            Some(Target::Monitor) => self.launch_monitor(),
-            Some(Target::RemoteClient(_)) => self.send_config(),
+            Some(Target::Monitor) => self.launch_monitor(gui),
+            Some(Target::RemoteClient(_)) => self.send_config(gui),
             None => {}
         }
     }
 
     /// Launch a local monitor subprocess.
-    fn launch_monitor(&self) {
+    fn launch_monitor<App>(&mut self, gui: &mut GuiContext<'_, App>)
+    where
+        App: gui_common::background_task::Project<Self> + gui_common::UserNotify + 'static,
+    {
         let config = match self.build_config() {
             Ok(cfg) => cfg,
             Err(e) => {
-                *self.config_send_state.lock().unwrap() = Some(ConfigSendState::Error {
-                    label: "monitor".to_string(),
-                    message: e,
-                });
+                gui.report_error(e);
                 return;
             }
         };
 
-        *self.config_send_state.lock().unwrap() = Some(ConfigSendState::Sending {
-            label: "monitor".to_string(),
-        });
-
-        let state = self.config_send_state.clone();
         let children = self.monitor_children.clone();
-        thread::spawn(move || {
-            let result = (|| -> Result<String, String> {
-                let serialized = rmp_serde::to_vec(&config)
-                    .map_err(|e| format!("Failed to serialize config: {e}"))?;
+        gui.dispatch_notify("Launching monitor", move || {
+            let serialized = rmp_serde::to_vec(&config)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize config: {e}"))?;
 
-                let exe = tunnelclient_path()?;
+            let exe = tunnelclient_path().map_err(|e| anyhow::anyhow!(e))?;
 
-                let mut child = Command::new(exe)
-                    .arg("monitor")
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .spawn()
-                    .map_err(|e| format!("Failed to spawn monitor: {e}"))?;
+            let mut child = Command::new(exe)
+                .arg("monitor")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("Failed to spawn monitor: {e}"))?;
 
-                // Write config to child stdin and close it.
-                {
-                    let mut stdin = child.stdin.take().unwrap();
-                    stdin
-                        .write_all(&serialized)
-                        .map_err(|e| format!("Failed to write config to monitor: {e}"))?;
-                }
+            {
+                let mut stdin = child.stdin.take().unwrap();
+                stdin
+                    .write_all(&serialized)
+                    .map_err(|e| anyhow::anyhow!("Failed to write config to monitor: {e}"))?;
+            }
 
-                // Read the status line from child stdout.
-                let stdout = child.stdout.take().unwrap();
-                let mut reader = BufReader::new(stdout);
-                let mut line = String::new();
-                reader
-                    .read_line(&mut line)
-                    .map_err(|e| format!("Failed to read monitor status: {e}"))?;
+            let stdout = child.stdout.take().unwrap();
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            reader
+                .read_line(&mut line)
+                .map_err(|e| anyhow::anyhow!("Failed to read monitor status: {e}"))?;
 
-                let line = line.trim();
-                if line == "OK" {
-                    // Track the child so it gets killed when the console exits.
-                    children.lock().unwrap().push(child);
-                    Ok("Monitor launched successfully.".to_string())
-                } else if let Some(err) = line.strip_prefix("ERROR: ") {
-                    Err(err.to_string())
-                } else if line.is_empty() {
-                    Err("Monitor process exited without status.".to_string())
-                } else {
-                    Err(format!("Unexpected monitor response: {line}"))
-                }
-            })();
-
-            let mut guard = state.lock().unwrap();
-            *guard = Some(match result {
-                Ok(msg) => ConfigSendState::Success {
-                    label: "monitor".to_string(),
-                    message: msg,
-                },
-                Err(e) => ConfigSendState::Error {
-                    label: "monitor".to_string(),
-                    message: e,
-                },
-            });
+            let line = line.trim();
+            if line == "OK" {
+                children.lock().unwrap().push(child);
+                Ok("Monitor launched successfully.".to_string())
+            } else if let Some(err) = line.strip_prefix("ERROR: ") {
+                anyhow::bail!(err.to_string())
+            } else if line.is_empty() {
+                anyhow::bail!("Monitor process exited without status.")
+            } else {
+                anyhow::bail!("Unexpected monitor response: {line}")
+            }
         });
     }
 
     /// Send configuration to the selected remote client on a background thread.
-    fn send_config(&self) {
+    fn send_config<App>(&mut self, gui: &mut GuiContext<'_, App>)
+    where
+        App: gui_common::background_task::Project<Self> + gui_common::UserNotify + 'static,
+    {
         let client_name = match &self.selected_target {
             Some(Target::RemoteClient(name)) => name.clone(),
             _ => return,
@@ -319,93 +292,27 @@ impl AdminPanelState {
         let config = match self.build_config() {
             Ok(cfg) => cfg,
             Err(e) => {
-                *self.config_send_state.lock().unwrap() = Some(ConfigSendState::Error {
-                    label: client_name,
-                    message: e,
-                });
+                gui.report_error(e);
                 return;
             }
         };
 
-        *self.config_send_state.lock().unwrap() = Some(ConfigSendState::Sending {
-            label: client_name.clone(),
-        });
-
         let admin = self.admin_service.clone();
-        let state = self.config_send_state.clone();
-        let name = client_name.clone();
-        thread::spawn(move || {
-            let result = (|| -> anyhow::Result<String> {
-                let exe = tunnelclient_path().map_err(|e| anyhow::anyhow!(e))?;
-                admin.push_config(&name, &exe, config)
-            })();
-            let mut guard = state.lock().unwrap();
-            *guard = Some(match result {
-                Ok(msg) => ConfigSendState::Success {
-                    label: name,
-                    message: msg,
-                },
-                Err(e) => ConfigSendState::Error {
-                    label: name,
-                    message: e.to_string(),
-                },
-            });
+        gui.dispatch_notify(format!("Sending config to {client_name}"), move || {
+            let exe = tunnelclient_path().map_err(|e| anyhow::anyhow!(e))?;
+            admin.push_config(&client_name, &exe, config)
         });
-    }
-
-    /// Draw the modal overlay if a config send is in progress or completed.
-    fn draw_modal(&self, ctx: &egui::Context) {
-        let state = self.config_send_state.lock().unwrap();
-        if state.is_none() {
-            return;
-        }
-        // Drop the lock before showing the modal, since button clicks need to acquire it.
-        let (title, body, is_pending) = match state.as_ref().unwrap() {
-            ConfigSendState::Sending { label } => (
-                "Working...".to_string(),
-                format!("Sending config to {}...", label),
-                true,
-            ),
-            ConfigSendState::Success { label, message } => (
-                "Success".to_string(),
-                format!("{}:\n{}", label, message),
-                false,
-            ),
-            ConfigSendState::Error { label, message } => (
-                "Error".to_string(),
-                format!("Failed ({}):\n{}", label, message),
-                false,
-            ),
-        };
-        drop(state);
-
-        egui::Window::new(&title)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.label(&body);
-                ui.add_space(8.0);
-                if is_pending {
-                    ui.spinner();
-                    ui.add_space(4.0);
-                    if ui.button("Stop Waiting").clicked() {
-                        *self.config_send_state.lock().unwrap() = None;
-                    }
-                } else if ui.button("Ok").clicked() {
-                    *self.config_send_state.lock().unwrap() = None;
-                }
-            });
     }
 
     /// Render the full admin UI. Called by `ConfigApp::update` and by test harnesses.
-    pub fn render(&mut self, ctx: &egui::Context, clients: &[String]) {
-        let is_sending = self.config_send_state.lock().unwrap().is_some();
-
-        if is_sending {
-            ctx.request_repaint();
-        }
-
+    pub(crate) fn render<App>(
+        &mut self,
+        ctx: &egui::Context,
+        clients: &[String],
+        gui: &mut GuiContext<'_, App>,
+    ) where
+        App: gui_common::background_task::Project<Self> + gui_common::UserNotify + 'static,
+    {
         // Invalidate selection if the selected remote client has disappeared.
         if let Some(Target::RemoteClient(ref name)) = self.selected_target
             && !clients.iter().any(|c| c == name)
@@ -523,15 +430,12 @@ impl AdminPanelState {
                 Target::RemoteClient(_) => "Send Configuration",
             };
             if ui
-                .add_enabled(!is_sending, egui::Button::new(button_label))
+                .add_enabled(gui.task.is_none(), egui::Button::new(button_label))
                 .clicked()
             {
-                self.perform_action();
+                self.perform_action(gui);
             }
         });
-
-        // Modal overlay
-        self.draw_modal(ctx);
     }
 }
 
@@ -549,6 +453,9 @@ mod tests {
     use super::*;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+    use gui_common::MessageModal;
+    use gui_common::background_task::BlockingBackgroundTask;
+    use tunnels::control::mock::auto_respond_client;
 
     struct MockAdminService {
         clients: Vec<String>,
@@ -577,11 +484,31 @@ mod tests {
         }
     }
 
+    /// Dummy app type for tests.
+    struct TestApp {
+        admin: AdminPanelState,
+    }
+
+    gui_common::impl_project!(TestApp, admin: AdminPanelState);
+
+    impl gui_common::UserNotify for TestApp {
+        fn notify(&mut self, _title: &str, _message: &str) {}
+        fn notify_error(&mut self, _error: anyhow::Error) {}
+    }
+
     fn test_harness(clients: Vec<String>) -> Harness<'static, AdminPanelState> {
         let clients_for_render = clients.clone();
+        let client = auto_respond_client();
+        let mut modal = MessageModal::default();
+        let mut task: Option<BlockingBackgroundTask<TestApp>> = None;
         let harness = Harness::new_ui_state(
             move |ui, app: &mut AdminPanelState| {
-                app.render(ui.ctx(), &clients_for_render);
+                let mut gui = GuiContext {
+                    modal: &mut modal,
+                    client: &client,
+                    task: &mut task,
+                };
+                app.render::<TestApp>(ui.ctx(), &clients_for_render, &mut gui);
             },
             AdminPanelState::test_new(clients),
         );
@@ -716,51 +643,19 @@ mod tests {
         );
 
         // Render with empty client list -- should invalidate.
+        let client = auto_respond_client();
+        let mut modal = MessageModal::default();
+        let mut task: Option<BlockingBackgroundTask<TestApp>> = None;
         let ctx = egui::Context::default();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            app.render(ctx, &[]);
+            let mut gui = GuiContext {
+                modal: &mut modal,
+                client: &client,
+                task: &mut task,
+            };
+            app.render::<TestApp>(ctx, &[], &mut gui);
         });
         assert_eq!(app.selected_target, None);
-    }
-
-    // --- Modal tests ---
-
-    #[test]
-    fn modal_sending_shows_stop_waiting() {
-        let mut harness = test_harness(vec![]);
-        *harness.state_mut().config_send_state.lock().unwrap() = Some(ConfigSendState::Sending {
-            label: "test".to_string(),
-        });
-        // Use step() instead of run() because the sending state triggers request_repaint.
-        harness.step();
-        assert!(harness.query_by_label("Stop Waiting").is_some());
-    }
-
-    #[test]
-    fn modal_success_shows_ok() {
-        let mut harness = test_harness(vec![]);
-        *harness.state_mut().config_send_state.lock().unwrap() = Some(ConfigSendState::Success {
-            label: "test".to_string(),
-            message: "Done.".to_string(),
-        });
-        harness.step();
-        assert!(harness.query_by_label("Ok").is_some());
-    }
-
-    #[test]
-    fn modal_error_shows_message() {
-        let mut harness = test_harness(vec![]);
-        *harness.state_mut().config_send_state.lock().unwrap() = Some(ConfigSendState::Error {
-            label: "test".to_string(),
-            message: "Connection refused".to_string(),
-        });
-        harness.step();
-        assert!(harness.query_by_label("Ok").is_some());
-        assert!(
-            harness
-                .query_by_label("Failed (test):\nConnection refused")
-                .is_some()
-        );
     }
 
     // --- Snapshot tests ---
@@ -789,37 +684,5 @@ mod tests {
         harness.state_mut().selected_target = None;
         harness.run();
         harness.snapshot("admin_no_selection");
-    }
-
-    #[test]
-    fn snapshot_modal_sending() {
-        let mut harness = test_harness(vec![]);
-        *harness.state_mut().config_send_state.lock().unwrap() = Some(ConfigSendState::Sending {
-            label: "projector-1".to_string(),
-        });
-        harness.step();
-        harness.snapshot("admin_modal_sending");
-    }
-
-    #[test]
-    fn snapshot_modal_success() {
-        let mut harness = test_harness(vec![]);
-        *harness.state_mut().config_send_state.lock().unwrap() = Some(ConfigSendState::Success {
-            label: "projector-1".to_string(),
-            message: "Stopped a running show.\nStarting a new show.".to_string(),
-        });
-        harness.step();
-        harness.snapshot("admin_modal_success");
-    }
-
-    #[test]
-    fn snapshot_modal_error() {
-        let mut harness = test_harness(vec![]);
-        *harness.state_mut().config_send_state.lock().unwrap() = Some(ConfigSendState::Error {
-            label: "projector-1".to_string(),
-            message: "Resource temporarily unavailable".to_string(),
-        });
-        harness.step();
-        harness.snapshot("admin_modal_error");
     }
 }

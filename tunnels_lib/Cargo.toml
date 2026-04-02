@@ -11,3 +11,6 @@ serde.workspace = true
 ordered-float = "5"
 number = { git = "https://github.com/generalelectrix/number", branch = "main" }
 anyhow = "1"
+
+[dev-dependencies]
+rmp-serde.workspace = true

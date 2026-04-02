@@ -3,6 +3,8 @@ mod animation_panel;
 mod audio_panel;
 pub mod bootstrap_controller;
 mod midi_panel;
+pub mod projector_controller;
+pub mod projector_panel;
 mod ui_util;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,11 +12,14 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use eframe::egui;
+use gui_common::background_task::{BlockingBackgroundTask, OptionTaskExt};
+use gui_common::impl_project;
 
 use admin_panel::{AdminPanelState, AdminService};
 use audio_panel::{AudioPanel, AudioPanelState};
 use gui_common::{CloseHandler, MessageModal};
 use midi_panel::{MidiPanel, MidiPanelState};
+use projector_panel::{ProjectorPanelState, ProjectorService};
 use tunnels::animation_visualizer::VisualizerPanelState;
 use tunnels::control::CommandClient;
 use tunnels::gui_state::SharedGuiState;
@@ -27,6 +32,7 @@ enum Tab {
     Audio,
     Animation,
     Clients,
+    Projectors,
 }
 
 struct ConfigApp {
@@ -35,23 +41,35 @@ struct ConfigApp {
     audio_panel: AudioPanelState,
     admin_panel: AdminPanelState,
     admin_service: Arc<dyn AdminService>,
-    /// Behind Arc<Mutex<>> because this state is shared between the embedded
-    /// Animation tab and the detached viewport (which runs on a separate
-    /// thread via show_viewport_deferred). Only one renders at a time, so the
-    /// mutex is never contended.
+    projector_panel: ProjectorPanelState,
+    projector_service: Arc<dyn ProjectorService>,
     visualizer_panel: Arc<Mutex<VisualizerPanelState>>,
-    /// Shared with the deferred viewport closure so it can signal "close" back
-    /// to the main thread. Arc<AtomicBool> because the deferred closure is
-    /// 'static + Send + Sync and can't hold a reference to ConfigApp fields.
     visualizer_detached: Arc<AtomicBool>,
     close_handler: CloseHandler,
     modal: MessageModal,
     active_tab: Tab,
     gui_state: SharedGuiState,
+    task: Option<BlockingBackgroundTask<Self>>,
+}
+
+// Project impls — allow panels to dispatch background tasks targeting their own state.
+impl_project!(ConfigApp, projector_panel: ProjectorPanelState);
+impl_project!(ConfigApp, admin_panel: AdminPanelState);
+
+impl gui_common::UserNotify for ConfigApp {
+    fn notify(&mut self, title: &str, message: &str) {
+        self.modal.show(title, message);
+    }
+    fn notify_error(&mut self, error: anyhow::Error) {
+        self.modal.show_error(error);
+    }
 }
 
 impl eframe::App for ConfigApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Poll and apply background task results before splitting borrows.
+        self.task.poll(ctx).if_complete(self);
+
         self.close_handler.update("Quit Tunnels?", ctx);
 
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
@@ -60,6 +78,7 @@ impl eframe::App for ConfigApp {
                 ui.selectable_value(&mut self.active_tab, Tab::Audio, "Audio");
                 ui.selectable_value(&mut self.active_tab, Tab::Animation, "Animation");
                 ui.selectable_value(&mut self.active_tab, Tab::Clients, "Clients");
+                ui.selectable_value(&mut self.active_tab, Tab::Projectors, "Projectors");
             });
         });
 
@@ -81,19 +100,32 @@ impl eframe::App for ConfigApp {
         }
 
         if self.active_tab == Tab::Clients {
-            // Admin panel draws its own SidePanel + CentralPanel.
             let clients = self.admin_service.clients();
-            self.admin_panel.render(ctx, &clients);
+            let mut gui = GuiContext {
+                modal: &mut self.modal,
+                client: &self.client,
+                task: &mut self.task,
+            };
+            self.admin_panel.render(ctx, &clients, &mut gui);
+        } else if self.active_tab == Tab::Projectors {
+            let projectors = self.projector_service.projectors();
+            let mut gui = GuiContext {
+                modal: &mut self.modal,
+                client: &self.client,
+                task: &mut self.task,
+            };
+            self.projector_panel.render(ctx, &projectors, &mut gui);
         } else {
             egui::CentralPanel::default().show(ctx, |ui| match self.active_tab {
                 Tab::Midi => {
                     let midi_slots = self.gui_state.midi_slots.load();
-                    let mut ctx = GuiContext {
+                    let mut gui = GuiContext {
                         modal: &mut self.modal,
                         client: &self.client,
+                        task: &mut self.task,
                     };
                     MidiPanel {
-                        commands: &mut ctx,
+                        commands: &mut gui,
                         state: &mut self.midi_panel,
                         slots: &midi_slots,
                     }
@@ -107,6 +139,7 @@ impl eframe::App for ConfigApp {
                         ctx: GuiContext {
                             modal: &mut self.modal,
                             client: &self.client,
+                            task: &mut self.task,
                         },
                         state: &mut self.audio_panel,
                         current_device: &audio_device,
@@ -122,7 +155,7 @@ impl eframe::App for ConfigApp {
                         &self.visualizer_detached,
                     );
                 }
-                Tab::Clients => {} // handled above
+                Tab::Clients | Tab::Projectors => {} // handled above
             });
         }
 
@@ -134,6 +167,7 @@ pub fn run_config_gui(
     client: CommandClient,
     gui_state: SharedGuiState,
     admin_service: Arc<dyn AdminService>,
+    projector_service: Arc<dyn ProjectorService>,
     hostname: String,
 ) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -147,6 +181,7 @@ pub fn run_config_gui(
     audio_panel.sync_from_device_name(&audio_device);
 
     let admin_panel = AdminPanelState::new(admin_service.clone(), hostname);
+    let projector_panel = ProjectorPanelState::new(projector_service.clone());
 
     eframe::run_native(
         "Tunnels",
@@ -158,6 +193,8 @@ pub fn run_config_gui(
                 audio_panel,
                 admin_panel,
                 admin_service,
+                projector_panel,
+                projector_service,
                 visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
                 visualizer_detached: Arc::new(AtomicBool::new(false)),
                 close_handler: CloseHandler::default(),
@@ -165,6 +202,7 @@ pub fn run_config_gui(
                 client,
                 active_tab: Tab::default(),
                 gui_state,
+                task: None,
             }))
         }),
     )

@@ -2,9 +2,11 @@ mod show;
 
 use crate::show::Show;
 use client_lib::config::ClientConfig;
+use log::error;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
 use std::process::ExitCode;
+use tunnelclient::projector;
 use tunnels_lib::RunFlag;
 
 fn main() -> ExitCode {
@@ -45,12 +47,20 @@ fn main() -> ExitCode {
             LevelFilter::Info
         });
 
+        start_projector_service();
+
         let mut show = Show::new(cfg, RunFlag::default()).expect("Failed to initialize show");
 
         show.run();
     }
 
     ExitCode::SUCCESS
+}
+
+fn start_projector_service() {
+    if let Err(e) = projector::spawn_projector_service() {
+        error!("Failed to spawn projector service thread: {e}");
+    }
 }
 
 fn init_logger(level: LevelFilter) {

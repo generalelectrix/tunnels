@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use console::bootstrap_controller::BootstrapController;
+use console::projector_controller::ProjectorController;
 use log::error;
 use midi_harness::install_midi_device_change_handler;
 
@@ -64,6 +65,11 @@ fn init_logger() {
 }
 
 fn main() -> Result<()> {
+    // Capture backtraces on all anyhow errors. No hot-path errors in this
+    // app, so the overhead is negligible. Backtraces are displayed in the
+    // error modal's Debug section.
+    unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
+
     init_logger();
 
     #[cfg(target_os = "macos")]
@@ -103,9 +109,12 @@ fn main() -> Result<()> {
     let admin: Arc<dyn console::admin_panel::AdminService> =
         Arc::new(BootstrapController::new(Some(Duration::from_secs(10))));
 
+    let projector: Arc<dyn console::projector_panel::ProjectorService> =
+        Arc::new(ProjectorController::new(Some(Duration::from_secs(60))));
+
     let hostname = hostname::get()
         .map(|h| h.into_string().unwrap_or_else(|_| "unknown".to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
 
-    console::run_config_gui(client, gui_state, admin, hostname)
+    console::run_config_gui(client, gui_state, admin, projector, hostname)
 }

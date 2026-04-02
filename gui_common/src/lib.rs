@@ -1,4 +1,15 @@
+pub mod background_task;
 pub mod midi_panel;
+
+/// Ability to show messages to the user.
+///
+/// Implemented by the app type so infrastructure code (background tasks,
+/// error handlers, etc.) can show notifications without knowing about
+/// the specific UI implementation.
+pub trait UserNotify {
+    fn notify(&mut self, title: &str, message: &str);
+    fn notify_error(&mut self, error: anyhow::Error);
+}
 
 use eframe::egui::{self, Color32};
 
@@ -101,22 +112,57 @@ pub fn dnd_reorder(
 /// Displays a modal dialog with a title and message, blocked until dismissed.
 #[derive(Default)]
 pub struct MessageModal {
-    pending: Option<(String, String)>,
+    pending: Option<ModalContent>,
+}
+
+enum ModalContent {
+    /// Simple title + message.
+    Message { title: String, message: String },
+    /// Rich error display with short message and expandable details.
+    Error(anyhow::Error),
 }
 
 impl MessageModal {
     pub fn show(&mut self, title: impl Into<String>, message: impl Into<String>) {
-        self.pending = Some((title.into(), message.into()));
+        self.pending = Some(ModalContent::Message {
+            title: title.into(),
+            message: message.into(),
+        });
+    }
+
+    /// Show an error with a short message and expandable detail chain.
+    pub fn show_error(&mut self, error: anyhow::Error) {
+        self.pending = Some(ModalContent::Error(error));
     }
 
     pub fn ui(&mut self, ctx: &egui::Context) {
-        let Some((title, message)) = &self.pending else {
+        let Some(content) = &self.pending else {
             return;
         };
         let response = egui::Modal::new(egui::Id::new("message_modal")).show(ctx, |ui| {
             ui.set_width(300.0);
-            ui.heading(title.as_str());
-            ui.label(message.as_str());
+            match content {
+                ModalContent::Message { title, message } => {
+                    ui.heading(title.as_str());
+                    ui.label(message.as_str());
+                }
+                ModalContent::Error(error) => {
+                    ui.heading("Error");
+                    ui.add_space(4.0);
+                    // Full error chain as the default display.
+                    ui.label(format!("{error:#}"));
+
+                    // Debug representation (includes backtrace if captured).
+                    let debug = format!("{error:?}");
+                    let chain = format!("{error:#}");
+                    if debug != chain {
+                        ui.add_space(4.0);
+                        ui.collapsing("Debug", |ui| {
+                            ui.monospace(&debug);
+                        });
+                    }
+                }
+            }
             ui.add_space(8.0);
             if ui.button("OK").clicked() {
                 ui.close();
@@ -125,6 +171,100 @@ impl MessageModal {
         if response.should_close() {
             self.pending = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+    use egui_kittest::Harness;
+
+    fn modal_harness() -> Harness<'static, MessageModal> {
+        Harness::new_ui_state(
+            |ui, modal: &mut MessageModal| {
+                modal.ui(ui.ctx());
+            },
+            MessageModal::default(),
+        )
+    }
+
+    #[test]
+    fn show_error_displays_full_chain() {
+        // Build a chained error: inner context wraps the root cause.
+        let error = anyhow::anyhow!("connection refused")
+            .context("failed to send command")
+            .context("projector control error");
+
+        let mut harness = modal_harness();
+        harness.state_mut().show_error(error);
+        harness.step();
+
+        // The full chain should be visible as the default message.
+        assert!(harness
+            .query_by_label_contains("projector control error")
+            .is_some());
+        assert!(harness
+            .query_by_label_contains("connection refused")
+            .is_some());
+        assert!(harness.query_by_label("OK").is_some());
+    }
+
+    #[test]
+    fn show_error_with_backtrace_has_debug_section() {
+        // Build an error with context so the debug repr ({:?}) differs from
+        // the chain repr ({:#}). The debug repr includes "Caused by:" and
+        // backtrace info regardless of RUST_BACKTRACE.
+        let error = anyhow::anyhow!("root cause").context("wrapper");
+
+        let debug = format!("{error:?}");
+        let chain = format!("{error:#}");
+
+        // Sanity: debug and chain representations should differ (debug has
+        // "Caused by:" formatting that chain doesn't).
+        assert_ne!(
+            debug, chain,
+            "debug and chain should differ for chained errors"
+        );
+
+        let mut harness = modal_harness();
+        harness.state_mut().show_error(error);
+        harness.step();
+
+        assert!(harness.query_by_label("Debug").is_some());
+    }
+
+    #[test]
+    fn show_message_displays_title_and_body() {
+        let mut harness = modal_harness();
+        harness.state_mut().show("Success", "Config deployed.");
+        harness.step();
+
+        assert!(harness.query_by_label("Success").is_some());
+        assert!(harness.query_by_label("Config deployed.").is_some());
+        assert!(harness.query_by_label("OK").is_some());
+    }
+
+    #[test]
+    fn snapshot_error_modal() {
+        let error = anyhow::anyhow!("connection refused")
+            .context("failed to send command")
+            .context("projector control error");
+
+        let mut harness = modal_harness();
+        harness.state_mut().show_error(error);
+        harness.step();
+        harness.snapshot("message_modal_error");
+    }
+
+    #[test]
+    fn snapshot_message_modal() {
+        let mut harness = modal_harness();
+        harness
+            .state_mut()
+            .show("Success", "Monitor launched successfully.");
+        harness.step();
+        harness.snapshot("message_modal_success");
     }
 }
 

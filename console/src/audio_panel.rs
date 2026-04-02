@@ -29,14 +29,14 @@ impl AudioPanelState {
     }
 }
 
-pub(crate) struct AudioPanel<'a> {
-    pub ctx: GuiContext<'a>,
+pub(crate) struct AudioPanel<'a, App> {
+    pub ctx: GuiContext<'a, App>,
     pub state: &'a mut AudioPanelState,
     pub current_device: &'a str,
     pub clock_service_running: bool,
 }
 
-impl AudioPanel<'_> {
+impl<App: 'static> AudioPanel<'_, App> {
     pub fn ui(mut self, ui: &mut egui::Ui) {
         ui.heading("Audio Input");
         ui.separator();
@@ -134,6 +134,7 @@ impl AudioPanel<'_> {
 mod tests {
     use super::*;
     use egui_kittest::Harness;
+    use gui_common::background_task::BlockingBackgroundTask;
     use gui_common::MessageModal;
     use tunnels::control::mock::auto_respond_client;
 
@@ -149,12 +150,14 @@ mod tests {
     fn render_offline() {
         let client = auto_respond_client();
         let mut modal = MessageModal::default();
+        let mut task: Option<BlockingBackgroundTask<()>> = None;
         let mut state = test_audio_state(vec![], None);
         let mut harness = Harness::new_ui(|ui| {
             AudioPanel {
                 ctx: GuiContext {
                     modal: &mut modal,
                     client: &client,
+                    task: &mut task,
                 },
                 state: &mut state,
                 current_device: "Offline",
@@ -170,6 +173,7 @@ mod tests {
     fn render_with_devices() {
         let client = auto_respond_client();
         let mut modal = MessageModal::default();
+        let mut task: Option<BlockingBackgroundTask<()>> = None;
         let devices = vec![
             "Built-in Microphone".to_string(),
             "Scarlett 2i2 USB".to_string(),
@@ -180,6 +184,7 @@ mod tests {
                 ctx: GuiContext {
                     modal: &mut modal,
                     client: &client,
+                    task: &mut task,
                 },
                 state: &mut state,
                 current_device: "Scarlett 2i2 USB",
@@ -195,12 +200,14 @@ mod tests {
     fn render_clock_service_running() {
         let client = auto_respond_client();
         let mut modal = MessageModal::default();
+        let mut task: Option<BlockingBackgroundTask<()>> = None;
         let mut state = test_audio_state(vec![], None);
         let mut harness = Harness::new_ui(|ui| {
             AudioPanel {
                 ctx: GuiContext {
                     modal: &mut modal,
                     client: &client,
+                    task: &mut task,
                 },
                 state: &mut state,
                 current_device: "Offline",

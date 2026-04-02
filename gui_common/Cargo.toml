@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 eframe = "0.33"
+anyhow.workspace = true
 midi_harness = { path = "../midi_harness" }
 
 [dev-dependencies]
