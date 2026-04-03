@@ -546,7 +546,7 @@ mod test {
             Device::TouchOsc,
             Device::BehringerCmdMM1,
         ];
-        let event_types = [EventType::NoteOn, EventType::ControlChange];
+        let event_types = [EventType::NoteOn, EventType::NoteOff, EventType::ControlChange];
 
         // Build a map of device_name -> full debug string of all mappings
         let mut results: std::collections::BTreeMap<String, String> =
