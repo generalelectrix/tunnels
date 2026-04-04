@@ -66,7 +66,6 @@ fn init_apc_40(out: &mut dyn Output) -> Result<()> {
         0xF0, 0x47, 0x00, 0x73, 0x60, 0x00, 0x04, 0x42, 0x08, 0x04, 0x01, 0xF7,
     ])?;
 
-    let knob_off = 0;
     let knob_single = 1;
     let knob_volume = 2;
     let knob_pan = 3;
@@ -92,7 +91,7 @@ fn init_apc_40(out: &mut dyn Output) -> Result<()> {
     add_ring_setting(0x3C, knob_pan);
     add_ring_setting(0x3D, knob_volume);
     add_ring_setting(0x3E, knob_single);
-    add_ring_setting(0x3F, knob_off);
+    add_ring_setting(0x3F, knob_pan);
 
     // bottom knobs
     add_ring_setting(0x18, knob_single);
