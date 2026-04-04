@@ -30,11 +30,6 @@ impl BootstrapController {
         self.controller.list()
     }
 
-    /// Force-restart discovery, clearing stale services and re-browsing from scratch.
-    pub fn refresh(&self) {
-        self.controller.refresh();
-    }
-
     /// Push a binary to a named bootstrapper instance.
     /// `run_args`: args to launch the binary with.
     /// `stdin_payload`: data to pipe into the child's stdin after launch.

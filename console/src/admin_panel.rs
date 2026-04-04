@@ -19,8 +19,6 @@ pub trait AdminService: Send + Sync {
         binary_path: &Path,
         config: ClientConfig,
     ) -> anyhow::Result<String>;
-    /// Force-restart discovery, clearing stale services and re-browsing from scratch.
-    fn refresh_clients(&self);
 }
 
 impl AdminService for BootstrapController {
@@ -35,9 +33,6 @@ impl AdminService for BootstrapController {
     ) -> anyhow::Result<String> {
         let stdin_payload = rmp_serde::to_vec(&config)?;
         self.push_binary(name, binary_path, &["monitor"], &stdin_payload)
-    }
-    fn refresh_clients(&self) {
-        self.refresh();
     }
 }
 
@@ -428,16 +423,7 @@ impl AdminPanelState {
             .max_width(side_panel_width)
             .frame(panel_frame)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("Targets");
-                    if ui
-                        .button("\u{1f504}")
-                        .on_hover_text("Refresh client list")
-                        .clicked()
-                    {
-                        self.admin_service.refresh_clients();
-                    }
-                });
+                ui.heading("Targets");
                 ui.separator();
 
                 // Monitor is always first.
@@ -580,7 +566,6 @@ mod tests {
         ) -> anyhow::Result<String> {
             Ok("Mock: configuration accepted.".to_string())
         }
-        fn refresh_clients(&self) {}
     }
 
     impl AdminPanelState {

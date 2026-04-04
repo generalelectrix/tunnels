@@ -4,7 +4,6 @@ use bonsoir::{BrowseEvent, Registration};
 
 use anyhow::{bail, Result};
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -77,36 +76,16 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
     Ok(Box::new(move || drop(registration)))
 }
 
-/// Signal sent to the browse thread to restart discovery.
-pub(crate) enum BrowseControl {
-    Restart,
-}
-
 /// Maintain a collection of service instances we can remotely interact with.
 pub(crate) struct Browser<S: Send + 'static> {
     service_name: String,
     services: Arc<Mutex<HashMap<String, S>>>,
-    control_tx: Sender<BrowseControl>,
 }
 
 impl<S: Send> Browser<S> {
     /// Start up a new service controller at the given service name.
     /// Asynchronously browse for new services, and remove them when they expire.
     pub(crate) fn new<F>(name: String, open_service: F) -> Self
-    where
-        F: Fn(&ServiceEndpoint) -> Result<S> + Send + 'static,
-    {
-        let (control_tx, control_rx) = std::sync::mpsc::channel();
-        Self::new_with_control(name, open_service, control_tx, control_rx)
-    }
-
-    /// Like `new`, but accepts pre-built control channels (for testing).
-    pub(crate) fn new_with_control<F>(
-        name: String,
-        open_service: F,
-        control_tx: Sender<BrowseControl>,
-        control_rx: Receiver<BrowseControl>,
-    ) -> Self
     where
         F: Fn(&ServiceEndpoint) -> Result<S> + Send + 'static,
     {
@@ -133,14 +112,12 @@ impl<S: Send> Browser<S> {
                 |name| {
                     services_remote.lock().unwrap().remove(name);
                 },
-                control_rx,
             );
         });
 
         Browser {
             services,
             service_name: name,
-            control_tx,
         }
     }
 
@@ -154,13 +131,6 @@ impl<S: Send> Browser<S> {
         &self.service_name
     }
 
-    /// Force-restart discovery, clearing stale services and re-browsing
-    /// from scratch.
-    pub(crate) fn refresh(&self) {
-        self.services.lock().unwrap().clear();
-        let _ = self.control_tx.send(BrowseControl::Restart);
-    }
-
     /// Borrow a service to perform an action.
     pub(crate) fn use_service<A, R>(&self, name: &str, action: A) -> Option<R>
     where
@@ -171,13 +141,12 @@ impl<S: Send> Browser<S> {
     }
 }
 
-/// Block the current thread browsing for services. If the browser is restarted
-/// (via control channel), tear down and recreate.
+/// Block the current thread browsing for services. Retries if browser
+/// creation fails (e.g. socket error).
 fn browse_forever<A, D>(
     name: &str,
     mut on_service_appear: A,
     mut on_service_drop: D,
-    control_rx: Receiver<BrowseControl>,
 ) where
     A: FnMut((ServiceEndpoint, String)),
     D: FnMut(&str),
@@ -193,13 +162,7 @@ fn browse_forever<A, D>(
         };
 
         loop {
-            // Check for control signals (non-blocking).
-            if control_rx.try_recv().is_ok() {
-                log::info!("[bonsoir] Restart requested, recreating browser for '{name}'");
-                break;
-            }
-
-            match event_rx.recv_timeout(Duration::from_millis(500)) {
+            match event_rx.recv() {
                 Ok(BrowseEvent::ServiceUp(info)) => {
                     let endpoint = ServiceEndpoint {
                         hostname: info.address.to_string(),
@@ -210,15 +173,13 @@ fn browse_forever<A, D>(
                 Ok(BrowseEvent::ServiceDown(instance_name)) => {
                     on_service_drop(&instance_name);
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err(_) => {
                     log::warn!("[bonsoir] Browser channel disconnected for '{name}'");
                     break;
                 }
             }
         }
 
-        // Brief backoff before restarting.
         thread::sleep(Duration::from_secs(2));
     }
 }
@@ -226,7 +187,6 @@ fn browse_forever<A, D>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     fn init_logging() {
@@ -268,53 +228,5 @@ mod tests {
             "Browser should have discovered at least one service"
         );
         stop();
-    }
-
-    #[test]
-    fn browser_recovers_after_restart() {
-        init_logging();
-        let resolve_count = Arc::new(AtomicUsize::new(0));
-        let resolve_counter = resolve_count.clone();
-
-        let stop_a = register_service("recovtest", 19993).unwrap();
-        thread::sleep(Duration::from_millis(500));
-
-        let (control_tx, control_rx) = std::sync::mpsc::channel();
-        let browser: Browser<()> = Browser::new_with_control(
-            "recovtest".to_string(),
-            move |_| {
-                resolve_counter.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            },
-            control_tx,
-            control_rx,
-        );
-
-        thread::sleep(Duration::from_secs(3));
-        let count_before = resolve_count.load(Ordering::SeqCst);
-        assert!(
-            count_before > 0,
-            "browser should have resolved at least one service"
-        );
-
-        // Restart the browser.
-        browser.control_tx.send(BrowseControl::Restart).unwrap();
-        thread::sleep(Duration::from_secs(1));
-
-        // Deregister A, register B.
-        stop_a();
-        thread::sleep(Duration::from_millis(500));
-        let stop_b = register_service("recovtest", 19994).unwrap();
-
-        thread::sleep(Duration::from_secs(5));
-
-        let count_after = resolve_count.load(Ordering::SeqCst);
-        assert!(
-            count_after > count_before,
-            "browser should have resolved new services after restart \
-             (before={count_before}, after={count_after})"
-        );
-
-        stop_b();
     }
 }
