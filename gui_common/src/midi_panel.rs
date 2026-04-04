@@ -49,10 +49,8 @@ pub struct MidiPanel<'a, C: MidiCommands> {
 
 impl<C: MidiCommands> MidiPanel<'_, C> {
     pub fn ui(mut self, ui: &mut egui::Ui) {
-        ui.heading("MIDI Devices");
-        ui.separator();
-
         ui.horizontal(|ui| {
+            ui.heading("MIDI Devices");
             if ui
                 .button("\u{1f504}")
                 .on_hover_text("Refresh port list")
@@ -61,7 +59,7 @@ impl<C: MidiCommands> MidiPanel<'_, C> {
                 self.state.refresh_ports();
             }
         });
-        ui.add_space(4.0);
+        ui.separator();
 
         let slots = self.slots;
 

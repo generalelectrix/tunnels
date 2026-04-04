@@ -178,12 +178,7 @@ fn scp_send_bytes(
 }
 
 /// Deploy the bootstrapper to a remote machine.
-fn deploy(
-    target: &SshTarget,
-    username: &str,
-    password: &str,
-    binary_path: &Path,
-) -> Result<()> {
+fn deploy(target: &SshTarget, username: &str, password: &str, binary_path: &Path) -> Result<()> {
     let session = open_session(target, username, password)?;
 
     // Resolve the remote user's home directory.

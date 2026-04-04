@@ -12,6 +12,7 @@ members = [
     "console",
     "client_lib",
     "minusmq",
+    "bonsoir",
     "bootstrap-deploy",
 ]
 

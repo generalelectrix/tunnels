@@ -1,58 +1,34 @@
-//! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
+//! Advertise a service via bonsoir. Browse for and agglomerate instances of this service.
 
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use bonsoir::{BrowseEvent, Registration};
 
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
-/// Maximum service name length per RFC 6763.
-/// mdns-sd only validates this asynchronously on its daemon thread, so we check
-/// eagerly at registration time to surface errors immediately.
+/// Maximum service name length (matching the original DNS-SD limit).
 const SERVICE_NAME_LEN_MAX: usize = 15;
 
 pub type StopFn = Box<dyn FnOnce() + Send>;
 
-/// Maximum length of a single DNS label (RFC 1035).
-const MAX_DNS_LABEL_LEN: usize = 63;
+/// Maximum length of an instance name.
+const MAX_INSTANCE_NAME_LEN: usize = 63;
 
-/// Truncate a string to fit within a DNS label.
-fn truncate_to_dns_label(s: &str) -> &str {
-    &s[..s.len().min(MAX_DNS_LABEL_LEN)]
+/// Truncate a string to fit within the instance name limit.
+fn truncate_to_label(s: &str) -> &str {
+    &s[..s.len().min(MAX_INSTANCE_NAME_LEN)]
 }
 
-/// A resolved DNS-SD service instance: the address and port to connect to.
+/// A resolved service instance: the address and port to connect to.
 pub(crate) struct ServiceEndpoint {
     pub(crate) hostname: String,
     pub(crate) port: u16,
 }
 
-/// Format a service name into the fully-qualified mDNS service type (e.g. `"_foo._tcp.local."`).
-///
-/// mdns-sd requires the `.local.` suffix on all service types.
-pub(crate) fn service_type_fq(name: &str) -> String {
-    format!("_{name}._tcp.local.")
-}
-
-/// Extract the instance name from a fully-qualified service name.
-/// e.g. "myinstance._test._tcp.local." with service type "_test._tcp.local." -> "myinstance"
-fn instance_name_from_fullname(fullname: &str, service_type: &str) -> String {
-    fullname
-        .strip_suffix(service_type)
-        .unwrap_or(fullname)
-        .trim_end_matches('.')
-        .to_string()
-}
-
-/// Strip the trailing dot from a hostname if present.
-/// mdns-sd returns hostnames like "myhost.local." but network APIs expect "myhost.local".
-fn strip_trailing_dot(hostname: &str) -> String {
-    hostname.strip_suffix('.').unwrap_or(hostname).to_string()
-}
-
-/// Get the machine's display name for use as a DNS-SD instance name.
-/// On macOS, uses the Computer Name (e.g. "Bore A") to match Apple's native DNS-SD behavior.
+/// Get the machine's display name for use as a service instance name.
+/// On macOS, uses the Computer Name (e.g. "Bore A").
 /// Falls back to the short hostname.
 fn machine_hostname() -> String {
     // Try macOS Computer Name first.
@@ -63,7 +39,7 @@ fn machine_hostname() -> String {
         if output.status.success() {
             let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !name.is_empty() {
-                return truncate_to_dns_label(&name).to_string();
+                return truncate_to_label(&name).to_string();
             }
         }
     }
@@ -73,39 +49,12 @@ fn machine_hostname() -> String {
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
     let short = raw.split('.').next().unwrap_or(&raw);
-    truncate_to_dns_label(short).to_string()
+    truncate_to_label(short).to_string()
 }
 
-/// Build a service-scoped mDNS hostname that won't collide with the system hostname.
-///
-/// macOS's built-in mDNS responder already advertises A/AAAA records for the system
-/// hostname (e.g. "bore-b.local."). The mdns-sd library also publishes A/AAAA records
-/// for whatever hostname we give it, so using the bare system hostname causes a
-/// collision — macOS detects the duplicate and renames itself (e.g. "bore-b-2.local").
-///
-/// By appending the service name to the hostname stem (e.g. "bore-b-tunnelbootstrap.local."),
-/// we avoid the collision while still getting correct IP resolution via enable_addr_auto().
-fn mdns_service_hostname(service_name: &str) -> String {
-    let raw = hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .unwrap_or_else(|| "localhost".to_string());
-    let stem = raw
-        .strip_suffix(".local.")
-        .or_else(|| raw.strip_suffix(".local"))
-        .unwrap_or(&raw);
-    // Truncate the stem so "{stem}-{service_name}" fits in a DNS label.
-    let max_stem = MAX_DNS_LABEL_LEN - 1 - service_name.len();
-    let stem = &stem[..stem.len().min(max_stem)];
-    format!("{stem}-{service_name}.local.")
-}
-
-/// Create a `ServiceDaemon` and register a service with automatic address resolution.
-/// Uses the machine's hostname as the instance name, matching the behavior of Apple's
-/// native DNS-SD API (async-dnssd).
-/// Returns the daemon (which must be kept alive to maintain the registration) and
-/// the fullname needed for later unregistration.
-pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemon, String)> {
+/// Register a service via bonsoir heartbeats.
+/// Returns the Registration handle (which must be kept alive) and the instance name.
+pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(Registration, String)> {
     if name.len() > SERVICE_NAME_LEN_MAX {
         bail!(
             "Service name {:?} is {} bytes, max is {}",
@@ -115,44 +64,19 @@ pub(crate) fn create_and_register(name: &str, port: u16) -> Result<(ServiceDaemo
         );
     }
 
-    let service_type = service_type_fq(name);
-    let daemon = ServiceDaemon::new()?;
-
-    let hostname = mdns_service_hostname(name);
-    // Use the raw hostname (without .local. suffix) as the instance name,
-    // so each machine advertises with its own name rather than the service type.
     let instance_name = machine_hostname();
-
-    let service_info = ServiceInfo::new(
-        &service_type,
-        &instance_name,
-        &hostname,
-        "",
-        port,
-        None::<HashMap<String, String>>,
-    )?
-    .enable_addr_auto();
-
-    let fullname = service_info.get_fullname().to_string();
-    daemon.register(service_info)?;
-
-    Ok((daemon, fullname))
+    let registration = Registration::new(name, &instance_name, port)?;
+    Ok((registration, instance_name))
 }
 
-/// Register a vanilla service over DNS-SD.
-/// Return a callback that will deregister the service.
+/// Register a service. Return a callback that will deregister it.
 pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
-    let (daemon, fullname) = create_and_register(name, port)?;
-
-    Ok(Box::new(move || {
-        let _ = daemon.unregister(&fullname);
-        let _ = daemon.shutdown();
-    }))
+    let (registration, _instance_name) = create_and_register(name, port)?;
+    // Drop sends goodbye packets.
+    Ok(Box::new(move || drop(registration)))
 }
 
 /// Maintain a collection of service instances we can remotely interact with.
-/// FIXME: there's currently no way to stop the browse thread, it will run until
-/// the process terminates even if we drop this struct.
 pub(crate) struct Browser<S: Send + 'static> {
     service_name: String,
     services: Arc<Mutex<HashMap<String, S>>>,
@@ -160,10 +84,7 @@ pub(crate) struct Browser<S: Send + 'static> {
 
 impl<S: Send> Browser<S> {
     /// Start up a new service controller at the given service name.
-    /// Asynchronously browse for new services, and remove them if they deregister.
-    /// For the moment, panic if anything goes wrong during initialization.
-    /// This is acceptable as this action will run once during startup and there's nothing to do
-    /// except bail completely if this process fails.
+    /// Asynchronously browse for new services, and remove them when they expire.
     pub(crate) fn new<F>(name: String, open_service: F) -> Self
     where
         F: Fn(&ServiceEndpoint) -> Result<S> + Send + 'static,
@@ -172,7 +93,6 @@ impl<S: Send> Browser<S> {
 
         let services_remote = services.clone();
         let service_name = name.clone();
-        // Spawn a new thread to run the browse event loop.
         thread::spawn(move || {
             browse_forever(
                 &service_name,
@@ -181,9 +101,11 @@ impl<S: Send> Browser<S> {
                         services_remote.lock().unwrap().insert(name, service);
                     }
                     Err(e) => {
-                        println!(
-                            "Could not connect to '{}:{}':\n{}",
-                            endpoint.hostname, endpoint.port, e
+                        log::warn!(
+                            "[bonsoir] Could not connect to '{}:{}': {}",
+                            endpoint.hostname,
+                            endpoint.port,
+                            e
                         );
                     }
                 },
@@ -219,43 +141,43 @@ impl<S: Send> Browser<S> {
     }
 }
 
-/// Block the current thread browsing for services until the daemon shuts down.
+/// Block the current thread browsing for services. Retries if browser
+/// creation fails (e.g. socket error).
 fn browse_forever<A, D>(name: &str, mut on_service_appear: A, mut on_service_drop: D)
 where
     A: FnMut((ServiceEndpoint, String)),
     D: FnMut(&str),
 {
-    let service_type = service_type_fq(name);
-    let daemon = ServiceDaemon::new().expect("Failed to create mDNS daemon");
-    let receiver = daemon
-        .browse(&service_type)
-        .expect("Failed to start mDNS browse");
+    loop {
+        let (_browser, event_rx) = match bonsoir::Browser::new(name) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("[bonsoir] Failed to create browser for '{name}': {e}");
+                thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+        };
 
-    while let Ok(event) = receiver.recv() {
-        match event {
-            ServiceEvent::ServiceResolved(info) => {
-                let instance_name = instance_name_from_fullname(info.get_fullname(), &service_type);
-                // Prefer a resolved IPv4 address over the mDNS hostname, since the
-                // hostname (e.g. "myhost.local") may not be resolvable by the
-                // system DNS resolver.
-                let host = info
-                    .get_addresses_v4()
-                    .into_iter()
-                    .next()
-                    .map(|addr| addr.to_string())
-                    .unwrap_or_else(|| strip_trailing_dot(info.get_hostname()));
-                let endpoint = ServiceEndpoint {
-                    hostname: host,
-                    port: info.get_port(),
-                };
-                on_service_appear((endpoint, instance_name));
+        loop {
+            match event_rx.recv() {
+                Ok(BrowseEvent::ServiceUp(info)) => {
+                    let endpoint = ServiceEndpoint {
+                        hostname: info.address.to_string(),
+                        port: info.port,
+                    };
+                    on_service_appear((endpoint, info.instance_name));
+                }
+                Ok(BrowseEvent::ServiceDown(instance_name)) => {
+                    on_service_drop(&instance_name);
+                }
+                Err(_) => {
+                    log::warn!("[bonsoir] Browser channel disconnected for '{name}'");
+                    break;
+                }
             }
-            ServiceEvent::ServiceRemoved(_, fullname) => {
-                let instance_name = instance_name_from_fullname(&fullname, &service_type);
-                on_service_drop(&instance_name);
-            }
-            _ => {}
         }
+
+        thread::sleep(Duration::from_secs(2));
     }
 }
 
@@ -264,27 +186,8 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    #[test]
-    fn test_service_type_fq() {
-        assert_eq!(service_type_fq("foo"), "_foo._tcp.local.");
-    }
-
-    #[test]
-    fn test_instance_name_extraction() {
-        assert_eq!(
-            instance_name_from_fullname("mybox._test._tcp.local.", "_test._tcp.local."),
-            "mybox"
-        );
-        assert_eq!(
-            instance_name_from_fullname("a.b.c._svc._tcp.local.", "_svc._tcp.local."),
-            "a.b.c"
-        );
-    }
-
-    #[test]
-    fn test_strip_trailing_dot() {
-        assert_eq!(strip_trailing_dot("myhost.local."), "myhost.local");
-        assert_eq!(strip_trailing_dot("myhost.local"), "myhost.local");
+    fn init_logging() {
+        let _ = env_logger::builder().is_test(true).try_init();
     }
 
     #[test]
@@ -295,14 +198,12 @@ mod tests {
 
     #[test]
     fn name_at_max_length_accepted() {
-        // 15 chars, right at the RFC 6763 limit.
         let stop = register_service("exactly15chrsss", 0).unwrap();
         stop();
     }
 
     #[test]
     fn name_too_long_rejected() {
-        // 16 chars, one over the limit.
         match register_service("toolongservicenm", 0) {
             Err(e) => assert!(e.to_string().contains("max is"), "{e}"),
             Ok(_) => panic!("should have rejected name longer than 15 chars"),
@@ -311,12 +212,11 @@ mod tests {
 
     #[test]
     fn test_register_and_browse() {
+        init_logging();
         let stop = register_service("browsetest", 19991).unwrap();
-        // Give the registration a moment to propagate.
         thread::sleep(Duration::from_millis(500));
 
         let browser: Browser<()> = Browser::new("browsetest".to_string(), |_| Ok(()));
-        // Give the browser a moment to discover.
         thread::sleep(Duration::from_secs(3));
 
         let services = browser.list();

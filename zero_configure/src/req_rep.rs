@@ -1,4 +1,4 @@
-//! Advertise a service over DNS-SD. Browse for and agglomerate instances of this service.
+//! Advertise a service via bonsoir. Browse for and agglomerate instances of this service.
 //! Interact with one or more instances of this service, using TCP request-response.
 
 use anyhow::bail;
@@ -9,7 +9,7 @@ use anyhow::Result;
 
 use crate::bare::{create_and_register, Browser};
 
-/// Advertise a service over DNS-SD, using TCP request-response as the transport.
+/// Advertise a service via bonsoir, using TCP request-response as the transport.
 /// Pass each message received on the socket to the action callback. Send the byte
 /// buffer returned by the action callback back to the requester.
 pub fn run_service_req_rep<F>(name: &str, port: u16, action: F) -> Result<()>
@@ -17,8 +17,8 @@ where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
-    // Keep _daemon alive on the stack; dropping it would end the registration.
-    let (_daemon, _fullname) = create_and_register(name, port)?;
+    // Keep _registration alive on the stack; dropping it would end the heartbeats.
+    let (_registration, _instance_name) = create_and_register(name, port)?;
     minusmq::req_rep::serve(listener, action)
 }
 
@@ -31,7 +31,7 @@ pub struct Controller {
 
 impl Controller {
     /// Start up a new service controller at the given service name.
-    /// Asynchronously browse for new services, and remove them if they deregister.
+    /// Asynchronously browse for new services, and remove them when they expire.
     pub fn new(name: String) -> Self {
         Self::with_recv_timeout(name, None)
     }
@@ -101,6 +101,7 @@ mod tests {
     /// Test that we can advertise a single service and successfully connect to it.
     #[test]
     fn test_pair() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let name = "reqreptest";
         let port = 19992;
 
@@ -120,8 +121,9 @@ mod tests {
             .unwrap();
         });
 
-        // Give the service a moment to register via DNS-SD and start listening.
-        sleep(3000);
+        // Give the service a moment to register and start heartbeating.
+        // bonsoir heartbeats every 2s, so we need at least that plus startup time.
+        sleep(5000);
 
         let names = controller.list();
         assert_eq!(1, names.len());

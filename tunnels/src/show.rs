@@ -337,8 +337,7 @@ impl Show {
                 if self.clock_publisher.is_some() {
                     bail!("Clock service is already running.");
                 }
-                self.clock_publisher =
-                    Some(clock_server::clock_publisher()?);
+                self.clock_publisher = Some(clock_server::clock_publisher()?);
                 info!("Clock service started.");
                 GuiDirty::CLOCK_SERVICE
             }
@@ -546,7 +545,11 @@ mod test {
             Device::TouchOsc,
             Device::BehringerCmdMM1,
         ];
-        let event_types = [EventType::NoteOn, EventType::NoteOff, EventType::ControlChange];
+        let event_types = [
+            EventType::NoteOn,
+            EventType::NoteOff,
+            EventType::ControlChange,
+        ];
 
         // Build a map of device_name -> full debug string of all mappings
         let mut results: std::collections::BTreeMap<String, String> =

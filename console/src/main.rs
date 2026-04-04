@@ -49,11 +49,22 @@ fn install_terminate_override() {
     }
 }
 
-fn main() -> Result<()> {
+#[cfg(target_os = "macos")]
+fn init_logger() {
     oslog::OsLogger::new("com.generalelectrix.tunnels")
         .level_filter(log::LevelFilter::Info)
         .init()
         .expect("failed to initialize os_log");
+}
+
+#[cfg(not(target_os = "macos"))]
+fn init_logger() {
+    simplelog::SimpleLogger::init(simplelog::LevelFilter::Info, simplelog::Config::default())
+        .expect("failed to initialize logger");
+}
+
+fn main() -> Result<()> {
+    init_logger();
 
     #[cfg(target_os = "macos")]
     install_terminate_override();

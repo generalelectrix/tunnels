@@ -13,13 +13,14 @@ gui_common = { path = "../gui_common" }
 eframe = "0.33"
 anyhow = "1"
 log = "0.4"
-oslog = "0.2"
+simplelog = "0.12"
 rmp-serde = { workspace = true }
 sha2 = "0.10"
 zero_configure = { path = "../zero_configure" }
 hostname = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+oslog = "0.2"
 objc2 = "0.5"
 objc2-app-kit = "0.2"
 objc2-foundation = "0.2"

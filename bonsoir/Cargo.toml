@@ -1,0 +1,15 @@
+[package]
+name = "bonsoir"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+socket2 = { version = "0.5", features = ["all"] }
+if-addrs = "0.13"
+serde.workspace = true
+rmp-serde.workspace = true
+log.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+env_logger = "0.11"

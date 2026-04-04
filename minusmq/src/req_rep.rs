@@ -58,13 +58,24 @@ pub fn send(addr: impl ToSocketAddrs, msg: &[u8]) -> Result<Vec<u8>> {
     wire::read_msg(&mut stream).context("reading response")
 }
 
-/// Like `send`, but with a timeout on both the connection and the read/write.
+/// Like `send`, but with a timeout on the connection and the read/write.
+/// The connect phase uses a shorter timeout (capped at 3s) to handle WiFi
+/// latency while still failing faster than the OS default (~75s).
 pub fn send_with_timeout(
     addr: impl ToSocketAddrs,
     msg: &[u8],
     timeout: Duration,
 ) -> Result<Vec<u8>> {
-    let mut stream = TcpStream::connect(addr).context("failed to connect")?;
+    const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+    let connect_timeout = timeout.min(MAX_CONNECT_TIMEOUT);
+
+    // Resolve to a concrete SocketAddr so we can use connect_timeout.
+    let socket_addr = addr
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("address resolved to nothing"))?;
+    let mut stream =
+        TcpStream::connect_timeout(&socket_addr, connect_timeout).context("failed to connect")?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
     wire::write_msg(&mut stream, msg).context("writing request")?;
