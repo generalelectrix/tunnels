@@ -1,10 +1,10 @@
 //! Advertise a service over DNS-SD.  Browse for and agglomerate instances of this service.
 
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceEvent, ServiceInfo};
 
 use anyhow::{bail, Result};
 use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -152,12 +152,20 @@ pub fn register_service(name: &str, port: u16) -> Result<StopFn> {
     }))
 }
 
+/// Signal sent to the browse thread to control the daemon lifecycle.
+/// Signal sent to the browse thread to tear down the current mDNS daemon
+/// and start fresh. The retry loop will create a new daemon immediately.
+pub(crate) enum BrowseControl {
+    Restart,
+}
+
 /// Maintain a collection of service instances we can remotely interact with.
 /// FIXME: there's currently no way to stop the browse thread, it will run until
 /// the process terminates even if we drop this struct.
 pub(crate) struct Browser<S: Send + 'static> {
     service_name: String,
     services: Arc<Mutex<HashMap<String, S>>>,
+    control_tx: Sender<BrowseControl>,
 }
 
 impl<S: Send> Browser<S> {
@@ -170,19 +178,17 @@ impl<S: Send> Browser<S> {
     where
         F: Fn(&ServiceEndpoint) -> Result<S> + Send + 'static,
     {
-        // Production path: create a channel that is never signaled.
-        let (_tx, rx) = std::sync::mpsc::channel();
-        // Leak the sender so the channel stays open for the lifetime of the process.
-        std::mem::forget(_tx);
-        Self::new_with_shutdown(name, open_service, rx)
+        let (control_tx, control_rx) = std::sync::mpsc::channel();
+        Self::new_with_control(name, open_service, control_tx, control_rx)
     }
 
-    /// Like `new`, but accepts a shutdown channel that can be used to kill the
-    /// internal mDNS daemon for testing recovery behavior.
-    pub(crate) fn new_with_shutdown<F>(
+    /// Like `new`, but accepts pre-built control channels.
+    /// Used by tests to send Shutdown signals.
+    pub(crate) fn new_with_control<F>(
         name: String,
         open_service: F,
-        shutdown_rx: Receiver<()>,
+        control_tx: Sender<BrowseControl>,
+        control_rx: Receiver<BrowseControl>,
     ) -> Self
     where
         F: Fn(&ServiceEndpoint) -> Result<S> + Send + 'static,
@@ -202,20 +208,23 @@ impl<S: Send> Browser<S> {
                     Err(e) => {
                         log::warn!(
                             "[dnssd] Could not connect to '{}:{}': {}",
-                            endpoint.hostname, endpoint.port, e
+                            endpoint.hostname,
+                            endpoint.port,
+                            e
                         );
                     }
                 },
                 |name| {
                     services_remote.lock().unwrap().remove(name);
                 },
-                shutdown_rx,
+                control_rx,
             );
         });
 
         Browser {
             services,
             service_name: name,
+            control_tx,
         }
     }
 
@@ -229,6 +238,14 @@ impl<S: Send> Browser<S> {
         &self.service_name
     }
 
+    /// Force-restart the mDNS daemon, clearing stale services and re-browsing
+    /// from scratch. Use this when the network environment has changed and
+    /// passive discovery isn't recovering.
+    pub(crate) fn refresh(&self) {
+        self.services.lock().unwrap().clear();
+        let _ = self.control_tx.send(BrowseControl::Restart);
+    }
+
     /// Borrow a service to perform an action.
     pub(crate) fn use_service<A, R>(&self, name: &str, action: A) -> Option<R>
     where
@@ -239,22 +256,20 @@ impl<S: Send> Browser<S> {
     }
 }
 
-/// Block the current thread browsing for services. If the daemon dies, wait briefly
-/// and restart with a fresh daemon. This ensures the browser recovers from transient
-/// failures such as network interface changes that cause the mDNS daemon to shut down.
+/// Block the current thread browsing for services. If the daemon dies or a
+/// refresh is requested, tear down and restart with a fresh daemon.
 fn browse_forever<A, D>(
     name: &str,
     mut on_service_appear: A,
     mut on_service_drop: D,
-    shutdown_rx: Receiver<()>,
-)
-where
+    control_rx: Receiver<BrowseControl>,
+) where
     A: FnMut((ServiceEndpoint, String)),
     D: FnMut(&str),
 {
     let service_type = service_type_fq(name);
-    // Share the shutdown receiver across loop iterations via Arc<Mutex>.
-    let shutdown_rx = Arc::new(Mutex::new(shutdown_rx));
+    // Share the control receiver across loop iterations via Arc<Mutex>.
+    let control_rx = Arc::new(Mutex::new(control_rx));
 
     loop {
         let daemon = match ServiceDaemon::new() {
@@ -265,6 +280,34 @@ where
                 continue;
             }
         };
+
+        // Hook up the daemon's monitor channel to log network events.
+        match daemon.monitor() {
+            Ok(monitor_rx) => {
+                thread::spawn(move || {
+                    while let Ok(event) = monitor_rx.recv() {
+                        match event {
+                            DaemonEvent::IpAdd(addr) => {
+                                log::info!("[dnssd] Interface added: {addr}");
+                            }
+                            DaemonEvent::IpDel(addr) => {
+                                log::info!("[dnssd] Interface removed: {addr}");
+                            }
+                            DaemonEvent::Error(e) => {
+                                log::error!("[dnssd] Daemon error: {e}");
+                            }
+                            other => {
+                                log::debug!("[dnssd] Daemon event: {other:?}");
+                            }
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                log::warn!("[dnssd] Could not attach daemon monitor: {e}");
+            }
+        }
+
         let receiver = match daemon.browse(&service_type) {
             Ok(r) => r,
             Err(e) => {
@@ -274,11 +317,10 @@ where
             }
         };
 
-        // Spawn a helper thread that waits for the shutdown signal and kills the daemon.
-        // This is used for testing; in production the channel is never signaled.
-        let shutdown_rx_clone = shutdown_rx.clone();
+        // Spawn a helper thread that waits for control signals and acts on the daemon.
+        let control_rx_clone = control_rx.clone();
         thread::spawn(move || {
-            if let Ok(rx) = shutdown_rx_clone.lock() {
+            if let Ok(rx) = control_rx_clone.lock() {
                 if rx.recv().is_ok() {
                     let _ = daemon.shutdown();
                 }
@@ -290,15 +332,16 @@ where
                 ServiceEvent::ServiceResolved(info) => {
                     let instance_name =
                         instance_name_from_fullname(info.get_fullname(), &service_type);
-                    // Prefer a resolved IPv4 address over the mDNS hostname, since the
-                    // hostname (e.g. "myhost.local") may not be resolvable by the
-                    // system DNS resolver.
                     let host = info
                         .get_addresses_v4()
                         .into_iter()
                         .next()
                         .map(|addr| addr.to_string())
                         .unwrap_or_else(|| strip_trailing_dot(info.get_hostname()));
+                    log::info!(
+                        "[dnssd] Resolved '{instance_name}' at {host}:{}",
+                        info.get_port()
+                    );
                     let endpoint = ServiceEndpoint {
                         hostname: host,
                         port: info.get_port(),
@@ -307,13 +350,14 @@ where
                 }
                 ServiceEvent::ServiceRemoved(_, fullname) => {
                     let instance_name = instance_name_from_fullname(&fullname, &service_type);
+                    log::info!("[dnssd] Service removed: '{instance_name}'");
                     on_service_drop(&instance_name);
                 }
-                ServiceEvent::SearchStarted(ty) => {
-                    log::info!("[dnssd] Browse started for {ty}");
+                ServiceEvent::SearchStarted(detail) => {
+                    log::info!("[dnssd] Browse started: {detail}");
                 }
                 ServiceEvent::ServiceFound(ty, fullname) => {
-                    log::debug!("[dnssd] Service found: {fullname} ({ty}), awaiting resolve...");
+                    log::info!("[dnssd] Service found: {fullname} ({ty}), awaiting resolve...");
                 }
                 ServiceEvent::SearchStopped(ty) => {
                     log::warn!("[dnssd] Browse stopped for {ty}");
@@ -407,14 +451,15 @@ mod tests {
         let stop_a = register_service("recovtest", 19993).unwrap();
         thread::sleep(Duration::from_millis(500));
 
-        let (kill_tx, kill_rx) = std::sync::mpsc::channel();
-        let _browser: Browser<()> = Browser::new_with_shutdown(
+        let (control_tx, control_rx) = std::sync::mpsc::channel();
+        let browser: Browser<()> = Browser::new_with_control(
             "recovtest".to_string(),
             move |_| {
                 resolve_counter.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             },
-            kill_rx,
+            control_tx,
+            control_rx,
         );
 
         // Wait for the browser to discover service A.
@@ -426,7 +471,7 @@ mod tests {
         );
 
         // 2. Kill the browser's daemon to simulate daemon death.
-        kill_tx.send(()).unwrap();
+        browser.control_tx.send(BrowseControl::Restart).unwrap();
         // Wait for the daemon to shut down and the browse loop to exit.
         thread::sleep(Duration::from_secs(1));
 

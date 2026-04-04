@@ -51,6 +51,13 @@ impl Controller {
         self.browser.list()
     }
 
+    /// Force-restart the mDNS daemon, clearing stale services and re-browsing
+    /// from scratch. Use this when the network environment has changed and
+    /// passive discovery isn't recovering.
+    pub fn refresh(&self) {
+        self.browser.refresh();
+    }
+
     /// Send a message to one of the services on this controller, returning the response.
     pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>> {
         let timeout = self.timeout;

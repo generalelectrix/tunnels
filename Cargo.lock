@@ -977,6 +977,7 @@ dependencies = [
  "oslog",
  "rmp-serde",
  "sha2",
+ "simplelog",
  "stage_theme",
  "tunnels",
  "tunnels_lib",
