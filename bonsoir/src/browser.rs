@@ -159,9 +159,7 @@ fn handle_packet(
         MessageType::Heartbeat => {
             // Use loopback for services on our own machine.
             let address = match sender_addr {
-                IpAddr::V4(v4) if local_interfaces.contains(&v4) => {
-                    IpAddr::V4(Ipv4Addr::LOCALHOST)
-                }
+                IpAddr::V4(v4) if local_interfaces.contains(&v4) => IpAddr::V4(Ipv4Addr::LOCALHOST),
                 other => other,
             };
 

@@ -8,10 +8,7 @@ use std::thread;
 use tunnels_lib::{number::UnipolarFloat, Snapshot};
 
 use crate::{
-    clock_bank::ClockBank,
-    mixer::Mixer,
-    palette::ColorPalette,
-    position_bank::PositionBank,
+    clock_bank::ClockBank, mixer::Mixer, palette::ColorPalette, position_bank::PositionBank,
 };
 
 const PORT: u16 = 6000;

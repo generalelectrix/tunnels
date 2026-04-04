@@ -143,11 +143,8 @@ impl<S: Send> Browser<S> {
 
 /// Block the current thread browsing for services. Retries if browser
 /// creation fails (e.g. socket error).
-fn browse_forever<A, D>(
-    name: &str,
-    mut on_service_appear: A,
-    mut on_service_drop: D,
-) where
+fn browse_forever<A, D>(name: &str, mut on_service_appear: A, mut on_service_drop: D)
+where
     A: FnMut((ServiceEndpoint, String)),
     D: FnMut(&str),
 {

@@ -49,7 +49,14 @@ impl Registration {
         let instance_name = instance_name.to_string();
 
         let join_handle = thread::spawn(move || {
-            registration_loop(socket, &service_type, &instance_name, port, timing, shutdown_rx);
+            registration_loop(
+                socket,
+                &service_type,
+                &instance_name,
+                port,
+                timing,
+                shutdown_rx,
+            );
         });
 
         Ok(Self {

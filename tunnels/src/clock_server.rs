@@ -69,8 +69,8 @@ mod tests {
 
     #[test]
     fn service_name_registers() {
-        let stop = zero_configure::bare::register_service(SERVICE_NAME, 0)
-            .expect("should register");
+        let stop =
+            zero_configure::bare::register_service(SERVICE_NAME, 0).expect("should register");
         stop();
     }
 
