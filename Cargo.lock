@@ -694,6 +694,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bonsoir"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "if-addrs 0.13.4",
+ "log",
+ "rmp-serde",
+ "serde",
+ "socket2 0.5.10",
+]
+
+[[package]]
 name = "bootstrap-deploy"
 version = "0.1.0"
 dependencies = [
@@ -2532,6 +2544,16 @@ dependencies = [
 
 [[package]]
 name = "if-addrs"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b2eeee38fef3aa9b4cc5f1beea8a2444fc00e7377cafae396de3f5c2065e24"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "if-addrs"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
@@ -2991,11 +3013,11 @@ checksum = "d797ab3274a16f4940f9650a29838e940223aeff31773df5c2827ad82150182f"
 dependencies = [
  "fastrand",
  "flume",
- "if-addrs",
+ "if-addrs 0.15.0",
  "log",
  "mio 1.2.0",
  "socket-pktinfo",
- "socket2",
+ "socket2 0.6.3",
 ]
 
 [[package]]
@@ -5124,8 +5146,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "927136cc2ae6a1b0e66ac6b1210902b75c3f726db004a73bc18686dcd0dcd22f"
 dependencies = [
  "libc",
- "socket2",
+ "socket2 0.6.3",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7208,9 +7240,9 @@ name = "zero_configure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bonsoir",
  "hostname",
  "log",
- "mdns-sd",
  "minusmq",
  "rmp-serde",
  "serde",
