@@ -51,10 +51,22 @@ pub enum RenderMode {
     Saucer,
 }
 
+/// Controls the geometric path that segments are distributed along.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+pub enum PathShape {
+    /// Segments are distributed along an ellipse (default).
+    #[default]
+    Ellipse,
+    /// Segments are distributed along a straight line.
+    Line,
+}
+
 /// A command to draw a single shape.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Shape {
     pub render_mode: RenderMode,
+    #[serde(default)]
+    pub path_shape: PathShape,
     pub level: f64,
     pub thickness: f64,
     pub hue: f64,
@@ -73,7 +85,7 @@ pub struct Shape {
 impl Hash for Shape {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.render_mode.hash(state);
-        OrderedFloat(self.level).hash(state);
+        self.path_shape.hash(state);
         OrderedFloat(self.level).hash(state);
         OrderedFloat(self.thickness).hash(state);
         OrderedFloat(self.hue).hash(state);
@@ -93,6 +105,7 @@ impl Hash for Shape {
 impl PartialEq for Shape {
     fn eq(&self, o: &Self) -> bool {
         self.render_mode == o.render_mode
+            && self.path_shape == o.path_shape
             && almost_eq(self.level, o.level)
             && almost_eq(self.thickness, o.thickness)
             && almost_eq(self.sat, o.sat)
@@ -158,11 +171,12 @@ pub fn assert_almost_eq(a: f64, b: f64) {
 
 #[cfg(test)]
 pub mod test {
-    use crate::{RenderMode, Shape};
+    use crate::{PathShape, RenderMode, Shape};
 
     fn shape_for_test(linear: f64, radial: f64) -> Shape {
         Shape {
             render_mode: RenderMode::default(),
+            path_shape: PathShape::default(),
             level: linear,
             thickness: linear,
             sat: linear,

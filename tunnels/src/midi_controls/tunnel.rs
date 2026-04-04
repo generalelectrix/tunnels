@@ -161,5 +161,7 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 send,
             );
         }
+        // PathShape has no MIDI mapping yet — ignore for now.
+        PathShape(_) => {}
     };
 }

@@ -13,7 +13,7 @@ use std::cmp::max;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
-use tunnels_lib::{RenderMode, Shape};
+use tunnels_lib::{PathShape, RenderMode, Shape};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -56,6 +56,8 @@ pub struct Tunnel {
     y_offset: Smoother<f64>,
     anims: [TargetedAnimation; N_ANIM],
     render_mode: RenderMode,
+    #[serde(default)]
+    path_shape: PathShape,
 }
 
 impl Default for Tunnel {
@@ -94,6 +96,7 @@ impl Default for Tunnel {
             y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
             render_mode: RenderMode::default(),
+            path_shape: PathShape::default(),
         }
     }
 }
@@ -263,13 +266,30 @@ impl Tunnel {
             let x_center = x_offset + x_adjust;
             let y_center = y_offset + y_adjust;
 
-            // compute ellipse parameters
-            let radius_x = ((self.size.val()
-                * (MAX_ASPECT_RATIO * (self.aspect_ratio.val().val() + aspect_ratio_adjust))
-                - thickness_allowance)
-                + size_adjust)
-                .abs();
-            let radius_y = (self.size.val().val() - thickness_allowance + size_adjust).abs();
+            // compute path geometry parameters
+            let (radius_x, radius_y) = match self.path_shape {
+                PathShape::Ellipse => {
+                    let rx = ((self.size.val()
+                        * (MAX_ASPECT_RATIO
+                            * (self.aspect_ratio.val().val() + aspect_ratio_adjust))
+                        - thickness_allowance)
+                        + size_adjust)
+                        .abs();
+                    let ry = (self.size.val().val() - thickness_allowance + size_adjust).abs();
+                    (rx, ry)
+                }
+                PathShape::Line => {
+                    // size controls line half-length
+                    let half_length =
+                        (self.size.val().val() - thickness_allowance + size_adjust).abs();
+                    // aspect_ratio controls perpendicular offset from line center
+                    // at default 0.5, offset is 0 (segments sit on the line)
+                    let offset = (self.aspect_ratio.val().val() + aspect_ratio_adjust - 0.5)
+                        * self.size.val()
+                        * MAX_ASPECT_RATIO;
+                    (half_length, offset)
+                }
+            };
 
             // The angle of this particular segment.
             let start_angle: Phase = self.curr_marquee_angle
@@ -286,6 +306,7 @@ impl Tunnel {
             let arc = if as_mask {
                 Shape {
                     render_mode: self.render_mode,
+                    path_shape: self.path_shape,
                     level: 1.0,
                     thickness: stroke_weight,
                     hue: 0.0,
@@ -320,6 +341,7 @@ impl Tunnel {
 
                 Shape {
                     render_mode: self.render_mode,
+                    path_shape: self.path_shape,
                     level: level_scale.val(),
                     thickness: stroke_weight,
                     hue: hue.val(),
@@ -359,6 +381,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
         emitter.emit_tunnel_state_change(RenderMode(self.render_mode));
+        emitter.emit_tunnel_state_change(PathShape(self.path_shape));
     }
 
     /// Handle a control event.
@@ -424,6 +447,7 @@ impl Tunnel {
             PositionY(v) => self.y_offset.set_target(v),
             SpinSpeed(v) => self.spin_speed = v,
             RenderMode(v) => self.render_mode = v,
+            PathShape(v) => self.path_shape = v,
         };
         emitter.emit_tunnel_state_change(sc);
     }
@@ -485,6 +509,7 @@ pub enum StateChange {
     PositionY(f64),
     SpinSpeed(BipolarFloat),
     RenderMode(RenderMode),
+    PathShape(PathShape),
 }
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -515,7 +540,7 @@ pub mod fixture {
     use std::time::Duration;
 
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-    use tunnels_lib::{RenderMode, Snapshot};
+    use tunnels_lib::{PathShape, RenderMode, Snapshot};
 
     use crate::animation::{
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
@@ -745,6 +770,167 @@ pub mod fixture {
         );
         tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         snapshot(render_default(&tunnel))
+    }
+
+    /// Create an arc tunnel with spin animation on the ellipse path.
+    fn arc_spin_tunnel(segs: u8) -> Tunnel {
+        let mut tunnel = Tunnel::default();
+        tunnel.handle_state_change(StateChange::Segments(segs), &mut NoopEmitter);
+        tunnel.anims[0].target = AnimationTarget::Spin;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel
+    }
+
+    /// Many small arc segments with spin — dashes rotate like the line version.
+    pub fn arc_spin_many_snapshot() -> Snapshot {
+        snapshot(render_default(&arc_spin_tunnel(126)))
+    }
+
+    /// Few large arc segments with spin — curvature visible when rotated.
+    pub fn arc_spin_few_snapshot() -> Snapshot {
+        snapshot(render_default(&arc_spin_tunnel(12)))
+    }
+
+    /// Wide ellipse with few arcs and spin — exaggerated curvature effect.
+    pub fn arc_spin_wide_ellipse_snapshot() -> Snapshot {
+        let mut tunnel = arc_spin_tunnel(12);
+        tunnel.handle_state_change(
+            StateChange::AspectRatio(UnipolarFloat::new(0.75)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Render a line-path tunnel in arc mode for snapshot testing.
+    pub fn default_tunnel_line_snapshot() -> Snapshot {
+        let mut tunnel = Tunnel {
+            path_shape: PathShape::Line,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Render a line-path tunnel in dot mode for snapshot testing.
+    pub fn default_tunnel_line_dot_snapshot() -> Snapshot {
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Dot,
+            path_shape: PathShape::Line,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Render a saucer tunnel with few thin segments on a line path for snapshot testing.
+    pub fn saucer_line_few_thin_snapshot() -> Snapshot {
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Saucer,
+            path_shape: PathShape::Line,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(0.1)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Render an arc tunnel on a line path with spin animation.
+    pub fn arc_line_spin_snapshot() -> Snapshot {
+        let mut tunnel = Tunnel {
+            path_shape: PathShape::Line,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
+        tunnel.anims[0].target = AnimationTarget::Spin;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Render a saucer tunnel on a line path with spin animation.
+    pub fn saucer_line_spin_snapshot() -> Snapshot {
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Saucer,
+            path_shape: PathShape::Line,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(0.1)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].target = AnimationTarget::Spin;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::ONE)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// Create a line-path tunnel with a sine wave animation on AspectRatio.
+    /// n_periods=1, moderate amplitude, default sine waveform.
+    fn line_aspect_ratio_anim_tunnel(render_mode: RenderMode) -> Tunnel {
+        let mut tunnel = Tunnel {
+            render_mode,
+            path_shape: PathShape::Line,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
+        tunnel.anims[0].target = AnimationTarget::AspectRatio;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.25))),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel
+    }
+
+    /// Line-path arc tunnel with aspect ratio sine animation.
+    pub fn line_aspect_ratio_anim_arc_snapshot() -> Snapshot {
+        snapshot(render_default(&line_aspect_ratio_anim_tunnel(
+            RenderMode::Arc,
+        )))
+    }
+
+    /// Line-path dot tunnel with aspect ratio sine animation.
+    pub fn line_aspect_ratio_anim_dot_snapshot() -> Snapshot {
+        snapshot(render_default(&line_aspect_ratio_anim_tunnel(
+            RenderMode::Dot,
+        )))
+    }
+
+    /// Line-path saucer tunnel with aspect ratio sine animation.
+    pub fn line_aspect_ratio_anim_saucer_snapshot() -> Snapshot {
+        snapshot(render_default(&line_aspect_ratio_anim_tunnel(
+            RenderMode::Saucer,
+        )))
     }
 
     /// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.

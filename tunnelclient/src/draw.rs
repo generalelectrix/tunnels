@@ -4,9 +4,9 @@ use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
 use graphics::Context;
 use graphics::types::Color;
-use graphics::{CircleArc, Graphics, Transformed, ellipse, rectangle};
+use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::PI;
-use tunnels_lib::{RenderMode, Shape, Snapshot};
+use tunnels_lib::{PathShape, RenderMode, Shape, Snapshot};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -69,6 +69,8 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
 impl<G: Graphics> Draw<G> for Shape {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         let color = hsv_to_rgb(self.hue, self.sat, self.val, self.level);
+        let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
+        let spin_rad = self.spin_angle * TWOPI;
 
         let (x, y) = {
             let (x0, y0) = match cfg.transformation {
@@ -91,60 +93,223 @@ impl<G: Graphics> Draw<G> for Shape {
         }
         .rot_rad(self.rot_angle * TWOPI);
 
-        match self.render_mode {
-            RenderMode::Arc => {
-                let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
-                let x_size = self.rad_x * cfg.critical_size;
-                let y_size = self.rad_y * cfg.critical_size;
-                let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
-                let start = self.start * TWOPI;
-                let stop = self.stop * TWOPI;
-                CircleArc::new(color, thickness, start, stop).draw(
-                    bound,
+        match self.path_shape {
+            PathShape::Ellipse => {
+                draw_ellipse(self, color, thickness, spin_rad, transform, gl, cfg);
+            }
+            PathShape::Line => {
+                draw_line(self, color, thickness, spin_rad, transform, gl, cfg);
+            }
+        }
+    }
+}
+
+fn draw_ellipse<G: Graphics>(
+    shape: &Shape,
+    color: Color,
+    thickness: f64,
+    spin_rad: f64,
+    transform: graphics::math::Matrix2d,
+    gl: &mut G,
+    cfg: &ClientConfig,
+) {
+    match shape.render_mode {
+        RenderMode::Arc => {
+            let x_size = shape.rad_x * cfg.critical_size;
+            let y_size = shape.rad_y * cfg.critical_size;
+            let start = shape.start * TWOPI;
+            let stop = shape.stop * TWOPI;
+
+            // Compute centroid of this arc segment on the ellipse.
+            let mid_angle = (start + stop) / 2.0;
+            let cx = x_size * mid_angle.cos();
+            let cy = y_size * mid_angle.sin();
+
+            // Draw the arc rotated around its centroid by spin_angle.
+            let local = transform.trans(cx, cy).rot_rad(spin_rad);
+            let offset_bound = rectangle::centered([-cx, -cy, x_size, y_size]);
+            CircleArc::new(color, thickness, start, stop).draw(
+                offset_bound,
+                &Default::default(),
+                local,
+                gl,
+            );
+        }
+        RenderMode::Dot => {
+            let mid_angle = (shape.start + shape.stop) / 2.0 * TWOPI;
+            let cx = shape.rad_x * cfg.critical_size * mid_angle.cos();
+            let cy = shape.rad_y * cfg.critical_size * mid_angle.sin();
+            let bound = rectangle::centered([cx, cy, thickness, thickness]);
+            ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
+        }
+        RenderMode::Saucer => {
+            let mid_angle = (shape.start + shape.stop) / 2.0 * TWOPI;
+            let rx = shape.rad_x * cfg.critical_size;
+            let ry = shape.rad_y * cfg.critical_size;
+            let cx = rx * mid_angle.cos();
+            let cy = ry * mid_angle.sin();
+
+            let start_rad = shape.start * TWOPI;
+            let stop_rad = shape.stop * TWOPI;
+            let p1x = rx * start_rad.cos();
+            let p1y = ry * start_rad.sin();
+            let p2x = rx * stop_rad.cos();
+            let p2y = ry * stop_rad.sin();
+            let chord_len = ((p2x - p1x).powi(2) + (p2y - p1y).powi(2)).sqrt() / 2.0;
+
+            let tangent_angle = (ry * mid_angle.cos()).atan2(-rx * mid_angle.sin());
+
+            let bound = rectangle::centered([0.0, 0.0, chord_len, thickness]);
+            let local_transform = transform.trans(cx, cy).rot_rad(tangent_angle + spin_rad);
+            ellipse::Ellipse::new(color).draw(bound, &Default::default(), local_transform, gl);
+        }
+    }
+}
+
+/// Wrapping and cross-fade geometry for a segment on a line path.
+struct LineWrap {
+    /// Position of the segment midpoint, wrapped into [left_end, right_end].
+    mid: f64,
+    /// Fade factor in [0, 1]. 1.0 = fully visible, <1.0 = near an endpoint.
+    fade: f64,
+    /// Mirror position at the opposite end, if fading.
+    mirror_pos: Option<f64>,
+}
+
+fn compute_line_wrap(mid_pos: f64, left_end: f64, right_end: f64, fade_zone: f64) -> LineWrap {
+    let line_len = right_end - left_end;
+
+    let mid = if line_len > 0.0 {
+        let shifted = mid_pos - left_end;
+        left_end + ((shifted % line_len) + line_len) % line_len
+    } else {
+        0.0
+    };
+
+    let dist_to_edge = (mid - left_end).min(right_end - mid);
+    let fade = if fade_zone > 0.0 {
+        (dist_to_edge / fade_zone).min(1.0)
+    } else {
+        1.0
+    };
+
+    let mirror_pos = if fade < 1.0 {
+        Some(if mid - left_end < right_end - mid {
+            right_end - (mid - left_end)
+        } else {
+            left_end + (right_end - mid)
+        })
+    } else {
+        None
+    };
+
+    LineWrap {
+        mid,
+        fade,
+        mirror_pos,
+    }
+}
+
+fn draw_line<G: Graphics>(
+    shape: &Shape,
+    color: Color,
+    thickness: f64,
+    spin_rad: f64,
+    transform: graphics::math::Matrix2d,
+    gl: &mut G,
+    cfg: &ClientConfig,
+) {
+    let half_length = shape.rad_x * cfg.critical_size;
+    let y_offset = shape.rad_y * cfg.critical_size;
+
+    // Normalize start/stop to [0, 1) and compute segment span.
+    let start_norm = ((shape.start % 1.0) + 1.0) % 1.0;
+    let seg_width = shape.stop - shape.start;
+
+    // Map phase [0, 1] to line position [-half_length, +half_length].
+    let start_pos = (start_norm * 2.0 - 1.0) * half_length;
+    let end_pos = start_pos + seg_width * 2.0 * half_length;
+
+    let left_end = -half_length;
+    let right_end = half_length;
+
+    match shape.render_mode {
+        RenderMode::Arc => {
+            // Draw a line segment centered at its midpoint, rotated by spin_angle.
+            let draw_seg = |seg_start: f64, seg_end: f64, gl: &mut G| {
+                let mid_x = (seg_start + seg_end) / 2.0;
+                let seg_half_len = (seg_end - seg_start) / 2.0;
+                let local = transform.trans(mid_x, y_offset).rot_rad(spin_rad);
+                line::Line::new(color, thickness).draw_from_to(
+                    [-seg_half_len, 0.0],
+                    [seg_half_len, 0.0],
                     &Default::default(),
-                    transform,
+                    local,
                     gl,
                 );
+            };
+
+            if end_pos <= right_end && start_pos >= left_end {
+                draw_seg(start_pos, end_pos, gl);
+            } else {
+                let clamped_start = start_pos.max(left_end);
+                let clamped_end = end_pos.min(right_end);
+                if clamped_start < clamped_end {
+                    draw_seg(clamped_start, clamped_end, gl);
+                }
+                if end_pos > right_end {
+                    let overflow = end_pos - right_end;
+                    let wrap_end = (left_end + overflow).min(right_end);
+                    draw_seg(left_end, wrap_end, gl);
+                }
+                if start_pos < left_end {
+                    let underflow = left_end - start_pos;
+                    let wrap_start = (right_end - underflow).max(left_end);
+                    draw_seg(wrap_start, right_end, gl);
+                }
             }
-            RenderMode::Dot => {
-                let dot_radius = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
-                let mid_angle = (self.start + self.stop) / 2.0 * TWOPI;
-                let cx = self.rad_x * cfg.critical_size * mid_angle.cos();
-                let cy = self.rad_y * cfg.critical_size * mid_angle.sin();
-                let bound = rectangle::centered([cx, cy, dot_radius, dot_radius]);
+        }
+        RenderMode::Dot => {
+            let mid_pos = (start_pos + end_pos) / 2.0;
+            let fade_zone = seg_width * 2.0 * half_length;
+            let wrap = compute_line_wrap(mid_pos, left_end, right_end, fade_zone);
+
+            let r = thickness * wrap.fade;
+            if r > 0.0 {
+                let bound = rectangle::centered([wrap.mid, y_offset, r, r]);
                 ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
             }
-            RenderMode::Saucer => {
-                // Centroid: same as Dot mode
-                let mid_angle = (self.start + self.stop) / 2.0 * TWOPI;
-                let rx = self.rad_x * cfg.critical_size;
-                let ry = self.rad_y * cfg.critical_size;
-                let cx = rx * mid_angle.cos();
-                let cy = ry * mid_angle.sin();
 
-                // Major axis: chord length between start and end points on ellipse
-                let start_rad = self.start * TWOPI;
-                let stop_rad = self.stop * TWOPI;
-                let p1x = rx * start_rad.cos();
-                let p1y = ry * start_rad.sin();
-                let p2x = rx * stop_rad.cos();
-                let p2y = ry * stop_rad.sin();
-                let chord_len = ((p2x - p1x).powi(2) + (p2y - p1y).powi(2)).sqrt() / 2.0;
+            if let Some(mirror_pos) = wrap.mirror_pos {
+                let mirror_r = thickness * (1.0 - wrap.fade);
+                if mirror_r > 0.0 {
+                    let bound = rectangle::centered([mirror_pos, y_offset, mirror_r, mirror_r]);
+                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
+                }
+            }
+        }
+        RenderMode::Saucer => {
+            let mid_pos = (start_pos + end_pos) / 2.0;
+            let seg_len = (end_pos - start_pos).abs();
+            let fade_zone = seg_width * 2.0 * half_length;
+            let wrap = compute_line_wrap(mid_pos, left_end, right_end, fade_zone);
 
-                // Minor axis: thickness (same scaling as Dot mode radius)
-                let minor_radius = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
+            // Draw saucer oriented along the line (no tangent calculation needed
+            // since the line direction is constant along x-axis before rotation).
+            let major = seg_len / 2.0 * wrap.fade;
+            if major > 0.0 {
+                let bound = rectangle::centered([0.0, 0.0, major, thickness]);
+                let local = transform.trans(wrap.mid, y_offset).rot_rad(spin_rad);
+                ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
+            }
 
-                // Orientation: tangent to ellipse path at midpoint
-                // For parametric ellipse (rx*cos(t), ry*sin(t)), tangent at t is (-rx*sin(t), ry*cos(t))
-                let tangent_angle = (ry * mid_angle.cos()).atan2(-rx * mid_angle.sin());
-
-                // Center bound at origin, then transform: rotate by tangent, translate to centroid.
-                // This ensures rotation happens around the saucer's center, not around (0,0).
-                let bound = rectangle::centered([0.0, 0.0, chord_len, minor_radius]);
-                let local_transform = transform
-                    .trans(cx, cy)
-                    .rot_rad(tangent_angle + self.spin_angle * TWOPI);
-                ellipse::Ellipse::new(color).draw(bound, &Default::default(), local_transform, gl);
+            if let Some(mirror_pos) = wrap.mirror_pos {
+                let mirror_major = seg_len / 2.0 * (1.0 - wrap.fade);
+                if mirror_major > 0.0 {
+                    let bound = rectangle::centered([0.0, 0.0, mirror_major, thickness]);
+                    let local = transform.trans(mirror_pos, y_offset).rot_rad(spin_rad);
+                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
+                }
             }
         }
     }

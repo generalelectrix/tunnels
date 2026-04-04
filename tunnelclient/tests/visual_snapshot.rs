@@ -7,7 +7,7 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::draw::Draw;
-use tunnels_lib::{Shape, Snapshot};
+use tunnels_lib::{PathShape, RenderMode, Shape, Snapshot};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -116,6 +116,7 @@ fn assert_images_match_with_limit(
 fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> Shape {
     Shape {
         render_mode: Default::default(),
+        path_shape: Default::default(),
         level: 1.0,
         thickness: 0.1,
         hue,
@@ -316,4 +317,193 @@ fn saucer_tall_ellipse_spin() {
     let snapshot = tunnels::tunnel::fixture::saucer_tall_ellipse_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_tall_ellipse_spin.png");
+}
+
+// --- Ellipse path: arc spin ---
+
+#[test]
+fn arc_spin_many() {
+    let snapshot = tunnels::tunnel::fixture::arc_spin_many_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "arc_spin_many.png");
+}
+
+#[test]
+fn arc_spin_few() {
+    let snapshot = tunnels::tunnel::fixture::arc_spin_few_snapshot();
+    let image = render_snapshot(&snapshot, &test_config());
+    compare_to_fixture(&image, "arc_spin_few.png");
+}
+
+#[test]
+fn arc_spin_wide_ellipse() {
+    let snapshot = tunnels::tunnel::fixture::arc_spin_wide_ellipse_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "arc_spin_wide_ellipse.png");
+}
+
+// --- Line path: full-tunnel snapshots ---
+
+#[test]
+fn default_tunnel_line() {
+    let snapshot = tunnels::tunnel::fixture::default_tunnel_line_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "default_tunnel_line.png");
+}
+
+#[test]
+fn default_tunnel_line_dot() {
+    let snapshot = tunnels::tunnel::fixture::default_tunnel_line_dot_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "default_tunnel_line_dot.png");
+}
+
+#[test]
+fn saucer_line_few_thin() {
+    let snapshot = tunnels::tunnel::fixture::saucer_line_few_thin_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "saucer_line_few_thin.png");
+}
+
+#[test]
+fn saucer_line_spin() {
+    let snapshot = tunnels::tunnel::fixture::saucer_line_spin_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "saucer_line_spin.png");
+}
+
+#[test]
+fn arc_line_spin() {
+    let snapshot = tunnels::tunnel::fixture::arc_line_spin_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "arc_line_spin.png");
+}
+
+// --- Line path: direct Shape edge-wrapping tests ---
+
+/// Helper to create a line-path Shape with specific start/stop and render mode.
+fn test_line_shape(render_mode: RenderMode, start: f64, stop: f64) -> Shape {
+    Shape {
+        render_mode,
+        path_shape: PathShape::Line,
+        level: 1.0,
+        thickness: 0.1,
+        hue: 0.0,
+        sat: 1.0,
+        val: 1.0,
+        x: 0.0,
+        y: 0.0,
+        rad_x: 0.4, // line half-length
+        rad_y: 0.0, // on the line (no perpendicular offset)
+        start,
+        stop,
+        rot_angle: 0.0,
+        spin_angle: 0.0,
+    }
+}
+
+fn snapshot_from_shapes(shapes: Vec<Shape>) -> Snapshot {
+    Snapshot {
+        frame_number: 0,
+        layers: vec![Arc::new(shapes)],
+    }
+}
+
+/// Arc segment that wraps past the right end of the line.
+#[test]
+fn line_arc_edge_wrap() {
+    let shapes = vec![
+        // A segment sitting squarely on the line (no wrapping).
+        test_line_shape(RenderMode::Arc, 0.3, 0.4),
+        // A segment that wraps past the right end (start near 1.0, stop > 1.0).
+        test_line_shape(RenderMode::Arc, 0.9, 1.05),
+    ];
+    let snapshot = snapshot_from_shapes(shapes);
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "line_arc_edge_wrap.png");
+}
+
+/// Dot near the edge of the line, cross-fading between ends.
+#[test]
+fn line_dot_edge_crossfade() {
+    let seg_width = 1.0 / 12.0; // simulate 12 segments
+    let shapes = vec![
+        // A dot in the middle of the line (no fading).
+        test_line_shape(RenderMode::Dot, 0.25, 0.25 + seg_width),
+        // A dot just entering the fade zone near the right end.
+        test_line_shape(
+            RenderMode::Dot,
+            0.95 - seg_width / 2.0,
+            0.95 + seg_width / 2.0,
+        ),
+        // A dot midway through wrapping.
+        test_line_shape(
+            RenderMode::Dot,
+            1.0 - seg_width / 4.0,
+            1.0 + 3.0 * seg_width / 4.0,
+        ),
+    ];
+    let snapshot = snapshot_from_shapes(shapes);
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "line_dot_edge_crossfade.png");
+}
+
+/// Saucer near the edge of the line, cross-fading between ends.
+#[test]
+fn line_saucer_edge_crossfade() {
+    let seg_width = 1.0 / 12.0;
+    let shapes = vec![
+        // A saucer in the middle of the line.
+        test_line_shape(RenderMode::Saucer, 0.25, 0.25 + seg_width),
+        // A saucer just entering the fade zone near the right end.
+        test_line_shape(
+            RenderMode::Saucer,
+            0.95 - seg_width / 2.0,
+            0.95 + seg_width / 2.0,
+        ),
+        // A saucer midway through wrapping.
+        test_line_shape(
+            RenderMode::Saucer,
+            1.0 - seg_width / 4.0,
+            1.0 + 3.0 * seg_width / 4.0,
+        ),
+    ];
+    let snapshot = snapshot_from_shapes(shapes);
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "line_saucer_edge_crossfade.png");
+}
+
+// --- Line path: aspect ratio animation (wiggle) ---
+
+#[test]
+fn line_aspect_ratio_anim_arc() {
+    let snapshot = tunnels::tunnel::fixture::line_aspect_ratio_anim_arc_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "line_aspect_ratio_anim_arc.png");
+}
+
+#[test]
+fn line_aspect_ratio_anim_dot() {
+    let snapshot = tunnels::tunnel::fixture::line_aspect_ratio_anim_dot_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "line_aspect_ratio_anim_dot.png");
+}
+
+#[test]
+fn line_aspect_ratio_anim_saucer() {
+    let snapshot = tunnels::tunnel::fixture::line_aspect_ratio_anim_saucer_snapshot();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+    compare_to_fixture(&image, "line_aspect_ratio_anim_saucer.png");
 }
