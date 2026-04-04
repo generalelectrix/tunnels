@@ -115,8 +115,8 @@ fn draw_ellipse<G: Graphics>(
 ) {
     match shape.render_mode {
         RenderMode::Arc => {
-            let x_size = shape.rad_x * cfg.critical_size;
-            let y_size = shape.rad_y * cfg.critical_size;
+            let x_size = shape.extent_x * cfg.critical_size;
+            let y_size = shape.extent_y * cfg.critical_size;
             let start = shape.start * TWOPI;
             let stop = shape.stop * TWOPI;
             let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
@@ -150,15 +150,15 @@ fn draw_ellipse<G: Graphics>(
         }
         RenderMode::Dot => {
             let mid_angle = (shape.start + shape.stop) / 2.0 * TWOPI;
-            let cx = shape.rad_x * cfg.critical_size * mid_angle.cos();
-            let cy = shape.rad_y * cfg.critical_size * mid_angle.sin();
+            let cx = shape.extent_x * cfg.critical_size * mid_angle.cos();
+            let cy = shape.extent_y * cfg.critical_size * mid_angle.sin();
             let bound = rectangle::centered([cx, cy, thickness, thickness]);
             ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
         }
         RenderMode::Saucer => {
             let mid_angle = (shape.start + shape.stop) / 2.0 * TWOPI;
-            let rx = shape.rad_x * cfg.critical_size;
-            let ry = shape.rad_y * cfg.critical_size;
+            let rx = shape.extent_x * cfg.critical_size;
+            let ry = shape.extent_y * cfg.critical_size;
             let cx = rx * mid_angle.cos();
             let cy = ry * mid_angle.sin();
 
@@ -179,50 +179,40 @@ fn draw_ellipse<G: Graphics>(
     }
 }
 
-/// Wrapping and cross-fade geometry for a segment on a line path.
-struct LineWrap {
-    /// Position of the segment midpoint, wrapped into [left_end, right_end].
-    mid: f64,
-    /// Fade factor in [0, 1]. 1.0 = fully visible, <1.0 = near an endpoint.
-    fade: f64,
-    /// Mirror position at the opposite end, if fading.
-    mirror_pos: Option<f64>,
+/// Cross-fade geometry for a segment whose extent crosses the right boundary
+/// of the line path. Segments fully inside the line need no wrapping.
+struct LineCrossfade {
+    /// Center of the inside portion (for the primary shape).
+    inside_mid: f64,
+    /// Center of the wrapped overflow portion (for the mirror shape).
+    overflow_mid: f64,
+    /// Fraction of the segment inside the line [0, 1].
+    inside_fraction: f64,
 }
 
-fn compute_line_wrap(mid_pos: f64, left_end: f64, right_end: f64, fade_zone: f64) -> LineWrap {
-    let line_len = right_end - left_end;
-
-    let mid = if line_len > 0.0 {
-        let shifted = mid_pos - left_end;
-        left_end + ((shifted % line_len) + line_len) % line_len
-    } else {
-        0.0
-    };
-
-    let dist_to_edge = (mid - left_end).min(right_end - mid);
-    let fade = if fade_zone > 0.0 {
-        (dist_to_edge / fade_zone).min(1.0)
-    } else {
-        1.0
-    };
-
-    let mirror_pos = if fade < 1.0 {
-        // Mirror appears at the opposite endpoint from whichever edge the
-        // dot is fading near.
-        Some(if mid - left_end < right_end - mid {
-            right_end
-        } else {
-            left_end
-        })
-    } else {
-        None
-    };
-
-    LineWrap {
-        mid,
-        fade,
-        mirror_pos,
+/// If the segment [start_pos, end_pos] crosses right_end, return the crossfade
+/// geometry. Otherwise return None — the segment is fully inside and should be
+/// drawn at full size at its midpoint.
+fn compute_line_crossfade(
+    start_pos: f64,
+    end_pos: f64,
+    left_end: f64,
+    right_end: f64,
+) -> Option<LineCrossfade> {
+    if end_pos <= right_end {
+        return None;
     }
+    let seg_len = end_pos - start_pos;
+    if seg_len <= 0.0 {
+        return None;
+    }
+    let inside_fraction = ((right_end - start_pos) / seg_len).clamp(0.0, 1.0);
+    let overflow = end_pos - right_end;
+    Some(LineCrossfade {
+        inside_mid: (start_pos + right_end) / 2.0,
+        overflow_mid: left_end + overflow / 2.0,
+        inside_fraction,
+    })
 }
 
 fn draw_line<G: Graphics>(
@@ -234,8 +224,8 @@ fn draw_line<G: Graphics>(
     gl: &mut G,
     cfg: &ClientConfig,
 ) {
-    let half_length = shape.rad_x * cfg.critical_size;
-    let y_offset = shape.rad_y * cfg.critical_size;
+    let half_length = shape.extent_x * cfg.critical_size;
+    let y_offset = shape.extent_y * cfg.critical_size;
 
     // Normalize start/stop to [0, 1) and compute segment span.
     let start_norm = ((shape.start % 1.0) + 1.0) % 1.0;
@@ -251,9 +241,7 @@ fn draw_line<G: Graphics>(
     match shape.render_mode {
         RenderMode::Arc => {
             // Draw a line segment centered at its midpoint, rotated by spin_angle.
-            let draw_seg = |seg_start: f64, seg_end: f64, gl: &mut G| {
-                let mid_x = (seg_start + seg_end) / 2.0;
-                let seg_half_len = (seg_end - seg_start) / 2.0;
+            let draw_seg = |mid_x: f64, seg_half_len: f64, gl: &mut G| {
                 let local = transform.trans(mid_x, y_offset).rot_rad(spin_rad);
                 line::Line::new(color, thickness).draw_from_to(
                     [-seg_half_len, 0.0],
@@ -264,65 +252,68 @@ fn draw_line<G: Graphics>(
                 );
             };
 
-            if end_pos <= right_end && start_pos >= left_end {
-                draw_seg(start_pos, end_pos, gl);
+            let seg_half_len = (end_pos - start_pos) / 2.0;
+            if let Some(cf) = compute_line_crossfade(start_pos, end_pos, left_end, right_end) {
+                // Inside portion.
+                let inside_half = seg_half_len * cf.inside_fraction;
+                if inside_half > 0.0 {
+                    draw_seg(cf.inside_mid, inside_half, gl);
+                }
+                // Overflow portion wrapped to the left end.
+                let overflow_half = seg_half_len * (1.0 - cf.inside_fraction);
+                if overflow_half > 0.0 {
+                    draw_seg(cf.overflow_mid, overflow_half, gl);
+                }
             } else {
-                let clamped_start = start_pos.max(left_end);
-                let clamped_end = end_pos.min(right_end);
-                if clamped_start < clamped_end {
-                    draw_seg(clamped_start, clamped_end, gl);
-                }
-                if end_pos > right_end {
-                    let overflow = end_pos - right_end;
-                    let wrap_end = (left_end + overflow).min(right_end);
-                    draw_seg(left_end, wrap_end, gl);
-                }
-                if start_pos < left_end {
-                    let underflow = left_end - start_pos;
-                    let wrap_start = (right_end - underflow).max(left_end);
-                    draw_seg(wrap_start, right_end, gl);
-                }
+                let mid_pos = (start_pos + end_pos) / 2.0;
+                draw_seg(mid_pos, seg_half_len, gl);
             }
         }
         RenderMode::Dot => {
-            let mid_pos = (start_pos + end_pos) / 2.0;
-            let fade_zone = seg_width * 2.0 * half_length;
-            let wrap = compute_line_wrap(mid_pos, left_end, right_end, fade_zone);
-
-            let r = thickness * wrap.fade;
-            if r > 0.0 {
-                let bound = rectangle::centered([wrap.mid, y_offset, r, r]);
-                ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
-            }
-
-            if let Some(mirror_pos) = wrap.mirror_pos {
-                let mirror_r = thickness * (1.0 - wrap.fade);
-                if mirror_r > 0.0 {
-                    let bound = rectangle::centered([mirror_pos, y_offset, mirror_r, mirror_r]);
+            if let Some(cf) = compute_line_crossfade(start_pos, end_pos, left_end, right_end) {
+                // Segment crosses the right boundary — crossfade.
+                let r = thickness * cf.inside_fraction;
+                if r > 0.0 {
+                    let bound = rectangle::centered([cf.inside_mid, y_offset, r, r]);
                     ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
                 }
+                let mirror_r = thickness * (1.0 - cf.inside_fraction);
+                if mirror_r > 0.0 {
+                    let bound =
+                        rectangle::centered([cf.overflow_mid, y_offset, mirror_r, mirror_r]);
+                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
+                }
+            } else {
+                // Fully inside — draw at full size.
+                let mid_pos = (start_pos + end_pos) / 2.0;
+                let bound = rectangle::centered([mid_pos, y_offset, thickness, thickness]);
+                ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
             }
         }
         RenderMode::Saucer => {
-            let mid_pos = (start_pos + end_pos) / 2.0;
-            let seg_len = (end_pos - start_pos).abs();
-            let fade_zone = seg_width * 2.0 * half_length;
-            let wrap = compute_line_wrap(mid_pos, left_end, right_end, fade_zone);
-
-            // Draw saucer oriented along the line (no tangent calculation needed
-            // since the line direction is constant along x-axis before rotation).
-            let major = seg_len / 2.0 * wrap.fade;
-            if major > 0.0 {
-                let bound = rectangle::centered([0.0, 0.0, major, thickness]);
-                let local = transform.trans(wrap.mid, y_offset).rot_rad(spin_rad);
-                ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
-            }
-
-            if let Some(mirror_pos) = wrap.mirror_pos {
-                let mirror_major = seg_len / 2.0 * (1.0 - wrap.fade);
+            let seg_len = end_pos - start_pos;
+            if let Some(cf) = compute_line_crossfade(start_pos, end_pos, left_end, right_end) {
+                // Segment crosses the right boundary — crossfade.
+                // Draw saucer oriented along the line.
+                let major = seg_len / 2.0 * cf.inside_fraction;
+                if major > 0.0 {
+                    let bound = rectangle::centered([0.0, 0.0, major, thickness]);
+                    let local = transform.trans(cf.inside_mid, y_offset).rot_rad(spin_rad);
+                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
+                }
+                let mirror_major = seg_len / 2.0 * (1.0 - cf.inside_fraction);
                 if mirror_major > 0.0 {
                     let bound = rectangle::centered([0.0, 0.0, mirror_major, thickness]);
-                    let local = transform.trans(mirror_pos, y_offset).rot_rad(spin_rad);
+                    let local = transform.trans(cf.overflow_mid, y_offset).rot_rad(spin_rad);
+                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
+                }
+            } else {
+                // Fully inside — draw at full size.
+                let mid_pos = (start_pos + end_pos) / 2.0;
+                let major = seg_len / 2.0;
+                if major > 0.0 {
+                    let bound = rectangle::centered([0.0, 0.0, major, thickness]);
+                    let local = transform.trans(mid_pos, y_offset).rot_rad(spin_rad);
                     ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
                 }
             }

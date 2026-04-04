@@ -124,8 +124,8 @@ fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> Shape {
         val: 1.0,
         x: 0.0,
         y: 0.0,
-        rad_x: radius,
-        rad_y: radius,
+        extent_x: radius,
+        extent_y: radius,
         start,
         stop,
         rot_angle: 0.0,
@@ -399,8 +399,8 @@ fn test_line_shape(render_mode: RenderMode, start: f64, stop: f64) -> Shape {
         val: 1.0,
         x: 0.0,
         y: 0.0,
-        rad_x: 0.4, // line half-length
-        rad_y: 0.0, // on the line (no perpendicular offset)
+        extent_x: 0.4, // line half-length
+        extent_y: 0.0, // on the line (no perpendicular offset)
         start,
         stop,
         rot_angle: 0.0,
@@ -506,4 +506,16 @@ fn line_aspect_ratio_anim_saucer() {
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_aspect_ratio_anim_saucer.png");
+}
+
+// --- Line path: saucer marquee evolution sequence ---
+
+#[test]
+fn saucer_line_marquee_sequence() {
+    let snapshots = tunnels::tunnel::fixture::saucer_line_marquee_sequence();
+    let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
+    for (i, snapshot) in snapshots.iter().enumerate() {
+        let image = render_snapshot_sized(snapshot, &cfg, WIDE_WIDTH, HEIGHT);
+        compare_to_fixture(&image, &format!("saucer_line_marquee_f{i}.png"));
+    }
 }

@@ -498,8 +498,8 @@ mod test {
         seg.hue = trunc_f64(seg.hue);
         seg.sat = trunc_f64(seg.sat);
         seg.val = trunc_f64(seg.val);
-        seg.rad_x = trunc_f64(seg.rad_x);
-        seg.rad_y = trunc_f64(seg.rad_y);
+        seg.extent_x = trunc_f64(seg.extent_x);
+        seg.extent_y = trunc_f64(seg.extent_y);
         seg.start = trunc_f64(seg.start);
         seg.stop = trunc_f64(seg.stop);
         seg.rot_angle = trunc_f64(seg.rot_angle);

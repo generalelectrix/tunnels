@@ -74,8 +74,8 @@ pub struct Shape {
     pub val: f64,
     pub x: f64,
     pub y: f64,
-    pub rad_x: f64,
-    pub rad_y: f64,
+    pub extent_x: f64,
+    pub extent_y: f64,
     pub start: f64,
     pub stop: f64,
     pub rot_angle: f64,
@@ -93,8 +93,8 @@ impl Hash for Shape {
         OrderedFloat(self.val).hash(state);
         OrderedFloat(self.x).hash(state);
         OrderedFloat(self.y).hash(state);
-        OrderedFloat(self.rad_x).hash(state);
-        OrderedFloat(self.rad_y).hash(state);
+        OrderedFloat(self.extent_x).hash(state);
+        OrderedFloat(self.extent_y).hash(state);
         OrderedFloat(self.start).hash(state);
         OrderedFloat(self.stop).hash(state);
         OrderedFloat(self.rot_angle).hash(state);
@@ -112,8 +112,8 @@ impl PartialEq for Shape {
             && almost_eq(self.val, o.val)
             && almost_eq(self.x, o.x)
             && almost_eq(self.y, o.y)
-            && almost_eq(self.rad_x, o.rad_x)
-            && almost_eq(self.rad_y, o.rad_y)
+            && almost_eq(self.extent_x, o.extent_x)
+            && almost_eq(self.extent_y, o.extent_y)
             && angle_almost_eq(self.hue, o.hue)
             && angle_almost_eq(self.start, o.start)
             && angle_almost_eq(self.stop, o.stop)
@@ -183,8 +183,8 @@ pub mod test {
             val: linear,
             x: linear,
             y: linear,
-            rad_x: linear,
-            rad_y: linear,
+            extent_x: linear,
+            extent_y: linear,
             // radial items
             hue: radial,
             start: radial,

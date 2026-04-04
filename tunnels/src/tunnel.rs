@@ -285,7 +285,6 @@ impl Tunnel {
                     // aspect_ratio controls perpendicular offset from line center
                     // at default 0.5, offset is 0 (segments sit on the line)
                     let offset = (self.aspect_ratio.val().val() + aspect_ratio_adjust - 0.5)
-                        * self.size.val()
                         * MAX_ASPECT_RATIO;
                     (half_length, offset)
                 }
@@ -314,8 +313,8 @@ impl Tunnel {
                     val: 0.0,
                     x: x_center,
                     y: y_center,
-                    rad_x: radius_x,
-                    rad_y: radius_y,
+                    extent_x: radius_x,
+                    extent_y: radius_y,
                     start: start_angle.val(),
                     stop: stop_angle,
                     rot_angle: rot_angle.val(),
@@ -349,8 +348,8 @@ impl Tunnel {
                     val: 1.0,
                     x: x_center,
                     y: y_center,
-                    rad_x: radius_x,
-                    rad_y: radius_y,
+                    extent_x: radius_x,
+                    extent_y: radius_y,
                     start: start_angle.val(),
                     stop: stop_angle,
                     rot_angle: rot_angle.val(),
@@ -931,6 +930,49 @@ pub mod fixture {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Saucer,
         )))
+    }
+
+    /// Render a sequence of frames of a line-saucer tunnel with marquee motion,
+    /// for evaluating edge transition behavior.
+    pub fn saucer_line_marquee_sequence() -> Vec<Snapshot> {
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Saucer,
+            path_shape: PathShape::Line,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Segments(16), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(0.15)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::MarqueeSpeed(BipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+
+        let frame_interval = Duration::from_millis(25);
+        let frames_per_snapshot = 16;
+        let n_snapshots = 24;
+        let mut snapshots = Vec::new();
+        for snap in 0..n_snapshots {
+            let arcs = tunnel.render(
+                UnipolarFloat::ONE,
+                false,
+                &ClockBank::default(),
+                &ColorPalette::default(),
+                &PositionBank::default(),
+                UnipolarFloat::ZERO,
+            );
+            snapshots.push(Snapshot {
+                frame_number: snap,
+                layers: vec![Arc::new(arcs)],
+            });
+            for _ in 0..frames_per_snapshot {
+                tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
+            }
+        }
+        snapshots
     }
 
     /// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.
