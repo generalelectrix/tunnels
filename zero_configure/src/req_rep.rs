@@ -108,6 +108,7 @@ mod tests {
     /// Test that we can advertise a single service and successfully connect to it.
     #[test]
     fn test_pair() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let name = "reqreptest";
         let port = 19992;
 
@@ -127,8 +128,9 @@ mod tests {
             .unwrap();
         });
 
-        // Give the service a moment to register via DNS-SD and start listening.
-        sleep(3000);
+        // Give the service a moment to register and start heartbeating.
+        // bonsoir heartbeats every 2s, so we need at least that plus startup time.
+        sleep(5000);
 
         let names = controller.list();
         assert_eq!(1, names.len());

@@ -12,3 +12,6 @@ rmp-serde.workspace = true
 anyhow.workspace = true
 log.workspace = true
 minusmq = { path = "../minusmq" }
+
+[dev-dependencies]
+env_logger = "0.11"

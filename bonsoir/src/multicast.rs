@@ -6,15 +6,20 @@ use anyhow::{Context, Result};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 /// Multicast group address for bonsoir discovery.
-/// 239.255.66.83 — site-local scope (RFC 2365). 66/83 = ASCII 'B'/'S'.
-pub const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 66, 83);
+/// Uses the mDNS multicast group (224.0.0.251) so that macOS exempts our
+/// traffic from the application firewall. Our packets are msgpack (not DNS),
+/// so mDNSResponder ignores them.
+pub const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 
-/// Port for bonsoir multicast traffic.
-pub const MULTICAST_PORT: u16 = 5765;
+/// Port for bonsoir multicast traffic. Uses the mDNS port for the same
+/// firewall exemption reason.
+pub const MULTICAST_PORT: u16 = 5353;
 
-/// Create a UDP socket suitable for sending multicast packets.
-/// The socket is bound to an ephemeral port on all interfaces.
-pub fn sender_socket() -> Result<std::net::UdpSocket> {
+/// Create a UDP socket for both sending and receiving multicast packets.
+/// Binds to INADDR_ANY on the multicast port. Uses a single socket for
+/// send and receive, matching the pattern used by mDNSResponder and the
+/// mdns-sd crate for reliable same-machine multicast on macOS.
+pub fn multicast_socket() -> Result<std::net::UdpSocket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
         .context("failed to create UDP socket")?;
     socket
@@ -24,33 +29,20 @@ pub fn sender_socket() -> Result<std::net::UdpSocket> {
     socket
         .set_reuse_port(true)
         .context("failed to set SO_REUSEPORT")?;
+    // Enable multicast loopback for same-machine delivery.
     socket
-        .bind(&SockAddr::from(SocketAddr::from((
-            Ipv4Addr::UNSPECIFIED,
-            0,
-        ))))
-        .context("failed to bind sender socket")?;
-    Ok(socket.into())
-}
-
-/// Create a UDP socket suitable for receiving multicast packets.
-/// Binds to the multicast port with address reuse enabled.
-pub fn receiver_socket() -> Result<std::net::UdpSocket> {
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
-        .context("failed to create UDP socket")?;
+        .set_multicast_loop_v4(true)
+        .context("failed to set IP_MULTICAST_LOOP")?;
+    // Set multicast TTL to 255 per RFC 6762.
     socket
-        .set_reuse_address(true)
-        .context("failed to set SO_REUSEADDR")?;
-    #[cfg(unix)]
-    socket
-        .set_reuse_port(true)
-        .context("failed to set SO_REUSEPORT")?;
+        .set_multicast_ttl_v4(255)
+        .context("failed to set IP_MULTICAST_TTL")?;
     socket
         .bind(&SockAddr::from(SocketAddr::from((
             Ipv4Addr::UNSPECIFIED,
             MULTICAST_PORT,
         ))))
-        .context("failed to bind receiver socket")?;
+        .context("failed to bind multicast socket")?;
     Ok(socket.into())
 }
 
@@ -114,7 +106,6 @@ pub fn refresh_interfaces(
     if new_ifaces == current {
         return current.to_vec();
     }
-    // Leave old, join new.
     leave_multicast(socket, current);
     let joined = join_multicast(socket);
     log::info!(

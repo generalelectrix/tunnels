@@ -229,6 +229,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
+    fn init_logging() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
     #[test]
     fn test_register_and_stop() {
         let stop = register_service("regtest", 19990).unwrap();
@@ -251,6 +255,7 @@ mod tests {
 
     #[test]
     fn test_register_and_browse() {
+        init_logging();
         let stop = register_service("browsetest", 19991).unwrap();
         thread::sleep(Duration::from_millis(500));
 
@@ -267,6 +272,7 @@ mod tests {
 
     #[test]
     fn browser_recovers_after_restart() {
+        init_logging();
         let resolve_count = Arc::new(AtomicUsize::new(0));
         let resolve_counter = resolve_count.clone();
 

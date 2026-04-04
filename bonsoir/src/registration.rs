@@ -8,9 +8,7 @@ use anyhow::{Context, Result};
 
 use crate::multicast;
 use crate::wire::Packet;
-
-/// How often to send heartbeat packets.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+use crate::Timing;
 
 /// How often to re-check network interfaces.
 const INTERFACE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
@@ -23,19 +21,25 @@ pub struct Registration {
 }
 
 impl Registration {
-    /// Register a service and start heartbeating.
-    ///
-    /// - `service_type`: short name like `"tunnelbootstrap"` (max 15 bytes)
-    /// - `instance_name`: human-readable name like `"Bore A"` (max 63 bytes)
-    /// - `port`: the TCP port the service listens on
+    /// Register a service and start heartbeating with default timing.
     pub fn new(service_type: &str, instance_name: &str, port: u16) -> Result<Self> {
-        let socket = multicast::sender_socket().context("registration socket")?;
-        // Also bind a receiver socket so we can hear Query packets.
-        let recv_socket = multicast::receiver_socket().context("registration recv socket")?;
-        recv_socket
-            .set_read_timeout(Some(Duration::from_millis(500)))
+        Self::with_timing(service_type, instance_name, port, Timing::default())
+    }
+
+    /// Register a service with custom timing.
+    pub fn with_timing(
+        service_type: &str,
+        instance_name: &str,
+        port: u16,
+        timing: Timing,
+    ) -> Result<Self> {
+        // Single socket for both sending heartbeats and receiving queries,
+        // matching the pattern used by mDNSResponder and mdns-sd.
+        let socket = multicast::multicast_socket().context("registration socket")?;
+        socket
+            .set_read_timeout(Some(timing.heartbeat_interval / 2))
             .context("set read timeout")?;
-        let joined = multicast::join_multicast(&recv_socket);
+        let joined = multicast::join_multicast(&socket);
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
@@ -49,30 +53,26 @@ impl Registration {
 
         let join_handle = thread::spawn(move || {
             let mut interfaces = joined;
-            let mut last_heartbeat = Instant::now() - HEARTBEAT_INTERVAL; // send immediately
+            let mut last_heartbeat = Instant::now() - timing.heartbeat_interval; // send immediately
             let mut last_interface_check = Instant::now();
             let mut buf = [0u8; 256];
 
             loop {
-                // Check for shutdown.
                 if shutdown_rx.try_recv().is_ok() {
                     break;
                 }
 
-                // Send heartbeat if due.
-                if last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
+                if last_heartbeat.elapsed() >= timing.heartbeat_interval {
                     send_heartbeat(&socket, &service_type, &instance_name, port, &dest);
                     last_heartbeat = Instant::now();
                 }
 
-                // Refresh interfaces if due.
                 if last_interface_check.elapsed() >= INTERFACE_REFRESH_INTERVAL {
-                    interfaces = multicast::refresh_interfaces(&recv_socket, &interfaces);
+                    interfaces = multicast::refresh_interfaces(&socket, &interfaces);
                     last_interface_check = Instant::now();
                 }
 
-                // Listen for Query packets (non-blocking with timeout).
-                match recv_socket.recv_from(&mut buf) {
+                match socket.recv_from(&mut buf) {
                     Ok((len, _src)) => {
                         if let Ok(pkt) = Packet::decode(&buf[..len]) {
                             if pkt.message_type == crate::wire::MessageType::Query
@@ -115,7 +115,7 @@ impl Registration {
                 instance_name
             );
 
-            multicast::leave_multicast(&recv_socket, &interfaces);
+            multicast::leave_multicast(&socket, &interfaces);
         });
 
         Ok(Self {

@@ -9,12 +9,7 @@ use anyhow::{Context, Result};
 
 use crate::multicast;
 use crate::wire::{MessageType, Packet, ServiceInstance, PROTOCOL_VERSION};
-
-/// How long before a service is considered expired (3 missed heartbeats).
-const EXPIRY_TIMEOUT: Duration = Duration::from_secs(6);
-
-/// How often to check for expired services.
-const EXPIRY_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+use crate::Timing;
 
 /// How often to re-check network interfaces.
 const INTERFACE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
@@ -41,13 +36,22 @@ pub struct Browser {
 }
 
 impl Browser {
-    /// Start browsing for services of the given type.
-    /// Returns a `Browser` handle and a `Receiver` that emits `BrowseEvent`s.
-    /// Immediately sends a Query to solicit fast responses from existing services.
+    /// Start browsing with default timing.
     pub fn new(service_type: &str) -> Result<(Self, Receiver<BrowseEvent>)> {
-        let socket = multicast::receiver_socket().context("browser socket")?;
+        Self::with_timing(service_type, Timing::default())
+    }
+
+    /// Start browsing with custom timing.
+    pub fn with_timing(
+        service_type: &str,
+        timing: Timing,
+    ) -> Result<(Self, Receiver<BrowseEvent>)> {
+        let socket = multicast::multicast_socket().context("browser socket")?;
+        // Use a fraction of the expiry timeout as the read timeout so we
+        // check for expired services and shutdown signals frequently.
+        let check_interval = timing.expiry_timeout / 3;
         socket
-            .set_read_timeout(Some(EXPIRY_CHECK_INTERVAL))
+            .set_read_timeout(Some(check_interval))
             .context("set read timeout")?;
         let joined = multicast::join_multicast(&socket);
 
@@ -68,7 +72,14 @@ impl Browser {
         let service_type = service_type.to_string();
 
         let join_handle = thread::spawn(move || {
-            browse_loop(socket, &service_type, joined, shutdown_rx, event_tx);
+            browse_loop(
+                socket,
+                &service_type,
+                joined,
+                shutdown_rx,
+                event_tx,
+                timing,
+            );
         });
 
         Ok((
@@ -98,43 +109,41 @@ fn browse_loop(
     initial_interfaces: Vec<std::net::Ipv4Addr>,
     shutdown_rx: Receiver<()>,
     event_tx: Sender<BrowseEvent>,
+    timing: Timing,
 ) {
     let mut services: HashMap<String, TrackedService> = HashMap::new();
     let mut interfaces = initial_interfaces;
     let mut last_expiry_check = Instant::now();
     let mut last_interface_check = Instant::now();
     let mut buf = [0u8; 512];
+    let check_interval = timing.expiry_timeout / 3;
 
     loop {
-        // Check for shutdown.
         if shutdown_rx.try_recv().is_ok() {
             break;
         }
 
-        // Receive packets (blocks up to EXPIRY_CHECK_INTERVAL).
         match socket.recv_from(&mut buf) {
-            Ok((len, src)) => {
-                match Packet::decode(&buf[..len]) {
-                    Ok(pkt) => {
-                        if pkt.version != PROTOCOL_VERSION {
-                            log::warn!(
-                                "[bonsoir] Dropping packet from {}: version {}, expected {}",
-                                src.ip(),
-                                pkt.version,
-                                PROTOCOL_VERSION
-                            );
-                            continue;
-                        }
-                        if pkt.service_type != service_type {
-                            continue; // Not our service type.
-                        }
-                        handle_packet(&pkt, src.ip(), &mut services, &event_tx);
+            Ok((len, src)) => match Packet::decode(&buf[..len]) {
+                Ok(pkt) => {
+                    if pkt.version != PROTOCOL_VERSION {
+                        log::warn!(
+                            "[bonsoir] Dropping packet from {}: version {}, expected {}",
+                            src.ip(),
+                            pkt.version,
+                            PROTOCOL_VERSION
+                        );
+                        continue;
                     }
-                    Err(e) => {
-                        log::debug!("[bonsoir] Failed to decode packet from {src}: {e}");
+                    if pkt.service_type != service_type {
+                        continue;
                     }
+                    handle_packet(&pkt, src.ip(), &interfaces, &mut services, &event_tx);
                 }
-            }
+                Err(e) => {
+                    log::debug!("[bonsoir] Failed to decode packet from {src}: {e}");
+                }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => {
@@ -142,13 +151,11 @@ fn browse_loop(
             }
         }
 
-        // Expire stale services.
-        if last_expiry_check.elapsed() >= EXPIRY_CHECK_INTERVAL {
-            expire_stale(&mut services, &event_tx);
+        if last_expiry_check.elapsed() >= check_interval {
+            expire_stale(&mut services, &event_tx, &timing);
             last_expiry_check = Instant::now();
         }
 
-        // Refresh interfaces.
         if last_interface_check.elapsed() >= INTERFACE_REFRESH_INTERVAL {
             interfaces = multicast::refresh_interfaces(&socket, &interfaces);
             last_interface_check = Instant::now();
@@ -161,15 +168,26 @@ fn browse_loop(
 fn handle_packet(
     pkt: &Packet,
     sender_addr: std::net::IpAddr,
+    local_interfaces: &[std::net::Ipv4Addr],
     services: &mut HashMap<String, TrackedService>,
     event_tx: &Sender<BrowseEvent>,
 ) {
     match pkt.message_type {
         MessageType::Heartbeat => {
+            // Use loopback for services on our own machine. This is faster
+            // (avoids the network stack) and avoids macOS's application firewall,
+            // which blocks inbound TCP on non-loopback interfaces for unsigned
+            // binaries.
+            let address = match sender_addr {
+                std::net::IpAddr::V4(v4) if local_interfaces.contains(&v4) => {
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+                }
+                other => other,
+            };
             let instance = ServiceInstance {
                 service_type: pkt.service_type.clone(),
                 instance_name: pkt.instance_name.clone(),
-                address: sender_addr,
+                address,
                 port: pkt.port,
             };
             let is_new = !services.contains_key(&pkt.instance_name);
@@ -195,25 +213,28 @@ fn handle_packet(
                 let _ = event_tx.send(BrowseEvent::ServiceDown(pkt.instance_name.clone()));
             }
         }
-        MessageType::Query => {
-            // Browsers ignore queries.
-        }
+        MessageType::Query => {}
     }
 }
 
 fn expire_stale(
     services: &mut HashMap<String, TrackedService>,
     event_tx: &Sender<BrowseEvent>,
+    timing: &Timing,
 ) {
     let expired: Vec<String> = services
         .iter()
-        .filter(|(_, tracked)| tracked.last_seen.elapsed() > EXPIRY_TIMEOUT)
+        .filter(|(_, tracked)| tracked.last_seen.elapsed() > timing.expiry_timeout)
         .map(|(name, _)| name.clone())
         .collect();
 
     for name in expired {
         services.remove(&name);
-        log::info!("[bonsoir] '{}' expired (no heartbeat for {:?})", name, EXPIRY_TIMEOUT);
+        log::info!(
+            "[bonsoir] '{}' expired (no heartbeat for {:?})",
+            name,
+            timing.expiry_timeout
+        );
         let _ = event_tx.send(BrowseEvent::ServiceDown(name));
     }
 }

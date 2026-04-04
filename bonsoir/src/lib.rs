@@ -9,27 +9,61 @@ mod multicast;
 mod registration;
 mod wire;
 
-pub use browser::{Browser, BrowseEvent};
+pub use browser::{BrowseEvent, Browser};
 pub use registration::Registration;
 pub use wire::ServiceInstance;
+
+use std::time::Duration;
+
+/// Timing configuration for bonsoir discovery.
+#[derive(Debug, Clone)]
+pub struct Timing {
+    /// How often registrations send heartbeat packets.
+    pub heartbeat_interval: Duration,
+    /// How long a browser waits before considering a service expired.
+    pub expiry_timeout: Duration,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval: Duration::from_secs(2),
+            expiry_timeout: Duration::from_secs(6),
+        }
+    }
+}
+
+impl Timing {
+    /// Fast timing for tests: 50ms heartbeat, 150ms expiry.
+    pub fn fast() -> Self {
+        Self {
+            heartbeat_interval: Duration::from_millis(50),
+            expiry_timeout: Duration::from_millis(150),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+
+    /// Initialize env_logger for tests. Calling this multiple times is safe —
+    /// `try_init` silently ignores subsequent calls.
+    fn init_logging() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
 
     #[test]
     fn discover_and_expire() {
-        // Register a service.
-        let reg = Registration::new("bontest", "TestHost", 19995).unwrap();
+        init_logging();
+        let timing = Timing::fast();
 
-        // Start browsing.
-        let (browser, events) = Browser::new("bontest").unwrap();
+        let reg = Registration::with_timing("bontest", "TestHost", 19995, timing.clone()).unwrap();
+        let (_browser, events) = Browser::with_timing("bontest", timing).unwrap();
 
-        // Wait for discovery (should happen within 3 seconds).
-        let event = events.recv_timeout(Duration::from_secs(3)).expect(
-            "should discover the service within 3 seconds",
-        );
+        let event = events
+            .recv_timeout(Duration::from_secs(2))
+            .expect("should discover the service");
         match event {
             BrowseEvent::ServiceUp(info) => {
                 assert_eq!(info.instance_name, "TestHost");
@@ -42,34 +76,34 @@ mod tests {
         // Drop the registration — should send goodbye packets.
         drop(reg);
 
-        // Wait for the service to disappear (goodbye or expiry, within 8 seconds).
-        let event = events.recv_timeout(Duration::from_secs(8)).expect(
-            "should see ServiceDown within 8 seconds",
-        );
+        // Goodbye should arrive almost instantly; expiry within 1s.
+        let event = events
+            .recv_timeout(Duration::from_secs(2))
+            .expect("should see ServiceDown");
         match event {
             BrowseEvent::ServiceDown(name) => {
                 assert_eq!(name, "TestHost");
             }
             BrowseEvent::ServiceUp(_) => panic!("unexpected ServiceUp after drop"),
         }
-
-        drop(browser);
     }
 
     #[test]
     fn query_discovers_existing_service() {
-        // Register first, then browse — the query mechanism should find it.
-        let reg = Registration::new("querytest", "QueryHost", 19996).unwrap();
+        init_logging();
+        let timing = Timing::fast();
+
+        let reg =
+            Registration::with_timing("querytest", "QueryHost", 19996, timing.clone()).unwrap();
 
         // Give the registration a moment to start heartbeating.
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(100));
 
-        // Now start browsing — the initial query should get an immediate response.
-        let (_browser, events) = Browser::new("querytest").unwrap();
+        let (_browser, events) = Browser::with_timing("querytest", timing).unwrap();
 
-        let event = events.recv_timeout(Duration::from_secs(3)).expect(
-            "query should discover existing service within 3 seconds",
-        );
+        let event = events
+            .recv_timeout(Duration::from_secs(2))
+            .expect("query should discover existing service");
         match event {
             BrowseEvent::ServiceUp(info) => {
                 assert_eq!(info.instance_name, "QueryHost");
@@ -82,12 +116,15 @@ mod tests {
 
     #[test]
     fn ignores_other_service_types() {
-        let _reg = Registration::new("othertype", "OtherHost", 19997).unwrap();
+        init_logging();
+        let timing = Timing::fast();
 
-        let (_browser, events) = Browser::new("mytype").unwrap();
+        let _reg =
+            Registration::with_timing("othertype", "OtherHost", 19997, timing.clone()).unwrap();
+        let (_browser, events) = Browser::with_timing("mytype", timing).unwrap();
 
-        // Should not discover the other service type.
-        let result = events.recv_timeout(Duration::from_secs(4));
+        // Should not discover the other service type within several heartbeat cycles.
+        let result = events.recv_timeout(Duration::from_secs(1));
         assert!(
             result.is_err(),
             "should not discover a service of a different type"
