@@ -40,6 +40,9 @@ const RENDER_MODE_ARC: Mapping = note_on(0, 62);
 const RENDER_MODE_DOT: Mapping = note_on(0, 63);
 const RENDER_MODE_SAUCER: Mapping = note_on(0, 64);
 
+const PATH_SHAPE_ELLIPSE: Mapping = note_on(0, 58);
+const PATH_SHAPE_LINE: Mapping = note_on(0, 59);
+
 // TouchOSC XY position pad.
 const POSITION_X: Mapping = cc(8, 1);
 const POSITION_Y: Mapping = cc(8, 0);
@@ -57,10 +60,18 @@ lazy_static! {
         off: 0,
         on: 1,
     };
+    static ref PATH_SHAPE_BUTTONS: RadioButtons = RadioButtons {
+        mappings: vec!(
+            PATH_SHAPE_ELLIPSE,
+            PATH_SHAPE_LINE,
+        ),
+        off: 0,
+        on: 1,
+    };
     static ref PALETTE_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
         mappings: (-1..N_PALETTE_SELECTS)
-            .map(|palette_id| note_on_ch0((palette_id + PALETTE_SELECT_CONTROL_OFFSET) as u8))
+            .map(|palette_id| note_on(8, (palette_id + PALETTE_SELECT_CONTROL_OFFSET) as u8))
             .collect(),
         off: 0,
         on: 1,
@@ -97,8 +108,10 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         RENDER_MODE_ARC => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Arc))),
         RENDER_MODE_DOT => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Dot))),
         RENDER_MODE_SAUCER => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Saucer))),
+        PATH_SHAPE_ELLIPSE => Tunnel(Set(PathShape(tunnels_lib::PathShape::Ellipse))),
+        PATH_SHAPE_LINE => Tunnel(Set(PathShape(tunnels_lib::PathShape::Line))),
         m if m.event_type == crate::midi::EventType::NoteOn
-            && m.channel == 0
+            && m.channel == 8
             && m.control >= (PALETTE_SELECT_CONTROL_OFFSET - 1) as u8
             && m.control < (PALETTE_SELECT_CONTROL_OFFSET + N_PALETTE_SELECTS) as u8 =>
         {
@@ -138,7 +151,7 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 None => -1,
             };
             PALETTE_SELECT_BUTTONS.select(
-                note_on_ch0((index + PALETTE_SELECT_CONTROL_OFFSET) as u8),
+                note_on(8, (index + PALETTE_SELECT_CONTROL_OFFSET) as u8),
                 send,
             );
         }
@@ -161,7 +174,15 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 send,
             );
         }
-        // PathShape has no MIDI mapping yet — ignore for now.
-        PathShape(_) => {}
+        PathShape(v) => {
+            use tunnels_lib::PathShape::*;
+            PATH_SHAPE_BUTTONS.select(
+                match v {
+                    Ellipse => PATH_SHAPE_ELLIPSE,
+                    Line => PATH_SHAPE_LINE,
+                },
+                send,
+            );
+        }
     };
 }

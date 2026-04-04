@@ -646,8 +646,8 @@ mod test {
     }
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
-        use tunnels_lib::RenderMode;
         use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
+        use tunnels_lib::{PathShape, RenderMode};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);
@@ -681,6 +681,8 @@ mod test {
             t("tunnel/render_arc", T::RenderMode(RenderMode::Arc));
             t("tunnel/render_dot", T::RenderMode(RenderMode::Dot));
             t("tunnel/render_saucer", T::RenderMode(RenderMode::Saucer));
+            t("tunnel/path_ellipse", T::PathShape(PathShape::Ellipse));
+            t("tunnel/path_line", T::PathShape(PathShape::Line));
         }
 
         // Animation state changes.
