@@ -119,21 +119,34 @@ fn draw_ellipse<G: Graphics>(
             let y_size = shape.rad_y * cfg.critical_size;
             let start = shape.start * TWOPI;
             let stop = shape.stop * TWOPI;
+            let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
 
-            // Compute centroid of this arc segment on the ellipse.
-            let mid_angle = (start + stop) / 2.0;
-            let cx = x_size * mid_angle.cos();
-            let cy = y_size * mid_angle.sin();
+            if stop - start >= TWOPI {
+                // Full circle: no meaningful centroid to spin around.
+                CircleArc::new(color, thickness, start, stop).draw(
+                    bound,
+                    &Default::default(),
+                    transform,
+                    gl,
+                );
+            } else {
+                // Compute centroid of this arc segment on the ellipse.
+                let mid_angle = (start + stop) / 2.0;
+                let cx = x_size * mid_angle.cos();
+                let cy = y_size * mid_angle.sin();
 
-            // Draw the arc rotated around its centroid by spin_angle.
-            let local = transform.trans(cx, cy).rot_rad(spin_rad);
-            let offset_bound = rectangle::centered([-cx, -cy, x_size, y_size]);
-            CircleArc::new(color, thickness, start, stop).draw(
-                offset_bound,
-                &Default::default(),
-                local,
-                gl,
-            );
+                // Draw the arc rotated around its centroid by spin_angle.
+                // Offset the ellipse bound so the centroid is at the local origin,
+                // apply spin rotation, then translate to the centroid position.
+                let local = transform.trans(cx, cy).rot_rad(spin_rad);
+                let offset_bound = rectangle::centered([-cx, -cy, x_size, y_size]);
+                CircleArc::new(color, thickness, start, stop).draw(
+                    offset_bound,
+                    &Default::default(),
+                    local,
+                    gl,
+                );
+            }
         }
         RenderMode::Dot => {
             let mid_angle = (shape.start + shape.stop) / 2.0 * TWOPI;
@@ -194,10 +207,12 @@ fn compute_line_wrap(mid_pos: f64, left_end: f64, right_end: f64, fade_zone: f64
     };
 
     let mirror_pos = if fade < 1.0 {
+        // Mirror appears at the opposite endpoint from whichever edge the
+        // dot is fading near.
         Some(if mid - left_end < right_end - mid {
-            right_end - (mid - left_end)
+            right_end
         } else {
-            left_end + (right_end - mid)
+            left_end
         })
     } else {
         None
