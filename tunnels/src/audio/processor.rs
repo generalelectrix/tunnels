@@ -2,7 +2,7 @@
 //! Provides lowpass filterting and configurable amplitude envelope.
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
 use audio_processor_traits::AudioProcessorSettings;
-use audio_processor_traits::{simple_processor::MonoAudioProcessor, AtomicF32, AudioContext};
+use audio_processor_traits::{AtomicF32, AudioContext, simple_processor::MonoAudioProcessor};
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use log::debug;
 use std::sync::Arc;

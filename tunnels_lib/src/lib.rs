@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     hash::{Hash, Hasher},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 

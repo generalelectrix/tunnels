@@ -1,5 +1,5 @@
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 use derive_more::Display;
 use log::{debug, error, warn};
 use rosc::{OscMessage, OscPacket, OscType};
@@ -123,13 +123,15 @@ pub fn listen(spec: DeviceSpec, send: Sender<ControlEvent>) -> Result<()> {
         Ok(packet)
     };
 
-    thread::spawn(move || loop {
-        match recv() {
-            Ok(packet) => {
-                forward_packet(packet, spec.device, &send);
-            }
-            Err(e) => {
-                error!("Error receiving from OSC device {}: {}", spec.device, e);
+    thread::spawn(move || {
+        loop {
+            match recv() {
+                Ok(packet) => {
+                    forward_packet(packet, spec.device, &send);
+                }
+                Err(e) => {
+                    error!("Error receiving from OSC device {}: {}", spec.device, e);
+                }
             }
         }
     });

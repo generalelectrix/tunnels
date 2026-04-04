@@ -1,16 +1,14 @@
+use crate::typed_index::typed_index;
 use serde::{Deserialize, Serialize};
 use tunnels_lib::color::Hsv;
-use typed_index_derive::TypedIndex;
 
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 
 const MIN_PALETTE_SIZE: usize = 1;
 
-#[derive(
-    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
-)]
-#[typed_index(Hsv)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ColorPaletteIdx(pub usize);
+typed_index!(ColorPaletteIdx, Hsv);
 
 /// Store an array of colors that can be used by beams.
 #[derive(Serialize, Deserialize, Clone)]

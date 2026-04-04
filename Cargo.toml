@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "tunnels_lib",
     "tunnels",
@@ -15,6 +15,9 @@ members = [
     "bonsoir",
     "bootstrap-deploy",
 ]
+
+[workspace.package]
+edition = "2024"
 
 [workspace.dependencies]
 serde = { version = "^1", features = ["derive", "rc"] }

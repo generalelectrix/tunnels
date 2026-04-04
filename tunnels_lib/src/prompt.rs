@@ -1,5 +1,5 @@
 //! Helper functions for prompting CLI input.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use io::Write;
 use std::io;
 

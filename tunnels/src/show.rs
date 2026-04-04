@@ -14,11 +14,11 @@ use crate::{
     osc::DeviceSpec as OscDeviceSpec,
     palette::{self, ColorPalette},
     position_bank::{self, PositionBank},
-    send::{start_render_service, Frame},
+    send::{Frame, start_render_service},
     test_mode::TestModeSetup,
     tunnel,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use log::{self, error, info, warn};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
@@ -27,8 +27,8 @@ use std::{
     io::BufWriter,
     path::{Path, PathBuf},
     sync::{
-        mpsc::{Receiver, Sender},
         Arc,
+        mpsc::{Receiver, Sender},
     },
     time::{Duration, Instant},
 };
@@ -414,10 +414,10 @@ pub struct ShowState {
 mod test {
     use std::{
         collections::HashSet,
-        sync::{mpsc::channel, Arc},
+        sync::{Arc, mpsc::channel},
     };
 
-    use tunnels_lib::{number::UnipolarFloat, LayerCollection, Shape};
+    use tunnels_lib::{LayerCollection, Shape, number::UnipolarFloat};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
@@ -646,8 +646,8 @@ mod test {
     }
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
-        use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
         use tunnels_lib::RenderMode;
+        use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);

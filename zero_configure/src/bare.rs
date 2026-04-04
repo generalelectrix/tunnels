@@ -2,7 +2,7 @@
 
 use bonsoir::{BrowseEvent, Registration};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -35,12 +35,11 @@ fn machine_hostname() -> String {
     if let Ok(output) = std::process::Command::new("scutil")
         .args(["--get", "ComputerName"])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !name.is_empty() {
-                return truncate_to_label(&name).to_string();
-            }
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return truncate_to_label(&name).to_string();
         }
     }
     // Fall back to short hostname.

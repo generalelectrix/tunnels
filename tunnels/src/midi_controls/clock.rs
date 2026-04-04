@@ -7,9 +7,9 @@ use crate::{
     clock::StateChange as ClockStateChange,
     clock_bank::ClockIdxExt,
     clock_bank::ControlMessage,
-    clock_bank::StateChange,
     clock_bank::N_CLOCKS,
-    midi::{cc, event, note_on, Mapping, MidiOutput},
+    clock_bank::StateChange,
+    midi::{Mapping, MidiOutput, cc, event, note_on},
     midi_controls::Device,
     midi_controls::{bipolar_to_midi, unipolar_to_midi},
 };

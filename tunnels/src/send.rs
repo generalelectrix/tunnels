@@ -3,9 +3,9 @@ use log::{error, info, warn};
 use rmp_serde::Serializer;
 use serde::Serialize;
 use std::net::TcpListener;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread;
-use tunnels_lib::{number::UnipolarFloat, Snapshot};
+use tunnels_lib::{Snapshot, number::UnipolarFloat};
 
 use crate::{
     clock_bank::ClockBank, mixer::Mixer, palette::ColorPalette, position_bank::PositionBank,
@@ -25,29 +25,31 @@ pub fn start_render_service() -> Result<Sender<Frame>> {
     let mut send_buf = Vec::new();
     thread::Builder::new()
         .name("render".to_string())
-        .spawn(move || loop {
-            match get_frame(&mut recv) {
-                None => {
-                    info!("Render server shutting down.");
-                    return;
-                }
-                Some((dropped_frames, frame)) => {
-                    if dropped_frames > 0 {
-                        warn!("Render server dropped {dropped_frames} frames.");
+        .spawn(move || {
+            loop {
+                match get_frame(&mut recv) {
+                    None => {
+                        info!("Render server shutting down.");
+                        return;
                     }
+                    Some((dropped_frames, frame)) => {
+                        if dropped_frames > 0 {
+                            warn!("Render server dropped {dropped_frames} frames.");
+                        }
 
-                    let video_outs = frame.mixer.render(
-                        &frame.clocks,
-                        &frame.color_palette,
-                        &frame.positions,
-                        frame.audio_envelope,
-                    );
-                    for (video_chan, draw_commands) in video_outs.into_iter().enumerate() {
-                        let snapshot = Snapshot {
-                            frame_number: frame.number,
-                            layers: draw_commands,
-                        };
-                        send_snapshot(&mut send_buf, &publisher, video_chan, snapshot);
+                        let video_outs = frame.mixer.render(
+                            &frame.clocks,
+                            &frame.color_palette,
+                            &frame.positions,
+                            frame.audio_envelope,
+                        );
+                        for (video_chan, draw_commands) in video_outs.into_iter().enumerate() {
+                            let snapshot = Snapshot {
+                                frame_number: frame.number,
+                                layers: draw_commands,
+                            };
+                            send_snapshot(&mut send_buf, &publisher, video_chan, snapshot);
+                        }
                     }
                 }
             }

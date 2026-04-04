@@ -1,13 +1,13 @@
 use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
 use crate::palette::ColorPalette;
 use crate::position_bank::PositionBank;
+use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use crate::{clock_bank::ClockBank, master_ui::EmitStateChange as EmitShowStateChange};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::{LayerCollection, Shape};
-use typed_index_derive::TypedIndex;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -232,11 +232,9 @@ impl Channel {
 }
 
 /// Index into a particular mixer channel.
-#[derive(
-    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
-)]
-#[typed_index(Channel)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ChannelIdx(pub usize);
+typed_index!(ChannelIdx, Channel);
 
 /// Index into a particular virtual video channel.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]

@@ -204,11 +204,7 @@ impl Animation {
             Waveform::Constant => 1.0,
         };
 
-        if self.invert {
-            -result
-        } else {
-            result
-        }
+        if self.invert { -result } else { result }
     }
 
     /// Return the complete, scaled value of this animation for the provided parameters.

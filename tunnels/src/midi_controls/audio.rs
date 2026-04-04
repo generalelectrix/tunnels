@@ -4,7 +4,7 @@ use tunnels_lib::number::UnipolarFloat;
 
 use crate::{
     audio::{ControlMessage, StateChange},
-    midi::{cc, event, note_on, note_on_ch1, Mapping, MidiOutput},
+    midi::{Mapping, MidiOutput, cc, event, note_on, note_on_ch1},
     midi_controls::Device,
     show::ControlMessage::Audio,
 };

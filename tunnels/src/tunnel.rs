@@ -1,3 +1,4 @@
+use crate::typed_index::typed_index;
 use crate::{
     animation::Animation,
     animation_target::AnimationTarget,
@@ -13,7 +14,6 @@ use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
 use tunnels_lib::{RenderMode, Shape};
-use typed_index_derive::TypedIndex;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -439,11 +439,9 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
     BipolarFloat::new(scaled)
 }
 
-#[derive(
-    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
-)]
-#[typed_index(TargetedAnimation)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct AnimationIdx(pub usize);
+typed_index!(AnimationIdx, TargetedAnimation);
 
 /// Combination of an animation and a tunnel parameter target for that animation.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]

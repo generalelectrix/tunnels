@@ -1,6 +1,6 @@
 use crate::{
     animation_target::AnimationTarget as AnimationTargetState,
-    midi::{note_on_ch0, Event, Mapping, MidiOutput},
+    midi::{Event, Mapping, MidiOutput, note_on_ch0},
     midi_controls::Device,
     show::ControlMessage::AnimationTarget as Animation,
 };

@@ -1,6 +1,6 @@
 //! Loading and parsing client configurations.
 use crate::transform::{Transform, TransformDirection};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::fs::File;

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use client_lib::config::ClientConfig;
 use graphics::clear;
 use log::{error, info};
@@ -105,17 +105,19 @@ fn receive_snapshots(
         minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000, cfg.video_channel as u8);
     thread::Builder::new()
         .name("snapshot_receiver".to_string())
-        .spawn(move || loop {
-            if !run_flag.should_run() {
-                info!("Snapshot receiver shutting down.");
-                break;
-            }
-            let buf = subscriber.recv();
-            match rmp_serde::from_slice::<Snapshot>(&buf) {
-                Ok(msg) => {
-                    *snapshot_manager.lock().unwrap() = Some(Arc::new(msg));
+        .spawn(move || {
+            loop {
+                if !run_flag.should_run() {
+                    info!("Snapshot receiver shutting down.");
+                    break;
                 }
-                Err(e) => error!("receive error: {e}"),
+                let buf = subscriber.recv();
+                match rmp_serde::from_slice::<Snapshot>(&buf) {
+                    Ok(msg) => {
+                        *snapshot_manager.lock().unwrap() = Some(Arc::new(msg));
+                    }
+                    Err(e) => error!("receive error: {e}"),
+                }
             }
         })
         .expect("Failed to spawn snapshot receiver thread");

@@ -1,9 +1,9 @@
 //! Provide an audio input stream that automatically reconnects when disconnected.
-use anyhow::bail;
 use anyhow::Result;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use anyhow::bail;
 use cpal::BufferSize;
 use cpal::SupportedBufferSize;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamError};
 use log::{info, warn};
 use std::sync::mpsc::channel;
@@ -161,7 +161,9 @@ where
         SupportedBufferSize::Range { min, max } => {
             let clamped_buffer_size = frame_count.clamp(*min, *max);
             if clamped_buffer_size != frame_count {
-                warn!("Target audio buffer size {frame_count} is out of range for this device; using {clamped_buffer_size}.");
+                warn!(
+                    "Target audio buffer size {frame_count} is out of range for this device; using {clamped_buffer_size}."
+                );
             }
             clamped_buffer_size
         }

@@ -126,10 +126,10 @@ impl ChildManager {
                 self.child = None;
 
                 // Reset backoff if the process was stable for long enough.
-                if let Some(launched) = self.launched_at {
-                    if launched.elapsed() >= STABILITY_THRESHOLD {
-                        self.backoff = Duration::from_secs(1);
-                    }
+                if let Some(launched) = self.launched_at
+                    && launched.elapsed() >= STABILITY_THRESHOLD
+                {
+                    self.backoff = Duration::from_secs(1);
                 }
 
                 info!("Restarting in {:?}", self.backoff);
