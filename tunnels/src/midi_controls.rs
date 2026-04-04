@@ -30,7 +30,7 @@ use self::mixer::update_mixer_control;
 use self::tunnel::update_tunnel_control;
 
 pub use self::mixer::PAGE_SIZE as MIXER_CHANNELS_PER_PAGE;
-pub use crate::midi_controls::device::{init_apc_20, Device, MidiDevice, MidiHandler};
+pub use crate::midi_controls::device::{Device, MidiDevice, MidiHandler, init_apc_20};
 
 pub struct Dispatcher {
     midi_manager: Manager,

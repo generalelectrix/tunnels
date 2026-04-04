@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use crate::Timing;
 use crate::multicast::MulticastSocket;
 use crate::wire::{Packet, RECV_BUF_SIZE};
-use crate::Timing;
 
 /// Number of goodbye packets to send on shutdown. Multiple copies provide
 /// redundancy since UDP delivery is not guaranteed.
@@ -104,17 +104,16 @@ fn registration_loop(
         // Non-blocking recv — sleep briefly if nothing available.
         match socket.recv_from(&mut buf) {
             Ok((len, _src)) => {
-                if let Ok(pkt) = Packet::decode(&buf[..len]) {
-                    if pkt.message_type == crate::wire::MessageType::Query
-                        && pkt.service_type == service_type
-                    {
-                        log::debug!(
-                            "[bonsoir] Received query for '{}', responding",
-                            service_type
-                        );
-                        send_heartbeat(&socket, service_type, instance_name, port);
-                        last_heartbeat = Instant::now();
-                    }
+                if let Ok(pkt) = Packet::decode(&buf[..len])
+                    && pkt.message_type == crate::wire::MessageType::Query
+                    && pkt.service_type == service_type
+                {
+                    log::debug!(
+                        "[bonsoir] Received query for '{}', responding",
+                        service_type
+                    );
+                    send_heartbeat(&socket, service_type, instance_name, port);
+                    last_heartbeat = Instant::now();
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {

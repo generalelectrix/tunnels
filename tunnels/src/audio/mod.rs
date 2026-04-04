@@ -1,6 +1,6 @@
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::transient_indicator::TransientIndicator;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{info, warn};
 use std::time::Duration;

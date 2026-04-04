@@ -1,5 +1,5 @@
-use std::sync::mpsc::channel;
 use std::sync::Arc;
+use std::sync::mpsc::channel;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -9,7 +9,7 @@ use midi_harness::install_midi_device_change_handler;
 
 use tunnels::control::CommandClient;
 use tunnels::gui_state::GuiState;
-use tunnels::midi::{default_midi_slots, ControlEventHandler};
+use tunnels::midi::{ControlEventHandler, default_midi_slots};
 use tunnels::show::Show;
 
 /// Approximately 240 fps.
@@ -32,10 +32,10 @@ fn install_terminate_override() {
         use objc2_app_kit::NSApplication;
         use objc2_foundation::MainThreadMarker;
 
-        let mtm = MainThreadMarker::new_unchecked();
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
         let app = NSApplication::sharedApplication(mtm);
         if let Some(window) = app.keyWindow() {
-            window.performClose(None);
+            unsafe { window.performClose(None) };
         }
     }
 

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::bare::{create_and_register, Browser};
+use crate::bare::{Browser, create_and_register};
 
 /// Advertise a service via bonsoir, using TCP request-response as the transport.
 /// Pass each message received on the socket to the action callback. Send the byte

@@ -1,5 +1,5 @@
 use crate::{
-    midi::{cc, event, note_on, Event, EventType, MidiOutput},
+    midi::{Event, EventType, MidiOutput, cc, event, note_on},
     midi_controls::Device,
     mixer::ControlMessage,
     mixer::StateChange,

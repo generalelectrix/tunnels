@@ -407,10 +407,10 @@ impl AdminPanelState {
         }
 
         // Invalidate selection if the selected remote client has disappeared.
-        if let Some(Target::RemoteClient(ref name)) = self.selected_target {
-            if !clients.iter().any(|c| c == name) {
-                self.selected_target = None;
-            }
+        if let Some(Target::RemoteClient(ref name)) = self.selected_target
+            && !clients.iter().any(|c| c == name)
+        {
+            self.selected_target = None;
         }
 
         // Use a consistent frame for both panels so headings and separators align.
@@ -547,8 +547,8 @@ impl Drop for AdminPanelState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui_kittest::kittest::Queryable;
     use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
 
     struct MockAdminService {
         clients: Vec<String>,
@@ -697,9 +697,11 @@ mod tests {
         let mut harness = test_harness(vec![]);
         harness.state_mut().selected_target = None;
         harness.run();
-        assert!(harness
-            .query_by_label("Select a target to configure.")
-            .is_some());
+        assert!(
+            harness
+                .query_by_label("Select a target to configure.")
+                .is_some()
+        );
     }
 
     // --- Disappearing client tests ---
@@ -754,9 +756,11 @@ mod tests {
         });
         harness.step();
         assert!(harness.query_by_label("Ok").is_some());
-        assert!(harness
-            .query_by_label("Failed (test):\nConnection refused")
-            .is_some());
+        assert!(
+            harness
+                .query_by_label("Failed (test):\nConnection refused")
+                .is_some()
+        );
     }
 
     // --- Snapshot tests ---

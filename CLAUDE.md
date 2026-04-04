@@ -8,6 +8,14 @@ All components of this system run live. A crash stops the show. Code running aft
 
 Mutex `.lock().unwrap()` is acceptable when there is no recovery path from a poisoned mutex.
 
+## Pre-commit hook
+
+A pre-commit hook that runs `cargo fmt` is checked into `.githooks/`. After cloning, enable it with:
+
+```
+git config core.hooksPath .githooks
+```
+
 ## Prefer vendored C dependencies
 
 When a crate wraps a C library (OpenSSL, SDL2, libssh2, etc.), prefer the `vendored` or `bundled` feature so the library is built from source. This keeps builds self-contained and avoids cross-compilation failures from missing system libraries. Use judgment — if vendoring introduces significant downsides (massive build times, licensing issues, etc.), discuss the tradeoff first.

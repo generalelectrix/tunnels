@@ -8,9 +8,9 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::multicast::MulticastSocket;
-use crate::wire::{MessageType, Packet, ServiceInstance, PROTOCOL_VERSION, RECV_BUF_SIZE};
 use crate::Timing;
+use crate::multicast::MulticastSocket;
+use crate::wire::{MessageType, PROTOCOL_VERSION, Packet, RECV_BUF_SIZE, ServiceInstance};
 
 /// Events emitted by the browser.
 #[derive(Debug, Clone)]

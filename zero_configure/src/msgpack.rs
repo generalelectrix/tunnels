@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use rmp_serde::Deserializer;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::io::Cursor;
 
 pub type ReceiveResult<T> = Result<T>;

@@ -1,5 +1,5 @@
+use crate::typed_index::typed_index;
 use serde::{Deserialize, Serialize};
-use typed_index_derive::TypedIndex;
 
 const MIN_POSITION_COUNT: usize = 1;
 
@@ -11,11 +11,9 @@ pub struct Position {
 
 pub type Positions = Vec<Position>;
 
-#[derive(
-    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
-)]
-#[typed_index(Position)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct PositionIdx(pub usize);
+typed_index!(PositionIdx, Position);
 
 /// Store an array of positions that can be used by beams.
 #[derive(Serialize, Deserialize, Clone)]

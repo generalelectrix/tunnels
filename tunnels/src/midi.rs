@@ -132,10 +132,10 @@ impl MidiOutput for Manager {
     /// Error conditions are logged rather than returned.
     fn send(&mut self, device: &Device, event: Event) {
         self.manager.visit_outputs(|d, output| {
-            if d == device {
-                if let Err(e) = output.send(event) {
-                    error!("Failed to send midi event to {}: {}.", output.name(), e);
-                }
+            if d == device
+                && let Err(e) = output.send(event)
+            {
+                error!("Failed to send midi event to {}: {}.", output.name(), e);
             }
         });
     }
@@ -186,14 +186,14 @@ fn prompt_input_output<D: MidiDevice>(
     output_ports: &[MidiPortSpec],
 ) -> Result<DeviceSpec<D>> {
     let name = device.device_name().to_string();
-    if let Some(input) = input_ports.iter().find(|p| p.name == name) {
-        if let Some(output) = output_ports.iter().find(|p| p.name == name) {
-            return Ok(DeviceSpec {
-                device,
-                input_id: input.id.clone(),
-                output_id: output.id.clone(),
-            });
-        }
+    if let Some(input) = input_ports.iter().find(|p| p.name == name)
+        && let Some(output) = output_ports.iter().find(|p| p.name == name)
+    {
+        return Ok(DeviceSpec {
+            device,
+            input_id: input.id.clone(),
+            output_id: output.id.clone(),
+        });
     }
     println!("Didn't find a device of the expected name. Please manually select input and output.");
     let input_id = prompt_indexed_value("Input port:", input_ports)?.id;

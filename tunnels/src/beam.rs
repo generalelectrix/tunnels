@@ -3,8 +3,8 @@ use crate::position_bank::PositionBank;
 use crate::{clock_bank::ClockBank, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::Shape;
+use tunnels_lib::number::UnipolarFloat;
 
 /// Union type for all of the kinds of beams we can have.
 /// Since we don't need beam to be very extensible, we will try this approach

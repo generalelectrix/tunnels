@@ -2,7 +2,7 @@
 name = "tunnel-bootstrap"
 version = "0.1.0"
 authors = ["Chris Macklin <chris.macklin@gmail.com>"]
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 rmp-serde.workspace = true

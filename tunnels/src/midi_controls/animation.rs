@@ -1,14 +1,14 @@
 use crate::{
     animation::{ControlMessage, StateChange, Waveform as WaveformType},
     clock_bank::{ClockIdxExt, N_CLOCKS},
-    midi::{cc_ch0, event, note_on_ch0, note_on_ch1, Event, EventType, Mapping, MidiOutput},
+    midi::{Event, EventType, Mapping, MidiOutput, cc_ch0, event, note_on_ch0, note_on_ch1},
     midi_controls::Device,
     show::ControlMessage::Animation,
 };
 use lazy_static::lazy_static;
 
 use super::{
-    bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi, RadioButtons,
+    RadioButtons, bipolar_from_midi, bipolar_to_midi, unipolar_from_midi, unipolar_to_midi,
 };
 
 // knobs

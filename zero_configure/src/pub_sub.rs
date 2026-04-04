@@ -3,12 +3,12 @@
 use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use rmp_serde::Serializer;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    bare::{register_service, Browser, StopFn},
+    bare::{Browser, StopFn, register_service},
     msgpack::{Receive, ReceiveResult},
 };
 

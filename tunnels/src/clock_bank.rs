@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::typed_index::typed_index;
 use crate::{
     clock::{
         ControlMessage as ClockControlMessage, ControllableClock,
@@ -8,11 +9,10 @@ use crate::{
     },
     master_ui::EmitStateChange as EmitShowStateChange,
 };
-use anyhow::{bail, Error, Result};
+use anyhow::{Error, Result, bail};
 use log::error;
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::{Phase, UnipolarFloat};
-use typed_index_derive::TypedIndex;
 
 /// Read-only interface to the state of a collection of clocks.
 pub trait ClockStore {
@@ -35,15 +35,13 @@ pub trait ClockStore {
 /// how many globally-available clocks?
 pub const N_CLOCKS: usize = 4;
 
-#[derive(
-    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, TypedIndex,
-)]
-#[typed_index(ControllableClock)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 /// Index of a clock in the bank.
 /// Care should be taken to ensure that these values are always valid.
 /// External input should be accepted through ClockIdxExt and validated
 /// using from.
 pub struct ClockIdx(usize);
+typed_index!(ClockIdx, ControllableClock);
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 /// Public-facing "request" for a clock index.
