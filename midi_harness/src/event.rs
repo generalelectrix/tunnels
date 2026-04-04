@@ -94,8 +94,9 @@ impl Event {
         let control = msg[1];
         let value = msg[2];
         let event_type = match msg[0] >> 4 {
+            8 => EventType::NoteOff,
             // Most midi devices just send NoteOn with a velocity of 0 for NoteOff.
-            8 | 9 if value == 0 => EventType::NoteOff,
+            9 if value == 0 => EventType::NoteOff,
             9 => EventType::NoteOn,
             11 => EventType::ControlChange,
             other => {
@@ -124,4 +125,20 @@ pub const fn event(mapping: Mapping, value: u8) -> Event {
 pub enum ParseError {
     TooShort(usize),
     BadType(u8),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_real_note_off_with_nonzero_velocity() {
+        // Status 0x82 = NoteOff on channel 2, control 50, release velocity 64.
+        let msg = [0x82, 50, 64];
+        let event = Event::parse(&msg).expect("should parse real NoteOff with non-zero velocity");
+        assert_eq!(event.mapping.event_type, EventType::NoteOff);
+        assert_eq!(event.mapping.channel, 2);
+        assert_eq!(event.mapping.control, 50);
+        assert_eq!(event.value, 64);
+    }
 }
