@@ -10,4 +10,5 @@ hostname = "0.4"
 serde.workspace = true
 rmp-serde.workspace = true
 anyhow.workspace = true
+log.workspace = true
 minusmq = { path = "../minusmq" }

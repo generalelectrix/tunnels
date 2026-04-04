@@ -7208,6 +7208,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hostname",
+ "log",
  "mdns-sd",
  "minusmq",
  "rmp-serde",
