@@ -32,10 +32,10 @@ fn install_terminate_override() {
         use objc2_app_kit::NSApplication;
         use objc2_foundation::MainThreadMarker;
 
-        let mtm = MainThreadMarker::new_unchecked();
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
         let app = NSApplication::sharedApplication(mtm);
         if let Some(window) = app.keyWindow() {
-            window.performClose(None);
+            unsafe { window.performClose(None) };
         }
     }
 
