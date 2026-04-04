@@ -12,7 +12,7 @@ The system has four components:
 - **Bootstrapper** (`tunnel-bootstrap`) — a daemon that runs on remote client machines. Receives binary pushes from the console over TCP and manages the render client process.
 - **Bootstrap deploy** (`bootstrap-deploy`) — a CLI tool for initially deploying the bootstrapper to remote machines over SSH. Discovers machines via mDNS.
 
-Service discovery between components uses mDNS/Bonjour. Data is serialized with MessagePack.
+Service discovery between components uses bonsoir (UDP multicast heartbeats). Data is serialized with MessagePack.
 
 ## Hardware
 
@@ -67,6 +67,12 @@ VERSION=2026.04.01-1 scripts/build-app.sh
 This produces `dist/Tunnels.app` and `dist/Tunnels.dmg`.
 
 ### Development builds
+
+After cloning, set up the pre-commit hook to auto-format on commit:
+
+```
+git config core.hooksPath .githooks
+```
 
 To build and run individual components during development:
 
