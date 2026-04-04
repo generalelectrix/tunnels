@@ -1,5 +1,6 @@
 //! Multicast UDP socket setup and network interface management.
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
 use anyhow::{Context, Result};
@@ -11,15 +12,91 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 /// mDNSResponder ignores them. Using the same group/port as mDNS ensures
 /// compatibility with the same socket options and OS-level multicast behavior
 /// that mDNS relies on.
-pub const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
+const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 
 /// Port for bonsoir multicast traffic.
-pub const MULTICAST_PORT: u16 = 5353;
+const MULTICAST_PORT: u16 = 5353;
 
-/// Create a UDP socket for both sending and receiving multicast packets.
-/// Binds to INADDR_ANY on the multicast port, matching the pattern used by
-/// mDNSResponder and the mdns-sd crate.
-pub fn multicast_socket() -> Result<UdpSocket> {
+/// How often to re-check network interfaces for changes.
+const INTERFACE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A UDP multicast socket that manages group membership across interfaces.
+/// Owns the socket and the list of joined interfaces. Leaves the multicast
+/// group on all interfaces when dropped.
+pub(crate) struct MulticastSocket {
+    socket: UdpSocket,
+    interfaces: Vec<Ipv4Addr>,
+    last_interface_check: std::time::Instant,
+}
+
+impl MulticastSocket {
+    /// Create a new multicast socket, join the group on all interfaces.
+    pub fn new() -> Result<Self> {
+        let socket = create_socket()?;
+        let interfaces = join_multicast(&socket);
+        Ok(Self {
+            socket,
+            interfaces,
+            last_interface_check: std::time::Instant::now(),
+        })
+    }
+
+    /// Send data to the multicast group on every joined interface,
+    /// setting IP_MULTICAST_IF before each send.
+    pub fn send(&self, data: &[u8]) {
+        let dest = SocketAddr::from((MULTICAST_ADDR, MULTICAST_PORT));
+        for iface in &self.interfaces {
+            if let Err(e) = socket2::SockRef::from(&self.socket).set_multicast_if_v4(iface) {
+                log::debug!("[bonsoir] Failed to set IP_MULTICAST_IF to {iface}: {e}");
+                continue;
+            }
+            if let Err(e) = self.socket.send_to(data, dest) {
+                log::debug!("[bonsoir] Failed to send on {iface}: {e}");
+            }
+        }
+    }
+
+    /// Receive a packet. Non-blocking — returns WouldBlock if nothing available.
+    pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        self.socket.recv_from(buf)
+    }
+
+    /// The list of interfaces we've joined multicast on. Used by the browser
+    /// to detect same-machine services.
+    pub fn interfaces(&self) -> &[Ipv4Addr] {
+        &self.interfaces
+    }
+
+    /// Re-check network interfaces and rejoin if the set has changed.
+    /// Call this periodically from the event loop.
+    pub fn maybe_refresh_interfaces(&mut self) {
+        if self.last_interface_check.elapsed() < INTERFACE_REFRESH_INTERVAL {
+            return;
+        }
+        self.last_interface_check = std::time::Instant::now();
+
+        let new_ifaces = all_multicast_interfaces();
+        if new_ifaces == self.interfaces {
+            return;
+        }
+        leave_multicast(&self.socket, &self.interfaces);
+        self.interfaces = join_multicast(&self.socket);
+        log::info!(
+            "[bonsoir] Interfaces changed: {} -> {}",
+            format_addrs(&new_ifaces),
+            format_addrs(&self.interfaces),
+        );
+    }
+}
+
+impl Drop for MulticastSocket {
+    fn drop(&mut self) {
+        leave_multicast(&self.socket, &self.interfaces);
+    }
+}
+
+/// Create a UDP socket configured for multicast send/receive.
+fn create_socket() -> Result<UdpSocket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
         .context("failed to create UDP socket")?;
     socket
@@ -32,11 +109,9 @@ pub fn multicast_socket() -> Result<UdpSocket> {
     socket
         .set_nonblocking(true)
         .context("failed to set O_NONBLOCK")?;
-    // Enable multicast loopback for same-machine delivery.
     socket
         .set_multicast_loop_v4(true)
         .context("failed to set IP_MULTICAST_LOOP")?;
-    // Set multicast TTL to 255 per RFC 6762.
     socket
         .set_multicast_ttl_v4(255)
         .context("failed to set IP_MULTICAST_TTL")?;
@@ -49,33 +124,8 @@ pub fn multicast_socket() -> Result<UdpSocket> {
     Ok(socket.into())
 }
 
-/// The multicast destination address for sending packets.
-pub fn multicast_dest() -> SocketAddr {
-    SocketAddr::from((MULTICAST_ADDR, MULTICAST_PORT))
-}
-
-/// Send a packet on every joined interface, setting IP_MULTICAST_IF before
-/// each send. This matches how mdns-sd sends packets and ensures delivery
-/// on the correct interface, especially on systems with multiple interfaces
-/// (e.g. CI runners, machines with both Ethernet and WiFi).
-pub fn send_on_all_interfaces(socket: &UdpSocket, data: &[u8], interfaces: &[Ipv4Addr]) {
-    let dest = multicast_dest();
-    for iface in interfaces {
-        if let Err(e) = socket2::SockRef::from(socket).set_multicast_if_v4(iface) {
-            log::debug!("[bonsoir] Failed to set IP_MULTICAST_IF to {iface}: {e}");
-            continue;
-        }
-        if let Err(e) = socket.send_to(data, dest) {
-            log::debug!("[bonsoir] Failed to send on {iface}: {e}");
-        }
-    }
-}
-
-/// Join the multicast group on all available IPv4 interfaces, including loopback.
-/// Loopback is always included to ensure same-machine discovery works in
-/// environments with no external network (e.g. CI containers).
-/// Returns the list of interface addresses we joined on.
-pub fn join_multicast(socket: &UdpSocket) -> Vec<Ipv4Addr> {
+/// Join the multicast group on all available interfaces.
+fn join_multicast(socket: &UdpSocket) -> Vec<Ipv4Addr> {
     let mut joined = Vec::new();
     for iface in all_multicast_interfaces() {
         match socket.join_multicast_v4(&MULTICAST_ADDR, &iface) {
@@ -95,7 +145,7 @@ pub fn join_multicast(socket: &UdpSocket) -> Vec<Ipv4Addr> {
 }
 
 /// Leave the multicast group on the given interfaces.
-pub fn leave_multicast(socket: &UdpSocket, interfaces: &[Ipv4Addr]) {
+fn leave_multicast(socket: &UdpSocket, interfaces: &[Ipv4Addr]) {
     for iface in interfaces {
         let _ = socket.leave_multicast_v4(&MULTICAST_ADDR, iface);
     }
@@ -121,23 +171,6 @@ fn all_multicast_interfaces() -> Vec<Ipv4Addr> {
         ifaces.push(Ipv4Addr::LOCALHOST);
     }
     ifaces
-}
-
-/// Rejoin multicast if the set of interfaces has changed.
-/// Returns the updated interface list.
-pub fn refresh_interfaces(socket: &UdpSocket, current: &[Ipv4Addr]) -> Vec<Ipv4Addr> {
-    let new_ifaces = all_multicast_interfaces();
-    if new_ifaces == current {
-        return current.to_vec();
-    }
-    leave_multicast(socket, current);
-    let joined = join_multicast(socket);
-    log::info!(
-        "[bonsoir] Interfaces changed: {} -> {}",
-        format_addrs(current),
-        format_addrs(&joined),
-    );
-    joined
 }
 
 fn format_addrs(addrs: &[Ipv4Addr]) -> String {

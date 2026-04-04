@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 /// with a different version.
 pub const PROTOCOL_VERSION: u8 = 1;
 
+/// Maximum receive buffer size. Bonsoir packets are well under 100 bytes,
+/// but we leave headroom for future fields.
+pub const RECV_BUF_SIZE: usize = 512;
+
 /// The type of message in a bonsoir packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageType {
@@ -122,6 +126,10 @@ mod tests {
     fn packet_is_small() {
         let pkt = Packet::heartbeat("tunnelbootstrap", "Bore A", 15000);
         let bytes = pkt.encode().unwrap();
-        assert!(bytes.len() < 100, "packet should be small, got {} bytes", bytes.len());
+        assert!(
+            bytes.len() < 100,
+            "packet should be small, got {} bytes",
+            bytes.len()
+        );
     }
 }
