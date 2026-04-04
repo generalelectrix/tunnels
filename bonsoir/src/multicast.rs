@@ -51,11 +51,18 @@ pub fn multicast_dest() -> SocketAddr {
     SocketAddr::from((MULTICAST_ADDR, MULTICAST_PORT))
 }
 
-/// Join the multicast group on all available IPv4 interfaces.
+/// Join the multicast group on all available IPv4 interfaces, including loopback.
+/// Loopback is always included to ensure same-machine discovery works in
+/// environments with no external network (e.g. CI containers).
 /// Returns the list of interface addresses we joined on.
 pub fn join_multicast(socket: &std::net::UdpSocket) -> Vec<Ipv4Addr> {
     let mut joined = Vec::new();
-    for iface in ipv4_interfaces() {
+    // Always include loopback for same-machine discovery.
+    let mut ifaces = ipv4_interfaces();
+    if !ifaces.contains(&Ipv4Addr::LOCALHOST) {
+        ifaces.push(Ipv4Addr::LOCALHOST);
+    }
+    for iface in ifaces {
         match socket.join_multicast_v4(&MULTICAST_ADDR, &iface) {
             Ok(()) => {
                 log::debug!("[bonsoir] Joined multicast on {iface}");
