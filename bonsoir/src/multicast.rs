@@ -6,13 +6,14 @@ use anyhow::{Context, Result};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 /// Multicast group address for bonsoir discovery.
-/// Uses the mDNS multicast group (224.0.0.251) so that macOS exempts our
-/// traffic from the application firewall. Our packets are msgpack (not DNS),
-/// so mDNSResponder ignores them.
+/// Uses the mDNS multicast group (224.0.0.251) and port (5353) to match the
+/// well-known mDNS configuration. Our packets are msgpack (not DNS), so
+/// mDNSResponder ignores them. Using the same group/port as mDNS ensures
+/// compatibility with the same socket options and OS-level multicast behavior
+/// that mDNS relies on.
 pub const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 
-/// Port for bonsoir multicast traffic. Uses the mDNS port for the same
-/// firewall exemption reason.
+/// Port for bonsoir multicast traffic.
 pub const MULTICAST_PORT: u16 = 5353;
 
 /// Create a UDP socket for both sending and receiving multicast packets.

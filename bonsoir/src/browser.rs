@@ -170,10 +170,7 @@ fn handle_packet(
 ) {
     match pkt.message_type {
         MessageType::Heartbeat => {
-            // Use loopback for services on our own machine. This is faster
-            // (avoids the network stack) and sidesteps the macOS application
-            // firewall, which blocks inbound TCP on non-loopback interfaces
-            // for unsigned binaries during development.
+            // Use loopback for services on our own machine.
             let address = match sender_addr {
                 std::net::IpAddr::V4(v4) if local_interfaces.contains(&v4) => {
                     std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
