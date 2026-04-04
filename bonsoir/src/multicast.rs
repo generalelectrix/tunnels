@@ -77,12 +77,7 @@ pub fn send_on_all_interfaces(socket: &UdpSocket, data: &[u8], interfaces: &[Ipv
 /// Returns the list of interface addresses we joined on.
 pub fn join_multicast(socket: &UdpSocket) -> Vec<Ipv4Addr> {
     let mut joined = Vec::new();
-    let mut ifaces = ipv4_interfaces();
-    // Always include loopback for same-machine discovery.
-    if !ifaces.contains(&Ipv4Addr::LOCALHOST) {
-        ifaces.push(Ipv4Addr::LOCALHOST);
-    }
-    for iface in ifaces {
+    for iface in all_multicast_interfaces() {
         match socket.join_multicast_v4(&MULTICAST_ADDR, &iface) {
             Ok(()) => {
                 log::debug!("[bonsoir] Joined multicast on {iface}");
@@ -106,9 +101,10 @@ pub fn leave_multicast(socket: &UdpSocket, interfaces: &[Ipv4Addr]) {
     }
 }
 
-/// Enumerate all non-loopback, operational IPv4 interface addresses.
-pub fn ipv4_interfaces() -> Vec<Ipv4Addr> {
-    if_addrs::get_if_addrs()
+/// All IPv4 interfaces we should join multicast on: every non-loopback
+/// interface plus loopback itself (for same-machine discovery and CI).
+fn all_multicast_interfaces() -> Vec<Ipv4Addr> {
+    let mut ifaces: Vec<Ipv4Addr> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
         .filter_map(|iface| {
@@ -120,13 +116,17 @@ pub fn ipv4_interfaces() -> Vec<Ipv4Addr> {
                 IpAddr::V6(_) => None,
             }
         })
-        .collect()
+        .collect();
+    if !ifaces.contains(&Ipv4Addr::LOCALHOST) {
+        ifaces.push(Ipv4Addr::LOCALHOST);
+    }
+    ifaces
 }
 
 /// Rejoin multicast if the set of interfaces has changed.
 /// Returns the updated interface list.
 pub fn refresh_interfaces(socket: &UdpSocket, current: &[Ipv4Addr]) -> Vec<Ipv4Addr> {
-    let new_ifaces = ipv4_interfaces();
+    let new_ifaces = all_multicast_interfaces();
     if new_ifaces == current {
         return current.to_vec();
     }

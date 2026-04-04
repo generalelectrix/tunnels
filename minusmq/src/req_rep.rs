@@ -59,14 +59,14 @@ pub fn send(addr: impl ToSocketAddrs, msg: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Like `send`, but with a timeout on the connection and the read/write.
-/// The connect phase uses a shorter timeout (capped at 3s) since it should
-/// complete almost instantly on a LAN.
+/// The connect phase uses a shorter timeout (capped at 3s) to handle WiFi
+/// latency while still failing faster than the OS default (~75s).
 pub fn send_with_timeout(
     addr: impl ToSocketAddrs,
     msg: &[u8],
     timeout: Duration,
 ) -> Result<Vec<u8>> {
-    const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+    const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
     let connect_timeout = timeout.min(MAX_CONNECT_TIMEOUT);
 
     // Resolve to a concrete SocketAddr so we can use connect_timeout.
