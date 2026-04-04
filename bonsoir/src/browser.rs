@@ -1,6 +1,7 @@
 //! Service browser: listen for heartbeats, track liveness, expire stale entries.
 
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -47,24 +48,15 @@ impl Browser {
         timing: Timing,
     ) -> Result<(Self, Receiver<BrowseEvent>)> {
         let socket = multicast::multicast_socket().context("browser socket")?;
-        // Use a fraction of the expiry timeout as the read timeout so we
-        // check for expired services and shutdown signals frequently.
-        let check_interval = timing.expiry_timeout / 3;
-        socket
-            .set_read_timeout(Some(check_interval))
-            .context("set read timeout")?;
         let joined = multicast::join_multicast(&socket);
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
 
-        // Send initial query.
+        // Send initial query on all interfaces.
         let query = Packet::query(service_type);
         if let Ok(bytes) = query.encode() {
-            let dest = multicast::multicast_dest();
-            if let Err(e) = socket.send_to(&bytes, dest) {
-                log::warn!("[bonsoir] Failed to send initial query: {e}");
-            }
+            multicast::send_on_all_interfaces(&socket, &bytes, &joined);
         }
 
         log::info!("[bonsoir] Browsing for '{service_type}'");
@@ -106,7 +98,7 @@ impl Drop for Browser {
 fn browse_loop(
     socket: std::net::UdpSocket,
     service_type: &str,
-    initial_interfaces: Vec<std::net::Ipv4Addr>,
+    initial_interfaces: Vec<Ipv4Addr>,
     shutdown_rx: Receiver<()>,
     event_tx: Sender<BrowseEvent>,
     timing: Timing,
@@ -123,6 +115,7 @@ fn browse_loop(
             break;
         }
 
+        // Non-blocking recv.
         match socket.recv_from(&mut buf) {
             Ok((len, src)) => match Packet::decode(&buf[..len]) {
                 Ok(pkt) => {
@@ -144,10 +137,13 @@ fn browse_loop(
                     log::debug!("[bonsoir] Failed to decode packet from {src}: {e}");
                 }
             },
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // No data available — sleep briefly then check timers.
+                thread::sleep(check_interval);
+            }
             Err(e) => {
                 log::warn!("[bonsoir] Browser recv error: {e}");
+                thread::sleep(check_interval);
             }
         }
 
@@ -168,7 +164,7 @@ fn browse_loop(
 fn handle_packet(
     pkt: &Packet,
     sender_addr: std::net::IpAddr,
-    local_interfaces: &[std::net::Ipv4Addr],
+    local_interfaces: &[Ipv4Addr],
     services: &mut HashMap<String, TrackedService>,
     event_tx: &Sender<BrowseEvent>,
 ) {
@@ -180,7 +176,7 @@ fn handle_packet(
             // for unsigned binaries during development.
             let address = match sender_addr {
                 std::net::IpAddr::V4(v4) if local_interfaces.contains(&v4) => {
-                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+                    std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
                 }
                 other => other,
             };
@@ -201,7 +197,7 @@ fn handle_packet(
                 log::info!(
                     "[bonsoir] Discovered '{}' at {}:{}",
                     pkt.instance_name,
-                    sender_addr,
+                    address,
                     pkt.port
                 );
                 let _ = event_tx.send(BrowseEvent::ServiceUp(instance));

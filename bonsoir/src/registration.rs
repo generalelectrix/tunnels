@@ -1,5 +1,6 @@
 //! Service registration: periodic heartbeats on the multicast group.
 
+use std::net::UdpSocket;
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -33,19 +34,13 @@ impl Registration {
         port: u16,
         timing: Timing,
     ) -> Result<Self> {
-        // Single socket for both sending heartbeats and receiving queries,
-        // matching the pattern used by mDNSResponder and mdns-sd.
         let socket = multicast::multicast_socket().context("registration socket")?;
-        socket
-            .set_read_timeout(Some(timing.heartbeat_interval / 2))
-            .context("set read timeout")?;
         let joined = multicast::join_multicast(&socket);
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
         let service_type = service_type.to_string();
         let instance_name = instance_name.to_string();
-        let dest = multicast::multicast_dest();
 
         log::info!(
             "[bonsoir] Service '{service_type}' ('{instance_name}') registered on port {port}",
@@ -56,6 +51,7 @@ impl Registration {
             let mut last_heartbeat = Instant::now() - timing.heartbeat_interval; // send immediately
             let mut last_interface_check = Instant::now();
             let mut buf = [0u8; 256];
+            let poll_interval = timing.heartbeat_interval / 2;
 
             loop {
                 if shutdown_rx.try_recv().is_ok() {
@@ -63,7 +59,7 @@ impl Registration {
                 }
 
                 if last_heartbeat.elapsed() >= timing.heartbeat_interval {
-                    send_heartbeat(&socket, &service_type, &instance_name, port, &dest);
+                    send_heartbeat(&socket, &service_type, &instance_name, port, &interfaces);
                     last_heartbeat = Instant::now();
                 }
 
@@ -72,6 +68,7 @@ impl Registration {
                     last_interface_check = Instant::now();
                 }
 
+                // Non-blocking recv — sleep briefly if nothing available.
                 match socket.recv_from(&mut buf) {
                     Ok((len, _src)) => {
                         if let Ok(pkt) = Packet::decode(&buf[..len]) {
@@ -87,25 +84,27 @@ impl Registration {
                                     &service_type,
                                     &instance_name,
                                     port,
-                                    &dest,
+                                    &interfaces,
                                 );
                                 last_heartbeat = Instant::now();
                             }
                         }
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(poll_interval);
+                    }
                     Err(e) => {
                         log::warn!("[bonsoir] Registration recv error: {e}");
+                        thread::sleep(poll_interval);
                     }
                 }
             }
 
-            // Send goodbye packets (3x for redundancy).
+            // Send goodbye packets (3x for redundancy) on all interfaces.
             let goodbye = Packet::goodbye(&service_type, &instance_name, port);
             if let Ok(bytes) = goodbye.encode() {
                 for _ in 0..3 {
-                    let _ = socket.send_to(&bytes, dest);
+                    multicast::send_on_all_interfaces(&socket, &bytes, &interfaces);
                     thread::sleep(Duration::from_millis(50));
                 }
             }
@@ -137,18 +136,16 @@ impl Drop for Registration {
 }
 
 fn send_heartbeat(
-    socket: &std::net::UdpSocket,
+    socket: &UdpSocket,
     service_type: &str,
     instance_name: &str,
     port: u16,
-    dest: &std::net::SocketAddr,
+    interfaces: &[std::net::Ipv4Addr],
 ) {
     let pkt = Packet::heartbeat(service_type, instance_name, port);
     match pkt.encode() {
         Ok(bytes) => {
-            if let Err(e) = socket.send_to(&bytes, dest) {
-                log::warn!("[bonsoir] Failed to send heartbeat: {e}");
-            }
+            multicast::send_on_all_interfaces(socket, &bytes, interfaces);
         }
         Err(e) => {
             log::warn!("[bonsoir] Failed to encode heartbeat: {e}");
