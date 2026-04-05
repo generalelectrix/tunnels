@@ -53,9 +53,9 @@ enum ConfigSendState {
 /// Pre-baked resolution presets.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ResolutionPreset {
+    Wuxga,
     P1080,
     P720,
-    Wuxga,
     SxgaPlus,
     Custom,
 }
@@ -63,9 +63,9 @@ enum ResolutionPreset {
 impl ResolutionPreset {
     fn label(&self) -> &'static str {
         match self {
+            Self::Wuxga => "WUXGA (1920x1200)",
             Self::P1080 => "1080p (1920x1080)",
             Self::P720 => "720p (1280x720)",
-            Self::Wuxga => "WUXGA (1920x1200)",
             Self::SxgaPlus => "SXGA+ (1400x1050)",
             Self::Custom => "Custom",
         }
@@ -73,18 +73,18 @@ impl ResolutionPreset {
 
     fn resolution(&self) -> Option<(u32, u32)> {
         match self {
+            Self::Wuxga => Some((1920, 1200)),
             Self::P1080 => Some((1920, 1080)),
             Self::P720 => Some((1280, 720)),
-            Self::Wuxga => Some((1920, 1200)),
             Self::SxgaPlus => Some((1400, 1050)),
             Self::Custom => None,
         }
     }
 
     const ALL: [Self; 5] = [
+        Self::Wuxga,
         Self::P1080,
         Self::P720,
-        Self::Wuxga,
         Self::SxgaPlus,
         Self::Custom,
     ];
