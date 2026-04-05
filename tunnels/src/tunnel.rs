@@ -409,6 +409,8 @@ impl Tunnel {
                 self.handle_state_change(StateChange::PositionX(0.), emitter);
                 self.handle_state_change(StateChange::PositionY(0.), emitter);
             }
+            NudgeCW => self.curr_rot_angle += ROT_NUDGE,
+            NudgeCCW => self.curr_rot_angle += -ROT_NUDGE,
             ResetRotation => {
                 self.rot_speed = BipolarFloat::ZERO;
                 self.curr_rot_angle = Phase::ZERO;
@@ -486,6 +488,8 @@ const COLOR_SPREAD_SCALE: f64 = 16.;
 const X_NUDGE: f64 = 0.025;
 /// Y nudge increment
 const Y_NUDGE: f64 = 0.025;
+/// Rotation nudge increment (45° = 1/8 turn)
+const ROT_NUDGE: f64 = 0.125;
 /// line thickness scale as fraction of min half-screen
 const THICKNESS_SCALE: f64 = 0.5;
 const MAX_ASPECT_RATIO: f64 = 2.0;
@@ -518,6 +522,8 @@ pub enum ControlMessage {
     NudgeUp,
     NudgeDown,
     ResetPosition,
+    NudgeCW,
+    NudgeCCW,
     ResetRotation,
     ResetMarquee,
     ResetSpin,

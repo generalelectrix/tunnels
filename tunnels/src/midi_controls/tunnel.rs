@@ -33,6 +33,9 @@ const RESET_POSITION: Mapping = note_on_ch0(0x62);
 const RESET_ROTATION: Mapping = note_on_ch0(120);
 const RESET_MARQUEE: Mapping = note_on_ch0(121);
 
+const NUDGE_CW: Mapping = note_on(13, 0);
+const NUDGE_CCW: Mapping = note_on(13, 1);
+
 const SPIN_SPEED: Mapping = cc_ch0(55);
 const RESET_SPIN: Mapping = note_on_ch0(122);
 
@@ -103,6 +106,8 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         RESET_MARQUEE => Tunnel(ResetMarquee),
         SPIN_SPEED => Tunnel(Set(SpinSpeed(bipolar_from_midi(v)))),
         RESET_SPIN => Tunnel(ResetSpin),
+        NUDGE_CW => Tunnel(NudgeCW),
+        NUDGE_CCW => Tunnel(NudgeCCW),
         POSITION_X => Tunnel(Set(PositionX(bipolar_from_midi(v).val()))),
         POSITION_Y => Tunnel(Set(PositionY(bipolar_from_midi(v).val()))),
         RENDER_MODE_ARC => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Arc))),
