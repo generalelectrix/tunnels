@@ -73,6 +73,7 @@ LOGSCRIPT
 chmod +x "$APP/Contents/MacOS/view-logs.sh"
 
 cp "$ICNS" "$APP/Contents/Resources/Tunnels.icns"
+cp "$PROJECT_DIR/controller_templates/tunnels.touchosc" "$APP/Contents/Resources/tunnels.touchosc"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
