@@ -51,10 +51,22 @@ pub enum RenderMode {
     Saucer,
 }
 
+/// Controls the geometric path that segments are distributed along.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+pub enum PathShape {
+    /// Segments are distributed along an ellipse (default).
+    #[default]
+    Ellipse,
+    /// Segments are distributed along a straight line.
+    Line,
+}
+
 /// A command to draw a single shape.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Shape {
     pub render_mode: RenderMode,
+    #[serde(default)]
+    pub path_shape: PathShape,
     pub level: f64,
     pub thickness: f64,
     pub hue: f64,
@@ -62,8 +74,8 @@ pub struct Shape {
     pub val: f64,
     pub x: f64,
     pub y: f64,
-    pub rad_x: f64,
-    pub rad_y: f64,
+    pub extent_x: f64,
+    pub extent_y: f64,
     pub start: f64,
     pub stop: f64,
     pub rot_angle: f64,
@@ -73,7 +85,7 @@ pub struct Shape {
 impl Hash for Shape {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.render_mode.hash(state);
-        OrderedFloat(self.level).hash(state);
+        self.path_shape.hash(state);
         OrderedFloat(self.level).hash(state);
         OrderedFloat(self.thickness).hash(state);
         OrderedFloat(self.hue).hash(state);
@@ -81,8 +93,8 @@ impl Hash for Shape {
         OrderedFloat(self.val).hash(state);
         OrderedFloat(self.x).hash(state);
         OrderedFloat(self.y).hash(state);
-        OrderedFloat(self.rad_x).hash(state);
-        OrderedFloat(self.rad_y).hash(state);
+        OrderedFloat(self.extent_x).hash(state);
+        OrderedFloat(self.extent_y).hash(state);
         OrderedFloat(self.start).hash(state);
         OrderedFloat(self.stop).hash(state);
         OrderedFloat(self.rot_angle).hash(state);
@@ -93,14 +105,15 @@ impl Hash for Shape {
 impl PartialEq for Shape {
     fn eq(&self, o: &Self) -> bool {
         self.render_mode == o.render_mode
+            && self.path_shape == o.path_shape
             && almost_eq(self.level, o.level)
             && almost_eq(self.thickness, o.thickness)
             && almost_eq(self.sat, o.sat)
             && almost_eq(self.val, o.val)
             && almost_eq(self.x, o.x)
             && almost_eq(self.y, o.y)
-            && almost_eq(self.rad_x, o.rad_x)
-            && almost_eq(self.rad_y, o.rad_y)
+            && almost_eq(self.extent_x, o.extent_x)
+            && almost_eq(self.extent_y, o.extent_y)
             && angle_almost_eq(self.hue, o.hue)
             && angle_almost_eq(self.start, o.start)
             && angle_almost_eq(self.stop, o.stop)
@@ -158,19 +171,20 @@ pub fn assert_almost_eq(a: f64, b: f64) {
 
 #[cfg(test)]
 pub mod test {
-    use crate::{RenderMode, Shape};
+    use crate::{PathShape, RenderMode, Shape};
 
     fn shape_for_test(linear: f64, radial: f64) -> Shape {
         Shape {
             render_mode: RenderMode::default(),
+            path_shape: PathShape::default(),
             level: linear,
             thickness: linear,
             sat: linear,
             val: linear,
             x: linear,
             y: linear,
-            rad_x: linear,
-            rad_y: linear,
+            extent_x: linear,
+            extent_y: linear,
             // radial items
             hue: radial,
             start: radial,

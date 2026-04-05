@@ -498,8 +498,8 @@ mod test {
         seg.hue = trunc_f64(seg.hue);
         seg.sat = trunc_f64(seg.sat);
         seg.val = trunc_f64(seg.val);
-        seg.rad_x = trunc_f64(seg.rad_x);
-        seg.rad_y = trunc_f64(seg.rad_y);
+        seg.extent_x = trunc_f64(seg.extent_x);
+        seg.extent_y = trunc_f64(seg.extent_y);
         seg.start = trunc_f64(seg.start);
         seg.stop = trunc_f64(seg.stop);
         seg.rot_angle = trunc_f64(seg.rot_angle);
@@ -646,8 +646,8 @@ mod test {
     }
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
-        use tunnels_lib::RenderMode;
         use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
+        use tunnels_lib::{PathShape, RenderMode};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);
@@ -681,6 +681,8 @@ mod test {
             t("tunnel/render_arc", T::RenderMode(RenderMode::Arc));
             t("tunnel/render_dot", T::RenderMode(RenderMode::Dot));
             t("tunnel/render_saucer", T::RenderMode(RenderMode::Saucer));
+            t("tunnel/path_ellipse", T::PathShape(PathShape::Ellipse));
+            t("tunnel/path_line", T::PathShape(PathShape::Line));
         }
 
         // Animation state changes.
