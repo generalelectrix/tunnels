@@ -103,6 +103,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>10.13</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Tunnels hungers for your audio input.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Tunnels gotta use your network, yo.</string>
 </dict>
 </plist>
 PLIST
