@@ -267,7 +267,7 @@ impl Tunnel {
             let y_center = y_offset + y_adjust;
 
             // compute path geometry parameters
-            let (radius_x, radius_y) = match self.path_shape {
+            let (extent_x, extent_y) = match self.path_shape {
                 PathShape::Ellipse => {
                     let rx = ((self.size.val()
                         * (MAX_ASPECT_RATIO
@@ -313,8 +313,8 @@ impl Tunnel {
                     val: 0.0,
                     x: x_center,
                     y: y_center,
-                    extent_x: radius_x,
-                    extent_y: radius_y,
+                    extent_x,
+                    extent_y,
                     start: start_angle.val(),
                     stop: stop_angle,
                     rot_angle: rot_angle.val(),
@@ -348,8 +348,8 @@ impl Tunnel {
                     val: 1.0,
                     x: x_center,
                     y: y_center,
-                    extent_x: radius_x,
-                    extent_y: radius_y,
+                    extent_x,
+                    extent_y,
                     start: start_angle.val(),
                     stop: stop_angle,
                     rot_angle: rot_angle.val(),
