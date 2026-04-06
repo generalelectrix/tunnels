@@ -5,15 +5,14 @@ use std::time::Instant;
 use eframe::egui::{self, Color32};
 
 use tunnels::audio::log_scale::DEFAULT_RANGE_DB;
-use tunnels::audio::processor::{ChainIdx, ProcessorSettings};
+use tunnels::audio::processor::ProcessorSettings;
 
 use scrolling_plot::ScrollingPlot;
 
 /// Approximate update rate of the envelope (once per audio buffer, ~1kHz).
 const ENVELOPE_SAMPLE_RATE: f64 = 1000.0;
 
-// 1 input peak + 8 chains = 9 traces total.
-const NUM_TRACES: usize = 9;
+const NUM_TRACES: usize = 3;
 
 struct TraceConfig {
     label: &'static str,
@@ -22,53 +21,20 @@ struct TraceConfig {
 }
 
 const TRACE_CONFIGS: [TraceConfig; NUM_TRACES] = [
-    // Index 0: input peak
     TraceConfig {
         label: "Input peak",
         color: Color32::from_rgb(80, 80, 100),
         default_enabled: true,
     },
-    // Indices 1-4: abs() rectifier × 4 reducers
     TraceConfig {
-        label: "abs + env",
+        label: "Envelope",
         color: Color32::from_rgb(70, 180, 130),
         default_enabled: true,
     },
     TraceConfig {
-        label: "abs + two-stage",
-        color: Color32::from_rgb(220, 200, 60),
-        default_enabled: false,
-    },
-    TraceConfig {
-        label: "abs + RMS",
-        color: Color32::from_rgb(180, 180, 180),
-        default_enabled: false,
-    },
-    TraceConfig {
-        label: "abs + median",
-        color: Color32::from_rgb(255, 140, 180),
-        default_enabled: false,
-    },
-    // Indices 5-8: Hilbert rectifier × 4 reducers
-    TraceConfig {
-        label: "Hilbert + env",
-        color: Color32::from_rgb(80, 200, 220),
-        default_enabled: false,
-    },
-    TraceConfig {
-        label: "Hilbert + two-stage",
-        color: Color32::from_rgb(200, 100, 220),
-        default_enabled: false,
-    },
-    TraceConfig {
-        label: "Hilbert + RMS",
+        label: "Smoothed",
         color: Color32::WHITE,
-        default_enabled: false,
-    },
-    TraceConfig {
-        label: "Hilbert + median",
-        color: Color32::from_rgb(255, 200, 100),
-        default_enabled: false,
+        default_enabled: true,
     },
 ];
 
@@ -95,18 +61,10 @@ impl AudioVisApp {
             trace_enabled[i] = config.default_enabled;
         }
 
-        // Index 0 = input_peak, indices 1-8 = chain_history[0-7]
-        let s = &processor_settings;
         let read_positions = [
-            s.input_peak_history.write_pos(),
-            s.chain_history[ChainIdx::ABS_ENV].write_pos(),
-            s.chain_history[ChainIdx::ABS_TWO_STAGE].write_pos(),
-            s.chain_history[ChainIdx::ABS_RMS].write_pos(),
-            s.chain_history[ChainIdx::ABS_MEDIAN].write_pos(),
-            s.chain_history[ChainIdx::HILBERT_ENV].write_pos(),
-            s.chain_history[ChainIdx::HILBERT_TWO_STAGE].write_pos(),
-            s.chain_history[ChainIdx::HILBERT_RMS].write_pos(),
-            s.chain_history[ChainIdx::HILBERT_MEDIAN].write_pos(),
+            processor_settings.input_peak_history.write_pos(),
+            processor_settings.envelope_history.write_pos(),
+            processor_settings.smoothed_history.write_pos(),
         ];
 
         Self {
@@ -135,7 +93,6 @@ impl AudioVisApp {
         buf.drain_into(&mut samples, read_pos);
         samples
     }
-
 }
 
 impl eframe::App for AudioVisApp {
@@ -146,14 +103,13 @@ impl eframe::App for AudioVisApp {
         let log_enabled = self.log_enabled;
         let log_range = self.log_range_db;
 
-        for i in 0..NUM_TRACES {
-            let buf = if i == 0 {
-                &self.processor_settings.input_peak_history
-            } else {
-                &self.processor_settings.chain_history[i - 1]
-            };
+        let buffers: [&tunnels::audio::ring_buffer::SignalRingBuffer; NUM_TRACES] = [
+            &self.processor_settings.input_peak_history,
+            &self.processor_settings.envelope_history,
+            &self.processor_settings.smoothed_history,
+        ];
 
-            // Always drain to avoid ring buffer overflow.
+        for (i, buf) in buffers.iter().enumerate() {
             let mut samples = Self::drain_trace(buf, &mut self.read_positions[i]);
 
             if self.paused {
@@ -189,7 +145,6 @@ impl eframe::App for AudioVisApp {
             let ps = &self.processor_settings;
 
             ui.columns(2, |cols| {
-                // Left column: signal + envelope parameters.
                 cols[0].strong("Signal");
                 egui::Grid::new("signal_grid").show(&mut cols[0], |ui| {
                     ui.label("Input gain:");
@@ -219,38 +174,15 @@ impl eframe::App for AudioVisApp {
                         ps.envelope_release.set(v / 1000.0);
                     }
                     ui.end_row();
-                });
 
-                cols[0].separator();
-                cols[0].strong("Two-Stage");
-                egui::Grid::new("two_stage_grid").show(&mut cols[0], |ui| {
-                    ui.label("Fast attack:");
-                    let mut v = ps.fast_attack.get() * 1000.0;
-                    if ui.add(egui::Slider::new(&mut v, 0.1..=50.0).suffix(" ms").logarithmic(true)).changed() {
-                        ps.fast_attack.set(v / 1000.0);
-                    }
-                    ui.end_row();
-
-                    ui.label("Fast release:");
-                    let mut v = ps.fast_release.get() * 1000.0;
-                    if ui.add(egui::Slider::new(&mut v, 1.0..=200.0).suffix(" ms").logarithmic(true)).changed() {
-                        ps.fast_release.set(v / 1000.0);
+                    ui.label("Output smooth:");
+                    let mut v = ps.output_smoothing.get() * 1000.0;
+                    if ui.add(egui::Slider::new(&mut v, 0.0..=50.0).suffix(" ms")).changed() {
+                        ps.output_smoothing.set(v / 1000.0);
                     }
                     ui.end_row();
                 });
 
-                cols[0].separator();
-                cols[0].strong("RMS / Median");
-                egui::Grid::new("reducer_grid").show(&mut cols[0], |ui| {
-                    ui.label("Window:");
-                    let mut v = ps.reducer_window.get() * 1000.0;
-                    if ui.add(egui::Slider::new(&mut v, 1.0..=200.0).suffix(" ms").logarithmic(true)).changed() {
-                        ps.reducer_window.set(v / 1000.0);
-                    }
-                    ui.end_row();
-                });
-
-                // Right column: display controls.
                 cols[1].strong("Display");
                 if cols[1].button(if self.paused { "▶ Resume" } else { "⏸ Pause" }).clicked() {
                     self.paused = !self.paused;
@@ -276,7 +208,6 @@ impl eframe::App for AudioVisApp {
 
             ui.separator();
 
-            // Trace toggles.
             ui.horizontal_wrapped(|ui| {
                 for (i, config) in TRACE_CONFIGS.iter().enumerate() {
                     let mut enabled = self.trace_enabled[i];
@@ -293,7 +224,6 @@ impl eframe::App for AudioVisApp {
 
             ui.separator();
 
-            // Plot.
             let scales: Option<Vec<f32>> = if self.normalize_enabled {
                 Some(self.running_max.iter().map(|m| 1.0 / m).collect())
             } else {
@@ -352,24 +282,18 @@ mod tests {
         let update_interval = 1.0 / 1000.0;
         let enabled = [true; NUM_TRACES];
 
-        // Drain input peak (trace 0)
-        {
-            let mut pos = 0_usize;
-            let mut samples = Vec::new();
-            settings
-                .input_peak_history
-                .drain_into(&mut samples, &mut pos);
-            let t = samples.len() as f64 * update_interval;
-            plot.traces[0].ingest(&samples, update_interval, t);
-        }
+        let proc_buffers: [&tunnels::audio::ring_buffer::SignalRingBuffer; NUM_TRACES] = [
+            &settings.input_peak_history,
+            &settings.envelope_history,
+            &settings.smoothed_history,
+        ];
 
-        // Drain chain histories (traces 1-8)
-        for chain_idx in 0..8 {
+        for (i, buf) in proc_buffers.iter().enumerate() {
             let mut pos = 0_usize;
             let mut samples = Vec::new();
-            settings.chain_history[chain_idx].drain_into(&mut samples, &mut pos);
+            buf.drain_into(&mut samples, &mut pos);
             let t = samples.len() as f64 * update_interval;
-            plot.traces[chain_idx + 1].ingest(&samples, update_interval, t);
+            plot.traces[i].ingest(&samples, update_interval, t);
         }
 
         let mut harness = Harness::new_ui(|ui| {

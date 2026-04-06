@@ -15,8 +15,6 @@ pub mod log_scale;
 pub mod processor;
 pub mod reconnect;
 pub mod ring_buffer;
-pub mod running_median;
-pub mod tkeo;
 
 pub struct AudioInput {
     _input: Option<ReconnectingInput>,
