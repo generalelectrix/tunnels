@@ -602,6 +602,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio_vis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "eframe",
+ "egui_kittest",
+ "egui_plot",
+ "log",
+ "simplelog",
+ "stage_theme",
+ "tunnels",
+ "tunnels_lib",
+]
+
+[[package]]
 name = "augmented-atomics"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
