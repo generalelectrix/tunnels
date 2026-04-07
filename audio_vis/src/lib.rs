@@ -7,6 +7,7 @@ use eframe::egui::{self, Color32};
 use gui_common::audio_panel::{AudioCommands, AudioPanel, AudioPanelState, AudioSnapshot};
 use tunnels_audio::log_scale::DEFAULT_RANGE_DB;
 use tunnels_audio::processor::ProcessorSettings;
+use tunnels_audio::spectral::{self, SharedSpectralSnapshot};
 
 use scrolling_plot::ScrollingPlot;
 
@@ -26,17 +27,17 @@ const SIGNAL_TRACE_CONFIGS: [TraceConfig; NUM_SIGNAL_TRACES] = [
     TraceConfig {
         label: "Input peak",
         color: Color32::from_rgb(80, 80, 100),
-        default_enabled: true,
+        default_enabled: false,
     },
     TraceConfig {
         label: "Envelope",
         color: Color32::from_rgb(70, 180, 130),
-        default_enabled: true,
+        default_enabled: false,
     },
     TraceConfig {
         label: "Smoothed",
         color: Color32::WHITE,
-        default_enabled: true,
+        default_enabled: false,
     },
 ];
 
@@ -87,6 +88,8 @@ impl AudioCommands for DirectAudioCommands<'_> {
 pub struct AudioVisApp {
     processor_settings: ProcessorSettings,
     _input: Option<tunnels_audio::reconnect::ReconnectingInput>,
+    _spectral_stop: Option<Box<dyn FnOnce() + Send>>,
+    spectral_snapshot: SharedSpectralSnapshot,
     pending_device: Option<Option<String>>,
     audio_panel_state: AudioPanelState,
     /// Main signal plot (0-1 range): input peak, envelope, smoothed.
@@ -98,6 +101,11 @@ pub struct AudioVisApp {
     target_gain_read_position: usize,
     signal_trace_enabled: [bool; NUM_SIGNAL_TRACES],
     trim_trace_enabled: bool,
+    spectrum_visible: bool,
+    spectrum_1f_weighted: bool,
+    spectrum_log_freq: bool,
+    /// Manual Y-axis max for spectrum plot.
+    spectrum_y_max: f32,
     start_time: Instant,
     log_range_db: f32,
     log_enabled: bool,
@@ -132,9 +140,18 @@ impl AudioVisApp {
 
         let devices = tunnels_audio::AudioInput::devices().unwrap_or_default();
 
+        let spectral_snapshot = spectral::new_shared_snapshot();
+        let spectral_stop = spectral::start_spectral_thread(
+            processor_settings.clone(),
+            48000.0, // will be updated when a device connects
+            spectral_snapshot.clone(),
+        );
+
         Self {
             processor_settings,
             _input: None,
+            _spectral_stop: Some(spectral_stop),
+            spectral_snapshot,
             pending_device: None,
             audio_panel_state: AudioPanelState::new(devices),
             signal_plot,
@@ -144,6 +161,10 @@ impl AudioVisApp {
             target_gain_read_position,
             signal_trace_enabled,
             trim_trace_enabled: false,
+            spectrum_visible: true,
+            spectrum_1f_weighted: false,
+            spectrum_log_freq: true,
+            spectrum_y_max: 0.01,
             start_time: Instant::now(),
             log_range_db: DEFAULT_RANGE_DB,
             log_enabled: false,
@@ -155,6 +176,197 @@ impl AudioVisApp {
 
     fn current_time(&self) -> f64 {
         self.start_time.elapsed().as_secs_f64()
+    }
+
+    /// Render the frequency-domain spectrum plot.
+    fn render_spectrum_plot(
+        ui: &mut egui::Ui,
+        snap: &tunnels_audio::spectral::SpectralSnapshot,
+        height: f32,
+        weighted: bool,
+        log_freq: bool,
+        y_max: f32,
+    ) {
+        use egui_plot::{AxisHints, Line, Plot, PlotPoint, PlotPoints, VLine};
+
+        if snap.frequencies.is_empty() {
+            ui.label("Waiting for spectral data...");
+            return;
+        }
+
+        let plot_y_max = y_max as f64;
+
+        let freq_to_x = |f: f32| -> f64 {
+            if log_freq {
+                (f.max(1.0) as f64).log10()
+            } else {
+                f as f64
+            }
+        };
+
+        let min_freq = 20.0_f32;
+
+        let hz_axis = if log_freq {
+            AxisHints::new_x()
+                .label("Frequency")
+                .min_thickness(24.0)
+                .formatter(|mark, _range| {
+                    let f = 10.0_f64.powf(mark.value);
+                    if f >= 1000.0 {
+                        format!("{:.1}k", f / 1000.0)
+                    } else {
+                        format!("{:.0}", f)
+                    }
+                })
+        } else {
+            AxisHints::new_x()
+                .label("Frequency")
+                .min_thickness(24.0)
+                .formatter(|mark, _range| {
+                    let f = mark.value;
+                    if f >= 1000.0 {
+                        format!("{:.1}k", f / 1000.0)
+                    } else {
+                        format!("{:.0} Hz", f)
+                    }
+                })
+        };
+
+        Plot::new("spectrum_plot")
+            .height(height)
+            .include_y(0.0)
+            .include_y(plot_y_max)
+            .auto_bounds(egui::Vec2b::new(true, false))
+            .reset()
+            .allow_drag(false)
+            .allow_zoom(false)
+            .allow_scroll(false)
+            .show_axes([true, true])
+            .custom_x_axes(vec![hz_axis])
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot_ui| {
+                // Instantaneous interest.
+                let interest_data = if weighted {
+                    &snap.interest_weighted
+                } else {
+                    &snap.interest
+                };
+                let interest_points: Vec<PlotPoint> = snap
+                    .frequencies
+                    .iter()
+                    .zip(interest_data)
+                    .filter(|&(&f, _)| f >= min_freq)
+                    .map(|(&f, &v)| PlotPoint::new(freq_to_x(f), v.abs() as f64))
+                    .collect();
+                plot_ui.line(
+                    Line::new("Interest", PlotPoints::Owned(interest_points))
+                        .color(Color32::from_rgb(255, 120, 60))
+                        .width(1.0),
+                );
+
+                let interest_accum_data = if weighted {
+                    &snap.interest_accum_weighted
+                } else {
+                    &snap.interest_accum
+                };
+                let peak_data = if weighted {
+                    &snap.peaks_weighted
+                } else {
+                    &snap.peaks
+                };
+
+                // Accumulated interest (time-smoothed).
+                let accum_points: Vec<PlotPoint> = snap
+                    .frequencies
+                    .iter()
+                    .zip(interest_accum_data)
+                    .filter(|&(&f, _)| f >= min_freq)
+                    .map(|(&f, &v)| PlotPoint::new(freq_to_x(f), v as f64))
+                    .collect();
+                plot_ui.line(
+                    Line::new("Accumulated", PlotPoints::Owned(accum_points))
+                        .color(Color32::from_rgb(180, 255, 180))
+                        .width(1.5),
+                );
+
+                // Quality: interest_accum / magnitude_avg (dimensionless).
+                // High where dynamics dominate, low where steady-state dominates.
+                let mag_avg_data = if weighted {
+                    &snap.magnitude_avg_weighted
+                } else {
+                    &snap.magnitude_avg
+                };
+                let quality_points: Vec<PlotPoint> = snap
+                    .frequencies
+                    .iter()
+                    .zip(interest_accum_data.iter().zip(mag_avg_data))
+                    .filter(|&(&f, _)| f >= min_freq)
+                    .map(|(&f, (&interest, &mag))| {
+                        let q = if mag > 1e-10 { interest / mag } else { 0.0 };
+                        PlotPoint::new(freq_to_x(f), q as f64)
+                    })
+                    .collect();
+                plot_ui.line(
+                    Line::new("Quality", PlotPoints::Owned(quality_points))
+                        .color(Color32::from_rgb(255, 220, 100))
+                        .width(1.0),
+                );
+
+                // Interest * Quality: interest_accum² / magnitude_avg.
+                // Candidate mass distribution for band steering.
+                let iq_points: Vec<PlotPoint> = snap
+                    .frequencies
+                    .iter()
+                    .zip(interest_accum_data.iter().zip(mag_avg_data))
+                    .filter(|&(&f, _)| f >= min_freq)
+                    .map(|(&f, (&interest, &mag))| {
+                        let iq = if mag > 1e-10 {
+                            interest * interest / mag
+                        } else {
+                            0.0
+                        };
+                        PlotPoint::new(freq_to_x(f), iq as f64)
+                    })
+                    .collect();
+                plot_ui.line(
+                    Line::new("Interest*Quality", PlotPoints::Owned(iq_points))
+                        .color(Color32::from_rgb(255, 100, 255))
+                        .width(1.5),
+                );
+
+                // Peak markers hidden for now — exploring mass-distribution
+                // approach for band steering instead.
+                let _ = peak_data;
+            });
+    }
+
+    /// Show detected peaks in a bottom status bar.
+    fn render_spectrum_info(&self, ctx: &egui::Context) {
+        if !self.spectrum_visible {
+            return;
+        }
+        let snap = self.spectral_snapshot.load();
+        let peaks = if self.spectrum_1f_weighted {
+            &snap.peaks_weighted
+        } else {
+            &snap.peaks
+        };
+        if peaks.is_empty() {
+            return;
+        }
+        egui::TopBottomPanel::bottom("spectral_info").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for (i, peak) in peaks.iter().enumerate() {
+                    if i > 0 {
+                        ui.separator();
+                    }
+                    ui.label(format!(
+                        "{:.0} Hz ({:.0} wide)",
+                        peak.center_hz, peak.bandwidth_hz,
+                    ));
+                }
+            });
+        });
     }
 
     fn drain_trace(
@@ -331,53 +543,110 @@ impl eframe::App for AudioVisApp {
                     Color32::GRAY
                 });
                 ui.checkbox(&mut self.trim_trace_enabled, label);
+                // Spectrum toggle + options.
+                ui.checkbox(&mut self.spectrum_visible, "Spectrum");
+                if self.spectrum_visible {
+                    ui.checkbox(&mut self.spectrum_1f_weighted, "1/f");
+                    ui.checkbox(&mut self.spectrum_log_freq, "Log Hz");
+                    ui.add(
+                        egui::Slider::new(&mut self.spectrum_y_max, 0.001..=1.0)
+                            .text("Y")
+                            .logarithmic(true),
+                    );
+                }
             });
 
             ui.separator();
 
-            // Signal plot (main, 0-1 range).
-            let scales: Option<Vec<f32>> = if self.normalize_enabled {
-                Some(self.running_max.iter().map(|m| 1.0 / m).collect())
+            // Count visible plots.
+            let any_signal = self.signal_trace_enabled.iter().any(|&e| e);
+            let visible_plot_count = if any_signal { 1 } else { 0 }
+                + if self.trim_trace_enabled { 1 } else { 0 }
+                + if self.spectrum_visible { 1 } else { 0 };
+
+            if visible_plot_count == 0 {
+                ui.label("Enable a trace to see plots.");
             } else {
-                None
-            };
+                let total_height = ui.available_height();
+                // First plot gets half the space, rest split the remainder.
+                let primary_height = if visible_plot_count == 1 {
+                    total_height
+                } else {
+                    total_height * 0.5
+                };
+                let secondary_height = if visible_plot_count > 1 {
+                    (total_height - primary_height) / (visible_plot_count - 1).max(1) as f32
+                } else {
+                    0.0
+                };
 
-            let signal_height = if self.trim_trace_enabled {
-                ui.available_height() * 0.75
-            } else {
-                ui.available_height()
-            };
+                // Signal plot (main, 0-1 range).
+                if any_signal {
+                    let scales: Option<Vec<f32>> = if self.normalize_enabled {
+                        Some(self.running_max.iter().map(|m| 1.0 / m).collect())
+                    } else {
+                        None
+                    };
 
-            self.signal_plot.ui_with_options(
-                ui,
-                "audio_signals",
-                &self.signal_trace_enabled,
-                scales.as_deref(),
-                Some(link_group),
-                Some(signal_height),
-                None,
-            );
+                    let height = if visible_plot_count == 1 || (!self.trim_trace_enabled && !self.spectrum_visible) {
+                        total_height
+                    } else {
+                        primary_height
+                    };
 
-            // Gain plot (linked X, dB Y axis) — only if enabled.
-            if self.trim_trace_enabled {
-                use egui_plot::AxisHints;
+                    self.signal_plot.ui_with_options(
+                        ui,
+                        "audio_signals",
+                        &self.signal_trace_enabled,
+                        scales.as_deref(),
+                        Some(link_group),
+                        Some(height),
+                        None,
+                    );
+                }
 
-                let db_axis = AxisHints::new_y().formatter(|mark, _range| {
-                    let db = 20.0 * (mark.value as f32).log10();
-                    format!("{:+.0} dB", db)
-                });
+                // Gain plot (linked X, dB Y axis).
+                if self.trim_trace_enabled {
+                    use egui_plot::AxisHints;
 
-                self.trim_plot.ui_with_options(
-                    ui,
-                    "gain_plot",
-                    &[true, true],
-                    None,
-                    Some(link_group),
-                    None, // takes remaining height
-                    Some(vec![db_axis]),
-                );
+                    let db_axis = AxisHints::new_y().formatter(|mark, _range| {
+                        let db = 20.0 * (mark.value as f32).log10();
+                        format!("{:+.0} dB", db)
+                    });
+
+                    self.trim_plot.ui_with_options(
+                        ui,
+                        "gain_plot",
+                        &[true, true],
+                        None,
+                        Some(link_group),
+                        Some(secondary_height),
+                        Some(vec![db_axis]),
+                    );
+                }
+
+                // Spectrum plot (frequency domain).
+                if self.spectrum_visible {
+                    let snap = self.spectral_snapshot.load();
+                    let height = if !any_signal && !self.trim_trace_enabled {
+                        total_height
+                    } else {
+                        secondary_height
+                    };
+                    Self::render_spectrum_plot(
+                        ui,
+                        &snap,
+                        height,
+                        self.spectrum_1f_weighted,
+                        self.spectrum_log_freq,
+                        self.spectrum_y_max,
+                    );
+                }
             }
         });
+
+        // Peak info bar hidden — exploring mass-distribution approach.
+        // self.render_spectrum_info(ctx);
 
         // Apply pending device change (from the GUI device selector).
         if let Some(device) = self.pending_device.take() {

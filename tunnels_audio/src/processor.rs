@@ -52,6 +52,9 @@ pub struct ProcessorSettingsInner {
     pub effective_gain_history: SignalRingBuffer,
     /// Target gain the AGC is slewing toward.
     pub target_gain_history: SignalRingBuffer,
+    /// Channel for sending mono-mixed audio buffers to the spectral analysis thread.
+    /// Set by the spectral system at startup; None if spectral analysis is not active.
+    pub spectral_sender: std::sync::Mutex<Option<std::sync::mpsc::SyncSender<Vec<f32>>>>,
 }
 
 impl ProcessorSettingsInner {
@@ -86,6 +89,7 @@ impl Default for ProcessorSettingsInner {
             smoothed_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
             effective_gain_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
             target_gain_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
+            spectral_sender: std::sync::Mutex::new(None),
         }
     }
 }
@@ -196,6 +200,8 @@ pub struct Processor {
 
     /// Automatic input gain trim.
     auto_trim: AutoTrim,
+    /// Channel to send mono buffers to the spectral thread.
+    spectral_sender: Option<std::sync::mpsc::SyncSender<Vec<f32>>>,
 }
 
 fn make_envelope(
@@ -256,6 +262,7 @@ impl Processor {
             smooth_coeff: 0.0,
             smooth_time: 0.0,
             auto_trim: AutoTrim::new(),
+            spectral_sender: None,
         }
     }
 
@@ -325,7 +332,27 @@ impl Processor {
             self.settings.gain.get()
         };
 
+        // Lazily take the spectral sender from settings (once, on first buffer).
+        if self.spectral_sender.is_none() {
+            if let Ok(mut guard) = self.settings.spectral_sender.lock() {
+                self.spectral_sender = guard.take();
+            }
+        }
+
+        let ch_count_f = self.channel_count as f32;
+        let has_spectral = self.spectral_sender.is_some();
+        let mut mono_buf = if has_spectral {
+            let frames = interleaved_buffer.len() / self.channel_count.max(1);
+            Vec::with_capacity(frames)
+        } else {
+            Vec::new()
+        };
+
         for frame in interleaved_buffer.chunks(self.channel_count) {
+            if has_spectral {
+                mono_buf.push(frame.iter().sum::<f32>() / ch_count_f);
+            }
+
             for (ch, raw_sample) in frame.iter().enumerate() {
                 raw_peak = raw_peak.max(raw_sample.abs());
                 let sample = *raw_sample * effective_gain;
@@ -338,6 +365,11 @@ impl Processor {
                 let fast_val = self.fast_envelopes[ch].handle().state();
                 self.slow_envelopes[ch].m_process(&mut self.context, fast_val);
             }
+        }
+
+        // Send mono buffer to spectral thread (non-blocking, drop if full).
+        if let Some(sender) = &self.spectral_sender {
+            let _ = sender.try_send(mono_buf);
         }
 
         // Pre-gain clipping indicator: did any raw sample hit >= 1.0?

@@ -3,6 +3,7 @@ pub mod log_scale;
 pub mod processor;
 pub mod reconnect;
 pub mod ring_buffer;
+pub mod spectral;
 
 // Reference implementations kept for historical comparison, not used in production.
 pub mod running_median;
