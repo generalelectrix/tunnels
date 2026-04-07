@@ -90,6 +90,7 @@ pub struct AudioVisApp {
     _input: Option<tunnels_audio::reconnect::ReconnectingInput>,
     _spectral_stop: Option<Box<dyn FnOnce() + Send>>,
     spectral_snapshot: SharedSpectralSnapshot,
+    steering_params: std::sync::Arc<tunnels_audio::band_steering::SharedSteeringParams>,
     pending_device: Option<Option<String>>,
     audio_panel_state: AudioPanelState,
     /// Main signal plot (0-1 range): input peak, envelope, smoothed.
@@ -141,10 +142,12 @@ impl AudioVisApp {
         let devices = tunnels_audio::AudioInput::devices().unwrap_or_default();
 
         let spectral_snapshot = spectral::new_shared_snapshot();
+        let steering_params = tunnels_audio::band_steering::SharedSteeringParams::new();
         let spectral_stop = spectral::start_spectral_thread(
             processor_settings.clone(),
-            48000.0, // will be updated when a device connects
+            48000.0,
             spectral_snapshot.clone(),
+            steering_params.clone(),
         );
 
         Self {
@@ -152,6 +155,7 @@ impl AudioVisApp {
             _input: None,
             _spectral_stop: Some(spectral_stop),
             spectral_snapshot,
+            steering_params,
             pending_device: None,
             audio_panel_state: AudioPanelState::new(devices),
             signal_plot,
@@ -245,75 +249,17 @@ impl AudioVisApp {
             .custom_x_axes(vec![hz_axis])
             .legend(egui_plot::Legend::default())
             .show(ui, |plot_ui| {
-                // Instantaneous interest.
-                let interest_data = if weighted {
-                    &snap.interest_weighted
-                } else {
-                    &snap.interest
-                };
-                let interest_points: Vec<PlotPoint> = snap
-                    .frequencies
-                    .iter()
-                    .zip(interest_data)
-                    .filter(|&(&f, _)| f >= min_freq)
-                    .map(|(&f, &v)| PlotPoint::new(freq_to_x(f), v.abs() as f64))
-                    .collect();
-                plot_ui.line(
-                    Line::new("Interest", PlotPoints::Owned(interest_points))
-                        .color(Color32::from_rgb(255, 120, 60))
-                        .width(1.0),
-                );
-
+                // Interest*Quality: the mass distribution that drives band steering.
                 let interest_accum_data = if weighted {
                     &snap.interest_accum_weighted
                 } else {
                     &snap.interest_accum
                 };
-                let peak_data = if weighted {
-                    &snap.peaks_weighted
-                } else {
-                    &snap.peaks
-                };
-
-                // Accumulated interest (time-smoothed).
-                let accum_points: Vec<PlotPoint> = snap
-                    .frequencies
-                    .iter()
-                    .zip(interest_accum_data)
-                    .filter(|&(&f, _)| f >= min_freq)
-                    .map(|(&f, &v)| PlotPoint::new(freq_to_x(f), v as f64))
-                    .collect();
-                plot_ui.line(
-                    Line::new("Accumulated", PlotPoints::Owned(accum_points))
-                        .color(Color32::from_rgb(180, 255, 180))
-                        .width(1.5),
-                );
-
-                // Quality: interest_accum / magnitude_avg (dimensionless).
-                // High where dynamics dominate, low where steady-state dominates.
                 let mag_avg_data = if weighted {
                     &snap.magnitude_avg_weighted
                 } else {
                     &snap.magnitude_avg
                 };
-                let quality_points: Vec<PlotPoint> = snap
-                    .frequencies
-                    .iter()
-                    .zip(interest_accum_data.iter().zip(mag_avg_data))
-                    .filter(|&(&f, _)| f >= min_freq)
-                    .map(|(&f, (&interest, &mag))| {
-                        let q = if mag > 1e-10 { interest / mag } else { 0.0 };
-                        PlotPoint::new(freq_to_x(f), q as f64)
-                    })
-                    .collect();
-                plot_ui.line(
-                    Line::new("Quality", PlotPoints::Owned(quality_points))
-                        .color(Color32::from_rgb(255, 220, 100))
-                        .width(1.0),
-                );
-
-                // Interest * Quality: interest_accum² / magnitude_avg.
-                // Candidate mass distribution for band steering.
                 let iq_points: Vec<PlotPoint> = snap
                     .frequencies
                     .iter()
@@ -334,9 +280,75 @@ impl AudioVisApp {
                         .width(1.5),
                 );
 
-                // Peak markers hidden for now — exploring mass-distribution
-                // approach for band steering instead.
-                let _ = peak_data;
+                // Score surface: the convolution of the filter response
+                // with the IQ distribution. Peaks = optimal filter positions.
+                let score_points: Vec<PlotPoint> = snap
+                    .band_steering
+                    .score_surface
+                    .iter()
+                    .filter(|(f, _)| *f >= min_freq)
+                    .map(|&(f, s)| PlotPoint::new(freq_to_x(f), s as f64))
+                    .collect();
+                if !score_points.is_empty() {
+                    plot_ui.line(
+                        Line::new("Score", PlotPoints::Owned(score_points))
+                            .color(Color32::from_rgb(100, 255, 100))
+                            .width(1.5),
+                    );
+                }
+
+                // Lane boundaries as vertical lines.
+                let lane_boundary_color = Color32::from_rgba_premultiplied(255, 255, 255, 40);
+                let mut seen_boundaries = std::collections::HashSet::new();
+                for filter in &snap.band_steering.filters {
+                    for &boundary in &[filter.lane_min_hz, filter.lane_max_hz] {
+                        let key = (boundary * 10.0) as u32;
+                        if seen_boundaries.insert(key) {
+                            plot_ui.vline(
+                                VLine::new(
+                                    format!("{:.0} Hz boundary", boundary),
+                                    freq_to_x(boundary),
+                                )
+                                .color(lane_boundary_color)
+                                .width(1.0),
+                            );
+                        }
+                    }
+                }
+
+                // Filter response curves from band steering.
+                let lane_colors = [
+                    Color32::from_rgb(255, 100, 100),  // red — sub-bass
+                    Color32::from_rgb(100, 200, 255),  // blue — low-mid
+                    Color32::from_rgb(255, 255, 100),  // yellow — mid
+                    Color32::from_rgb(100, 255, 200),  // teal — high
+                ];
+                let sample_rate = snap.sample_rate;
+                let q = snap.band_steering.q;
+                for filter in &snap.band_steering.filters {
+                    let color = lane_colors[filter.lane_index % lane_colors.len()];
+                    // Sample the filter response across the frequency range.
+                    let response_points: Vec<PlotPoint> = snap
+                        .frequencies
+                        .iter()
+                        .filter(|&&f| f >= min_freq)
+                        .map(|&f| {
+                            let r = filter.response_at(f, sample_rate, q);
+                            // Scale response to match the Y axis — multiply by
+                            // the current Y max so the peak of the filter curve
+                            // reaches the top of the plot.
+                            PlotPoint::new(freq_to_x(f), (r * y_max) as f64)
+                        })
+                        .collect();
+                    plot_ui.line(
+                        Line::new(
+                            format!("{:.0} Hz", filter.center_hz),
+                            PlotPoints::Owned(response_points),
+                        )
+                        .color(color)
+                        .width(1.5),
+                    );
+                }
             });
     }
 
@@ -555,6 +567,32 @@ impl eframe::App for AudioVisApp {
                     );
                 }
             });
+
+            // Band steering parameter sliders.
+            if self.spectrum_visible {
+                ui.separator();
+                ui.strong("Band Steering");
+                egui::Grid::new("steering_grid").show(ui, |ui| {
+                    let p = &self.steering_params;
+                    let mut q = p.q.get();
+                    if ui.add(egui::Slider::new(&mut q, 0.5..=20.0).text("Q").logarithmic(true)).changed() {
+                        p.q.set(q);
+                    }
+                    ui.end_row();
+
+                    // Expose as "speed" (1 - damping) on a log scale so the
+                    // interesting range (0.001 to 0.1) gets proper resolution.
+                    let speed = 1.0 - p.damping.get();
+                    let mut speed_val = speed;
+                    if ui.add(egui::Slider::new(&mut speed_val, 0.001..=1.0).text("Speed").logarithmic(true)).changed() {
+                        p.damping.set(1.0 - speed_val);
+                    }
+                    ui.end_row();
+                });
+                if ui.button("Reset Filters").clicked() {
+                    self.steering_params.request_reset();
+                }
+            }
 
             ui.separator();
 

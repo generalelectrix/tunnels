@@ -31,6 +31,11 @@ const MIN_FREQ_HZ: f32 = 20.0;
 /// At 48kHz this is ~85ms between FFTs, giving ~12 Hz update rate.
 const COMPUTE_HOP: usize = FFT_SIZE / 4;
 
+/// Return the compute hop size (for deriving dt in other modules).
+pub const fn compute_hop() -> usize {
+    COMPUTE_HOP
+}
+
 /// EMA coefficient for the spectral magnitude average.
 /// Controls how quickly the "expected" spectrum adapts.
 /// ~10s half-life at 20 Hz compute rate.
@@ -82,6 +87,8 @@ pub struct SpectralSnapshot {
     pub peaks: Vec<SpectralPeak>,
     /// Detected peaks from accumulated 1/f-weighted interest.
     pub peaks_weighted: Vec<SpectralPeak>,
+    /// Current band steering filter positions.
+    pub band_steering: crate::band_steering::BandSteeringSnapshot,
     /// Sample rate used for frequency calculations.
     pub sample_rate: f32,
 }
@@ -100,6 +107,7 @@ impl Default for SpectralSnapshot {
             interest_accum_weighted: Vec::new(),
             peaks: Vec::new(),
             peaks_weighted: Vec::new(),
+            band_steering: crate::band_steering::BandSteeringSnapshot::default(),
             sample_rate: 48000.0,
         }
     }
@@ -123,10 +131,10 @@ pub fn start_spectral_thread(
     processor_settings: ProcessorSettings,
     sample_rate: f32,
     snapshot: SharedSpectralSnapshot,
+    steering_params: Arc<crate::band_steering::SharedSteeringParams>,
 ) -> Box<dyn FnOnce() + Send> {
     let (buf_tx, buf_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(CHANNEL_CAPACITY);
 
-    // Install the sender into ProcessorSettings so the audio callback can use it.
     {
         let mut guard = processor_settings.spectral_sender.lock().unwrap();
         *guard = Some(buf_tx);
@@ -135,7 +143,7 @@ pub fn start_spectral_thread(
     let handle = thread::Builder::new()
         .name("spectral-analysis".into())
         .spawn(move || {
-            run_spectral_loop(buf_rx, sample_rate, &snapshot);
+            run_spectral_loop(buf_rx, sample_rate, &snapshot, &steering_params);
         })
         .expect("failed to spawn spectral analysis thread");
 
@@ -151,14 +159,33 @@ fn run_spectral_loop(
     buf_rx: std::sync::mpsc::Receiver<Vec<f32>>,
     sample_rate: f32,
     snapshot_handle: &SharedSpectralSnapshot,
+    steering_params: &Arc<crate::band_steering::SharedSteeringParams>,
 ) {
     let mut analyzer = SpectralAnalyzer::new(sample_rate);
+    let mut band_steering = crate::band_steering::BandSteering::new();
 
-    // Event-driven: block on receiving each buffer from the audio thread.
     while let Ok(buf) = buf_rx.recv() {
         let should_compute = analyzer.push_samples(&buf);
         if should_compute {
-            if let Some(result) = analyzer.compute() {
+            band_steering.sync_params(steering_params);
+            if let Some(mut result) = analyzer.compute() {
+                // Compute interest*quality for band steering (using 1/f weighted
+                // variants since that's the metric we're committing to).
+                let iq: Vec<f32> = result
+                    .interest_accum_weighted
+                    .iter()
+                    .zip(&result.magnitude_avg_weighted)
+                    .map(|(&interest, &mag)| {
+                        if mag > 1e-10 {
+                            interest * interest / mag
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect();
+
+                band_steering.update(&result.frequencies, &iq, sample_rate);
+                result.band_steering = band_steering.snapshot();
                 snapshot_handle.store(Arc::new(result));
             }
         }
@@ -307,6 +334,7 @@ impl SpectralAnalyzer {
             interest_accum_weighted: accum_weighted_smoothed,
             peaks,
             peaks_weighted,
+            band_steering: crate::band_steering::BandSteeringSnapshot::default(),
             sample_rate: self.sample_rate,
         })
     }
