@@ -653,7 +653,7 @@ TouchOSC Bridge: |
   CC 1:1 -> Audio(Set(FilterCutoff(543.937)))
   CC 1:2 -> Audio(Set(EnvelopeAttack(65ms)))
   CC 1:3 -> Audio(Set(EnvelopeRelease(65ms)))
-  CC 1:4 -> Audio(Set(Gain(3.191074972923552)))
+  CC 1:4 -> Audio(Set(InputGain(3.191074972923552)))
   CC 1:7 -> Mixer(ControlMessage { channel: ChannelIdx(1), msg: Set(Level(UnipolarFloat(0.5039370078740157))) })
   CC 2:7 -> Mixer(ControlMessage { channel: ChannelIdx(2), msg: Set(Level(UnipolarFloat(0.5039370078740157))) })
   CC 3:7 -> Mixer(ControlMessage { channel: ChannelIdx(3), msg: Set(Level(UnipolarFloat(0.5039370078740157))) })

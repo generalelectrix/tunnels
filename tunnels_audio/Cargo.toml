@@ -1,0 +1,13 @@
+[package]
+name = "tunnels_audio"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+tunnels_lib = { path = "../tunnels_lib" }
+cpal = "0.16"
+augmented-dsp-filters = "2"
+audio-processor-analysis = "2"
+audio-processor-traits = "4"
+anyhow.workspace = true
+log.workspace = true

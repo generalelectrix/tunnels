@@ -36,7 +36,7 @@ pub fn interpret_touchosc(event: &MidiEvent) -> Option<crate::show::ControlMessa
         ENVELOPE_ATTACK => Audio(Set(EnvelopeAttack(envelope_edge_from_midi(v)))),
         ENVELOPE_RELEASE => Audio(Set(EnvelopeRelease(envelope_edge_from_midi(v)))),
         RESET => Audio(ResetParameters),
-        GAIN => Audio(Set(Gain(gain_from_midi(v)))),
+        GAIN => Audio(Set(InputGain(gain_from_midi(v)))),
         _ => return None,
     })
 }
@@ -75,7 +75,9 @@ pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutpu
         FilterCutoff(v) => send(event(FILTER_CUTOFF, filter_to_midi(v))),
         EnvelopeAttack(v) => send(event(ENVELOPE_ATTACK, envelope_edge_to_midi(v))),
         EnvelopeRelease(v) => send(event(ENVELOPE_RELEASE, envelope_edge_to_midi(v))),
-        Gain(v) => send(event(GAIN, gain_to_midi(v))),
+        OutputSmoothing(_) => {}
+        AutoTrimEnabled(_) => {}
+        InputGain(v) => send(event(GAIN, gain_to_midi(v))),
         IsClipping(v) => send(event(IS_CLIPPING, v as u8)),
     }
 }

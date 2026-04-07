@@ -609,10 +609,11 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "egui_plot",
+ "gui_common",
  "log",
  "simplelog",
  "stage_theme",
- "tunnels",
+ "tunnels_audio",
  "tunnels_lib",
 ]
 
@@ -5754,11 +5755,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
- "audio-processor-analysis",
- "audio-processor-traits",
- "augmented-dsp-filters",
  "bitflags 2.11.0",
- "cpal",
  "derive_more 2.0.1",
  "eframe",
  "egui_plot",
@@ -5774,8 +5771,22 @@ dependencies = [
  "serde",
  "serde_yaml",
  "simplelog",
+ "tunnels_audio",
  "tunnels_lib",
  "zero_configure",
+]
+
+[[package]]
+name = "tunnels_audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "audio-processor-analysis",
+ "audio-processor-traits",
+ "augmented-dsp-filters",
+ "cpal",
+ "log",
+ "tunnels_lib",
 ]
 
 [[package]]

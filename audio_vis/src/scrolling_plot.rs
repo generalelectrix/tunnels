@@ -3,8 +3,8 @@
 
 use std::collections::VecDeque;
 
-use eframe::egui::{self, Color32};
-use egui_plot::{Line, Plot, PlotPoint, PlotPoints};
+use eframe::egui::{self, Color32, Id, Vec2b};
+use egui_plot::{AxisHints, Line, Plot, PlotPoint, PlotPoints};
 
 /// A single time-series trace (ring of timestamped samples).
 pub struct Trace {
@@ -96,6 +96,21 @@ impl ScrollingPlot {
         enabled: &[bool],
         scales: Option<&[f32]>,
     ) {
+        self.ui_with_options(ui, plot_id, enabled, scales, None, None, None);
+    }
+
+    /// Render the plot with optional linked axes and custom Y axis hints.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ui_with_options(
+        &self,
+        ui: &mut egui::Ui,
+        plot_id: &str,
+        enabled: &[bool],
+        scales: Option<&[f32]>,
+        link_group: Option<Id>,
+        height: Option<f32>,
+        y_axis_hints: Option<Vec<AxisHints<'_>>>,
+    ) {
         let current_time = self
             .traces
             .iter()
@@ -104,9 +119,9 @@ impl ScrollingPlot {
             .filter_map(|(_, t)| t.points.back().map(|p| p[0]))
             .fold(0.0_f64, f64::max);
 
-        let height = ui.available_height().max(100.0);
+        let height = height.unwrap_or_else(|| ui.available_height().max(100.0));
 
-        Plot::new(plot_id)
+        let mut plot = Plot::new(plot_id)
             .default_x_bounds(current_time - self.window_seconds, current_time)
             .default_y_bounds(self.y_min, self.y_max)
             .height(height)
@@ -114,29 +129,40 @@ impl ScrollingPlot {
             .allow_zoom(false)
             .allow_scroll(false)
             .show_axes([false, true])
-            .legend(egui_plot::Legend::default())
-            .show(ui, |plot_ui| {
-                for (i, trace) in self.traces.iter().enumerate() {
-                    if enabled.get(i).copied().unwrap_or(true) {
-                        let scale = scales
-                            .and_then(|s| s.get(i).copied())
-                            .unwrap_or(1.0) as f64;
-                        let points = if scale != 1.0 {
-                            trace
-                                .points
-                                .iter()
-                                .map(|&[x, y]| PlotPoint::new(x, y * scale))
-                                .collect()
-                        } else {
-                            trace.plot_points()
-                        };
-                        plot_ui.line(
-                            Line::new(&trace.label, PlotPoints::Owned(points))
-                                .color(trace.color)
-                                .width(1.5),
-                        );
-                    }
+            .legend(egui_plot::Legend::default());
+
+        if let Some(group) = link_group {
+            plot = plot
+                .link_axis(group, Vec2b::new(true, false))
+                .link_cursor(group, Vec2b::new(true, false));
+        }
+
+        if let Some(hints) = y_axis_hints {
+            plot = plot.custom_y_axes(hints);
+        }
+
+        plot.show(ui, |plot_ui| {
+            for (i, trace) in self.traces.iter().enumerate() {
+                if enabled.get(i).copied().unwrap_or(true) {
+                    let scale = scales
+                        .and_then(|s| s.get(i).copied())
+                        .unwrap_or(1.0) as f64;
+                    let points = if scale != 1.0 {
+                        trace
+                            .points
+                            .iter()
+                            .map(|&[x, y]| PlotPoint::new(x, y * scale))
+                            .collect()
+                    } else {
+                        trace.plot_points()
+                    };
+                    plot_ui.line(
+                        Line::new(&trace.label, PlotPoints::Owned(points))
+                            .color(trace.color)
+                            .width(1.5),
+                    );
                 }
-            });
+            }
+        });
     }
 }

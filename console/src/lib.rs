@@ -12,11 +12,11 @@ use anyhow::Result;
 use eframe::egui;
 
 use admin_panel::{AdminPanelState, AdminService};
-use audio_panel::{AudioPanel, AudioPanelState};
-use gui_common::{CloseHandler, MessageModal};
+use audio_panel::AudioPanelState;
+use gui_common::{CloseHandler, MessageModal, audio_panel::AudioSnapshot, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
-use tunnels::control::CommandClient;
+use tunnels::control::{CommandClient, MetaCommand};
 use tunnels::gui_state::SharedGuiState;
 use ui_util::GuiContext;
 
@@ -98,21 +98,48 @@ impl eframe::App for ConfigApp {
                         slots: &midi_slots,
                     }
                     .ui(ui);
+
+                    ui.add_space(16.0);
+                    ui.separator();
+                    let clock_running =
+                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
+                    if let Some(action) = clock_panel::clock_service_ui(ui, clock_running) {
+                        let cmd = match action {
+                            clock_panel::ClockServiceAction::Start => {
+                                MetaCommand::StartClockService
+                            }
+                            clock_panel::ClockServiceAction::Stop => {
+                                MetaCommand::StopClockService
+                            }
+                        };
+                        let mut ctx = GuiContext {
+                            modal: &mut self.modal,
+                            client: &self.client,
+                        };
+                        let _ = ctx.send_command(cmd);
+                    }
                 }
                 Tab::Audio => {
+                    let audio_state = self.gui_state.audio_state.load();
                     let audio_device = self.gui_state.audio_device.load();
-                    let clock_service_running =
-                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
-                    AudioPanel {
-                        ctx: GuiContext {
+                    let snapshot = AudioSnapshot {
+                        device_name: audio_device.as_ref().clone(),
+                        filter_cutoff_hz: audio_state.filter_cutoff_hz,
+                        envelope_attack: audio_state.envelope_attack,
+                        envelope_release: audio_state.envelope_release,
+                        output_smoothing: audio_state.output_smoothing,
+                        gain_linear: audio_state.gain_linear,
+                        auto_trim_enabled: audio_state.auto_trim_enabled,
+                    };
+                    audio_panel::render_audio_panel(
+                        ui,
+                        GuiContext {
                             modal: &mut self.modal,
                             client: &self.client,
                         },
-                        state: &mut self.audio_panel,
-                        current_device: &audio_device,
-                        clock_service_running,
-                    }
-                    .ui(ui);
+                        &mut self.audio_panel,
+                        &snapshot,
+                    );
                 }
                 Tab::Animation => {
                     animation_panel::ui(
@@ -143,7 +170,8 @@ pub fn run_config_gui(
         ..Default::default()
     };
     let audio_device = gui_state.audio_device.load();
-    let mut audio_panel = AudioPanelState::new();
+    let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
+    let mut audio_panel = AudioPanelState::new(devices);
     audio_panel.sync_from_device_name(&audio_device);
 
     let admin_panel = AdminPanelState::new(admin_service.clone(), hostname);

@@ -10,7 +10,7 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
-use super::processor::{Processor, ProcessorSettings};
+use crate::processor::{Processor, ProcessorSettings};
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,

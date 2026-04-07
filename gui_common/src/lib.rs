@@ -1,3 +1,5 @@
+pub mod audio_panel;
+pub mod clock_panel;
 pub mod midi_panel;
 
 use eframe::egui::{self, Color32};

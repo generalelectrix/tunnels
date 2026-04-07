@@ -40,10 +40,7 @@ zero_configure = { path = "../zero_configure" }
 minusmq = { path = "../minusmq" }
 
 # Audio subsystem
-cpal = "0.16"
-augmented-dsp-filters = "2"
-audio-processor-analysis = "2"
-audio-processor-traits = "4"
+tunnels_audio = { path = "../tunnels_audio" }
 
 [dev-dependencies]
 insta = { version = "1.28.0", features = ["yaml"] }

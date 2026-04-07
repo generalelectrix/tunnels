@@ -8,8 +8,9 @@ name = "audio_vis"
 path = "src/main.rs"
 
 [dependencies]
-tunnels = { path = "../tunnels" }
+tunnels_audio = { path = "../tunnels_audio" }
 tunnels_lib = { path = "../tunnels_lib" }
+gui_common = { path = "../gui_common" }
 stage_theme = { path = "../stage_theme" }
 eframe = "0.33"
 egui_plot = "0.34"
