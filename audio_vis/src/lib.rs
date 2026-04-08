@@ -3,6 +3,7 @@ pub mod scrolling_plot;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32};
+use egui_plot::{AxisHints, Line, Plot, PlotPoint, PlotPoints, VLine};
 
 use gui_common::audio_panel::{AudioCommands, AudioPanel, AudioPanelState, AudioSnapshot};
 use tunnels_audio::log_scale::DEFAULT_RANGE_DB;
@@ -14,7 +15,6 @@ use scrolling_plot::ScrollingPlot;
 /// Approximate update rate of the envelope (once per audio buffer, ~1kHz).
 const ENVELOPE_SAMPLE_RATE: f64 = 1000.0;
 
-/// Number of signal traces (main plot).
 const NUM_SIGNAL_TRACES: usize = 3;
 
 struct TraceConfig {
@@ -44,8 +44,7 @@ const SIGNAL_TRACE_CONFIGS: [TraceConfig; NUM_SIGNAL_TRACES] = [
 const GAIN_TRACE_COLOR: Color32 = Color32::from_rgb(200, 160, 60);
 const TARGET_GAIN_TRACE_COLOR: Color32 = Color32::from_rgb(120, 120, 180);
 
-/// Adapter that implements AudioCommands by writing directly to ProcessorSettings
-/// atomics. Used by audio_vis because there's no show loop to mediate.
+/// Adapter: AudioCommands by writing directly to ProcessorSettings atomics.
 struct DirectAudioCommands<'a> {
     settings: &'a ProcessorSettings,
     pending_device: Option<Option<String>>,
@@ -93,9 +92,7 @@ pub struct AudioVisApp {
     steering_params: std::sync::Arc<tunnels_audio::band_steering::SharedSteeringParams>,
     pending_device: Option<Option<String>>,
     audio_panel_state: AudioPanelState,
-    /// Main signal plot (0-1 range): input peak, envelope, smoothed.
     signal_plot: ScrollingPlot,
-    /// Auto-trim gain plot (dB range): separate Y axis.
     trim_plot: ScrollingPlot,
     signal_read_positions: [usize; NUM_SIGNAL_TRACES],
     gain_read_position: usize,
@@ -103,9 +100,6 @@ pub struct AudioVisApp {
     signal_trace_enabled: [bool; NUM_SIGNAL_TRACES],
     trim_trace_enabled: bool,
     spectrum_visible: bool,
-    spectrum_1f_weighted: bool,
-    spectrum_log_freq: bool,
-    /// Manual Y-axis max for spectrum plot.
     spectrum_y_max: f32,
     start_time: Instant,
     log_range_db: f32,
@@ -125,8 +119,6 @@ impl AudioVisApp {
             signal_trace_enabled[i] = config.default_enabled;
         }
 
-        // Gain plot: Y range in linear gain. Auto-trim range is +-10 dB
-        // (0.316x to 3.162x).
         let mut trim_plot = ScrollingPlot::new(3.0, 0.0, 3.5);
         trim_plot.add_trace("Effective gain", GAIN_TRACE_COLOR);
         trim_plot.add_trace("Target gain", TARGET_GAIN_TRACE_COLOR);
@@ -166,9 +158,7 @@ impl AudioVisApp {
             signal_trace_enabled,
             trim_trace_enabled: false,
             spectrum_visible: true,
-            spectrum_1f_weighted: false,
-            spectrum_log_freq: true,
-            spectrum_y_max: 0.01,
+            spectrum_y_max: 0.001,
             start_time: Instant::now(),
             log_range_db: DEFAULT_RANGE_DB,
             log_enabled: false,
@@ -180,205 +170,6 @@ impl AudioVisApp {
 
     fn current_time(&self) -> f64 {
         self.start_time.elapsed().as_secs_f64()
-    }
-
-    /// Render the frequency-domain spectrum plot.
-    fn render_spectrum_plot(
-        ui: &mut egui::Ui,
-        snap: &tunnels_audio::spectral::SpectralSnapshot,
-        height: f32,
-        weighted: bool,
-        log_freq: bool,
-        y_max: f32,
-    ) {
-        use egui_plot::{AxisHints, Line, Plot, PlotPoint, PlotPoints, VLine};
-
-        if snap.frequencies.is_empty() {
-            ui.label("Waiting for spectral data...");
-            return;
-        }
-
-        let plot_y_max = y_max as f64;
-
-        let freq_to_x = |f: f32| -> f64 {
-            if log_freq {
-                (f.max(1.0) as f64).log10()
-            } else {
-                f as f64
-            }
-        };
-
-        let min_freq = 20.0_f32;
-
-        let hz_axis = if log_freq {
-            AxisHints::new_x()
-                .label("Frequency")
-                .min_thickness(24.0)
-                .formatter(|mark, _range| {
-                    let f = 10.0_f64.powf(mark.value);
-                    if f >= 1000.0 {
-                        format!("{:.1}k", f / 1000.0)
-                    } else {
-                        format!("{:.0}", f)
-                    }
-                })
-        } else {
-            AxisHints::new_x()
-                .label("Frequency")
-                .min_thickness(24.0)
-                .formatter(|mark, _range| {
-                    let f = mark.value;
-                    if f >= 1000.0 {
-                        format!("{:.1}k", f / 1000.0)
-                    } else {
-                        format!("{:.0} Hz", f)
-                    }
-                })
-        };
-
-        Plot::new("spectrum_plot")
-            .height(height)
-            .include_y(0.0)
-            .include_y(plot_y_max)
-            .auto_bounds(egui::Vec2b::new(true, false))
-            .reset()
-            .allow_drag(false)
-            .allow_zoom(false)
-            .allow_scroll(false)
-            .show_axes([true, true])
-            .custom_x_axes(vec![hz_axis])
-            .legend(egui_plot::Legend::default())
-            .show(ui, |plot_ui| {
-                // Interest*Quality: the mass distribution that drives band steering.
-                let interest_accum_data = if weighted {
-                    &snap.interest_accum_weighted
-                } else {
-                    &snap.interest_accum
-                };
-                let mag_avg_data = if weighted {
-                    &snap.magnitude_avg_weighted
-                } else {
-                    &snap.magnitude_avg
-                };
-                let iq_points: Vec<PlotPoint> = snap
-                    .frequencies
-                    .iter()
-                    .zip(interest_accum_data.iter().zip(mag_avg_data))
-                    .filter(|&(&f, _)| f >= min_freq)
-                    .map(|(&f, (&interest, &mag))| {
-                        let iq = if mag > 1e-10 {
-                            interest * interest / mag
-                        } else {
-                            0.0
-                        };
-                        PlotPoint::new(freq_to_x(f), iq as f64)
-                    })
-                    .collect();
-                plot_ui.line(
-                    Line::new("Interest*Quality", PlotPoints::Owned(iq_points))
-                        .color(Color32::from_rgb(255, 100, 255))
-                        .width(1.5),
-                );
-
-                // Score surface: the convolution of the filter response
-                // with the IQ distribution. Peaks = optimal filter positions.
-                let score_points: Vec<PlotPoint> = snap
-                    .band_steering
-                    .score_surface
-                    .iter()
-                    .filter(|(f, _)| *f >= min_freq)
-                    .map(|&(f, s)| PlotPoint::new(freq_to_x(f), s as f64))
-                    .collect();
-                if !score_points.is_empty() {
-                    plot_ui.line(
-                        Line::new("Score", PlotPoints::Owned(score_points))
-                            .color(Color32::from_rgb(100, 255, 100))
-                            .width(1.5),
-                    );
-                }
-
-                // Lane boundaries as vertical lines.
-                let lane_boundary_color = Color32::from_rgba_premultiplied(255, 255, 255, 40);
-                let mut seen_boundaries = std::collections::HashSet::new();
-                for filter in &snap.band_steering.filters {
-                    for &boundary in &[filter.lane_min_hz, filter.lane_max_hz] {
-                        let key = (boundary * 10.0) as u32;
-                        if seen_boundaries.insert(key) {
-                            plot_ui.vline(
-                                VLine::new(
-                                    format!("{:.0} Hz boundary", boundary),
-                                    freq_to_x(boundary),
-                                )
-                                .color(lane_boundary_color)
-                                .width(1.0),
-                            );
-                        }
-                    }
-                }
-
-                // Filter response curves from band steering.
-                let lane_colors = [
-                    Color32::from_rgb(255, 100, 100),  // red — sub-bass
-                    Color32::from_rgb(100, 200, 255),  // blue — low-mid
-                    Color32::from_rgb(255, 255, 100),  // yellow — mid
-                    Color32::from_rgb(100, 255, 200),  // teal — high
-                ];
-                let sample_rate = snap.sample_rate;
-                let q = snap.band_steering.q;
-                for filter in &snap.band_steering.filters {
-                    let color = lane_colors[filter.lane_index % lane_colors.len()];
-                    // Sample the filter response across the frequency range.
-                    let response_points: Vec<PlotPoint> = snap
-                        .frequencies
-                        .iter()
-                        .filter(|&&f| f >= min_freq)
-                        .map(|&f| {
-                            let r = filter.response_at(f, sample_rate, q);
-                            // Scale response to match the Y axis — multiply by
-                            // the current Y max so the peak of the filter curve
-                            // reaches the top of the plot.
-                            PlotPoint::new(freq_to_x(f), (r * y_max) as f64)
-                        })
-                        .collect();
-                    plot_ui.line(
-                        Line::new(
-                            format!("{:.0} Hz", filter.center_hz),
-                            PlotPoints::Owned(response_points),
-                        )
-                        .color(color)
-                        .width(1.5),
-                    );
-                }
-            });
-    }
-
-    /// Show detected peaks in a bottom status bar.
-    fn render_spectrum_info(&self, ctx: &egui::Context) {
-        if !self.spectrum_visible {
-            return;
-        }
-        let snap = self.spectral_snapshot.load();
-        let peaks = if self.spectrum_1f_weighted {
-            &snap.peaks_weighted
-        } else {
-            &snap.peaks
-        };
-        if peaks.is_empty() {
-            return;
-        }
-        egui::TopBottomPanel::bottom("spectral_info").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (i, peak) in peaks.iter().enumerate() {
-                    if i > 0 {
-                        ui.separator();
-                    }
-                    ui.label(format!(
-                        "{:.0} Hz ({:.0} wide)",
-                        peak.center_hz, peak.bandwidth_hz,
-                    ));
-                }
-            });
-        });
     }
 
     fn drain_trace(
@@ -406,6 +197,261 @@ impl AudioVisApp {
             auto_trim_enabled: ps.auto_trim_enabled.get() > 0.5,
         }
     }
+
+    /// Render the CQT spectrum plot with interest*quality, score surface,
+    /// filter positions, and kernel overlays.
+    fn render_spectrum(
+        ui: &mut egui::Ui,
+        snap: &tunnels_audio::spectral::SpectralSnapshot,
+        height: f32,
+        y_max: f32,
+    ) {
+        if snap.frequencies.is_empty() {
+            ui.label("Waiting for spectral data...");
+            return;
+        }
+
+        // X axis: log frequency with Hz labels.
+        let freq_to_x = |f: f32| -> f64 { (f.max(1.0) as f64).log10() };
+
+        let hz_axis = AxisHints::new_x()
+            .label("Frequency")
+            .min_thickness(24.0)
+            .formatter(|mark, _range| {
+                let f = 10.0_f64.powf(mark.value);
+                if f >= 1000.0 {
+                    format!("{:.1}k", f / 1000.0)
+                } else {
+                    format!("{:.0}", f)
+                }
+            });
+
+        Plot::new("spectrum_plot")
+            .height(height)
+            .include_y(0.0)
+            .include_y(y_max as f64)
+            .auto_bounds(egui::Vec2b::new(true, false))
+            .reset()
+            .allow_drag(false)
+            .allow_zoom(false)
+            .allow_scroll(false)
+            .show_axes([true, true])
+            .custom_x_axes(vec![hz_axis])
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot_ui| {
+                // Helper to build a line from frequencies + values.
+                let make_line = |data: &[f32], name: &str, color: Color32, width: f32| {
+                    let points: Vec<PlotPoint> = snap
+                        .frequencies
+                        .iter()
+                        .zip(data)
+                        .map(|(&f, &v)| PlotPoint::new(freq_to_x(f), v as f64))
+                        .collect();
+                    Line::new(name.to_string(), PlotPoints::Owned(points))
+                        .color(color)
+                        .width(width)
+                };
+
+                // Raw CQT magnitude.
+                plot_ui.line(make_line(
+                    &snap.magnitude,
+                    "Magnitude",
+                    Color32::from_rgb(60, 60, 100),
+                    1.0,
+                ));
+
+                // Magnitude average (EMA baseline).
+                plot_ui.line(make_line(
+                    &snap.magnitude_avg,
+                    "Avg",
+                    Color32::from_rgb(80, 80, 140),
+                    1.0,
+                ));
+
+                // Instantaneous interest.
+                let interest_abs: Vec<f32> = snap.interest.iter().map(|v| v.abs()).collect();
+                plot_ui.line(make_line(
+                    &interest_abs,
+                    "Interest",
+                    Color32::from_rgb(255, 120, 60),
+                    1.0,
+                ));
+
+                // Accumulated interest.
+                plot_ui.line(make_line(
+                    &snap.interest_accum,
+                    "Accum",
+                    Color32::from_rgb(180, 255, 180),
+                    1.0,
+                ));
+
+                // Interest*quality (the steering metric).
+                plot_ui.line(make_line(
+                    &snap.interest_quality,
+                    "I*Q",
+                    Color32::from_rgb(255, 100, 255),
+                    1.5,
+                ));
+
+                // Score surface from band steering.
+                let score_points: Vec<PlotPoint> = snap
+                    .band_steering
+                    .score_surface
+                    .iter()
+                    .map(|&(f, s)| PlotPoint::new(freq_to_x(f), s as f64))
+                    .collect();
+                if !score_points.is_empty() {
+                    plot_ui.line(
+                        Line::new("Score", PlotPoints::Owned(score_points))
+                            .color(Color32::from_rgb(100, 255, 100))
+                            .width(1.5),
+                    );
+                }
+
+                // Lane boundaries.
+                let lane_boundary_color =
+                    Color32::from_rgba_premultiplied(255, 255, 255, 40);
+                let mut seen_boundaries = std::collections::HashSet::new();
+                for filter in &snap.band_steering.filters {
+                    for &boundary in &[filter.lane_min_hz, filter.lane_max_hz] {
+                        let key = (boundary * 10.0) as u32;
+                        if seen_boundaries.insert(key) {
+                            plot_ui.vline(
+                                VLine::new(
+                                    format!("{:.0} Hz", boundary),
+                                    freq_to_x(boundary),
+                                )
+                                .color(lane_boundary_color)
+                                .width(1.0),
+                            );
+                        }
+                    }
+                }
+
+                // Filter response curves (actual RBJ bandpass shape).
+                let lane_colors = [
+                    Color32::from_rgb(100, 200, 255), // blue — low-mid
+                    Color32::from_rgb(255, 255, 100), // yellow — mid
+                    Color32::from_rgb(100, 255, 200), // teal — high
+                ];
+                let q = snap.band_steering.q;
+                let sample_rate = snap.sample_rate;
+
+                let bins_per_octave =
+                    tunnels_audio::spectral::BINS_PER_OCTAVE as f32;
+                let kernel_half =
+                    snap.band_steering.kernel_half_bins as f32;
+
+                // Filter responses in dB, mapped to [0, y_max].
+                // 0 dB → y_max, -60 dB → 0.
+                const RESPONSE_FLOOR_DB: f32 = -40.0;
+                let db_to_y = |linear: f32| -> f64 {
+                    let db = if linear > 1e-10 {
+                        20.0 * linear.log10()
+                    } else {
+                        RESPONSE_FLOOR_DB
+                    };
+                    let normalized =
+                        (db - RESPONSE_FLOOR_DB) / (0.0 - RESPONSE_FLOOR_DB);
+                    (normalized.clamp(0.0, 1.0) * y_max) as f64
+                };
+
+                for filter in &snap.band_steering.filters {
+                    let color =
+                        lane_colors[filter.lane_index % lane_colors.len()];
+
+                    // RBJ bandpass response curve in dB (solid).
+                    let response_points: Vec<PlotPoint> = snap
+                        .frequencies
+                        .iter()
+                        .map(|&f| {
+                            let r = filter.response_at(f, sample_rate, q);
+                            PlotPoint::new(freq_to_x(f), db_to_y(r))
+                        })
+                        .collect();
+                    plot_ui.line(
+                        Line::new(
+                            format!("{:.0} Hz", filter.center_hz),
+                            PlotPoints::Owned(response_points),
+                        )
+                        .color(color)
+                        .width(1.5),
+                    );
+
+                    // Raised cosine convolution kernel in dB (dimmer).
+                    if kernel_half > 0.0 {
+                        let kernel_color = Color32::from_rgba_premultiplied(
+                            color.r() / 2,
+                            color.g() / 2,
+                            color.b() / 2,
+                            180,
+                        );
+                        let kernel_points: Vec<PlotPoint> = snap
+                            .frequencies
+                            .iter()
+                            .map(|&f| {
+                                let dist_bins = ((f / filter.center_hz).log2()
+                                    * bins_per_octave)
+                                    .abs();
+                                let weight = if dist_bins >= kernel_half {
+                                    0.0
+                                } else {
+                                    0.5 * (1.0
+                                        + (std::f32::consts::PI * dist_bins
+                                            / kernel_half)
+                                            .cos())
+                                };
+                                PlotPoint::new(freq_to_x(f), db_to_y(weight))
+                            })
+                            .collect();
+                        plot_ui.line(
+                            Line::new(
+                                format!("{:.0} Hz kernel", filter.center_hz),
+                                PlotPoints::Owned(kernel_points),
+                            )
+                            .color(kernel_color)
+                            .width(1.0),
+                        );
+                    }
+                }
+
+                // Mask bounds around target peaks.
+                let mask_half =
+                    snap.band_steering.mask_half_bins as f32;
+                if mask_half > 0.0 {
+                    let mask_color =
+                        Color32::from_rgba_premultiplied(255, 60, 60, 50);
+                    for &(peak_hz, lane_idx) in
+                        &snap.band_steering.target_peaks
+                    {
+                        let _ = lane_idx;
+                        // Mask extends mask_half bins in each direction.
+                        let lo_hz = peak_hz
+                            / 2.0_f32
+                                .powf(mask_half / bins_per_octave);
+                        let hi_hz = peak_hz
+                            * 2.0_f32
+                                .powf(mask_half / bins_per_octave);
+                        // Draw a filled rectangle from lo to hi at full Y.
+                        let rect_points = vec![
+                            PlotPoint::new(freq_to_x(lo_hz), 0.0),
+                            PlotPoint::new(freq_to_x(lo_hz), y_max as f64),
+                            PlotPoint::new(freq_to_x(hi_hz), y_max as f64),
+                            PlotPoint::new(freq_to_x(hi_hz), 0.0),
+                        ];
+                        plot_ui.line(
+                            Line::new(
+                                format!("mask {:.0}", peak_hz),
+                                PlotPoints::Owned(rect_points),
+                            )
+                            .color(mask_color)
+                            .fill(0.0)
+                            .width(0.5),
+                        );
+                    }
+                }
+            });
+    }
 }
 
 impl eframe::App for AudioVisApp {
@@ -425,33 +471,28 @@ impl eframe::App for AudioVisApp {
 
         for (i, buf) in signal_buffers.iter().enumerate() {
             let mut samples = Self::drain_trace(buf, &mut self.signal_read_positions[i]);
-
             if self.paused {
                 continue;
             }
-
             if !self.signal_trace_enabled[i] {
                 self.signal_plot.traces[i].points.clear();
                 self.running_max[i] = 0.001;
                 continue;
             }
-
             if log_enabled {
                 for v in &mut samples {
                     *v = tunnels_audio::log_scale::linear_to_perceptual(*v, log_range);
                 }
             }
-
             for &v in &samples {
                 if v > self.running_max[i] {
                     self.running_max[i] = v;
                 }
             }
-
             self.signal_plot.traces[i].ingest(&samples, interval, now);
         }
 
-        // Drain gain traces (effective + target).
+        // Drain gain traces.
         {
             let gain_samples = Self::drain_trace(
                 &self.processor_settings.effective_gain_history,
@@ -481,7 +522,7 @@ impl eframe::App for AudioVisApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.columns(2, |cols| {
-                // Left column: shared audio controls.
+                // Left: shared audio controls.
                 let snapshot = self.snapshot();
                 let mut commands = DirectAudioCommands {
                     settings: &self.processor_settings,
@@ -493,10 +534,9 @@ impl eframe::App for AudioVisApp {
                     snapshot: &snapshot,
                 }
                 .ui(&mut cols[0]);
-
                 self.pending_device = commands.pending_device.take();
 
-                // Right column: display controls (visualization-specific).
+                // Right: display controls.
                 cols[1].strong("Display");
                 if cols[1]
                     .button(if self.paused { "Resume" } else { "Pause" })
@@ -508,14 +548,13 @@ impl eframe::App for AudioVisApp {
                     ui.checkbox(&mut self.log_enabled, "Log transform");
                     if self.log_enabled {
                         ui.add(
-                            egui::Slider::new(&mut self.log_range_db, 6.0..=60.0).suffix(" dB"),
+                            egui::Slider::new(&mut self.log_range_db, 6.0..=60.0)
+                                .suffix(" dB"),
                         );
                     }
                     ui.end_row();
-
                     ui.checkbox(&mut self.normalize_enabled, "Normalize traces");
                     ui.end_row();
-
                     ui.label("Window:");
                     let mut secs = self.signal_plot.window_seconds as f32;
                     if ui
@@ -548,90 +587,91 @@ impl eframe::App for AudioVisApp {
                         self.signal_trace_enabled[i] = enabled;
                     }
                 }
-                // Gain trace toggle.
                 let label = egui::RichText::new("Gain").color(if self.trim_trace_enabled {
                     GAIN_TRACE_COLOR
                 } else {
                     Color32::GRAY
                 });
                 ui.checkbox(&mut self.trim_trace_enabled, label);
-                // Spectrum toggle + options.
                 ui.checkbox(&mut self.spectrum_visible, "Spectrum");
                 if self.spectrum_visible {
-                    ui.checkbox(&mut self.spectrum_1f_weighted, "1/f");
-                    ui.checkbox(&mut self.spectrum_log_freq, "Log Hz");
                     ui.add(
-                        egui::Slider::new(&mut self.spectrum_y_max, 0.001..=1.0)
+                        egui::Slider::new(&mut self.spectrum_y_max, 1e-12..=1000.0)
                             .text("Y")
                             .logarithmic(true),
                     );
                 }
             });
 
-            // Band steering parameter sliders.
+            // Band steering controls.
             if self.spectrum_visible {
                 ui.separator();
-                ui.strong("Band Steering");
-                egui::Grid::new("steering_grid").show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("Band Steering");
                     let p = &self.steering_params;
                     let mut q = p.q.get();
-                    if ui.add(egui::Slider::new(&mut q, 0.5..=20.0).text("Q").logarithmic(true)).changed() {
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut q, 0.5..=20.0)
+                                .text("Q")
+                                .logarithmic(true),
+                        )
+                        .changed()
+                    {
                         p.q.set(q);
                     }
-                    ui.end_row();
-
-                    // Expose as "speed" (1 - damping) on a log scale so the
-                    // interesting range (0.001 to 0.1) gets proper resolution.
                     let speed = 1.0 - p.damping.get();
                     let mut speed_val = speed;
-                    if ui.add(egui::Slider::new(&mut speed_val, 0.001..=1.0).text("Speed").logarithmic(true)).changed() {
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut speed_val, 0.001..=1.0)
+                                .text("Speed")
+                                .logarithmic(true),
+                        )
+                        .changed()
+                    {
                         p.damping.set(1.0 - speed_val);
                     }
-                    ui.end_row();
+                    if ui.button("Reset").clicked() {
+                        self.steering_params.request_reset();
+                    }
                 });
-                if ui.button("Reset Filters").clicked() {
-                    self.steering_params.request_reset();
-                }
             }
 
             ui.separator();
 
-            // Count visible plots.
+            // Plot layout.
             let any_signal = self.signal_trace_enabled.iter().any(|&e| e);
-            let visible_plot_count = if any_signal { 1 } else { 0 }
+            let visible_count = if any_signal { 1 } else { 0 }
                 + if self.trim_trace_enabled { 1 } else { 0 }
                 + if self.spectrum_visible { 1 } else { 0 };
 
-            if visible_plot_count == 0 {
+            if visible_count == 0 {
                 ui.label("Enable a trace to see plots.");
             } else {
                 let total_height = ui.available_height();
-                // First plot gets half the space, rest split the remainder.
-                let primary_height = if visible_plot_count == 1 {
+                let primary_height = if visible_count == 1 {
                     total_height
                 } else {
                     total_height * 0.5
                 };
-                let secondary_height = if visible_plot_count > 1 {
-                    (total_height - primary_height) / (visible_plot_count - 1).max(1) as f32
+                let secondary_height = if visible_count > 1 {
+                    (total_height - primary_height) / (visible_count - 1).max(1) as f32
                 } else {
                     0.0
                 };
 
-                // Signal plot (main, 0-1 range).
                 if any_signal {
                     let scales: Option<Vec<f32>> = if self.normalize_enabled {
                         Some(self.running_max.iter().map(|m| 1.0 / m).collect())
                     } else {
                         None
                     };
-
-                    let height = if visible_plot_count == 1 || (!self.trim_trace_enabled && !self.spectrum_visible) {
+                    let height = if visible_count == 1 {
                         total_height
                     } else {
                         primary_height
                     };
-
                     self.signal_plot.ui_with_options(
                         ui,
                         "audio_signals",
@@ -643,15 +683,11 @@ impl eframe::App for AudioVisApp {
                     );
                 }
 
-                // Gain plot (linked X, dB Y axis).
                 if self.trim_trace_enabled {
-                    use egui_plot::AxisHints;
-
                     let db_axis = AxisHints::new_y().formatter(|mark, _range| {
                         let db = 20.0 * (mark.value as f32).log10();
                         format!("{:+.0} dB", db)
                     });
-
                     self.trim_plot.ui_with_options(
                         ui,
                         "gain_plot",
@@ -663,7 +699,6 @@ impl eframe::App for AudioVisApp {
                     );
                 }
 
-                // Spectrum plot (frequency domain).
                 if self.spectrum_visible {
                     let snap = self.spectral_snapshot.load();
                     let height = if !any_signal && !self.trim_trace_enabled {
@@ -671,22 +706,12 @@ impl eframe::App for AudioVisApp {
                     } else {
                         secondary_height
                     };
-                    Self::render_spectrum_plot(
-                        ui,
-                        &snap,
-                        height,
-                        self.spectrum_1f_weighted,
-                        self.spectrum_log_freq,
-                        self.spectrum_y_max,
-                    );
+                    Self::render_spectrum(ui, &snap, height, self.spectrum_y_max);
                 }
             }
         });
 
-        // Peak info bar hidden — exploring mass-distribution approach.
-        // self.render_spectrum_info(ctx);
-
-        // Apply pending device change (from the GUI device selector).
+        // Apply pending device change.
         if let Some(device) = self.pending_device.take() {
             self._input = device.map(|name| {
                 tunnels_audio::reconnect::ReconnectingInput::new(
