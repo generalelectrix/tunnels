@@ -85,13 +85,12 @@ fn create_monitor_output(
 /// Approximate update rate of the envelope (once per audio buffer, ~1kHz).
 const ENVELOPE_SAMPLE_RATE: f64 = 1000.0;
 
-/// 3 base + 6 steered + 8 wavelet raw + 8 D4 norm + 8 D8 norm.
+/// 3 base + 6 steered + 8 wavelet raw + 8 wavelet normalized.
 const NUM_BASE_TRACES: usize = 3;
 const NUM_STEERED_START: usize = NUM_BASE_TRACES;
 const NUM_WAVELET_START: usize = NUM_BASE_TRACES + STEERED_FILTER_COUNT;
-const NUM_D4_NORM_START: usize = NUM_WAVELET_START + NUM_BANDS;
-const NUM_D8_NORM_START: usize = NUM_D4_NORM_START + NUM_BANDS;
-const NUM_SIGNAL_TRACES: usize = NUM_D8_NORM_START + NUM_BANDS;
+const NUM_WAVELET_NORM_START: usize = NUM_WAVELET_START + NUM_BANDS;
+const NUM_SIGNAL_TRACES: usize = NUM_WAVELET_NORM_START + NUM_BANDS;
 
 struct TraceConfig {
     label: &'static str,
@@ -120,24 +119,15 @@ const SIGNAL_TRACE_CONFIGS: [TraceConfig; NUM_SIGNAL_TRACES] = [
     TraceConfig { label: "375-750", color: Color32::from_rgb(80, 120, 255), default_enabled: false },
     TraceConfig { label: "187-375", color: Color32::from_rgb(180, 80, 255), default_enabled: false },
     TraceConfig { label: "<187", color: Color32::from_rgb(160, 160, 160), default_enabled: false },
-    // D4 normalized — solid colors, on by default.
-    TraceConfig { label: "D4 12-24k", color: Color32::from_rgb(255, 60, 60), default_enabled: true },
-    TraceConfig { label: "D4 6-12k", color: Color32::from_rgb(255, 160, 40), default_enabled: true },
-    TraceConfig { label: "D4 3-6k", color: Color32::from_rgb(255, 240, 60), default_enabled: true },
-    TraceConfig { label: "D4 1.5-3k", color: Color32::from_rgb(60, 255, 120), default_enabled: true },
-    TraceConfig { label: "D4 750-1.5k", color: Color32::from_rgb(60, 220, 255), default_enabled: true },
-    TraceConfig { label: "D4 375-750", color: Color32::from_rgb(80, 120, 255), default_enabled: true },
-    TraceConfig { label: "D4 187-375", color: Color32::from_rgb(180, 80, 255), default_enabled: true },
-    TraceConfig { label: "D4 <187", color: Color32::from_rgb(160, 160, 160), default_enabled: true },
-    // D8 normalized — dimmer versions for overlay comparison, off by default.
-    TraceConfig { label: "D8 12-24k", color: Color32::from_rgb(180, 40, 40), default_enabled: false },
-    TraceConfig { label: "D8 6-12k", color: Color32::from_rgb(180, 110, 30), default_enabled: false },
-    TraceConfig { label: "D8 3-6k", color: Color32::from_rgb(180, 170, 40), default_enabled: false },
-    TraceConfig { label: "D8 1.5-3k", color: Color32::from_rgb(40, 180, 80), default_enabled: false },
-    TraceConfig { label: "D8 750-1.5k", color: Color32::from_rgb(40, 155, 180), default_enabled: false },
-    TraceConfig { label: "D8 375-750", color: Color32::from_rgb(55, 85, 180), default_enabled: false },
-    TraceConfig { label: "D8 187-375", color: Color32::from_rgb(130, 55, 180), default_enabled: false },
-    TraceConfig { label: "D8 <187", color: Color32::from_rgb(110, 110, 110), default_enabled: false },
+    // Wavelet band envelopes (normalized) — same colors, on by default.
+    TraceConfig { label: "N 12-24k", color: Color32::from_rgb(255, 60, 60), default_enabled: true },
+    TraceConfig { label: "N 6-12k", color: Color32::from_rgb(255, 160, 40), default_enabled: true },
+    TraceConfig { label: "N 3-6k", color: Color32::from_rgb(255, 240, 60), default_enabled: true },
+    TraceConfig { label: "N 1.5-3k", color: Color32::from_rgb(60, 255, 120), default_enabled: true },
+    TraceConfig { label: "N 750-1.5k", color: Color32::from_rgb(60, 220, 255), default_enabled: true },
+    TraceConfig { label: "N 375-750", color: Color32::from_rgb(80, 120, 255), default_enabled: true },
+    TraceConfig { label: "N 187-375", color: Color32::from_rgb(180, 80, 255), default_enabled: true },
+    TraceConfig { label: "N <187", color: Color32::from_rgb(160, 160, 160), default_enabled: true },
 ];
 
 const GAIN_TRACE_COLOR: Color32 = Color32::from_rgb(200, 160, 60);
@@ -240,10 +230,8 @@ impl AudioVisApp {
         for i in 0..NUM_BANDS {
             signal_read_positions[NUM_WAVELET_START + i] =
                 processor_settings.wavelet_histories[i].write_pos();
-            signal_read_positions[NUM_D4_NORM_START + i] =
-                processor_settings.wavelet_d4_norm_histories[i].write_pos();
-            signal_read_positions[NUM_D8_NORM_START + i] =
-                processor_settings.wavelet_d8_norm_histories[i].write_pos();
+            signal_read_positions[NUM_WAVELET_NORM_START + i] =
+                processor_settings.wavelet_norm_histories[i].write_pos();
         }
         let gain_read_position = processor_settings.effective_gain_history.write_pos();
         let target_gain_read_position = processor_settings.target_gain_history.write_pos();
@@ -704,12 +692,10 @@ impl eframe::App for AudioVisApp {
                 base_buffers[i]
             } else if i < NUM_WAVELET_START {
                 &self.processor_settings.steered_envelope_histories[i - NUM_STEERED_START]
-            } else if i < NUM_D4_NORM_START {
+            } else if i < NUM_WAVELET_NORM_START {
                 &self.processor_settings.wavelet_histories[i - NUM_WAVELET_START]
-            } else if i < NUM_D8_NORM_START {
-                &self.processor_settings.wavelet_d4_norm_histories[i - NUM_D4_NORM_START]
             } else {
-                &self.processor_settings.wavelet_d8_norm_histories[i - NUM_D8_NORM_START]
+                &self.processor_settings.wavelet_norm_histories[i - NUM_WAVELET_NORM_START]
             }
         };
 

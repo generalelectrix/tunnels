@@ -65,12 +65,10 @@ pub struct ProcessorSettingsInner {
     /// Shared steered filter frequencies (written by spectral thread).
     /// Set at startup; None if spectral analysis is not active.
     pub shared_filter_freqs: std::sync::Mutex<Option<Arc<SharedFilterFreqs>>>,
-    /// Per-band wavelet envelope histories (raw, before normalization) — from active wavelet.
+    /// Per-band wavelet envelope histories (raw, before normalization).
     pub wavelet_histories: [SignalRingBuffer; NUM_BANDS],
-    /// D4 normalized envelope histories (always running).
-    pub wavelet_d4_norm_histories: [SignalRingBuffer; NUM_BANDS],
-    /// D8 normalized envelope histories (always running).
-    pub wavelet_d8_norm_histories: [SignalRingBuffer; NUM_BANDS],
+    /// Per-band wavelet envelope histories (after adaptive normalization).
+    pub wavelet_norm_histories: [SignalRingBuffer; NUM_BANDS],
     /// Floor tracking half-life in seconds (slow — adapts to ambient level).
     pub norm_floor_halflife: AtomicF32,
     /// Ceiling tracking half-life in seconds (moderate — tracks recent peaks).
@@ -129,14 +127,11 @@ impl Default for ProcessorSettingsInner {
             wavelet_histories: std::array::from_fn(|_| {
                 SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)
             }),
-            wavelet_d4_norm_histories: std::array::from_fn(|_| {
+            wavelet_norm_histories: std::array::from_fn(|_| {
                 SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)
             }),
-            wavelet_d8_norm_histories: std::array::from_fn(|_| {
-                SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)
-            }),
-            norm_floor_halflife: AtomicF32::new(5.0),    // 5 second default
-            norm_ceiling_halflife: AtomicF32::new(2.0),   // 2 second default
+            norm_floor_halflife: AtomicF32::new(10.0),
+            norm_ceiling_halflife: AtomicF32::new(5.0),
             norm_floor_mode: std::sync::atomic::AtomicU32::new(0),   // Average
             norm_ceiling_mode: std::sync::atomic::AtomicU32::new(1), // Limit
             monitor_freq: AtomicF32::new(0.0),
@@ -383,23 +378,14 @@ pub struct Processor {
     /// Shared steered filter frequencies from spectral thread.
     shared_filter_freqs: Option<Arc<SharedFilterFreqs>>,
 
-    // === Dual wavelet decomposition (D4 + D8 running in parallel) ===
-    wavelet_d4: WaveletDecomposition,
-    wavelet_d8: WaveletDecomposition,
-    // D4 envelope chain.
-    d4_hilberts: [HilbertTransform; NUM_BANDS],
-    d4_fast_envs: Vec<EnvelopeFollowerProcessor>,
-    d4_slow_envs: Vec<EnvelopeFollowerProcessor>,
-    d4_smoothed: [f32; NUM_BANDS],
-    d4_normalizers: [AdaptiveNormalizer; NUM_BANDS],
-    d4_contexts: Vec<AudioContext>,
-    // D8 envelope chain.
-    d8_hilberts: [HilbertTransform; NUM_BANDS],
-    d8_fast_envs: Vec<EnvelopeFollowerProcessor>,
-    d8_slow_envs: Vec<EnvelopeFollowerProcessor>,
-    d8_smoothed: [f32; NUM_BANDS],
-    d8_normalizers: [AdaptiveNormalizer; NUM_BANDS],
-    d8_contexts: Vec<AudioContext>,
+    // === Wavelet decomposition (D4) + per-band envelope extraction ===
+    wavelet: WaveletDecomposition,
+    wavelet_hilberts: [HilbertTransform; NUM_BANDS],
+    wavelet_fast_envs: Vec<EnvelopeFollowerProcessor>,
+    wavelet_slow_envs: Vec<EnvelopeFollowerProcessor>,
+    wavelet_smoothed: [f32; NUM_BANDS],
+    wavelet_normalizers: [AdaptiveNormalizer; NUM_BANDS],
+    wavelet_contexts: Vec<AudioContext>,
 
     // === Monitor HP+LP bandpass ===
     monitor_hp: [FilterProcessor<f32>; 2],
@@ -538,8 +524,8 @@ impl Processor {
             }
             (fast_envs, slow_envs, contexts)
         };
-        let (d4_fast_envs, d4_slow_envs, d4_contexts) = make_wavelet_envs(slow_attack, slow_release);
-        let (d8_fast_envs, d8_slow_envs, d8_contexts) = make_wavelet_envs(slow_attack, slow_release);
+        let (wavelet_fast_envs, wavelet_slow_envs, wavelet_contexts) =
+            make_wavelet_envs(slow_attack, slow_release);
 
         // Monitor HP+LP bandpass (mono, manual frequency control).
         let monitor_hp = make_butterworth_pair(FilterType::HighPass, 500.0, &mut context);
@@ -570,20 +556,13 @@ impl Processor {
             steered_center_hz: [0.0; STEERED_FILTER_COUNT],
             steered_q: 0.0,
             shared_filter_freqs: None,
-            wavelet_d4: WaveletDecomposition::new(WaveletType::Daubechies4),
-            wavelet_d8: WaveletDecomposition::new(WaveletType::Daubechies8),
-            d4_hilberts: std::array::from_fn(|_| HilbertTransform::new()),
-            d4_fast_envs,
-            d4_slow_envs,
-            d4_smoothed: [0.0; NUM_BANDS],
-            d4_normalizers: std::array::from_fn(|_| AdaptiveNormalizer::new()),
-            d4_contexts,
-            d8_hilberts: std::array::from_fn(|_| HilbertTransform::new()),
-            d8_fast_envs,
-            d8_slow_envs,
-            d8_smoothed: [0.0; NUM_BANDS],
-            d8_normalizers: std::array::from_fn(|_| AdaptiveNormalizer::new()),
-            d8_contexts,
+            wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
+            wavelet_hilberts: std::array::from_fn(|_| HilbertTransform::new()),
+            wavelet_fast_envs,
+            wavelet_slow_envs,
+            wavelet_smoothed: [0.0; NUM_BANDS],
+            wavelet_normalizers: std::array::from_fn(|_| AdaptiveNormalizer::new()),
+            wavelet_contexts,
             monitor_hp,
             monitor_lp,
             monitor_freq: 0.0,
@@ -626,11 +605,7 @@ impl Processor {
                 env.handle().set_attack(attack);
                 env.handle().set_release(release);
             }
-            for env in &mut self.d4_slow_envs {
-                env.handle().set_attack(attack);
-                env.handle().set_release(release);
-            }
-            for env in &mut self.d8_slow_envs {
+            for env in &mut self.wavelet_slow_envs {
                 env.handle().set_attack(attack);
                 env.handle().set_release(release);
             }
@@ -768,26 +743,18 @@ impl Processor {
                 self.steered_slow_envs[i].m_process(&mut self.context, fast_val);
             }
 
-            // Dual wavelet decomposition (D4 + D8) → per-band envelope extraction.
+            // Wavelet decomposition → per-band envelope extraction.
+            // Whitening: multiply by 2^(NUM_LEVELS - level) to correct for
+            // the 1/f power spectrum of music. Higher bands get more boost.
             {
-                let h = &mut self.d4_hilberts;
-                let fe = &mut self.d4_fast_envs;
-                let se = &mut self.d4_slow_envs;
-                let cx = &mut self.d4_contexts;
-                self.wavelet_d4.push(mono_gained, |band, sample| {
-                    let amp = h[band].envelope(sample as f64) as f32;
-                    fe[band].m_process(&mut cx[band], amp);
-                    let fv = fe[band].handle().state();
-                    se[band].m_process(&mut cx[band], fv);
-                });
-            }
-            {
-                let h = &mut self.d8_hilberts;
-                let fe = &mut self.d8_fast_envs;
-                let se = &mut self.d8_slow_envs;
-                let cx = &mut self.d8_contexts;
-                self.wavelet_d8.push(mono_gained, |band, sample| {
-                    let amp = h[band].envelope(sample as f64) as f32;
+                let h = &mut self.wavelet_hilberts;
+                let fe = &mut self.wavelet_fast_envs;
+                let se = &mut self.wavelet_slow_envs;
+                let cx = &mut self.wavelet_contexts;
+                self.wavelet.push(mono_gained, |band, sample| {
+                    let level = if band < NUM_LEVELS { band } else { NUM_LEVELS - 1 };
+                    let whiten = (1 << (NUM_LEVELS - level)) as f32;
+                    let amp = h[band].envelope((sample * whiten) as f64) as f32;
                     fe[band].m_process(&mut cx[band], amp);
                     let fv = fe[band].handle().state();
                     se[band].m_process(&mut cx[band], fv);
@@ -906,28 +873,17 @@ impl Processor {
             }
         }
 
-        // Dual wavelet envelopes → ring buffers.
-        // D4 raw goes to wavelet_histories (for raw trace display).
-        // Both D4 and D8 normalized go to their own histories.
+        // Wavelet band envelopes → raw + normalized ring buffers.
         for i in 0..NUM_BANDS {
-            // D4.
-            self.d4_normalizers[i].set_params(floor_hl, ceil_hl, update_rate);
-            let d4_env = self.d4_slow_envs[i].handle().state();
-            self.d4_smoothed[i] = coeff * self.d4_smoothed[i] + (1.0 - coeff) * d4_env;
-            let d4_norm = self.d4_normalizers[i].process(
-                self.d4_smoothed[i], floor_mode, ceil_mode,
+            self.wavelet_normalizers[i].set_params(floor_hl, ceil_hl, update_rate);
+            let env_val = self.wavelet_slow_envs[i].handle().state();
+            self.wavelet_smoothed[i] =
+                coeff * self.wavelet_smoothed[i] + (1.0 - coeff) * env_val;
+            let normalized = self.wavelet_normalizers[i].process(
+                self.wavelet_smoothed[i], floor_mode, ceil_mode,
             );
-            self.settings.wavelet_histories[i].push(self.d4_smoothed[i]);
-            self.settings.wavelet_d4_norm_histories[i].push(d4_norm);
-
-            // D8.
-            self.d8_normalizers[i].set_params(floor_hl, ceil_hl, update_rate);
-            let d8_env = self.d8_slow_envs[i].handle().state();
-            self.d8_smoothed[i] = coeff * self.d8_smoothed[i] + (1.0 - coeff) * d8_env;
-            let d8_norm = self.d8_normalizers[i].process(
-                self.d8_smoothed[i], floor_mode, ceil_mode,
-            );
-            self.settings.wavelet_d8_norm_histories[i].push(d8_norm);
+            self.settings.wavelet_histories[i].push(self.wavelet_smoothed[i]);
+            self.settings.wavelet_norm_histories[i].push(normalized);
         }
     }
 }
