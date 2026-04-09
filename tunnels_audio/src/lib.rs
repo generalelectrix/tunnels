@@ -16,6 +16,21 @@ use tunnels_lib::transient_indicator::TransientIndicator;
 use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, SharedEnvelopeHistory};
 use self::reconnect::ReconnectingInput;
 
+/// An available audio device with its display name and cpal handle.
+#[derive(Clone)]
+pub struct AudioDevice {
+    pub name: String,
+    pub device: cpal::Device,
+}
+
+impl std::fmt::Debug for AudioDevice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioDevice")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
 pub struct AudioInput {
     _input: Option<ReconnectingInput>,
     processor_settings: ProcessorSettings,
@@ -36,12 +51,16 @@ impl AudioInput {
     /// Update the monitor at about 60 fps.
     const MONITOR_UPDATE_INTERVAL: Duration = Duration::from_micros(16_667);
 
-    /// Get the names of all available input audio devices.
-    pub fn devices() -> Result<Vec<String>> {
+    /// Get all available audio devices.
+    pub fn devices() -> Result<Vec<AudioDevice>> {
         let host = cpal::default_host();
-        let devices = host.input_devices()?;
-        let device_names = devices.map(|d| d.name().unwrap_or_else(|e| e.to_string()));
-        Ok(device_names.collect())
+        Ok(host
+            .devices()?
+            .map(|d| {
+                let name = d.name().unwrap_or_else(|e| e.to_string());
+                AudioDevice { name, device: d }
+            })
+            .collect())
     }
 
     fn offline() -> Self {
@@ -56,16 +75,20 @@ impl AudioInput {
         }
     }
 
-    pub fn new(device_name: Option<String>) -> Result<Self> {
-        let device_name = match device_name {
+    pub fn new(device: Option<AudioDevice>) -> Result<Self> {
+        let device = match device {
             None => return Ok(Self::offline()),
             Some(d) => d,
         };
 
-        info!("Using audio input device {device_name}.");
+        info!("Using audio input device {}.", device.name);
 
         let processor_settings = ProcessorSettings::default();
-        let input = ReconnectingInput::new(device_name.clone(), processor_settings.clone());
+        let input = ReconnectingInput::new(
+            device.name.clone(),
+            device.device,
+            processor_settings.clone(),
+        )?;
 
         Ok(Self {
             _input: Some(input),
@@ -74,7 +97,7 @@ impl AudioInput {
             monitor: false,
             monitor_update_age: Duration::ZERO,
             clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
-            device_name,
+            device_name: device.name,
         })
     }
 
@@ -281,7 +304,7 @@ pub trait EmitStateChange {
 }
 
 /// Prompt the user to configure an audio input device.
-pub fn prompt_audio() -> Result<Option<String>> {
+pub fn prompt_audio() -> Result<Option<AudioDevice>> {
     if !prompt_bool("Use audio input?")? {
         return Ok(None);
     }
@@ -289,9 +312,11 @@ pub fn prompt_audio() -> Result<Option<String>> {
     if input_devices.is_empty() {
         bail!("No audio input devices found.");
     }
+    let names: Vec<String> = input_devices.iter().map(|d| d.name.clone()).collect();
     println!("Available devices:");
-    for (i, port) in input_devices.iter().enumerate() {
-        println!("{i}: {port}");
+    for (i, name) in names.iter().enumerate() {
+        println!("{i}: {name}");
     }
-    prompt_indexed_value("Input audio device:", &input_devices).map(Some)
+    let selected_name = prompt_indexed_value("Input audio device:", &names)?;
+    Ok(input_devices.into_iter().find(|d| d.name == selected_name))
 }

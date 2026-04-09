@@ -6,7 +6,7 @@ use cpal::SupportedBufferSize;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamError};
 use log::{info, warn};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::Duration;
 
@@ -18,12 +18,29 @@ pub struct ReconnectingInput {
 
 impl ReconnectingInput {
     /// Create a new self-reconnecting input.
-    /// Device disconnection is handled asynchronously and will attempt to
-    /// reconnect the device until this struct is dropped.
-    pub fn new(device_name: String, processor_settings: ProcessorSettings) -> Self {
-        Self {
-            stop: Some(reconnect(device_name, processor_settings)),
-        }
+    ///
+    /// The initial stream open happens on the reconnect thread (because cpal's
+    /// Stream is not Send on macOS), but this method blocks until it either
+    /// succeeds or fails, so the caller gets immediate error feedback.
+    ///
+    /// The provided `device` is used for the initial open, avoiding device
+    /// re-enumeration. On reconnection after a disconnect, the device is
+    /// looked up by name.
+    pub fn new(
+        device_name: String,
+        device: Device,
+        processor_settings: ProcessorSettings,
+    ) -> Result<Self> {
+        let (result_tx, result_rx) = channel::<Result<()>>();
+        Ok(Self {
+            stop: Some(reconnect(
+                device_name,
+                device,
+                processor_settings,
+                result_tx,
+                &result_rx,
+            )?),
+        })
     }
 }
 
@@ -40,23 +57,31 @@ type StopReconnect = Box<dyn FnOnce()>;
 /// Try to reconnect a disconnected audio input this often.
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Spawn a thread to handle device disconnection.
-/// Return a closure that can be called to terminate the input stream, blocking
-/// until it completes.
-fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> StopReconnect {
-    enum Cmd {
-        Stop,
-        Disconnected,
-    }
+enum Cmd {
+    Stop,
+    Disconnected,
+}
+
+/// Spawn the reconnect thread and perform the initial stream open on it.
+/// Blocks until the first open attempt completes, returning Err if it fails.
+fn reconnect(
+    device_name: String,
+    device: Device,
+    processor_settings: ProcessorSettings,
+    result_tx: Sender<Result<()>>,
+    result_rx: &std::sync::mpsc::Receiver<Result<()>>,
+) -> Result<StopReconnect> {
     use Cmd::*;
 
     let (send, recv) = channel::<Cmd>();
-    // Load an initial command into the queue to open input.
-    send.send(Cmd::Disconnected).unwrap();
-    let disconnected_sender = send.clone();
+    // Signal the thread to do the initial open.
+    send.send(Disconnected).unwrap();
+    let stop_sender = send.clone();
 
     let reconnect_thread = thread::spawn(move || {
-        let mut _input_stream = None;
+        let mut _input_stream: Option<Stream> = None;
+        let mut first_open = true;
+
         for event in recv {
             match event {
                 Stop => {
@@ -65,26 +90,39 @@ fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> Stop
                 }
                 Disconnected => {
                     // Drop the existing stream.
-                    {
-                        _input_stream = None;
-                    }
-                    // Try to re-open.
-                    let sender = disconnected_sender.clone();
-                    let reopen_result =
-                        create_input_stream(&device_name, processor_settings.clone(), move || {
-                            sender.send(Disconnected).ok();
-                            warn!("Audio input disconnected.");
-                        });
+                    _input_stream = None;
 
-                    match reopen_result {
+                    // For the initial open, use the device handle directly (no
+                    // enumeration). For reconnection, look up by name.
+                    let device_result = if first_open {
+                        Ok(device.clone())
+                    } else {
+                        find_device_by_name(&device_name)
+                    };
+
+                    let open_result = device_result.and_then(|d| {
+                        build_input_stream(&d, processor_settings.clone(), send.clone())
+                    });
+
+                    match open_result {
                         Ok(input) => {
-                            info!("Successfully opened audio input {device_name}.");
+                            if first_open {
+                                info!("Successfully opened audio input {device_name}.");
+                                let _ = result_tx.send(Ok(()));
+                                first_open = false;
+                            } else {
+                                info!("Successfully reopened audio input {device_name}.");
+                            }
                             _input_stream = Some(input);
                         }
                         Err(e) => {
+                            if first_open {
+                                // Report the error to the caller and exit.
+                                let _ = result_tx.send(Err(e));
+                                return;
+                            }
                             warn!("Unable to reopen audio input {device_name}: {e}.");
-                            let sender = disconnected_sender.clone();
-                            // Spawn a thread to wake us up and try again after a delay.
+                            let sender = send.clone();
                             thread::spawn(move || {
                                 thread::sleep(RECONNECT_INTERVAL);
                                 sender.send(Disconnected).ok();
@@ -96,50 +134,40 @@ fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> Stop
         }
     });
 
-    Box::new(move || {
-        send.send(Stop)
+    // Block until the initial open attempt completes on the thread.
+    let initial_result = result_rx
+        .recv()
+        .map_err(|_| anyhow::anyhow!("Audio reconnect thread exited unexpectedly"))?;
+    initial_result?;
+
+    Ok(Box::new(move || {
+        stop_sender
+            .send(Cmd::Stop)
             .expect("Sending stop to reconnect thread failed");
         reconnect_thread
             .join()
             .expect("Joining reconnect thread failed");
-    })
+    }))
 }
 
-fn open_audio_device(name: &str) -> Result<Device> {
-    let mut errors: Vec<String> = Vec::new();
+/// Find a device by name. Used only for reconnection after a disconnect.
+fn find_device_by_name(name: &str) -> Result<Device> {
     let host = cpal::default_host();
-    for input in host.input_devices()? {
-        match input.name() {
-            Ok(n) if n == name => {
-                return Ok(input);
-            }
+    for device in host.devices()? {
+        match device.name() {
+            Ok(n) if n == name => return Ok(device),
             Ok(_) => (),
-            Err(e) => {
-                errors.push(e.to_string());
-            }
+            Err(_) => (),
         }
     }
-    let mut err_msg = format!("audio input {name} not found");
-    if !errors.is_empty() {
-        err_msg = format!(
-            "{}; some device errors occurred: {}",
-            err_msg,
-            errors.join(", ")
-        )
-    }
-
-    bail!(err_msg);
+    bail!("audio device {name} not found");
 }
 
-fn create_input_stream<F>(
-    device_name: &str,
+fn build_input_stream(
+    device: &Device,
     processor_settings: ProcessorSettings,
-    mut on_disconnect: F,
-) -> Result<Stream>
-where
-    F: FnMut() + Send + 'static,
-{
-    let device = open_audio_device(device_name)?;
+    disconnect_sender: Sender<Cmd>,
+) -> Result<Stream> {
     let supported = device.default_input_config()?;
 
     // Aim for about 1 ms of audio buffering latency.
@@ -190,7 +218,8 @@ where
             eprintln!("An audio input error occurred: {err}");
         }
         StreamError::DeviceNotAvailable => {
-            on_disconnect();
+            disconnect_sender.send(Cmd::Disconnected).ok();
+            warn!("Audio input disconnected.");
         }
     };
 

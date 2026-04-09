@@ -5,7 +5,8 @@ use crate::STATUS_COLORS;
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
-    fn set_device(&mut self, device: Option<String>);
+    /// Select a device by index into the device list, or None for offline.
+    fn set_device(&mut self, device_index: Option<usize>);
     fn set_filter_cutoff(&mut self, hz: f32);
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
@@ -142,8 +143,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             });
 
         if self.state.selected_audio != prev_audio {
-            let device_name = self.state.current_audio_device();
-            self.commands.set_device(device_name);
+            self.commands.set_device(self.state.selected_audio);
         }
     }
 
@@ -151,92 +151,87 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.heading("Envelope");
         ui.add_space(4.0);
 
-        egui::Grid::new("envelope_controls_grid").show(ui, |ui| {
-            // Input gain (dB).
-            ui.label("Input gain:");
-            let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
-            if ui
-                .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
-                .changed()
-            {
-                self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
-            }
-            ui.end_row();
+        egui::Grid::new("envelope_controls_grid")
+            .min_col_width(200.0)
+            .show(ui, |ui| {
+                // Input gain (dB).
+                ui.label("Input gain:");
+                let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
+                if ui
+                    .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
+                    .changed()
+                {
+                    self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
+                }
+                ui.end_row();
 
-            // Auto-trim toggle.
-            ui.label("Auto trim:");
-            let mut enabled = self.snapshot.auto_trim_enabled;
-            if ui.checkbox(&mut enabled, "").changed() {
-                self.commands.set_auto_trim_enabled(enabled);
-            }
-            ui.end_row();
+                // Auto-trim toggle.
+                ui.label("Auto trim:");
+                let mut enabled = self.snapshot.auto_trim_enabled;
+                if ui.checkbox(&mut enabled, "").changed() {
+                    self.commands.set_auto_trim_enabled(enabled);
+                }
+                ui.end_row();
 
-            // Filter cutoff.
-            ui.label("Filter cutoff:");
-            let mut cutoff = self.snapshot.filter_cutoff_hz;
-            if ui
-                .add(
-                    egui::Slider::new(&mut cutoff, 40.0..=1040.0)
-                        .suffix(" Hz")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands.set_filter_cutoff(cutoff);
-            }
-            ui.end_row();
+                // Filter cutoff.
+                ui.label("Filter cutoff:");
+                let mut cutoff = self.snapshot.filter_cutoff_hz;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut cutoff, 40.0..=1040.0)
+                            .suffix(" Hz")
+                            .logarithmic(true),
+                    )
+                    .changed()
+                {
+                    self.commands.set_filter_cutoff(cutoff);
+                }
+                ui.end_row();
 
-            // Envelope attack.
-            ui.label("Env attack:");
-            let mut attack_ms = self.snapshot.envelope_attack.as_secs_f32() * 1000.0;
-            if ui
-                .add(
-                    egui::Slider::new(&mut attack_ms, 1.0..=256.0)
-                        .suffix(" ms")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands
-                    .set_envelope_attack(Duration::from_secs_f32(attack_ms / 1000.0));
-            }
-            ui.end_row();
+                // Envelope attack.
+                ui.label("Env attack:");
+                let mut attack_ms = self.snapshot.envelope_attack.as_secs_f32() * 1000.0;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut attack_ms, 1.0..=256.0)
+                            .suffix(" ms")
+                            .logarithmic(true),
+                    )
+                    .changed()
+                {
+                    self.commands
+                        .set_envelope_attack(Duration::from_secs_f32(attack_ms / 1000.0));
+                }
+                ui.end_row();
 
-            // Envelope release.
-            ui.label("Env release:");
-            let mut release_ms = self.snapshot.envelope_release.as_secs_f32() * 1000.0;
-            if ui
-                .add(
-                    egui::Slider::new(&mut release_ms, 1.0..=1000.0)
-                        .suffix(" ms")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands
-                    .set_envelope_release(Duration::from_secs_f32(release_ms / 1000.0));
-            }
-            ui.end_row();
+                // Envelope release.
+                ui.label("Env release:");
+                let mut release_ms = self.snapshot.envelope_release.as_secs_f32() * 1000.0;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut release_ms, 1.0..=1000.0)
+                            .suffix(" ms")
+                            .logarithmic(true),
+                    )
+                    .changed()
+                {
+                    self.commands
+                        .set_envelope_release(Duration::from_secs_f32(release_ms / 1000.0));
+                }
+                ui.end_row();
 
-            // Output smoothing.
-            ui.label("Output smooth:");
-            let mut smooth_ms = self.snapshot.output_smoothing.as_secs_f32() * 1000.0;
-            if ui
-                .add(egui::Slider::new(&mut smooth_ms, 0.0..=50.0).suffix(" ms"))
-                .changed()
-            {
-                self.commands
-                    .set_output_smoothing(Duration::from_secs_f32(smooth_ms / 1000.0));
-            }
-            ui.end_row();
-        });
-
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if ui.button("Reset").clicked() {
-                self.commands.reset_parameters();
-            }
-        });
+                // Output smoothing.
+                ui.label("Output smooth:");
+                let mut smooth_ms = self.snapshot.output_smoothing.as_secs_f32() * 1000.0;
+                if ui
+                    .add(egui::Slider::new(&mut smooth_ms, 0.0..=50.0).suffix(" ms"))
+                    .changed()
+                {
+                    self.commands
+                        .set_output_smoothing(Duration::from_secs_f32(smooth_ms / 1000.0));
+                }
+                ui.end_row();
+            });
     }
 
     fn band_and_agc_controls(&mut self, ui: &mut egui::Ui) {
@@ -247,88 +242,92 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.heading("Band / AGC");
         ui.add_space(4.0);
 
-        egui::Grid::new("band_agc_grid").show(ui, |ui| {
-            // Band selector.
-            ui.label("Active band:");
-            let mut band = self.snapshot.active_band;
-            let selected_text = BAND_LABELS
-                .get(band as usize)
-                .copied()
-                .unwrap_or("<187");
-            egui::ComboBox::from_id_salt("active_band")
-                .selected_text(selected_text)
-                .show_ui(ui, |ui| {
-                    for (i, label) in BAND_LABELS.iter().enumerate() {
-                        ui.selectable_value(&mut band, i as u32, *label);
+        egui::Grid::new("band_agc_grid")
+            .min_col_width(200.0)
+            .show(ui, |ui| {
+                // Band selector.
+                ui.label("Active band:");
+                let mut band = self.snapshot.active_band;
+                let selected_text = BAND_LABELS.get(band as usize).copied().unwrap_or("<187");
+                egui::ComboBox::from_id_salt("active_band")
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        for (i, label) in BAND_LABELS.iter().enumerate() {
+                            ui.selectable_value(&mut band, i as u32, *label);
+                        }
+                    });
+                if band != self.snapshot.active_band {
+                    self.commands.set_active_band(band);
+                }
+                ui.end_row();
+
+                // Floor half-life.
+                ui.label("Floor half-life:");
+                let mut floor_hl = self.snapshot.norm_floor_halflife;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut floor_hl, 0.5..=30.0)
+                            .suffix(" s")
+                            .logarithmic(true),
+                    )
+                    .changed()
+                {
+                    self.commands.set_norm_floor_halflife(floor_hl);
+                }
+                ui.end_row();
+
+                // Floor mode.
+                ui.label("Floor mode:");
+                ui.horizontal(|ui| {
+                    let mut mode = self.snapshot.norm_floor_mode;
+                    if ui.selectable_label(mode == 0, "Avg").clicked() {
+                        mode = 0;
+                    }
+                    if ui.selectable_label(mode == 1, "Min").clicked() {
+                        mode = 1;
+                    }
+                    if mode != self.snapshot.norm_floor_mode {
+                        self.commands.set_norm_floor_mode(mode);
                     }
                 });
-            if band != self.snapshot.active_band {
-                self.commands.set_active_band(band);
-            }
-            ui.end_row();
+                ui.end_row();
 
-            // Floor half-life.
-            ui.label("Floor half-life:");
-            let mut floor_hl = self.snapshot.norm_floor_halflife;
-            if ui
-                .add(
-                    egui::Slider::new(&mut floor_hl, 0.5..=30.0)
-                        .suffix(" s")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands.set_norm_floor_halflife(floor_hl);
-            }
-            ui.end_row();
+                // Ceiling half-life.
+                ui.label("Ceil half-life:");
+                let mut ceil_hl = self.snapshot.norm_ceiling_halflife;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut ceil_hl, 0.5..=15.0)
+                            .suffix(" s")
+                            .logarithmic(true),
+                    )
+                    .changed()
+                {
+                    self.commands.set_norm_ceiling_halflife(ceil_hl);
+                }
+                ui.end_row();
 
-            // Floor mode.
-            ui.label("Floor mode:");
-            ui.horizontal(|ui| {
-                let mut mode = self.snapshot.norm_floor_mode;
-                if ui.selectable_label(mode == 0, "Avg").clicked() {
-                    mode = 0;
-                }
-                if ui.selectable_label(mode == 1, "Min").clicked() {
-                    mode = 1;
-                }
-                if mode != self.snapshot.norm_floor_mode {
-                    self.commands.set_norm_floor_mode(mode);
-                }
+                // Ceiling mode.
+                ui.label("Ceil mode:");
+                ui.horizontal(|ui| {
+                    let mut mode = self.snapshot.norm_ceiling_mode;
+                    if ui.selectable_label(mode == 0, "Avg").clicked() {
+                        mode = 0;
+                    }
+                    if ui.selectable_label(mode == 1, "Max").clicked() {
+                        mode = 1;
+                    }
+                    if mode != self.snapshot.norm_ceiling_mode {
+                        self.commands.set_norm_ceiling_mode(mode);
+                    }
+                });
+                ui.end_row();
             });
-            ui.end_row();
 
-            // Ceiling half-life.
-            ui.label("Ceil half-life:");
-            let mut ceil_hl = self.snapshot.norm_ceiling_halflife;
-            if ui
-                .add(
-                    egui::Slider::new(&mut ceil_hl, 0.5..=15.0)
-                        .suffix(" s")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands.set_norm_ceiling_halflife(ceil_hl);
-            }
-            ui.end_row();
-
-            // Ceiling mode.
-            ui.label("Ceil mode:");
-            ui.horizontal(|ui| {
-                let mut mode = self.snapshot.norm_ceiling_mode;
-                if ui.selectable_label(mode == 0, "Avg").clicked() {
-                    mode = 0;
-                }
-                if ui.selectable_label(mode == 1, "Max").clicked() {
-                    mode = 1;
-                }
-                if mode != self.snapshot.norm_ceiling_mode {
-                    self.commands.set_norm_ceiling_mode(mode);
-                }
-            });
-            ui.end_row();
-        });
+        ui.add_space(4.0);
+        if ui.button("Reset All").clicked() {
+            self.commands.reset_parameters();
+        }
     }
 
     fn refresh_audio_devices(&mut self) {
@@ -354,7 +353,7 @@ mod tests {
     }
 
     impl AudioCommands for MockAudioCommands {
-        fn set_device(&mut self, _device: Option<String>) {}
+        fn set_device(&mut self, _device_index: Option<usize>) {}
         fn set_filter_cutoff(&mut self, _hz: f32) {}
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}

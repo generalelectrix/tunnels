@@ -95,6 +95,16 @@ impl ProcessorSettingsInner {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
+        self.gain.set(1.0);
+        self.auto_trim_enabled.set(1.0);
+        self.active_band
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.norm_floor_halflife.set(10.0);
+        self.norm_ceiling_halflife.set(5.0);
+        self.norm_floor_mode
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.norm_ceiling_mode
+            .store(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -652,7 +662,11 @@ impl Processor {
             .settings
             .active_band
             .load(std::sync::atomic::Ordering::Relaxed) as usize;
-        let active = if active >= NUM_OUTPUT_BANDS { 0 } else { active };
+        let active = if active >= NUM_OUTPUT_BANDS {
+            0
+        } else {
+            active
+        };
         self.settings.envelope.set(output_bands[active]);
     }
 }

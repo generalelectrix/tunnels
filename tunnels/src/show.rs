@@ -54,7 +54,7 @@ impl Show {
         osc_devices: Vec<OscDeviceSpec>,
         send_control_event: Sender<ControlEvent>,
         recv_control_event: Receiver<ControlEvent>,
-        audio_input_device: Option<String>,
+        audio_input_device: Option<audio::AudioDevice>,
         run_clock_service: bool,
         save_path: Option<PathBuf>,
         gui_state: Option<SharedGuiState>,
@@ -273,9 +273,7 @@ impl Show {
                 output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
                 gain_linear: ps.gain.get() as f64,
                 auto_trim_enabled: ps.auto_trim_enabled.get() > 0.5,
-                active_band: ps
-                    .active_band
-                    .load(std::sync::atomic::Ordering::Relaxed),
+                active_band: ps.active_band.load(std::sync::atomic::Ordering::Relaxed),
                 norm_floor_halflife: ps.norm_floor_halflife.get(),
                 norm_ceiling_halflife: ps.norm_ceiling_halflife.get(),
                 norm_floor_mode: ps
@@ -366,8 +364,15 @@ impl Show {
                 self.refresh_ui();
                 GuiDirty::MIDI_SLOTS
             }
-            SetAudioDevice(name) => {
-                self.audio_input = AudioInput::new(name)?;
+            SetAudioDevice(device) => {
+                self.audio_input = AudioInput::new(device)?;
+                // Re-share the envelope history handle so the GUI sees the new
+                // processor's ring buffers.
+                if let Some(gui_state) = &self.gui_state {
+                    gui_state
+                        .envelope_history
+                        .store(Arc::new(Some(self.audio_input.envelope_history())));
+                }
                 GuiDirty::AUDIO_DEVICE
             }
             AudioControl(msg) => {

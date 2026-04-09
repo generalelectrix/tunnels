@@ -3,14 +3,7 @@ use gui_common::scrolling_plot::ScrollingPlot;
 use tunnels::audio::processor::{NUM_OUTPUT_BANDS, SharedEnvelopeHistory};
 
 const BAND_LABELS: [&str; NUM_OUTPUT_BANDS] = [
-    "<187",
-    "187-375",
-    "375-750",
-    "750-1.5k",
-    "1.5-3k",
-    "3-6k",
-    "6-12k",
-    "12-24k",
+    "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
 ];
 
 const BAND_COLORS: [Color32; NUM_OUTPUT_BANDS] = [
@@ -107,8 +100,8 @@ impl EnvelopeViewerState {
         }
         self.plot.trim(now);
 
-        // Render the plot.
-        let height = 200.0_f32;
+        // Render the plot — fill remaining vertical space, minimum 150px.
+        let height = ui.available_height().max(150.0);
         self.plot.ui_with_options(
             ui,
             "envelope_viewer",
@@ -118,6 +111,9 @@ impl EnvelopeViewerState {
             Some(height),
             None, // no custom Y axis
         );
+
+        // Continuously repaint while the viewer is open.
+        ui.ctx().request_repaint();
 
         true
     }
