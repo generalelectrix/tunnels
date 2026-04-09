@@ -15,7 +15,6 @@ members = [
     "minusmq",
     "bonsoir",
     "bootstrap-deploy",
-    "audio_vis",
 ]
 
 [workspace.package]

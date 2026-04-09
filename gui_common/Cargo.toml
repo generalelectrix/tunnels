@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 eframe = "0.33"
+egui_plot = "0.34"
 midi_harness = { path = "../midi_harness" }
 
 [dev-dependencies]
