@@ -14,8 +14,10 @@ use log::debug;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::band_steering::{STEERED_FILTER_COUNT, SharedFilterFreqs};
 use crate::hilbert::HilbertTransform;
 use crate::ring_buffer::SignalRingBuffer;
+use crate::wavelet::{NUM_BANDS, NUM_LEVELS, WaveletDecomposition, WaveletType};
 
 /// 16384 slots ≈ 16 seconds of history at ~1kHz buffer rate.
 const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
@@ -23,6 +25,10 @@ const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 /// Fast envelope follower: catches every peak within a cycle.
 const FAST_ATTACK: Duration = Duration::from_millis(1);
 const FAST_RELEASE: Duration = Duration::new(0, 4_000_000); // 4ms
+
+/// 4th-order Butterworth HP+LP bandpass: 2 biquad stages per slope.
+/// Q values for 4th-order Butterworth SOS decomposition.
+const BUTTERWORTH_4_Q: [f32; 2] = [0.5412, 1.3066];
 
 pub struct ProcessorSettingsInner {
     /// Current envelope value for the show loop.
@@ -48,10 +54,36 @@ pub struct ProcessorSettingsInner {
     pub input_peak_history: SignalRingBuffer,
     /// Envelope after symmetric output smoothing.
     pub smoothed_history: SignalRingBuffer,
+    /// Lowpass envelope after adaptive normalization.
+    pub lowpass_norm_history: SignalRingBuffer,
     /// Effective input gain over time.
     pub effective_gain_history: SignalRingBuffer,
     /// Target gain the AGC is slewing toward.
     pub target_gain_history: SignalRingBuffer,
+    /// Per steered-filter envelope histories for visualization.
+    pub steered_envelope_histories: [SignalRingBuffer; STEERED_FILTER_COUNT],
+    /// Shared steered filter frequencies (written by spectral thread).
+    /// Set at startup; None if spectral analysis is not active.
+    pub shared_filter_freqs: std::sync::Mutex<Option<Arc<SharedFilterFreqs>>>,
+    /// Per-band wavelet envelope histories (raw, before normalization) — from active wavelet.
+    pub wavelet_histories: [SignalRingBuffer; NUM_BANDS],
+    /// D4 normalized envelope histories (always running).
+    pub wavelet_d4_norm_histories: [SignalRingBuffer; NUM_BANDS],
+    /// D8 normalized envelope histories (always running).
+    pub wavelet_d8_norm_histories: [SignalRingBuffer; NUM_BANDS],
+    /// Floor tracking half-life in seconds (slow — adapts to ambient level).
+    pub norm_floor_halflife: AtomicF32,
+    /// Ceiling tracking half-life in seconds (moderate — tracks recent peaks).
+    pub norm_ceiling_halflife: AtomicF32,
+    /// Floor tracking mode: 0 = Average, 1 = Limit (min-tracking).
+    pub norm_floor_mode: std::sync::atomic::AtomicU32,
+    /// Ceiling tracking mode: 0 = Average, 1 = Limit (max-tracking).
+    pub norm_ceiling_mode: std::sync::atomic::AtomicU32,
+    /// Monitor bandpass center frequency in Hz. 0 = monitor disabled.
+    pub monitor_freq: AtomicF32,
+    /// Lock-free ring buffer for monitor audio (input callback writes,
+    /// output callback reads). Sized for ~100ms at 48kHz.
+    pub monitor_ring: SignalRingBuffer,
     /// Channel for sending mono-mixed audio buffers to the spectral analysis thread.
     /// Set by the spectral system at startup; None if spectral analysis is not active.
     pub spectral_sender: std::sync::Mutex<Option<std::sync::mpsc::SyncSender<Vec<f32>>>>,
@@ -87,8 +119,28 @@ impl Default for ProcessorSettingsInner {
             envelope_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
             input_peak_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
             smoothed_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
+            lowpass_norm_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
             effective_gain_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
             target_gain_history: SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY),
+            steered_envelope_histories: std::array::from_fn(|_| {
+                SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)
+            }),
+            shared_filter_freqs: std::sync::Mutex::new(None),
+            wavelet_histories: std::array::from_fn(|_| {
+                SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)
+            }),
+            wavelet_d4_norm_histories: std::array::from_fn(|_| {
+                SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)
+            }),
+            wavelet_d8_norm_histories: std::array::from_fn(|_| {
+                SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)
+            }),
+            norm_floor_halflife: AtomicF32::new(5.0),    // 5 second default
+            norm_ceiling_halflife: AtomicF32::new(2.0),   // 2 second default
+            norm_floor_mode: std::sync::atomic::AtomicU32::new(0),   // Average
+            norm_ceiling_mode: std::sync::atomic::AtomicU32::new(1), // Limit
+            monitor_freq: AtomicF32::new(0.0),
+            monitor_ring: SignalRingBuffer::new(8192), // ~170ms at 48kHz
             spectral_sender: std::sync::Mutex::new(None),
         }
     }
@@ -178,6 +230,121 @@ impl AutoTrim {
     }
 }
 
+/// Tracking mode for floor/ceiling.
+/// - Average: asymmetric EMA tracking the general level
+/// - Limit: tracks the instantaneous min (floor) or max (ceiling) with slow decay
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TrackingMode {
+    Average = 0,
+    Limit = 1,
+}
+
+impl TrackingMode {
+    pub fn from_u32(v: u32) -> Self {
+        if v == 1 { Self::Limit } else { Self::Average }
+    }
+}
+
+/// Adaptive envelope normalizer: tracks a floor and ceiling,
+/// outputs `(envelope - floor) / (ceiling - floor)` clamped to [0, 1].
+struct AdaptiveNormalizer {
+    floor: f32,
+    ceiling: f32,
+    /// EMA coefficients for average-mode floor tracking.
+    floor_rise_coeff: f32,
+    floor_fall_coeff: f32,
+    /// EMA coefficient for limit-mode floor (slow rise from minimum).
+    floor_limit_rise_coeff: f32,
+    /// EMA coefficient for ceiling decay.
+    ceiling_fall_coeff: f32,
+}
+
+impl AdaptiveNormalizer {
+    /// Minimum range between floor and ceiling. This caps the maximum gain
+    /// at 1/MIN_RANGE. With normalized input (~unity), 0.333 = max 3× gain.
+    const MIN_RANGE: f32 = 0.333;
+
+    fn new() -> Self {
+        Self {
+            floor: 0.0,
+            ceiling: 0.001,
+            floor_rise_coeff: 0.999,
+            floor_fall_coeff: 0.99,
+            floor_limit_rise_coeff: 0.999,
+            ceiling_fall_coeff: 0.999,
+        }
+    }
+
+    fn set_params(&mut self, floor_halflife: f32, ceiling_halflife: f32, update_rate: f32) {
+        if update_rate <= 0.0 {
+            return;
+        }
+        // Average mode: slow rise, faster fall.
+        self.floor_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_fall_coeff = Self::halflife_to_coeff(floor_halflife * 0.2, update_rate);
+        // Limit mode: instant drop to min, slow rise back.
+        self.floor_limit_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
+        // Ceiling: instant attack, decays at ceiling halflife.
+        self.ceiling_fall_coeff = Self::halflife_to_coeff(ceiling_halflife, update_rate);
+    }
+
+    fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
+        if halflife_secs <= 0.0 {
+            return 0.0;
+        }
+        (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
+    }
+
+    #[inline]
+    fn process(
+        &mut self,
+        envelope: f32,
+        floor_mode: TrackingMode,
+        ceiling_mode: TrackingMode,
+    ) -> f32 {
+        // Update floor.
+        match floor_mode {
+            TrackingMode::Average => {
+                let coeff = if envelope > self.floor {
+                    self.floor_rise_coeff
+                } else {
+                    self.floor_fall_coeff
+                };
+                self.floor = coeff * self.floor + (1.0 - coeff) * envelope;
+            }
+            TrackingMode::Limit => {
+                if envelope < self.floor {
+                    self.floor = envelope; // instant drop to minimum
+                } else {
+                    self.floor = self.floor_limit_rise_coeff * self.floor
+                        + (1.0 - self.floor_limit_rise_coeff) * envelope;
+                }
+            }
+        }
+
+        // Update ceiling.
+        match ceiling_mode {
+            TrackingMode::Average => {
+                // Symmetric EMA — same speed up and down.
+                self.ceiling = self.ceiling_fall_coeff * self.ceiling
+                    + (1.0 - self.ceiling_fall_coeff) * envelope;
+            }
+            TrackingMode::Limit => {
+                if envelope > self.ceiling {
+                    self.ceiling = envelope; // instant rise to maximum
+                } else {
+                    self.ceiling = self.ceiling_fall_coeff * self.ceiling
+                        + (1.0 - self.ceiling_fall_coeff) * envelope;
+                }
+            }
+        }
+
+        let range = (self.ceiling - self.floor).max(Self::MIN_RANGE);
+        ((envelope - self.floor) / range).clamp(0.0, 1.0)
+    }
+}
+
 pub struct Processor {
     settings: ProcessorSettings,
     filter_cutoff: f32,
@@ -194,14 +361,102 @@ pub struct Processor {
     /// Symmetric one-pole smoother state (one value, not per-channel —
     /// applied after the per-channel envelopes are averaged).
     smoothed_value: f32,
+    /// Adaptive normalizer for the lowpass envelope.
+    lowpass_normalizer: AdaptiveNormalizer,
     /// Cached smoother coefficient, recomputed when output_smoothing changes.
     smooth_coeff: f32,
     smooth_time: f32,
 
     /// Automatic input gain trim.
     auto_trim: AutoTrim,
+
+    // === Steered HP+LP bandpass filter chains (mono) ===
+    /// Each entry: [hp_stage_0, hp_stage_1, lp_stage_0, lp_stage_1]
+    steered_hp: Vec<[FilterProcessor<f32>; 2]>,
+    steered_lp: Vec<[FilterProcessor<f32>; 2]>,
+    steered_hilberts: Vec<HilbertTransform>,
+    steered_fast_envs: Vec<EnvelopeFollowerProcessor>,
+    steered_slow_envs: Vec<EnvelopeFollowerProcessor>,
+    steered_smoothed: [f32; STEERED_FILTER_COUNT],
+    steered_center_hz: [f32; STEERED_FILTER_COUNT],
+    steered_q: f32,
+    /// Shared steered filter frequencies from spectral thread.
+    shared_filter_freqs: Option<Arc<SharedFilterFreqs>>,
+
+    // === Dual wavelet decomposition (D4 + D8 running in parallel) ===
+    wavelet_d4: WaveletDecomposition,
+    wavelet_d8: WaveletDecomposition,
+    // D4 envelope chain.
+    d4_hilberts: [HilbertTransform; NUM_BANDS],
+    d4_fast_envs: Vec<EnvelopeFollowerProcessor>,
+    d4_slow_envs: Vec<EnvelopeFollowerProcessor>,
+    d4_smoothed: [f32; NUM_BANDS],
+    d4_normalizers: [AdaptiveNormalizer; NUM_BANDS],
+    d4_contexts: Vec<AudioContext>,
+    // D8 envelope chain.
+    d8_hilberts: [HilbertTransform; NUM_BANDS],
+    d8_fast_envs: Vec<EnvelopeFollowerProcessor>,
+    d8_slow_envs: Vec<EnvelopeFollowerProcessor>,
+    d8_smoothed: [f32; NUM_BANDS],
+    d8_normalizers: [AdaptiveNormalizer; NUM_BANDS],
+    d8_contexts: Vec<AudioContext>,
+
+    // === Monitor HP+LP bandpass ===
+    monitor_hp: [FilterProcessor<f32>; 2],
+    monitor_lp: [FilterProcessor<f32>; 2],
+    monitor_freq: f32,
+
     /// Channel to send mono buffers to the spectral thread.
     spectral_sender: Option<std::sync::mpsc::SyncSender<Vec<f32>>>,
+}
+
+/// Compute HP and LP cutoff frequencies from center frequency and Q.
+/// Symmetric in log-frequency space.
+fn bandpass_cutoffs(center_hz: f32, q: f32) -> (f32, f32) {
+    let q = q.clamp(0.5, 2.0); // 0.5-2.0 octave bandwidth range
+    let half_bw = 1.0 / (2.0 * q); // half-bandwidth in octaves
+    let hp_hz = center_hz / 2.0_f32.powf(half_bw);
+    let lp_hz = center_hz * 2.0_f32.powf(half_bw);
+    (hp_hz, lp_hz)
+}
+
+/// Create a 4th-order Butterworth HP or LP as two biquad stages.
+fn make_butterworth_pair(
+    filter_type: FilterType,
+    cutoff: f32,
+    context: &mut AudioContext,
+) -> [FilterProcessor<f32>; 2] {
+    let mut stages: [FilterProcessor<f32>; 2] = [
+        FilterProcessor::new(filter_type),
+        FilterProcessor::new(filter_type),
+    ];
+    for (i, stage) in stages.iter_mut().enumerate() {
+        stage.set_cutoff(cutoff);
+        stage.set_q(BUTTERWORTH_4_Q[i]);
+        stage.m_prepare(context);
+    }
+    stages
+}
+
+/// Update cutoff and Q on a Butterworth pair.
+fn update_butterworth_pair(stages: &mut [FilterProcessor<f32>; 2], cutoff: f32) {
+    for (i, stage) in stages.iter_mut().enumerate() {
+        stage.set_cutoff(cutoff);
+        stage.set_q(BUTTERWORTH_4_Q[i]);
+    }
+}
+
+/// Process a sample through a Butterworth pair (2 cascaded stages).
+fn process_butterworth_pair(
+    stages: &mut [FilterProcessor<f32>; 2],
+    context: &mut AudioContext,
+    sample: f32,
+) -> f32 {
+    let mut s = sample;
+    for stage in stages.iter_mut() {
+        s = stage.m_process(context, s);
+    }
+    s
 }
 
 fn make_envelope(
@@ -247,6 +502,49 @@ impl Processor {
             slow_envelopes.push(make_envelope(&mut context, slow_attack, slow_release));
         }
 
+        // Initialize steered HP+LP bandpass chains (mono, one per steered filter).
+        let mut steered_hp = Vec::with_capacity(STEERED_FILTER_COUNT);
+        let mut steered_lp = Vec::with_capacity(STEERED_FILTER_COUNT);
+        let mut steered_hilberts = Vec::with_capacity(STEERED_FILTER_COUNT);
+        let mut steered_fast_envs = Vec::with_capacity(STEERED_FILTER_COUNT);
+        let mut steered_slow_envs = Vec::with_capacity(STEERED_FILTER_COUNT);
+        for _ in 0..STEERED_FILTER_COUNT {
+            steered_hp.push(make_butterworth_pair(FilterType::HighPass, 500.0, &mut context));
+            steered_lp.push(make_butterworth_pair(FilterType::LowPass, 2000.0, &mut context));
+            steered_hilberts.push(HilbertTransform::new());
+            steered_fast_envs.push(make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE));
+            steered_slow_envs.push(make_envelope(&mut context, slow_attack, slow_release));
+        }
+
+        // Create per-band envelope chains for a wavelet decomposition.
+        let base_sr = sample_rate as f32;
+        let make_wavelet_envs = |slow_attack: Duration, slow_release: Duration| {
+            let mut fast_envs = Vec::with_capacity(NUM_BANDS);
+            let mut slow_envs = Vec::with_capacity(NUM_BANDS);
+            let mut contexts = Vec::with_capacity(NUM_BANDS);
+            for band in 0..NUM_BANDS {
+                let level = if band < NUM_LEVELS { band } else { NUM_LEVELS - 1 };
+                let band_sr = base_sr / (1 << (level + 1)) as f32;
+                let mut band_ctx: AudioContext = AudioProcessorSettings {
+                    sample_rate: band_sr,
+                    input_channels: 1,
+                    output_channels: 1,
+                    ..Default::default()
+                }
+                .into();
+                fast_envs.push(make_envelope(&mut band_ctx, FAST_ATTACK, FAST_RELEASE));
+                slow_envs.push(make_envelope(&mut band_ctx, slow_attack, slow_release));
+                contexts.push(band_ctx);
+            }
+            (fast_envs, slow_envs, contexts)
+        };
+        let (d4_fast_envs, d4_slow_envs, d4_contexts) = make_wavelet_envs(slow_attack, slow_release);
+        let (d8_fast_envs, d8_slow_envs, d8_contexts) = make_wavelet_envs(slow_attack, slow_release);
+
+        // Monitor HP+LP bandpass (mono, manual frequency control).
+        let monitor_hp = make_butterworth_pair(FilterType::HighPass, 500.0, &mut context);
+        let monitor_lp = make_butterworth_pair(FilterType::LowPass, 2000.0, &mut context);
+
         Self {
             filter_cutoff,
             envelope_attack,
@@ -259,9 +557,36 @@ impl Processor {
             fast_envelopes,
             slow_envelopes,
             smoothed_value: 0.0,
+            lowpass_normalizer: AdaptiveNormalizer::new(),
             smooth_coeff: 0.0,
             smooth_time: 0.0,
             auto_trim: AutoTrim::new(),
+            steered_hp,
+            steered_lp,
+            steered_hilberts,
+            steered_fast_envs,
+            steered_slow_envs,
+            steered_smoothed: [0.0; STEERED_FILTER_COUNT],
+            steered_center_hz: [0.0; STEERED_FILTER_COUNT],
+            steered_q: 0.0,
+            shared_filter_freqs: None,
+            wavelet_d4: WaveletDecomposition::new(WaveletType::Daubechies4),
+            wavelet_d8: WaveletDecomposition::new(WaveletType::Daubechies8),
+            d4_hilberts: std::array::from_fn(|_| HilbertTransform::new()),
+            d4_fast_envs,
+            d4_slow_envs,
+            d4_smoothed: [0.0; NUM_BANDS],
+            d4_normalizers: std::array::from_fn(|_| AdaptiveNormalizer::new()),
+            d4_contexts,
+            d8_hilberts: std::array::from_fn(|_| HilbertTransform::new()),
+            d8_fast_envs,
+            d8_slow_envs,
+            d8_smoothed: [0.0; NUM_BANDS],
+            d8_normalizers: std::array::from_fn(|_| AdaptiveNormalizer::new()),
+            d8_contexts,
+            monitor_hp,
+            monitor_lp,
+            monitor_freq: 0.0,
             spectral_sender: None,
         }
     }
@@ -294,6 +619,18 @@ impl Processor {
             let attack = Duration::from_secs_f32(new_attack);
             let release = Duration::from_secs_f32(new_release);
             for env in &mut self.slow_envelopes {
+                env.handle().set_attack(attack);
+                env.handle().set_release(release);
+            }
+            for env in &mut self.steered_slow_envs {
+                env.handle().set_attack(attack);
+                env.handle().set_release(release);
+            }
+            for env in &mut self.d4_slow_envs {
+                env.handle().set_attack(attack);
+                env.handle().set_release(release);
+            }
+            for env in &mut self.d8_slow_envs {
                 env.handle().set_attack(attack);
                 env.handle().set_release(release);
             }
@@ -338,19 +675,66 @@ impl Processor {
                 self.spectral_sender = guard.take();
             }
         }
+        // Lazily take the shared filter frequencies (once, on first buffer).
+        if self.shared_filter_freqs.is_none() {
+            if let Ok(mut guard) = self.settings.shared_filter_freqs.lock() {
+                self.shared_filter_freqs = guard.take();
+            }
+        }
+
+        // Update steered HP+LP bandpass cutoffs from spectral thread.
+        if let Some(shared) = &self.shared_filter_freqs {
+            let q = shared.q.get();
+            let q_changed = q != self.steered_q;
+            if q_changed {
+                self.steered_q = q;
+            }
+            for i in 0..STEERED_FILTER_COUNT {
+                let new_hz = shared.center_hz[i].get();
+                if new_hz > 0.0 {
+                    if new_hz != self.steered_center_hz[i] || q_changed {
+                        self.steered_center_hz[i] = new_hz;
+                        let (hp_hz, lp_hz) = bandpass_cutoffs(new_hz, q);
+                        update_butterworth_pair(&mut self.steered_hp[i], hp_hz);
+                        update_butterworth_pair(&mut self.steered_lp[i], lp_hz);
+                    }
+                }
+            }
+            // Monitor filter uses the same Q.
+            let new_monitor_freq = self.settings.monitor_freq.get();
+            if new_monitor_freq > 0.0 {
+                if new_monitor_freq != self.monitor_freq || q_changed {
+                    self.monitor_freq = new_monitor_freq;
+                    let (hp_hz, lp_hz) = bandpass_cutoffs(new_monitor_freq, q);
+                    update_butterworth_pair(&mut self.monitor_hp, hp_hz);
+                    update_butterworth_pair(&mut self.monitor_lp, lp_hz);
+                }
+            }
+        } else {
+            let new_monitor_freq = self.settings.monitor_freq.get();
+            if new_monitor_freq > 0.0 && new_monitor_freq != self.monitor_freq {
+                self.monitor_freq = new_monitor_freq;
+                let (hp_hz, lp_hz) = bandpass_cutoffs(new_monitor_freq, 10.0);
+                update_butterworth_pair(&mut self.monitor_hp, hp_hz);
+                update_butterworth_pair(&mut self.monitor_lp, lp_hz);
+            }
+        }
+        let monitor_active = self.monitor_freq > 0.0;
 
         let ch_count_f = self.channel_count as f32;
         let has_spectral = self.spectral_sender.is_some();
+        let frames = interleaved_buffer.len() / self.channel_count.max(1);
         let mut mono_buf = if has_spectral {
-            let frames = interleaved_buffer.len() / self.channel_count.max(1);
             Vec::with_capacity(frames)
         } else {
             Vec::new()
         };
 
         for frame in interleaved_buffer.chunks(self.channel_count) {
+            // Compute mono mix (used for spectral sender + steered filters).
+            let mono = frame.iter().sum::<f32>() / ch_count_f;
             if has_spectral {
-                mono_buf.push(frame.iter().sum::<f32>() / ch_count_f);
+                mono_buf.push(mono);
             }
 
             for (ch, raw_sample) in frame.iter().enumerate() {
@@ -364,6 +748,61 @@ impl Processor {
                 self.fast_envelopes[ch].m_process(&mut self.context, amplitude);
                 let fast_val = self.fast_envelopes[ch].handle().state();
                 self.slow_envelopes[ch].m_process(&mut self.context, fast_val);
+            }
+
+            // Steered HP+LP bandpass chains (mono input, gained).
+            let mono_gained = mono * effective_gain;
+            for i in 0..STEERED_FILTER_COUNT {
+                if self.steered_center_hz[i] <= 0.0 {
+                    continue;
+                }
+                let hp_out = process_butterworth_pair(
+                    &mut self.steered_hp[i], &mut self.context, mono_gained,
+                );
+                let bp_out = process_butterworth_pair(
+                    &mut self.steered_lp[i], &mut self.context, hp_out,
+                );
+                let amp = self.steered_hilberts[i].envelope(bp_out as f64) as f32;
+                self.steered_fast_envs[i].m_process(&mut self.context, amp);
+                let fast_val = self.steered_fast_envs[i].handle().state();
+                self.steered_slow_envs[i].m_process(&mut self.context, fast_val);
+            }
+
+            // Dual wavelet decomposition (D4 + D8) → per-band envelope extraction.
+            {
+                let h = &mut self.d4_hilberts;
+                let fe = &mut self.d4_fast_envs;
+                let se = &mut self.d4_slow_envs;
+                let cx = &mut self.d4_contexts;
+                self.wavelet_d4.push(mono_gained, |band, sample| {
+                    let amp = h[band].envelope(sample as f64) as f32;
+                    fe[band].m_process(&mut cx[band], amp);
+                    let fv = fe[band].handle().state();
+                    se[band].m_process(&mut cx[band], fv);
+                });
+            }
+            {
+                let h = &mut self.d8_hilberts;
+                let fe = &mut self.d8_fast_envs;
+                let se = &mut self.d8_slow_envs;
+                let cx = &mut self.d8_contexts;
+                self.wavelet_d8.push(mono_gained, |band, sample| {
+                    let amp = h[band].envelope(sample as f64) as f32;
+                    fe[band].m_process(&mut cx[band], amp);
+                    let fv = fe[band].handle().state();
+                    se[band].m_process(&mut cx[band], fv);
+                });
+            }
+
+            // Monitor HP+LP bandpass (mono) → ring buffer for output callback.
+            if monitor_active {
+                let hp_out = process_butterworth_pair(
+                    &mut self.monitor_hp, &mut self.context, mono_gained,
+                );
+                let mon_out = process_butterworth_pair(
+                    &mut self.monitor_lp, &mut self.context, hp_out,
+                );
+                self.settings.monitor_ring.push(mon_out);
             }
         }
 
@@ -397,14 +836,99 @@ impl Processor {
         let coeff = self.smooth_coeff;
         self.smoothed_value = coeff * self.smoothed_value + (1.0 - coeff) * envelope;
 
+        // Normalization params (shared between lowpass and wavelet normalizers).
+        let floor_hl = self.settings.norm_floor_halflife.get();
+        let ceil_hl = self.settings.norm_ceiling_halflife.get();
+        let frames = interleaved_buffer.len() / self.channel_count.max(1);
+        let update_rate = if frames > 0 {
+            self.context.settings.sample_rate / frames as f32
+        } else {
+            1000.0
+        };
+
+        let floor_mode = TrackingMode::from_u32(
+            self.settings.norm_floor_mode.load(std::sync::atomic::Ordering::Relaxed),
+        );
+        let ceil_mode = TrackingMode::from_u32(
+            self.settings.norm_ceiling_mode.load(std::sync::atomic::Ordering::Relaxed),
+        );
+
+        self.lowpass_normalizer.set_params(floor_hl, ceil_hl, update_rate);
+        let lowpass_norm = self.lowpass_normalizer.process(
+            self.smoothed_value, floor_mode, ceil_mode,
+        );
+
         self.settings.envelope.set(envelope);
         self.settings.envelope_history.push(envelope);
         self.settings.input_peak_history.push(input_peak);
         self.settings.smoothed_history.push(self.smoothed_value);
+        self.settings.lowpass_norm_history.push(lowpass_norm);
         self.settings.effective_gain_history.push(effective_gain);
         self.settings
             .target_gain_history
             .push(self.auto_trim.desired_gain);
+
+        // Steered filter envelopes (smoothed, one per filter).
+        // Compute smoothed values for each physical filter chain.
+        for i in 0..STEERED_FILTER_COUNT {
+            let env_val = self.steered_slow_envs[i].handle().state();
+            self.steered_smoothed[i] =
+                coeff * self.steered_smoothed[i] + (1.0 - coeff) * env_val;
+        }
+        // Output to ring buffers sorted by frequency within each lane,
+        // so that output 0 is always the lowest-frequency filter. The
+        // physical filter chains keep their identity (no state disruption).
+        {
+            use crate::band_steering::STEERED_FILTER_LAYOUT;
+            let mut sorted_idx: [usize; STEERED_FILTER_COUNT] =
+                std::array::from_fn(|i| i);
+            let mut lane_start = 0;
+            let mut current_lane = STEERED_FILTER_LAYOUT[0].0;
+            for i in 1..=STEERED_FILTER_COUNT {
+                let next_lane = if i < STEERED_FILTER_COUNT {
+                    STEERED_FILTER_LAYOUT[i].0
+                } else {
+                    usize::MAX
+                };
+                if next_lane != current_lane {
+                    sorted_idx[lane_start..i].sort_by(|&a, &b| {
+                        self.steered_center_hz[a]
+                            .partial_cmp(&self.steered_center_hz[b])
+                            .unwrap()
+                    });
+                    lane_start = i;
+                    current_lane = next_lane;
+                }
+            }
+            for (out_idx, &phys_idx) in sorted_idx.iter().enumerate() {
+                self.settings.steered_envelope_histories[out_idx]
+                    .push(self.steered_smoothed[phys_idx]);
+            }
+        }
+
+        // Dual wavelet envelopes → ring buffers.
+        // D4 raw goes to wavelet_histories (for raw trace display).
+        // Both D4 and D8 normalized go to their own histories.
+        for i in 0..NUM_BANDS {
+            // D4.
+            self.d4_normalizers[i].set_params(floor_hl, ceil_hl, update_rate);
+            let d4_env = self.d4_slow_envs[i].handle().state();
+            self.d4_smoothed[i] = coeff * self.d4_smoothed[i] + (1.0 - coeff) * d4_env;
+            let d4_norm = self.d4_normalizers[i].process(
+                self.d4_smoothed[i], floor_mode, ceil_mode,
+            );
+            self.settings.wavelet_histories[i].push(self.d4_smoothed[i]);
+            self.settings.wavelet_d4_norm_histories[i].push(d4_norm);
+
+            // D8.
+            self.d8_normalizers[i].set_params(floor_hl, ceil_hl, update_rate);
+            let d8_env = self.d8_slow_envs[i].handle().state();
+            self.d8_smoothed[i] = coeff * self.d8_smoothed[i] + (1.0 - coeff) * d8_env;
+            let d8_norm = self.d8_normalizers[i].process(
+                self.d8_smoothed[i], floor_mode, ceil_mode,
+            );
+            self.settings.wavelet_d8_norm_histories[i].push(d8_norm);
+        }
     }
 }
 

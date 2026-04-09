@@ -76,6 +76,36 @@ impl SignalRingBuffer {
         *last_read_pos = current_write;
     }
 
+    /// Read up to `dest.len()` samples into a slice, returning the number
+    /// of samples actually written. Fills the remainder with 0.0 on underrun.
+    /// Called from the output audio callback (single consumer).
+    ///
+    /// `last_read_pos` is caller-owned state tracking where we left off.
+    pub fn read_into_slice(&self, dest: &mut [f32], last_read_pos: &mut usize) -> usize {
+        let current_write = self.write_pos.load(Ordering::Acquire);
+        let available = current_write.wrapping_sub(*last_read_pos);
+
+        // If we've fallen behind, skip to the most recent data.
+        let start = if available > self.capacity {
+            current_write - self.capacity
+        } else {
+            *last_read_pos
+        };
+        let available = current_write.wrapping_sub(start);
+
+        let to_read = available.min(dest.len());
+        for i in 0..to_read {
+            let index = start.wrapping_add(i) & (self.capacity - 1);
+            dest[i] = self.buffer[index].get();
+        }
+        // Fill remainder with silence.
+        for s in &mut dest[to_read..] {
+            *s = 0.0;
+        }
+        *last_read_pos = start.wrapping_add(to_read);
+        to_read
+    }
+
     /// Return the current write position (for initializing a consumer's last_read_pos).
     pub fn write_pos(&self) -> usize {
         self.write_pos.load(Ordering::Acquire)

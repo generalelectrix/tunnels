@@ -606,6 +606,7 @@ name = "audio_vis"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cpal",
  "eframe",
  "egui_kittest",
  "egui_plot",

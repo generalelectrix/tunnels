@@ -9,6 +9,35 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use audio_processor_traits::AtomicF32;
+
+/// Total number of steered filters across all lanes (2 + 2 + 2).
+pub const STEERED_FILTER_COUNT: usize = 6;
+
+/// Per-filter info: (lane_index, filter_index_within_lane).
+/// Matches the iteration order in BandSteering.
+pub const STEERED_FILTER_LAYOUT: [(usize, usize); STEERED_FILTER_COUNT] = [
+    (0, 0), (0, 1), // low-mid lane, 2 filters
+    (1, 0), (1, 1), // mid lane, 2 filters
+    (2, 0), (2, 1), // high lane, 2 filters
+];
+
+/// Shared atomic state for steered filter frequencies — written by the
+/// spectral thread, read by the audio callback to configure bandpass filters.
+pub struct SharedFilterFreqs {
+    pub center_hz: [AtomicF32; STEERED_FILTER_COUNT],
+    pub q: AtomicF32,
+}
+
+impl SharedFilterFreqs {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            center_hz: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            q: AtomicF32::new(DEFAULT_Q),
+        })
+    }
+}
+
 /// Configuration for a lane — a frequency region containing steerable filters.
 #[derive(Debug, Clone)]
 pub struct LaneConfig {
@@ -78,20 +107,48 @@ pub struct FilterSnapshot {
     pub lane_index: usize,
 }
 
-impl FilterSnapshot {
-    /// Compute the magnitude response of an RBJ bandpass filter at the given
-    /// frequency. Returns a value in [0, 1] where 1 = full passthrough.
-    pub fn response_at(&self, freq_hz: f32, sample_rate: f32, q: f32) -> f32 {
-        let w0 = 2.0 * std::f32::consts::PI * self.center_hz / sample_rate;
-        let alpha = w0.sin() / (2.0 * q);
+/// Q values for 4th-order Butterworth SOS decomposition.
+const BUTTERWORTH_4_Q: [f32; 2] = [0.5412, 1.3066];
 
-        let b0 = alpha;
-        let b1 = 0.0_f32;
-        let b2 = -alpha;
+impl FilterSnapshot {
+    /// Compute the magnitude response of a single RBJ biquad (LP or HP) at
+    /// the given frequency.
+    fn biquad_lp_response(cutoff_hz: f32, biquad_q: f32, freq_hz: f32, sample_rate: f32) -> f32 {
+        let w0 = 2.0 * std::f32::consts::PI * cutoff_hz / sample_rate;
+        let alpha = w0.sin() / (2.0 * biquad_q);
+        let cos_w0 = w0.cos();
+
+        // RBJ lowpass coefficients.
+        let b0 = (1.0 - cos_w0) / 2.0;
+        let b1 = 1.0 - cos_w0;
+        let b2 = (1.0 - cos_w0) / 2.0;
         let a0 = 1.0 + alpha;
-        let a1 = -2.0 * w0.cos();
+        let a1 = -2.0 * cos_w0;
         let a2 = 1.0 - alpha;
 
+        Self::eval_biquad(b0, b1, b2, a0, a1, a2, freq_hz, sample_rate)
+    }
+
+    fn biquad_hp_response(cutoff_hz: f32, biquad_q: f32, freq_hz: f32, sample_rate: f32) -> f32 {
+        let w0 = 2.0 * std::f32::consts::PI * cutoff_hz / sample_rate;
+        let alpha = w0.sin() / (2.0 * biquad_q);
+        let cos_w0 = w0.cos();
+
+        // RBJ highpass coefficients.
+        let b0 = (1.0 + cos_w0) / 2.0;
+        let b1 = -(1.0 + cos_w0);
+        let b2 = (1.0 + cos_w0) / 2.0;
+        let a0 = 1.0 + alpha;
+        let a1 = -2.0 * cos_w0;
+        let a2 = 1.0 - alpha;
+
+        Self::eval_biquad(b0, b1, b2, a0, a1, a2, freq_hz, sample_rate)
+    }
+
+    fn eval_biquad(
+        b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32,
+        freq_hz: f32, sample_rate: f32,
+    ) -> f32 {
         let w = 2.0 * std::f32::consts::PI * freq_hz / sample_rate;
         let cos_w = w.cos();
         let cos_2w = (2.0 * w).cos();
@@ -112,6 +169,23 @@ impl FilterSnapshot {
             0.0
         }
     }
+
+    /// Compute the magnitude response of the 4th-order Butterworth HP+LP
+    /// bandpass at the given frequency. Matches the processor's filter chain.
+    pub fn response_at(&self, freq_hz: f32, sample_rate: f32, q: f32) -> f32 {
+        // Derive HP and LP cutoffs from center + Q (same formula as processor).
+        let half_bw = 1.0 / (2.0 * q);
+        let hp_hz = self.center_hz / 2.0_f32.powf(half_bw);
+        let lp_hz = self.center_hz * 2.0_f32.powf(half_bw);
+
+        // 4th-order Butterworth = 2 cascaded biquad stages per slope.
+        let mut response = 1.0_f32;
+        for &bq in &BUTTERWORTH_4_Q {
+            response *= Self::biquad_hp_response(hp_hz, bq, freq_hz, sample_rate);
+            response *= Self::biquad_lp_response(lp_hz, bq, freq_hz, sample_rate);
+        }
+        response
+    }
 }
 
 impl Default for BandSteeringSnapshot {
@@ -128,7 +202,7 @@ impl Default for BandSteeringSnapshot {
     }
 }
 
-const DEFAULT_Q: f32 = 4.0;
+const DEFAULT_Q: f32 = 2.0; // 0.5 octave bandwidth
 const DEFAULT_DAMPING: f32 = 0.9;
 
 /// Exclusion mask is this many times wider than the convolution kernel.
@@ -153,11 +227,51 @@ fn cosine_kernel_weight(dist_bins: f32, half_width: f32) -> f32 {
     0.5 * (1.0 + (std::f32::consts::PI * d / half_width).cos())
 }
 
+/// Scoring mode for the spectral steering metric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ScoringMode {
+    /// `interest_accum² / magnitude_avg` — rewards dynamics/change.
+    InterestQuality = 0,
+    /// `magnitude / local_mean` — rewards spectral peaks regardless of dynamics.
+    SpectralContrast = 1,
+    /// `α * interest_quality + (1-α) * spectral_contrast` — tunable blend.
+    Blended = 2,
+}
+
+impl ScoringMode {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => Self::SpectralContrast,
+            2 => Self::Blended,
+            _ => Self::InterestQuality,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::InterestQuality => "Interest*Quality",
+            Self::SpectralContrast => "Spectral Contrast",
+            Self::Blended => "Blended",
+        }
+    }
+
+    pub const ALL: [ScoringMode; 3] = [
+        Self::InterestQuality,
+        Self::SpectralContrast,
+        Self::Blended,
+    ];
+}
+
 /// Shared tuning parameters — written by GUI, read by spectral thread.
 pub struct SharedSteeringParams {
     pub q: AtomicF32Wrapper,
     pub damping: AtomicF32Wrapper,
     pub reset_requested: AtomicU32,
+    /// Scoring mode (0=IQ, 1=Contrast, 2=Blended).
+    pub scoring_mode: AtomicU32,
+    /// Blend alpha for Blended mode (0.0 = pure contrast, 1.0 = pure IQ).
+    pub blend_alpha: AtomicF32Wrapper,
 }
 
 /// Simple atomic f32 wrapper.
@@ -181,6 +295,8 @@ impl SharedSteeringParams {
             q: AtomicF32Wrapper::new(DEFAULT_Q),
             damping: AtomicF32Wrapper::new(DEFAULT_DAMPING),
             reset_requested: AtomicU32::new(0),
+            scoring_mode: AtomicU32::new(ScoringMode::InterestQuality as u32),
+            blend_alpha: AtomicF32Wrapper::new(0.5),
         })
     }
 
@@ -209,7 +325,7 @@ impl BandSteering {
             LaneConfig {
                 min_hz: 4000.0,
                 max_hz: 20000.0,
-                filter_count: 3,
+                filter_count: 2,
             },
         ];
 
@@ -294,17 +410,14 @@ impl BandSteering {
             let lane_iq = &interest_quality[lo_bin..hi_bin];
             let lane_bins = lane_freqs.len();
 
-            // Cosine kernel half-width in bins, matched to the RBJ bandpass -3dB width.
+            // Cosine kernel half-width in bins, matched to the HP+LP bandpass width.
             //
-            // The -3dB bandwidth in octaves for a 2nd-order BPF at quality Q:
-            //   bw_oct = log2((2Q+1)/(2Q-1))
-            // We set kernel_half = bw_oct * BINS_PER_OCTAVE (the full -3dB width,
-            // not half). This way the cosine kernel's half-maximum aligns near the
-            // filter's -3dB point, and the kernel extends into the skirts where the
-            // BPF still has meaningful response.
+            // The bandpass is constructed as HP at center/2^(1/(2Q)) and LP at
+            // center*2^(1/(2Q)), giving a total bandwidth of 1/Q octaves.
+            // Kernel half-width = full bandwidth in bins.
             let bins_per_octave = crate::spectral::BINS_PER_OCTAVE;
             let q = self.q;
-            let bw_octaves = ((2.0 * q + 1.0) / (2.0 * q - 1.0)).log2();
+            let bw_octaves = 1.0 / q;
             let kernel_half =
                 ((bw_octaves * bins_per_octave as f32).ceil() as usize).max(1);
             self.kernel_half_bins = kernel_half;
@@ -457,21 +570,44 @@ impl BandSteering {
                     lane.config.max_hz,
                 );
             }
+
         }
     }
 
+    /// Write current filter positions and Q to the shared atomic state
+    /// so the audio callback can read them.
+    pub fn write_shared_freqs(&self, shared: &SharedFilterFreqs) {
+        let mut idx = 0;
+        for lane in &self.lanes {
+            for filter in &lane.filters {
+                if idx < STEERED_FILTER_COUNT {
+                    shared.center_hz[idx].set(filter.center_hz);
+                    idx += 1;
+                }
+            }
+        }
+        shared.q.set(self.q);
+    }
+
     /// Produce a snapshot of current filter positions for the GUI.
+    /// Filters within each lane are sorted by frequency so that the
+    /// flat index order matches the envelope output order.
     pub fn snapshot(&self) -> BandSteeringSnapshot {
         let mut filters = Vec::new();
         for (lane_idx, lane) in self.lanes.iter().enumerate() {
-            for filter in &lane.filters {
-                filters.push(FilterSnapshot {
+            let mut lane_filters: Vec<FilterSnapshot> = lane
+                .filters
+                .iter()
+                .map(|filter| FilterSnapshot {
                     center_hz: filter.center_hz,
                     lane_min_hz: lane.config.min_hz,
                     lane_max_hz: lane.config.max_hz,
                     lane_index: lane_idx,
-                });
-            }
+                })
+                .collect();
+            lane_filters
+                .sort_by(|a, b| a.center_hz.partial_cmp(&b.center_hz).unwrap());
+            filters.extend(lane_filters);
         }
         BandSteeringSnapshot {
             filters,

@@ -7,12 +7,13 @@
 //! Runs on a dedicated thread, consuming raw audio samples from a channel.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 
 use arc_swap::ArcSwap;
 use rustfft::{FftPlanner, num_complex::Complex};
 
-use crate::band_steering::{BandSteering, BandSteeringSnapshot, SharedSteeringParams};
+use crate::band_steering::{BandSteering, BandSteeringSnapshot, ScoringMode, SharedFilterFreqs, SharedSteeringParams};
 use crate::processor::ProcessorSettings;
 
 /// CQT configuration.
@@ -150,6 +151,9 @@ pub struct SpectralSnapshot {
     pub interest: Vec<f32>,
     pub interest_accum: Vec<f32>,
     pub interest_quality: Vec<f32>,
+    pub spectral_contrast: Vec<f32>,
+    /// The score surface actually fed to the steering (depends on scoring mode).
+    pub steering_score: Vec<f32>,
     pub band_steering: BandSteeringSnapshot,
     pub sample_rate: f32,
 }
@@ -163,6 +167,8 @@ impl Default for SpectralSnapshot {
             interest: Vec::new(),
             interest_accum: Vec::new(),
             interest_quality: Vec::new(),
+            spectral_contrast: Vec::new(),
+            steering_score: Vec::new(),
             band_steering: BandSteeringSnapshot::default(),
             sample_rate: 48000.0,
         }
@@ -180,6 +186,7 @@ pub fn start_spectral_thread(
     sample_rate: f32,
     snapshot: SharedSpectralSnapshot,
     steering_params: Arc<SharedSteeringParams>,
+    filter_freqs: Arc<SharedFilterFreqs>,
 ) -> Box<dyn FnOnce() + Send> {
     let (buf_tx, buf_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(CHANNEL_CAPACITY);
 
@@ -191,7 +198,7 @@ pub fn start_spectral_thread(
     let handle = thread::Builder::new()
         .name("spectral-analysis".into())
         .spawn(move || {
-            run_spectral_loop(buf_rx, sample_rate, &snapshot, &steering_params);
+            run_spectral_loop(buf_rx, sample_rate, &snapshot, &steering_params, &filter_freqs);
         })
         .expect("failed to spawn spectral analysis thread");
 
@@ -205,6 +212,7 @@ fn run_spectral_loop(
     sample_rate: f32,
     snapshot_handle: &SharedSpectralSnapshot,
     steering_params: &Arc<SharedSteeringParams>,
+    filter_freqs: &Arc<SharedFilterFreqs>,
 ) {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(FFT_SIZE);
@@ -284,7 +292,7 @@ fn run_spectral_loop(
             *acc = INTEREST_ACCUM_COEFF * *acc + (1.0 - INTEREST_ACCUM_COEFF) * v.abs();
         }
 
-        // Interest*quality.
+        // Interest*quality: rewards bins where energy is changing.
         let interest_quality: Vec<f32> = interest_accum
             .iter()
             .zip(&magnitude_avg)
@@ -297,9 +305,46 @@ fn run_spectral_loop(
             })
             .collect();
 
+        // Spectral contrast: rewards bins that stand out above their
+        // local neighborhood (±1 octave). Computed from the EMA-averaged
+        // magnitude so it reflects sustained spectral peaks, not
+        // frame-to-frame noise.
+        let window = BINS_PER_OCTAVE;
+        let spectral_contrast: Vec<f32> = (0..num_bins)
+            .map(|i| {
+                let lo = i.saturating_sub(window);
+                let hi = (i + window + 1).min(num_bins);
+                let local_mean = magnitude_avg[lo..hi].iter().sum::<f32>()
+                    / (hi - lo) as f32;
+                if local_mean > 1e-10 {
+                    magnitude_avg[i] / local_mean
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+
+        // Select scoring metric based on GUI setting.
+        let mode = ScoringMode::from_u32(
+            steering_params.scoring_mode.load(Ordering::Relaxed),
+        );
+        let steering_score: Vec<f32> = match mode {
+            ScoringMode::InterestQuality => interest_quality.clone(),
+            ScoringMode::SpectralContrast => spectral_contrast.clone(),
+            ScoringMode::Blended => {
+                let alpha = steering_params.blend_alpha.get();
+                interest_quality
+                    .iter()
+                    .zip(&spectral_contrast)
+                    .map(|(&iq, &sc)| alpha * iq + (1.0 - alpha) * sc)
+                    .collect()
+            }
+        };
+
         // Band steering.
         band_steering.sync_params(steering_params);
-        band_steering.update(&filterbank.center_freqs, &interest_quality, sample_rate, dt);
+        band_steering.update(&filterbank.center_freqs, &steering_score, sample_rate, dt);
+        band_steering.write_shared_freqs(filter_freqs);
 
         snapshot_handle.store(Arc::new(SpectralSnapshot {
             frequencies: filterbank.center_freqs.clone(),
@@ -308,6 +353,8 @@ fn run_spectral_loop(
             interest,
             interest_accum: interest_accum.clone(),
             interest_quality,
+            spectral_contrast,
+            steering_score,
             band_steering: band_steering.snapshot(),
             sample_rate,
         }));

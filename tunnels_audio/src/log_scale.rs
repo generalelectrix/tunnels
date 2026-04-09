@@ -1,16 +1,17 @@
 //! Perceptual (logarithmic) scaling for audio amplitude values.
 
-/// Convert linear amplitude [0, 1] to perceptual scale [0, 1].
+/// Convert linear amplitude to perceptual (dB) scale.
 ///
 /// Maps 0 dB (full scale) to 1.0 and -`range_db` to 0.0.
-/// Values below the floor map to 0.0.
+/// Values above 0 dB map to >1.0 (not clamped). Values below
+/// the floor map to 0.0.
 pub fn linear_to_perceptual(linear: f32, range_db: f32) -> f32 {
     const FLOOR: f32 = 1e-6;
     if linear <= FLOOR {
         return 0.0;
     }
     let db = 20.0 * linear.log10();
-    ((db + range_db) / range_db).clamp(0.0, 1.0)
+    ((db + range_db) / range_db).max(0.0)
 }
 
 /// Default dynamic range for the perceptual transform.
@@ -49,9 +50,10 @@ mod tests {
     }
 
     #[test]
-    fn above_full_scale_clamps_to_one() {
+    fn above_full_scale_exceeds_one() {
         let result = linear_to_perceptual(2.0, 60.0);
-        assert!((result - 1.0).abs() < 1e-6);
+        // 2.0 linear = +6 dB, maps to (6+60)/60 = 1.1
+        assert!(result > 1.0, "Values above 0 dB should map above 1.0, got {result}");
     }
 
     #[test]

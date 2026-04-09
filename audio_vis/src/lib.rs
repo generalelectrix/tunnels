@@ -1,21 +1,97 @@
 pub mod scrolling_plot;
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui::{self, Color32};
 use egui_plot::{AxisHints, Line, Plot, PlotPoint, PlotPoints, VLine};
 
 use gui_common::audio_panel::{AudioCommands, AudioPanel, AudioPanelState, AudioSnapshot};
+use tunnels_audio::band_steering::{STEERED_FILTER_COUNT, SharedFilterFreqs};
 use tunnels_audio::log_scale::DEFAULT_RANGE_DB;
+use tunnels_audio::wavelet::{NUM_BANDS, BAND_LABELS};
 use tunnels_audio::processor::ProcessorSettings;
 use tunnels_audio::spectral::{self, SharedSpectralSnapshot};
 
 use scrolling_plot::ScrollingPlot;
 
+fn list_output_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    host.output_devices()
+        .map(|devs| {
+            devs.filter_map(|d| d.name().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Create a cpal output stream that reads from the monitor ring buffer.
+fn create_monitor_output(
+    device_name: &str,
+    settings: &ProcessorSettings,
+) -> Option<cpal::Stream> {
+    let host = cpal::default_host();
+    let device = host
+        .output_devices()
+        .ok()?
+        .find(|d| d.name().ok().as_deref() == Some(device_name))?;
+
+    let config = device.default_output_config().ok()?;
+    let sample_rate = config.sample_rate().0;
+    let channels = config.channels() as usize;
+
+    let settings = Arc::clone(settings);
+    // Start reading from a position slightly behind the current write
+    // to pre-fill the jitter buffer (~50ms lead at 48kHz).
+    let write_pos = settings.monitor_ring.write_pos();
+    let mut read_pos = write_pos.wrapping_sub(2048.min(settings.monitor_ring.capacity() / 2));
+    // Pre-allocate mono buffer for the largest expected callback size.
+    let mut mono_buf = vec![0.0_f32; 4096];
+
+    let stream = device
+        .build_output_stream(
+            &cpal::StreamConfig {
+                channels: channels as u16,
+                sample_rate: cpal::SampleRate(sample_rate),
+                buffer_size: cpal::BufferSize::Default,
+            },
+            move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let mono_frames = output.len() / channels;
+                // Grow the pre-allocated buffer if needed (rare, only on first large callback).
+                if mono_buf.len() < mono_frames {
+                    mono_buf.resize(mono_frames, 0.0);
+                }
+                let mono = &mut mono_buf[..mono_frames];
+                settings
+                    .monitor_ring
+                    .read_into_slice(mono, &mut read_pos);
+                for (i, frame) in output.chunks_mut(channels).enumerate() {
+                    let sample = mono[i];
+                    for s in frame.iter_mut() {
+                        *s = sample;
+                    }
+                }
+            },
+            |err| eprintln!("Monitor output error: {err}"),
+            None,
+        )
+        .ok()?;
+
+    stream.play().ok()?;
+    Some(stream)
+}
+
 /// Approximate update rate of the envelope (once per audio buffer, ~1kHz).
 const ENVELOPE_SAMPLE_RATE: f64 = 1000.0;
 
-const NUM_SIGNAL_TRACES: usize = 3;
+/// 3 base + 6 steered + 8 wavelet raw + 8 D4 norm + 8 D8 norm.
+const NUM_BASE_TRACES: usize = 3;
+const NUM_STEERED_START: usize = NUM_BASE_TRACES;
+const NUM_WAVELET_START: usize = NUM_BASE_TRACES + STEERED_FILTER_COUNT;
+const NUM_D4_NORM_START: usize = NUM_WAVELET_START + NUM_BANDS;
+const NUM_D8_NORM_START: usize = NUM_D4_NORM_START + NUM_BANDS;
+const NUM_SIGNAL_TRACES: usize = NUM_D8_NORM_START + NUM_BANDS;
 
 struct TraceConfig {
     label: &'static str,
@@ -24,25 +100,49 @@ struct TraceConfig {
 }
 
 const SIGNAL_TRACE_CONFIGS: [TraceConfig; NUM_SIGNAL_TRACES] = [
-    TraceConfig {
-        label: "Input peak",
-        color: Color32::from_rgb(80, 80, 100),
-        default_enabled: false,
-    },
-    TraceConfig {
-        label: "Envelope",
-        color: Color32::from_rgb(70, 180, 130),
-        default_enabled: false,
-    },
-    TraceConfig {
-        label: "Smoothed",
-        color: Color32::WHITE,
-        default_enabled: false,
-    },
+    // Base traces.
+    TraceConfig { label: "Input peak", color: Color32::from_rgb(80, 80, 100), default_enabled: false },
+    TraceConfig { label: "Lowpass", color: Color32::from_rgb(180, 180, 180), default_enabled: false },
+    TraceConfig { label: "N Lowpass", color: Color32::WHITE, default_enabled: true },
+    // Steered filter envelopes (off by default now that wavelet bands exist).
+    TraceConfig { label: "LM-0", color: Color32::from_rgb(80, 160, 255), default_enabled: false },
+    TraceConfig { label: "LM-1", color: Color32::from_rgb(180, 100, 255), default_enabled: false },
+    TraceConfig { label: "Mid-0", color: Color32::from_rgb(255, 240, 60), default_enabled: false },
+    TraceConfig { label: "Mid-1", color: Color32::from_rgb(255, 160, 40), default_enabled: false },
+    TraceConfig { label: "Hi-0", color: Color32::from_rgb(60, 255, 180), default_enabled: false },
+    TraceConfig { label: "Hi-1", color: Color32::from_rgb(255, 80, 120), default_enabled: false },
+    // Wavelet band envelopes (raw) — rainbow, off by default.
+    TraceConfig { label: "12-24k", color: Color32::from_rgb(255, 60, 60), default_enabled: false },
+    TraceConfig { label: "6-12k", color: Color32::from_rgb(255, 160, 40), default_enabled: false },
+    TraceConfig { label: "3-6k", color: Color32::from_rgb(255, 240, 60), default_enabled: false },
+    TraceConfig { label: "1.5-3k", color: Color32::from_rgb(60, 255, 120), default_enabled: false },
+    TraceConfig { label: "750-1.5k", color: Color32::from_rgb(60, 220, 255), default_enabled: false },
+    TraceConfig { label: "375-750", color: Color32::from_rgb(80, 120, 255), default_enabled: false },
+    TraceConfig { label: "187-375", color: Color32::from_rgb(180, 80, 255), default_enabled: false },
+    TraceConfig { label: "<187", color: Color32::from_rgb(160, 160, 160), default_enabled: false },
+    // D4 normalized — solid colors, on by default.
+    TraceConfig { label: "D4 12-24k", color: Color32::from_rgb(255, 60, 60), default_enabled: true },
+    TraceConfig { label: "D4 6-12k", color: Color32::from_rgb(255, 160, 40), default_enabled: true },
+    TraceConfig { label: "D4 3-6k", color: Color32::from_rgb(255, 240, 60), default_enabled: true },
+    TraceConfig { label: "D4 1.5-3k", color: Color32::from_rgb(60, 255, 120), default_enabled: true },
+    TraceConfig { label: "D4 750-1.5k", color: Color32::from_rgb(60, 220, 255), default_enabled: true },
+    TraceConfig { label: "D4 375-750", color: Color32::from_rgb(80, 120, 255), default_enabled: true },
+    TraceConfig { label: "D4 187-375", color: Color32::from_rgb(180, 80, 255), default_enabled: true },
+    TraceConfig { label: "D4 <187", color: Color32::from_rgb(160, 160, 160), default_enabled: true },
+    // D8 normalized — dimmer versions for overlay comparison, off by default.
+    TraceConfig { label: "D8 12-24k", color: Color32::from_rgb(180, 40, 40), default_enabled: false },
+    TraceConfig { label: "D8 6-12k", color: Color32::from_rgb(180, 110, 30), default_enabled: false },
+    TraceConfig { label: "D8 3-6k", color: Color32::from_rgb(180, 170, 40), default_enabled: false },
+    TraceConfig { label: "D8 1.5-3k", color: Color32::from_rgb(40, 180, 80), default_enabled: false },
+    TraceConfig { label: "D8 750-1.5k", color: Color32::from_rgb(40, 155, 180), default_enabled: false },
+    TraceConfig { label: "D8 375-750", color: Color32::from_rgb(55, 85, 180), default_enabled: false },
+    TraceConfig { label: "D8 187-375", color: Color32::from_rgb(130, 55, 180), default_enabled: false },
+    TraceConfig { label: "D8 <187", color: Color32::from_rgb(110, 110, 110), default_enabled: false },
 ];
 
 const GAIN_TRACE_COLOR: Color32 = Color32::from_rgb(200, 160, 60);
 const TARGET_GAIN_TRACE_COLOR: Color32 = Color32::from_rgb(120, 120, 180);
+
 
 /// Adapter: AudioCommands by writing directly to ProcessorSettings atomics.
 struct DirectAudioCommands<'a> {
@@ -107,6 +207,11 @@ pub struct AudioVisApp {
     normalize_enabled: bool,
     running_max: [f32; NUM_SIGNAL_TRACES],
     paused: bool,
+    // === Monitor output ===
+    output_devices: Vec<String>,
+    selected_output: Option<String>,
+    monitor_freq: f32,
+    _monitor_stream: Option<cpal::Stream>,
 }
 
 impl AudioVisApp {
@@ -123,11 +228,23 @@ impl AudioVisApp {
         trim_plot.add_trace("Effective gain", GAIN_TRACE_COLOR);
         trim_plot.add_trace("Target gain", TARGET_GAIN_TRACE_COLOR);
 
-        let signal_read_positions = [
-            processor_settings.input_peak_history.write_pos(),
-            processor_settings.envelope_history.write_pos(),
-            processor_settings.smoothed_history.write_pos(),
-        ];
+        // Read positions: base traces, steered envelopes, wavelet band envelopes.
+        let mut signal_read_positions = [0_usize; NUM_SIGNAL_TRACES];
+        signal_read_positions[0] = processor_settings.input_peak_history.write_pos();
+        signal_read_positions[1] = processor_settings.smoothed_history.write_pos();
+        signal_read_positions[2] = processor_settings.lowpass_norm_history.write_pos();
+        for i in 0..STEERED_FILTER_COUNT {
+            signal_read_positions[NUM_STEERED_START + i] =
+                processor_settings.steered_envelope_histories[i].write_pos();
+        }
+        for i in 0..NUM_BANDS {
+            signal_read_positions[NUM_WAVELET_START + i] =
+                processor_settings.wavelet_histories[i].write_pos();
+            signal_read_positions[NUM_D4_NORM_START + i] =
+                processor_settings.wavelet_d4_norm_histories[i].write_pos();
+            signal_read_positions[NUM_D8_NORM_START + i] =
+                processor_settings.wavelet_d8_norm_histories[i].write_pos();
+        }
         let gain_read_position = processor_settings.effective_gain_history.write_pos();
         let target_gain_read_position = processor_settings.target_gain_history.write_pos();
 
@@ -135,11 +252,20 @@ impl AudioVisApp {
 
         let spectral_snapshot = spectral::new_shared_snapshot();
         let steering_params = tunnels_audio::band_steering::SharedSteeringParams::new();
+        let filter_freqs = SharedFilterFreqs::new();
+
+        // Share filter freqs with the processor (audio callback will read them).
+        {
+            let mut guard = processor_settings.shared_filter_freqs.lock().unwrap();
+            *guard = Some(filter_freqs.clone());
+        }
+
         let spectral_stop = spectral::start_spectral_thread(
             processor_settings.clone(),
             48000.0,
             spectral_snapshot.clone(),
             steering_params.clone(),
+            filter_freqs,
         );
 
         Self {
@@ -165,6 +291,10 @@ impl AudioVisApp {
             normalize_enabled: false,
             running_max: [0.001; NUM_SIGNAL_TRACES],
             paused: false,
+            output_devices: list_output_devices(),
+            selected_output: None,
+            monitor_freq: 1000.0,
+            _monitor_stream: None,
         }
     }
 
@@ -205,6 +335,7 @@ impl AudioVisApp {
         snap: &tunnels_audio::spectral::SpectralSnapshot,
         height: f32,
         y_max: f32,
+        monitor_freq: f32,
     ) {
         if snap.frequencies.is_empty() {
             ui.label("Waiting for spectral data...");
@@ -285,11 +416,27 @@ impl AudioVisApp {
                     1.0,
                 ));
 
-                // Interest*quality (the steering metric).
+                // Interest*quality.
                 plot_ui.line(make_line(
                     &snap.interest_quality,
                     "I*Q",
                     Color32::from_rgb(255, 100, 255),
+                    1.0,
+                ));
+
+                // Spectral contrast.
+                plot_ui.line(make_line(
+                    &snap.spectral_contrast,
+                    "Contrast",
+                    Color32::from_rgb(255, 180, 60),
+                    1.0,
+                ));
+
+                // Active steering score (what the filters actually follow).
+                plot_ui.line(make_line(
+                    &snap.steering_score,
+                    "Score",
+                    Color32::from_rgb(255, 255, 255),
                     1.5,
                 ));
 
@@ -328,11 +475,69 @@ impl AudioVisApp {
                     }
                 }
 
-                // Filter response curves (actual RBJ bandpass shape).
-                let lane_colors = [
-                    Color32::from_rgb(100, 200, 255), // blue — low-mid
-                    Color32::from_rgb(255, 255, 100), // yellow — mid
-                    Color32::from_rgb(100, 255, 200), // teal — high
+                // Wavelet octave band boundaries.
+                {
+                    let wavelet_boundary_color =
+                        Color32::from_rgba_premultiplied(100, 255, 100, 50);
+                    let wavelet_band_colors: [Color32; NUM_BANDS] = [
+                        Color32::from_rgb(255, 60, 60),
+                        Color32::from_rgb(255, 160, 40),
+                        Color32::from_rgb(255, 240, 60),
+                        Color32::from_rgb(60, 255, 120),
+                        Color32::from_rgb(60, 220, 255),
+                        Color32::from_rgb(80, 120, 255),
+                        Color32::from_rgb(180, 80, 255),
+                        Color32::from_rgb(160, 160, 160),
+                    ];
+                    // Band edges: 24000, 12000, 6000, 3000, 1500, 750, 375, 187.5
+                    let mut edge_hz = 24000.0_f32;
+                    for band in 0..NUM_BANDS {
+                        let lo_hz = edge_hz / 2.0;
+                        // Draw a faint vertical line at each boundary.
+                        if band < NUM_BANDS - 1 {
+                            plot_ui.vline(
+                                VLine::new(
+                                    format!("{:.0} Hz", lo_hz),
+                                    freq_to_x(lo_hz),
+                                )
+                                .color(wavelet_boundary_color)
+                                .width(1.0),
+                            );
+                        }
+                        // Shade the band region with its color at very low opacity.
+                        let hi_x = freq_to_x(edge_hz);
+                        let lo_x = freq_to_x(lo_hz);
+                        let c = wavelet_band_colors[band];
+                        let fill_color = Color32::from_rgba_premultiplied(
+                            c.r() / 4, c.g() / 4, c.b() / 4, 20,
+                        );
+                        let rect_points = vec![
+                            PlotPoint::new(lo_x, 0.0),
+                            PlotPoint::new(lo_x, y_max as f64),
+                            PlotPoint::new(hi_x, y_max as f64),
+                            PlotPoint::new(hi_x, 0.0),
+                        ];
+                        plot_ui.line(
+                            Line::new(
+                                format!("wband {}", BAND_LABELS[band]),
+                                PlotPoints::Owned(rect_points),
+                            )
+                            .color(fill_color)
+                            .fill(0.0)
+                            .width(0.0),
+                        );
+                        edge_hz = lo_hz;
+                    }
+                }
+
+                // Filter response curves — colors match envelope traces.
+                let filter_colors: [Color32; STEERED_FILTER_COUNT] = [
+                    Color32::from_rgb(80, 160, 255),  // LM-0
+                    Color32::from_rgb(180, 100, 255), // LM-1
+                    Color32::from_rgb(255, 240, 60),  // Mid-0
+                    Color32::from_rgb(255, 160, 40),  // Mid-1
+                    Color32::from_rgb(60, 255, 180),  // Hi-0
+                    Color32::from_rgb(255, 80, 120),  // Hi-1
                 ];
                 let q = snap.band_steering.q;
                 let sample_rate = snap.sample_rate;
@@ -356,9 +561,9 @@ impl AudioVisApp {
                     (normalized.clamp(0.0, 1.0) * y_max) as f64
                 };
 
-                for filter in &snap.band_steering.filters {
+                for (fi, filter) in snap.band_steering.filters.iter().enumerate() {
                     let color =
-                        lane_colors[filter.lane_index % lane_colors.len()];
+                        filter_colors[fi % filter_colors.len()];
 
                     // RBJ bandpass response curve in dB (solid).
                     let response_points: Vec<PlotPoint> = snap
@@ -415,6 +620,32 @@ impl AudioVisApp {
                     }
                 }
 
+                // Monitor filter response (white, dashed-style via thinner line).
+                if monitor_freq > 0.0 {
+                    let monitor_snap = tunnels_audio::band_steering::FilterSnapshot {
+                        center_hz: monitor_freq,
+                        lane_min_hz: 0.0,
+                        lane_max_hz: 0.0,
+                        lane_index: 0,
+                    };
+                    let monitor_points: Vec<PlotPoint> = snap
+                        .frequencies
+                        .iter()
+                        .map(|&f| {
+                            let r = monitor_snap.response_at(f, sample_rate, q);
+                            PlotPoint::new(freq_to_x(f), db_to_y(r))
+                        })
+                        .collect();
+                    plot_ui.line(
+                        Line::new(
+                            format!("Monitor {:.0} Hz", monitor_freq),
+                            PlotPoints::Owned(monitor_points),
+                        )
+                        .color(Color32::WHITE)
+                        .width(2.0),
+                    );
+                }
+
                 // Mask bounds around target peaks.
                 let mask_half =
                     snap.band_steering.mask_half_bins as f32;
@@ -462,14 +693,28 @@ impl eframe::App for AudioVisApp {
         let log_enabled = self.log_enabled;
         let log_range = self.log_range_db;
 
-        // Drain signal traces.
-        let signal_buffers: [&tunnels_audio::ring_buffer::SignalRingBuffer; NUM_SIGNAL_TRACES] = [
+        // Drain signal traces (base + steered envelopes).
+        let base_buffers: [&tunnels_audio::ring_buffer::SignalRingBuffer; NUM_BASE_TRACES] = [
             &self.processor_settings.input_peak_history,
-            &self.processor_settings.envelope_history,
             &self.processor_settings.smoothed_history,
+            &self.processor_settings.lowpass_norm_history,
         ];
+        let get_buf = |i: usize| -> &tunnels_audio::ring_buffer::SignalRingBuffer {
+            if i < NUM_BASE_TRACES {
+                base_buffers[i]
+            } else if i < NUM_WAVELET_START {
+                &self.processor_settings.steered_envelope_histories[i - NUM_STEERED_START]
+            } else if i < NUM_D4_NORM_START {
+                &self.processor_settings.wavelet_histories[i - NUM_WAVELET_START]
+            } else if i < NUM_D8_NORM_START {
+                &self.processor_settings.wavelet_d4_norm_histories[i - NUM_D4_NORM_START]
+            } else {
+                &self.processor_settings.wavelet_d8_norm_histories[i - NUM_D8_NORM_START]
+            }
+        };
 
-        for (i, buf) in signal_buffers.iter().enumerate() {
+        for i in 0..NUM_SIGNAL_TRACES {
+            let buf = get_buf(i);
             let mut samples = Self::drain_trace(buf, &mut self.signal_read_positions[i]);
             if self.paused {
                 continue;
@@ -569,6 +814,50 @@ impl eframe::App for AudioVisApp {
                         self.trim_plot.window_seconds = secs as f64;
                     }
                     ui.end_row();
+                    ui.label("AGC Floor:");
+                    ui.horizontal(|ui| {
+                        let mut floor_hl = self.processor_settings.norm_floor_halflife.get();
+                        if ui.add(
+                            egui::Slider::new(&mut floor_hl, 0.5..=30.0)
+                                .logarithmic(true)
+                                .suffix("s"),
+                        ).changed() {
+                            self.processor_settings.norm_floor_halflife.set(floor_hl);
+                        }
+                        let cur = self.processor_settings.norm_floor_mode
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        if ui.selectable_label(cur == 0, "Avg").clicked() {
+                            self.processor_settings.norm_floor_mode
+                                .store(0, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        if ui.selectable_label(cur == 1, "Min").clicked() {
+                            self.processor_settings.norm_floor_mode
+                                .store(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("AGC Ceil:");
+                    ui.horizontal(|ui| {
+                        let mut ceil_hl = self.processor_settings.norm_ceiling_halflife.get();
+                        if ui.add(
+                            egui::Slider::new(&mut ceil_hl, 0.5..=15.0)
+                                .logarithmic(true)
+                                .suffix("s"),
+                        ).changed() {
+                            self.processor_settings.norm_ceiling_halflife.set(ceil_hl);
+                        }
+                        let cur = self.processor_settings.norm_ceiling_mode
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        if ui.selectable_label(cur == 0, "Avg").clicked() {
+                            self.processor_settings.norm_ceiling_mode
+                                .store(0, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        if ui.selectable_label(cur == 1, "Max").clicked() {
+                            self.processor_settings.norm_ceiling_mode
+                                .store(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    });
+                    ui.end_row();
                 });
             });
 
@@ -587,6 +876,19 @@ impl eframe::App for AudioVisApp {
                         self.signal_trace_enabled[i] = enabled;
                     }
                 }
+                {
+                    let mut y = self.signal_plot.y_max as f32;
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut y, 0.01..=10.0)
+                                .text("Y")
+                                .logarithmic(true),
+                        )
+                        .changed()
+                    {
+                        self.signal_plot.y_max = y as f64;
+                    }
+                }
                 let label = egui::RichText::new("Gain").color(if self.trim_trace_enabled {
                     GAIN_TRACE_COLOR
                 } else {
@@ -594,49 +896,58 @@ impl eframe::App for AudioVisApp {
                 });
                 ui.checkbox(&mut self.trim_trace_enabled, label);
                 ui.checkbox(&mut self.spectrum_visible, "Spectrum");
-                if self.spectrum_visible {
-                    ui.add(
-                        egui::Slider::new(&mut self.spectrum_y_max, 1e-12..=1000.0)
-                            .text("Y")
-                            .logarithmic(true),
-                    );
-                }
             });
 
-            // Band steering controls.
-            if self.spectrum_visible {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.strong("Band Steering");
-                    let p = &self.steering_params;
-                    let mut q = p.q.get();
+            // Monitor output controls.
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.strong("Monitor");
+                // Output device dropdown.
+                let current_label = self
+                    .selected_output
+                    .as_deref()
+                    .unwrap_or("Off");
+                egui::ComboBox::from_id_salt("monitor_output")
+                    .selected_text(current_label)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(self.selected_output.is_none(), "Off").clicked() {
+                            self.selected_output = None;
+                            self._monitor_stream = None;
+                            self.processor_settings.monitor_freq.set(0.0);
+                        }
+                        for name in &self.output_devices {
+                            let selected = self.selected_output.as_deref() == Some(name);
+                            if ui.selectable_label(selected, name).clicked()
+                                && !selected
+                            {
+                                if let Some(stream) = create_monitor_output(
+                                    name,
+                                    &self.processor_settings,
+                                ) {
+                                    self._monitor_stream = Some(stream);
+                                    self.selected_output = Some(name.clone());
+                                    self.processor_settings.monitor_freq.set(self.monitor_freq);
+                                }
+                            }
+                        }
+                    });
+                if ui.button("↻").clicked() {
+                    self.output_devices = list_output_devices();
+                }
+                // Frequency slider.
+                if self.selected_output.is_some() {
                     if ui
                         .add(
-                            egui::Slider::new(&mut q, 0.5..=20.0)
-                                .text("Q")
+                            egui::Slider::new(&mut self.monitor_freq, 20.0..=20000.0)
+                                .text("Hz")
                                 .logarithmic(true),
                         )
                         .changed()
                     {
-                        p.q.set(q);
+                        self.processor_settings.monitor_freq.set(self.monitor_freq);
                     }
-                    let speed = 1.0 - p.damping.get();
-                    let mut speed_val = speed;
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut speed_val, 0.001..=1.0)
-                                .text("Speed")
-                                .logarithmic(true),
-                        )
-                        .changed()
-                    {
-                        p.damping.set(1.0 - speed_val);
-                    }
-                    if ui.button("Reset").clicked() {
-                        self.steering_params.request_reset();
-                    }
-                });
-            }
+                }
+            });
 
             ui.separator();
 
@@ -700,13 +1011,80 @@ impl eframe::App for AudioVisApp {
                 }
 
                 if self.spectrum_visible {
+                    // Spectrum controls — rendered inline above the plot.
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.spectrum_y_max, 1e-12..=1000.0)
+                                .text("Y")
+                                .logarithmic(true),
+                        );
+                        let p = &self.steering_params;
+                        let mut bw = 1.0 / p.q.get();
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut bw, 0.5..=2.0)
+                                    .text("BW")
+                                    .logarithmic(true),
+                            )
+                            .changed()
+                        {
+                            p.q.set(1.0 / bw);
+                        }
+                        let speed = 1.0 - p.damping.get();
+                        let mut speed_val = speed;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut speed_val, 0.001..=1.0)
+                                    .text("Speed")
+                                    .logarithmic(true),
+                            )
+                            .changed()
+                        {
+                            p.damping.set(1.0 - speed_val);
+                        }
+                        if ui.button("Reset").clicked() {
+                            self.steering_params.request_reset();
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        use tunnels_audio::band_steering::ScoringMode;
+                        let p = &self.steering_params;
+                        let current_mode = ScoringMode::from_u32(
+                            p.scoring_mode.load(std::sync::atomic::Ordering::Relaxed),
+                        );
+                        ui.label("Score:");
+                        for mode in ScoringMode::ALL {
+                            if ui
+                                .selectable_label(current_mode == mode, mode.label())
+                                .clicked()
+                            {
+                                p.scoring_mode.store(
+                                    mode as u32,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                            }
+                        }
+                        if current_mode == ScoringMode::Blended {
+                            let mut alpha = p.blend_alpha.get();
+                            if ui
+                                .add(egui::Slider::new(&mut alpha, 0.0..=1.0).text("α"))
+                                .changed()
+                            {
+                                p.blend_alpha.set(alpha);
+                            }
+                        }
+                        ui.separator();
+                    });
+
                     let snap = self.spectral_snapshot.load();
-                    let height = if !any_signal && !self.trim_trace_enabled {
+                    let height = if !any_signal
+                        && !self.trim_trace_enabled
+                    {
                         total_height
                     } else {
                         secondary_height
                     };
-                    Self::render_spectrum(ui, &snap, height, self.spectrum_y_max);
+                    Self::render_spectrum(ui, &snap, height, self.spectrum_y_max, self.monitor_freq);
                 }
             }
         });

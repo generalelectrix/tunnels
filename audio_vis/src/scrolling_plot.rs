@@ -57,8 +57,8 @@ impl Trace {
 pub struct ScrollingPlot {
     pub traces: Vec<Trace>,
     pub window_seconds: f64,
-    y_min: f64,
-    y_max: f64,
+    pub y_min: f64,
+    pub y_max: f64,
 }
 
 impl ScrollingPlot {

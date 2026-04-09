@@ -12,6 +12,7 @@ tunnels_audio = { path = "../tunnels_audio" }
 tunnels_lib = { path = "../tunnels_lib" }
 gui_common = { path = "../gui_common" }
 stage_theme = { path = "../stage_theme" }
+cpal = "0.16"
 eframe = "0.33"
 egui_plot = "0.34"
 anyhow.workspace = true
