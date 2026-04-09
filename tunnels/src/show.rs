@@ -257,16 +257,16 @@ impl Show {
             return;
         };
         let ps = self.audio_input.processor_settings();
-        gui_state.audio_state.store(Arc::new(
-            crate::gui_state::AudioStateSnapshot {
+        gui_state
+            .audio_state
+            .store(Arc::new(crate::gui_state::AudioStateSnapshot {
                 filter_cutoff_hz: ps.filter_cutoff.get(),
                 envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
                 envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
                 output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
                 gain_linear: ps.gain.get() as f64,
                 auto_trim_enabled: ps.auto_trim_enabled.get() > 0.5,
-            },
-        ));
+            }));
     }
 
     /// Push the current animation state to the GUI, if the visualizer is active.

@@ -132,7 +132,7 @@ impl Default for ProcessorSettingsInner {
             }),
             norm_floor_halflife: AtomicF32::new(10.0),
             norm_ceiling_halflife: AtomicF32::new(5.0),
-            norm_floor_mode: std::sync::atomic::AtomicU32::new(0),   // Average
+            norm_floor_mode: std::sync::atomic::AtomicU32::new(0), // Average
             norm_ceiling_mode: std::sync::atomic::AtomicU32::new(1), // Limit
             monitor_freq: AtomicF32::new(0.0),
             monitor_ring: SignalRingBuffer::new(8192), // ~170ms at 48kHz
@@ -199,9 +199,8 @@ impl AutoTrim {
         if buffer_peak > self.peak_tracker {
             self.peak_tracker = buffer_peak;
         } else {
-            self.peak_tracker =
-                Self::PEAK_RELEASE_COEFF * self.peak_tracker
-                    + (1.0 - Self::PEAK_RELEASE_COEFF) * buffer_peak;
+            self.peak_tracker = Self::PEAK_RELEASE_COEFF * self.peak_tracker
+                + (1.0 - Self::PEAK_RELEASE_COEFF) * buffer_peak;
         }
 
         // Compute desired gain in dB to bring tracked peak to target.
@@ -495,8 +494,16 @@ impl Processor {
         let mut steered_fast_envs = Vec::with_capacity(STEERED_FILTER_COUNT);
         let mut steered_slow_envs = Vec::with_capacity(STEERED_FILTER_COUNT);
         for _ in 0..STEERED_FILTER_COUNT {
-            steered_hp.push(make_butterworth_pair(FilterType::HighPass, 500.0, &mut context));
-            steered_lp.push(make_butterworth_pair(FilterType::LowPass, 2000.0, &mut context));
+            steered_hp.push(make_butterworth_pair(
+                FilterType::HighPass,
+                500.0,
+                &mut context,
+            ));
+            steered_lp.push(make_butterworth_pair(
+                FilterType::LowPass,
+                2000.0,
+                &mut context,
+            ));
             steered_hilberts.push(HilbertTransform::new());
             steered_fast_envs.push(make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE));
             steered_slow_envs.push(make_envelope(&mut context, slow_attack, slow_release));
@@ -509,7 +516,11 @@ impl Processor {
             let mut slow_envs = Vec::with_capacity(NUM_BANDS);
             let mut contexts = Vec::with_capacity(NUM_BANDS);
             for band in 0..NUM_BANDS {
-                let level = if band < NUM_LEVELS { band } else { NUM_LEVELS - 1 };
+                let level = if band < NUM_LEVELS {
+                    band
+                } else {
+                    NUM_LEVELS - 1
+                };
                 let band_sr = base_sr / (1 << (level + 1)) as f32;
                 let mut band_ctx: AudioContext = AudioProcessorSettings {
                     sample_rate: band_sr,
@@ -610,7 +621,6 @@ impl Processor {
                 env.handle().set_release(release);
             }
         }
-
     }
 
     /// Process a buffer of interleaved audio data.
@@ -732,11 +742,12 @@ impl Processor {
                     continue;
                 }
                 let hp_out = process_butterworth_pair(
-                    &mut self.steered_hp[i], &mut self.context, mono_gained,
+                    &mut self.steered_hp[i],
+                    &mut self.context,
+                    mono_gained,
                 );
-                let bp_out = process_butterworth_pair(
-                    &mut self.steered_lp[i], &mut self.context, hp_out,
-                );
+                let bp_out =
+                    process_butterworth_pair(&mut self.steered_lp[i], &mut self.context, hp_out);
                 let amp = self.steered_hilberts[i].envelope(bp_out as f64) as f32;
                 self.steered_fast_envs[i].m_process(&mut self.context, amp);
                 let fast_val = self.steered_fast_envs[i].handle().state();
@@ -752,7 +763,11 @@ impl Processor {
                 let se = &mut self.wavelet_slow_envs;
                 let cx = &mut self.wavelet_contexts;
                 self.wavelet.push(mono_gained, |band, sample| {
-                    let level = if band < NUM_LEVELS { band } else { NUM_LEVELS - 1 };
+                    let level = if band < NUM_LEVELS {
+                        band
+                    } else {
+                        NUM_LEVELS - 1
+                    };
                     let whiten = (1 << (NUM_LEVELS - level)) as f32;
                     let amp = h[band].envelope((sample * whiten) as f64) as f32;
                     fe[band].m_process(&mut cx[band], amp);
@@ -763,12 +778,10 @@ impl Processor {
 
             // Monitor HP+LP bandpass (mono) → ring buffer for output callback.
             if monitor_active {
-                let hp_out = process_butterworth_pair(
-                    &mut self.monitor_hp, &mut self.context, mono_gained,
-                );
-                let mon_out = process_butterworth_pair(
-                    &mut self.monitor_lp, &mut self.context, hp_out,
-                );
+                let hp_out =
+                    process_butterworth_pair(&mut self.monitor_hp, &mut self.context, mono_gained);
+                let mon_out =
+                    process_butterworth_pair(&mut self.monitor_lp, &mut self.context, hp_out);
                 self.settings.monitor_ring.push(mon_out);
             }
         }
@@ -814,16 +827,21 @@ impl Processor {
         };
 
         let floor_mode = TrackingMode::from_u32(
-            self.settings.norm_floor_mode.load(std::sync::atomic::Ordering::Relaxed),
+            self.settings
+                .norm_floor_mode
+                .load(std::sync::atomic::Ordering::Relaxed),
         );
         let ceil_mode = TrackingMode::from_u32(
-            self.settings.norm_ceiling_mode.load(std::sync::atomic::Ordering::Relaxed),
+            self.settings
+                .norm_ceiling_mode
+                .load(std::sync::atomic::Ordering::Relaxed),
         );
 
-        self.lowpass_normalizer.set_params(floor_hl, ceil_hl, update_rate);
-        let lowpass_norm = self.lowpass_normalizer.process(
-            self.smoothed_value, floor_mode, ceil_mode,
-        );
+        self.lowpass_normalizer
+            .set_params(floor_hl, ceil_hl, update_rate);
+        let lowpass_norm =
+            self.lowpass_normalizer
+                .process(self.smoothed_value, floor_mode, ceil_mode);
 
         self.settings.envelope.set(envelope);
         self.settings.envelope_history.push(envelope);
@@ -839,16 +857,14 @@ impl Processor {
         // Compute smoothed values for each physical filter chain.
         for i in 0..STEERED_FILTER_COUNT {
             let env_val = self.steered_slow_envs[i].handle().state();
-            self.steered_smoothed[i] =
-                coeff * self.steered_smoothed[i] + (1.0 - coeff) * env_val;
+            self.steered_smoothed[i] = coeff * self.steered_smoothed[i] + (1.0 - coeff) * env_val;
         }
         // Output to ring buffers sorted by frequency within each lane,
         // so that output 0 is always the lowest-frequency filter. The
         // physical filter chains keep their identity (no state disruption).
         {
             use crate::band_steering::STEERED_FILTER_LAYOUT;
-            let mut sorted_idx: [usize; STEERED_FILTER_COUNT] =
-                std::array::from_fn(|i| i);
+            let mut sorted_idx: [usize; STEERED_FILTER_COUNT] = std::array::from_fn(|i| i);
             let mut lane_start = 0;
             let mut current_lane = STEERED_FILTER_LAYOUT[0].0;
             for i in 1..=STEERED_FILTER_COUNT {
@@ -877,10 +893,11 @@ impl Processor {
         for i in 0..NUM_BANDS {
             self.wavelet_normalizers[i].set_params(floor_hl, ceil_hl, update_rate);
             let env_val = self.wavelet_slow_envs[i].handle().state();
-            self.wavelet_smoothed[i] =
-                coeff * self.wavelet_smoothed[i] + (1.0 - coeff) * env_val;
+            self.wavelet_smoothed[i] = coeff * self.wavelet_smoothed[i] + (1.0 - coeff) * env_val;
             let normalized = self.wavelet_normalizers[i].process(
-                self.wavelet_smoothed[i], floor_mode, ceil_mode,
+                self.wavelet_smoothed[i],
+                floor_mode,
+                ceil_mode,
             );
             self.settings.wavelet_histories[i].push(self.wavelet_smoothed[i]);
             self.settings.wavelet_norm_histories[i].push(normalized);

@@ -3,14 +3,14 @@
 //! Maintains a sliding window of samples and efficiently computes
 //! the median at each step. O(log k) per sample where k is the window size.
 
-use std::collections::BinaryHeap;
 use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::collections::VecDeque;
 
 /// Running median over a fixed-size sliding window.
 pub struct RunningMedian {
     window: VecDeque<f32>,
-    max_heap: BinaryHeap<OrdF32>,        // lower half (max at top)
+    max_heap: BinaryHeap<OrdF32>,          // lower half (max at top)
     min_heap: BinaryHeap<Reverse<OrdF32>>, // upper half (min at top)
     capacity: usize,
 }

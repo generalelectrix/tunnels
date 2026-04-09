@@ -142,8 +142,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
                 .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
                 .changed()
             {
-                self.commands
-                    .set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
+                self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
             }
             ui.end_row();
 

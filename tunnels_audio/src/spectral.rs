@@ -13,7 +13,9 @@ use std::thread;
 use arc_swap::ArcSwap;
 use rustfft::{FftPlanner, num_complex::Complex};
 
-use crate::band_steering::{BandSteering, BandSteeringSnapshot, ScoringMode, SharedFilterFreqs, SharedSteeringParams};
+use crate::band_steering::{
+    BandSteering, BandSteeringSnapshot, ScoringMode, SharedFilterFreqs, SharedSteeringParams,
+};
 use crate::processor::ProcessorSettings;
 
 /// CQT configuration.
@@ -198,7 +200,13 @@ pub fn start_spectral_thread(
     let handle = thread::Builder::new()
         .name("spectral-analysis".into())
         .spawn(move || {
-            run_spectral_loop(buf_rx, sample_rate, &snapshot, &steering_params, &filter_freqs);
+            run_spectral_loop(
+                buf_rx,
+                sample_rate,
+                &snapshot,
+                &steering_params,
+                &filter_freqs,
+            );
         })
         .expect("failed to spawn spectral analysis thread");
 
@@ -296,13 +304,11 @@ fn run_spectral_loop(
         let interest_quality: Vec<f32> = interest_accum
             .iter()
             .zip(&magnitude_avg)
-            .map(|(&int, &mag)| {
-                if mag > 1e-10 {
-                    int * int / mag
-                } else {
-                    0.0
-                }
-            })
+            .map(
+                |(&int, &mag)| {
+                    if mag > 1e-10 { int * int / mag } else { 0.0 }
+                },
+            )
             .collect();
 
         // Spectral contrast: rewards bins that stand out above their
@@ -314,8 +320,7 @@ fn run_spectral_loop(
             .map(|i| {
                 let lo = i.saturating_sub(window);
                 let hi = (i + window + 1).min(num_bins);
-                let local_mean = magnitude_avg[lo..hi].iter().sum::<f32>()
-                    / (hi - lo) as f32;
+                let local_mean = magnitude_avg[lo..hi].iter().sum::<f32>() / (hi - lo) as f32;
                 if local_mean > 1e-10 {
                     magnitude_avg[i] / local_mean
                 } else {
@@ -325,9 +330,7 @@ fn run_spectral_loop(
             .collect();
 
         // Select scoring metric based on GUI setting.
-        let mode = ScoringMode::from_u32(
-            steering_params.scoring_mode.load(Ordering::Relaxed),
-        );
+        let mode = ScoringMode::from_u32(steering_params.scoring_mode.load(Ordering::Relaxed));
         let steering_score: Vec<f32> = match mode {
             ScoringMode::InterestQuality => interest_quality.clone(),
             ScoringMode::SpectralContrast => spectral_contrast.clone(),
@@ -485,9 +488,7 @@ mod tests {
             })
             .collect();
 
-        let signal: Vec<f32> = (0..FFT_SIZE)
-            .map(|i| (i as f32 * 0.1).sin())
-            .collect();
+        let signal: Vec<f32> = (0..FFT_SIZE).map(|i| (i as f32 * 0.1).sin()).collect();
 
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
@@ -500,10 +501,7 @@ mod tests {
                 .map(|(&s, &w)| Complex::new(s * w, 0.0))
                 .collect();
             fft.process(&mut input);
-            let mag: Vec<f32> = input[..FFT_SIZE / 2 + 1]
-                .iter()
-                .map(|c| c.norm())
-                .collect();
+            let mag: Vec<f32> = input[..FFT_SIZE / 2 + 1].iter().map(|c| c.norm()).collect();
             fb.apply(&mag);
         }
 
@@ -516,10 +514,7 @@ mod tests {
                 .map(|(&s, &w)| Complex::new(s * w, 0.0))
                 .collect();
             fft.process(&mut input);
-            let mag: Vec<f32> = input[..FFT_SIZE / 2 + 1]
-                .iter()
-                .map(|c| c.norm())
-                .collect();
+            let mag: Vec<f32> = input[..FFT_SIZE / 2 + 1].iter().map(|c| c.norm()).collect();
             fb.apply(&mag);
         }
         let per_call = start.elapsed() / iterations;

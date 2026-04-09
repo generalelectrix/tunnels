@@ -23,9 +23,7 @@ fn main() -> Result<()> {
     eframe::run_native(
         "Audio Visualizer",
         options,
-        Box::new(move |_cc| {
-            Ok(Box::new(audio_vis::AudioVisApp::new(processor_settings)))
-        }),
+        Box::new(move |_cc| Ok(Box::new(audio_vis::AudioVisApp::new(processor_settings)))),
     )
     .unwrap();
 

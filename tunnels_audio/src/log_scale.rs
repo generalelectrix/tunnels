@@ -53,7 +53,10 @@ mod tests {
     fn above_full_scale_exceeds_one() {
         let result = linear_to_perceptual(2.0, 60.0);
         // 2.0 linear = +6 dB, maps to (6+60)/60 = 1.1
-        assert!(result > 1.0, "Values above 0 dB should map above 1.0, got {result}");
+        assert!(
+            result > 1.0,
+            "Values above 0 dB should map above 1.0, got {result}"
+        );
     }
 
     #[test]

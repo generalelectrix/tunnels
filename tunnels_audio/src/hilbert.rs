@@ -11,12 +11,7 @@
 /// Coefficients for the two allpass chains.
 /// From Olli Niemitalo's design, optimized for +/-0.7 degree accuracy
 /// over 99.8% of the bandwidth.
-const COEFFS_PATH0: [f64; 4] = [
-    0.6923878,
-    0.9360654322959,
-    0.9882295226860,
-    0.9987488452737,
-];
+const COEFFS_PATH0: [f64; 4] = [0.6923878, 0.9360654322959, 0.9882295226860, 0.9987488452737];
 
 const COEFFS_PATH1: [f64; 4] = [
     0.4021921162426,

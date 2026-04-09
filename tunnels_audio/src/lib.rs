@@ -124,9 +124,7 @@ impl AudioInput {
         emitter.emit_audio_state_change(AutoTrimEnabled(
             self.processor_settings.auto_trim_enabled.get() > 0.5,
         ));
-        emitter.emit_audio_state_change(InputGain(
-            self.processor_settings.gain.get() as f64,
-        ));
+        emitter.emit_audio_state_change(InputGain(self.processor_settings.gain.get() as f64));
         emitter.emit_audio_state_change(IsClipping(self.clip_indicator.state()));
     }
 
@@ -174,10 +172,11 @@ impl AudioInput {
                 .processor_settings
                 .output_smoothing
                 .set(v.as_secs_f32()),
-            AutoTrimEnabled(v) => self
-                .processor_settings
-                .auto_trim_enabled
-                .set(if v { 1.0 } else { 0.0 }),
+            AutoTrimEnabled(v) => {
+                self.processor_settings
+                    .auto_trim_enabled
+                    .set(if v { 1.0 } else { 0.0 })
+            }
             InputGain(v) => {
                 if v < 0. {
                     warn!("Invalid input gain {v} (< 0).");

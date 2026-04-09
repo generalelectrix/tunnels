@@ -108,9 +108,7 @@ impl eframe::App for ConfigApp {
                             clock_panel::ClockServiceAction::Start => {
                                 MetaCommand::StartClockService
                             }
-                            clock_panel::ClockServiceAction::Stop => {
-                                MetaCommand::StopClockService
-                            }
+                            clock_panel::ClockServiceAction::Stop => MetaCommand::StopClockService,
                         };
                         let mut ctx = GuiContext {
                             modal: &mut self.modal,

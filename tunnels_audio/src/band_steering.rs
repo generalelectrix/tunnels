@@ -17,9 +17,12 @@ pub const STEERED_FILTER_COUNT: usize = 6;
 /// Per-filter info: (lane_index, filter_index_within_lane).
 /// Matches the iteration order in BandSteering.
 pub const STEERED_FILTER_LAYOUT: [(usize, usize); STEERED_FILTER_COUNT] = [
-    (0, 0), (0, 1), // low-mid lane, 2 filters
-    (1, 0), (1, 1), // mid lane, 2 filters
-    (2, 0), (2, 1), // high lane, 2 filters
+    (0, 0),
+    (0, 1), // low-mid lane, 2 filters
+    (1, 0),
+    (1, 1), // mid lane, 2 filters
+    (2, 0),
+    (2, 1), // high lane, 2 filters
 ];
 
 /// Shared atomic state for steered filter frequencies — written by the
@@ -146,8 +149,14 @@ impl FilterSnapshot {
     }
 
     fn eval_biquad(
-        b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32,
-        freq_hz: f32, sample_rate: f32,
+        b0: f32,
+        b1: f32,
+        b2: f32,
+        a0: f32,
+        a1: f32,
+        a2: f32,
+        freq_hz: f32,
+        sample_rate: f32,
     ) -> f32 {
         let w = 2.0 * std::f32::consts::PI * freq_hz / sample_rate;
         let cos_w = w.cos();
@@ -214,7 +223,6 @@ const MASK_WIDTH_MULTIPLIER: f32 = 2.0;
 /// similarly-scored peaks frame to frame.
 const STICKY_THRESHOLD: f32 = 1.5;
 
-
 /// Raised cosine kernel: 0.5 * (1 + cos(π * dist / half_width)).
 /// Returns 1.0 at center, 0.0 at ±half_width. Better approximation to
 /// bandpass filter response shape than a triangle.
@@ -256,11 +264,8 @@ impl ScoringMode {
         }
     }
 
-    pub const ALL: [ScoringMode; 3] = [
-        Self::InterestQuality,
-        Self::SpectralContrast,
-        Self::Blended,
-    ];
+    pub const ALL: [ScoringMode; 3] =
+        [Self::InterestQuality, Self::SpectralContrast, Self::Blended];
 }
 
 /// Shared tuning parameters — written by GUI, read by spectral thread.
@@ -335,12 +340,18 @@ impl BandSteering {
                 let filters: Vec<SteerableFilter> = (0..config.filter_count)
                     .map(|i| {
                         let t = (i as f32 + 0.5) / config.filter_count as f32;
-                        let center =
-                            config.min_hz * (config.max_hz / config.min_hz).powf(t);
-                        SteerableFilter { center_hz: center, last_target_bin: None }
+                        let center = config.min_hz * (config.max_hz / config.min_hz).powf(t);
+                        SteerableFilter {
+                            center_hz: center,
+                            last_target_bin: None,
+                        }
                     })
                     .collect();
-                Lane { config, filters, prev_targets: Vec::new() }
+                Lane {
+                    config,
+                    filters,
+                    prev_targets: Vec::new(),
+                }
             })
             .collect();
 
@@ -418,8 +429,7 @@ impl BandSteering {
             let bins_per_octave = crate::spectral::BINS_PER_OCTAVE;
             let q = self.q;
             let bw_octaves = 1.0 / q;
-            let kernel_half =
-                ((bw_octaves * bins_per_octave as f32).ceil() as usize).max(1);
+            let kernel_half = ((bw_octaves * bins_per_octave as f32).ceil() as usize).max(1);
             self.kernel_half_bins = kernel_half;
             self.mask_half_bins =
                 ((kernel_half as f32 * MASK_WIDTH_MULTIPLIER).ceil() as usize).max(1);
@@ -565,12 +575,8 @@ impl BandSteering {
                 let log_current = filter.center_hz.max(1.0).ln();
                 let log_target = target_hz.max(1.0).ln();
                 let new_log = self.damping * log_current + (1.0 - self.damping) * log_target;
-                filter.center_hz = new_log.exp().clamp(
-                    lane.config.min_hz,
-                    lane.config.max_hz,
-                );
+                filter.center_hz = new_log.exp().clamp(lane.config.min_hz, lane.config.max_hz);
             }
-
         }
     }
 
@@ -605,8 +611,7 @@ impl BandSteering {
                     lane_index: lane_idx,
                 })
                 .collect();
-            lane_filters
-                .sort_by(|a, b| a.center_hz.partial_cmp(&b.center_hz).unwrap());
+            lane_filters.sort_by(|a, b| a.center_hz.partial_cmp(&b.center_hz).unwrap());
             filters.extend(lane_filters);
         }
         BandSteeringSnapshot {

@@ -89,13 +89,7 @@ impl ScrollingPlot {
     /// `enabled` slice must be the same length as `self.traces`.
     /// `scales` optionally provides per-trace Y scaling (e.g. for normalization).
     /// Pass `None` for no scaling.
-    pub fn ui(
-        &self,
-        ui: &mut egui::Ui,
-        plot_id: &str,
-        enabled: &[bool],
-        scales: Option<&[f32]>,
-    ) {
+    pub fn ui(&self, ui: &mut egui::Ui, plot_id: &str, enabled: &[bool], scales: Option<&[f32]>) {
         self.ui_with_options(ui, plot_id, enabled, scales, None, None, None);
     }
 
@@ -144,9 +138,7 @@ impl ScrollingPlot {
         plot.show(ui, |plot_ui| {
             for (i, trace) in self.traces.iter().enumerate() {
                 if enabled.get(i).copied().unwrap_or(true) {
-                    let scale = scales
-                        .and_then(|s| s.get(i).copied())
-                        .unwrap_or(1.0) as f64;
+                    let scale = scales.and_then(|s| s.get(i).copied()).unwrap_or(1.0) as f64;
                     let points = if scale != 1.0 {
                         trace
                             .points
