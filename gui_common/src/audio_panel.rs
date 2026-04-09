@@ -12,6 +12,11 @@ pub trait AudioCommands {
     fn set_output_smoothing(&mut self, duration: Duration);
     fn set_gain(&mut self, gain_linear: f64);
     fn set_auto_trim_enabled(&mut self, enabled: bool);
+    fn set_active_band(&mut self, band: u32);
+    fn set_norm_floor_halflife(&mut self, seconds: f32);
+    fn set_norm_ceiling_halflife(&mut self, seconds: f32);
+    fn set_norm_floor_mode(&mut self, mode: u32);
+    fn set_norm_ceiling_mode(&mut self, mode: u32);
     fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
@@ -29,6 +34,11 @@ pub struct AudioSnapshot {
     pub output_smoothing: Duration,
     pub gain_linear: f64,
     pub auto_trim_enabled: bool,
+    pub active_band: u32,
+    pub norm_floor_halflife: f32,
+    pub norm_ceiling_halflife: f32,
+    pub norm_floor_mode: u32,
+    pub norm_ceiling_mode: u32,
 }
 
 impl Default for AudioSnapshot {
@@ -41,6 +51,11 @@ impl Default for AudioSnapshot {
             output_smoothing: Duration::from_millis(8),
             gain_linear: 1.0,
             auto_trim_enabled: true,
+            active_band: 0,
+            norm_floor_halflife: 10.0,
+            norm_ceiling_halflife: 5.0,
+            norm_floor_mode: 0,
+            norm_ceiling_mode: 1,
         }
     }
 }
@@ -93,6 +108,8 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         self.device_selection(ui);
         ui.add_space(8.0);
         self.envelope_controls(ui);
+        ui.add_space(8.0);
+        self.band_and_agc_controls(ui);
     }
 
     fn device_selection(&mut self, ui: &mut egui::Ui) {
@@ -222,6 +239,98 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         });
     }
 
+    fn band_and_agc_controls(&mut self, ui: &mut egui::Ui) {
+        const BAND_LABELS: [&str; 8] = [
+            "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
+        ];
+
+        ui.heading("Band / AGC");
+        ui.add_space(4.0);
+
+        egui::Grid::new("band_agc_grid").show(ui, |ui| {
+            // Band selector.
+            ui.label("Active band:");
+            let mut band = self.snapshot.active_band;
+            let selected_text = BAND_LABELS
+                .get(band as usize)
+                .copied()
+                .unwrap_or("<187");
+            egui::ComboBox::from_id_salt("active_band")
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for (i, label) in BAND_LABELS.iter().enumerate() {
+                        ui.selectable_value(&mut band, i as u32, *label);
+                    }
+                });
+            if band != self.snapshot.active_band {
+                self.commands.set_active_band(band);
+            }
+            ui.end_row();
+
+            // Floor half-life.
+            ui.label("Floor half-life:");
+            let mut floor_hl = self.snapshot.norm_floor_halflife;
+            if ui
+                .add(
+                    egui::Slider::new(&mut floor_hl, 0.5..=30.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                self.commands.set_norm_floor_halflife(floor_hl);
+            }
+            ui.end_row();
+
+            // Floor mode.
+            ui.label("Floor mode:");
+            ui.horizontal(|ui| {
+                let mut mode = self.snapshot.norm_floor_mode;
+                if ui.selectable_label(mode == 0, "Avg").clicked() {
+                    mode = 0;
+                }
+                if ui.selectable_label(mode == 1, "Min").clicked() {
+                    mode = 1;
+                }
+                if mode != self.snapshot.norm_floor_mode {
+                    self.commands.set_norm_floor_mode(mode);
+                }
+            });
+            ui.end_row();
+
+            // Ceiling half-life.
+            ui.label("Ceil half-life:");
+            let mut ceil_hl = self.snapshot.norm_ceiling_halflife;
+            if ui
+                .add(
+                    egui::Slider::new(&mut ceil_hl, 0.5..=15.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                self.commands.set_norm_ceiling_halflife(ceil_hl);
+            }
+            ui.end_row();
+
+            // Ceiling mode.
+            ui.label("Ceil mode:");
+            ui.horizontal(|ui| {
+                let mut mode = self.snapshot.norm_ceiling_mode;
+                if ui.selectable_label(mode == 0, "Avg").clicked() {
+                    mode = 0;
+                }
+                if ui.selectable_label(mode == 1, "Max").clicked() {
+                    mode = 1;
+                }
+                if mode != self.snapshot.norm_ceiling_mode {
+                    self.commands.set_norm_ceiling_mode(mode);
+                }
+            });
+            ui.end_row();
+        });
+    }
+
     fn refresh_audio_devices(&mut self) {
         let prev_device = self.state.current_audio_device();
         self.state.audio_devices = self.commands.list_devices();
@@ -252,6 +361,11 @@ mod tests {
         fn set_output_smoothing(&mut self, _duration: Duration) {}
         fn set_gain(&mut self, _gain_linear: f64) {}
         fn set_auto_trim_enabled(&mut self, _enabled: bool) {}
+        fn set_active_band(&mut self, _band: u32) {}
+        fn set_norm_floor_halflife(&mut self, _seconds: f32) {}
+        fn set_norm_ceiling_halflife(&mut self, _seconds: f32) {}
+        fn set_norm_floor_mode(&mut self, _mode: u32) {}
+        fn set_norm_ceiling_mode(&mut self, _mode: u32) {}
         fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {

@@ -13,7 +13,7 @@ use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 use tunnels_lib::transient_indicator::TransientIndicator;
 
-use self::processor::ProcessorSettings;
+use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, SharedEnvelopeHistory};
 use self::reconnect::ReconnectingInput;
 
 pub struct AudioInput {
@@ -83,6 +83,11 @@ impl AudioInput {
         &self.processor_settings
     }
 
+    /// Return the shared envelope history handle for GUI visualization.
+    pub fn envelope_history(&self) -> SharedEnvelopeHistory {
+        self.processor_settings.envelope_history.clone()
+    }
+
     /// Update the state of audio control.
     pub fn update_state<E: EmitStateChange>(&mut self, delta_t: Duration, emitter: &mut E) {
         let envelope = self.processor_settings.envelope.get() as f64;
@@ -120,6 +125,27 @@ impl AudioInput {
         ));
         emitter.emit_audio_state_change(InputGain(self.processor_settings.gain.get() as f64));
         emitter.emit_audio_state_change(IsClipping(self.clip_indicator.state()));
+        emitter.emit_audio_state_change(ActiveBand(
+            self.processor_settings
+                .active_band
+                .load(std::sync::atomic::Ordering::Relaxed),
+        ));
+        emitter.emit_audio_state_change(NormFloorHalflife(
+            self.processor_settings.norm_floor_halflife.get(),
+        ));
+        emitter.emit_audio_state_change(NormCeilingHalflife(
+            self.processor_settings.norm_ceiling_halflife.get(),
+        ));
+        emitter.emit_audio_state_change(NormFloorMode(
+            self.processor_settings
+                .norm_floor_mode
+                .load(std::sync::atomic::Ordering::Relaxed),
+        ));
+        emitter.emit_audio_state_change(NormCeilingMode(
+            self.processor_settings
+                .norm_ceiling_mode
+                .load(std::sync::atomic::Ordering::Relaxed),
+        ));
     }
 
     /// Handle a control event.
@@ -178,6 +204,28 @@ impl AudioInput {
                 }
                 self.processor_settings.gain.set(v as f32);
             }
+            ActiveBand(v) => {
+                let clamped = v.min((NUM_OUTPUT_BANDS - 1) as u32);
+                self.processor_settings
+                    .active_band
+                    .store(clamped, std::sync::atomic::Ordering::Relaxed);
+            }
+            NormFloorHalflife(v) => {
+                self.processor_settings.norm_floor_halflife.set(v);
+            }
+            NormCeilingHalflife(v) => {
+                self.processor_settings.norm_ceiling_halflife.set(v);
+            }
+            NormFloorMode(v) => {
+                self.processor_settings
+                    .norm_floor_mode
+                    .store(v, std::sync::atomic::Ordering::Relaxed);
+            }
+            NormCeilingMode(v) => {
+                self.processor_settings
+                    .norm_ceiling_mode
+                    .store(v, std::sync::atomic::Ordering::Relaxed);
+            }
         };
         emitter.emit_audio_state_change(sc);
     }
@@ -214,6 +262,11 @@ pub enum StateChange {
     AutoTrimEnabled(bool),
     InputGain(f64),
     IsClipping(bool),
+    ActiveBand(u32),
+    NormFloorHalflife(f32),
+    NormCeilingHalflife(f32),
+    NormFloorMode(u32),
+    NormCeilingMode(u32),
 }
 
 #[derive(Debug, Clone)]

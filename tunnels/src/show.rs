@@ -166,6 +166,13 @@ impl Show {
     pub fn run(&mut self, update_interval: Duration) -> Result<()> {
         info!("Show is starting.");
 
+        // Share the envelope history handle with the GUI.
+        if let Some(gui_state) = &self.gui_state {
+            gui_state
+                .envelope_history
+                .store(Arc::new(Some(self.audio_input.envelope_history())));
+        }
+
         // Emit initial UI state.
         self.refresh_ui();
         self.snapshot_gui_state(GuiDirty::all());
@@ -266,6 +273,17 @@ impl Show {
                 output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
                 gain_linear: ps.gain.get() as f64,
                 auto_trim_enabled: ps.auto_trim_enabled.get() > 0.5,
+                active_band: ps
+                    .active_band
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                norm_floor_halflife: ps.norm_floor_halflife.get(),
+                norm_ceiling_halflife: ps.norm_ceiling_halflife.get(),
+                norm_floor_mode: ps
+                    .norm_floor_mode
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                norm_ceiling_mode: ps
+                    .norm_ceiling_mode
+                    .load(std::sync::atomic::Ordering::Relaxed),
             }));
     }
 

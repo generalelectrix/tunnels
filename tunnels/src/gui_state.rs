@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
+use tunnels_audio::processor::SharedEnvelopeHistory;
 
 use crate::animation_visualizer::AnimationSnapshot;
 
@@ -29,6 +30,11 @@ pub struct AudioStateSnapshot {
     pub output_smoothing: Duration,
     pub gain_linear: f64,
     pub auto_trim_enabled: bool,
+    pub active_band: u32,
+    pub norm_floor_halflife: f32,
+    pub norm_ceiling_halflife: f32,
+    pub norm_floor_mode: u32,
+    pub norm_ceiling_mode: u32,
 }
 
 impl Default for AudioStateSnapshot {
@@ -40,6 +46,11 @@ impl Default for AudioStateSnapshot {
             output_smoothing: Duration::from_millis(8),
             gain_linear: 1.0,
             auto_trim_enabled: true,
+            active_band: 0,
+            norm_floor_halflife: 10.0,
+            norm_ceiling_halflife: 5.0,
+            norm_floor_mode: 0,
+            norm_ceiling_mode: 1,
         }
     }
 }
@@ -51,6 +62,9 @@ pub struct GuiState {
     pub clock_service_running: AtomicBool,
     pub visualizer_active: AtomicBool,
     pub animation_state: ArcSwap<AnimationSnapshot>,
+    /// Shared envelope ring buffers for the envelope viewer panel.
+    /// Set by the show thread once `AudioInput` is initialized.
+    pub envelope_history: ArcSwap<Option<SharedEnvelopeHistory>>,
 }
 
 pub type SharedGuiState = Arc<GuiState>;
@@ -64,6 +78,7 @@ impl Default for GuiState {
             clock_service_running: AtomicBool::new(false),
             visualizer_active: AtomicBool::new(false),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),
+            envelope_history: ArcSwap::from_pointee(None),
         }
     }
 }

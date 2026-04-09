@@ -66,6 +66,42 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
         ));
     }
 
+    fn set_active_band(&mut self, band: u32) {
+        let _ = self.ctx.send_command(MetaCommand::AudioControl(
+            tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::ActiveBand(band)),
+        ));
+    }
+
+    fn set_norm_floor_halflife(&mut self, seconds: f32) {
+        let _ = self.ctx.send_command(MetaCommand::AudioControl(
+            tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::NormFloorHalflife(
+                seconds,
+            )),
+        ));
+    }
+
+    fn set_norm_ceiling_halflife(&mut self, seconds: f32) {
+        let _ = self.ctx.send_command(MetaCommand::AudioControl(
+            tunnels::audio::ControlMessage::Set(
+                tunnels::audio::StateChange::NormCeilingHalflife(seconds),
+            ),
+        ));
+    }
+
+    fn set_norm_floor_mode(&mut self, mode: u32) {
+        let _ = self.ctx.send_command(MetaCommand::AudioControl(
+            tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::NormFloorMode(mode)),
+        ));
+    }
+
+    fn set_norm_ceiling_mode(&mut self, mode: u32) {
+        let _ = self.ctx.send_command(MetaCommand::AudioControl(
+            tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::NormCeilingMode(
+                mode,
+            )),
+        ));
+    }
+
     fn toggle_monitor(&mut self) {
         let _ = self.ctx.send_command(MetaCommand::AudioControl(
             tunnels::audio::ControlMessage::ToggleMonitor,
