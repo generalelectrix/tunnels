@@ -22,11 +22,13 @@ When a crate wraps a C library (OpenSSL, SDL2, libssh2, etc.), prefer the `vendo
 
 ## Audio subsystem
 
-See `tunnels/src/audio/CLAUDE.md` for detailed architecture. Key points:
+The audio system lives in the `tunnels_audio` crate. Key points:
 
 - The audio callback is a real-time context — no allocations, no locks, no panics.
-- Parameters are passed via AtomicF32 fields in an Arc-shared struct, not through message channels. The audio thread polls for changes at the start of each buffer.
-- The production GUI communicates via ControlMessage → show loop → atomic writes. Only the dev tool (audio_vis) writes atomics directly.
+- Control parameters are passed via atomic fields in `ProcessorSettings` (an `Arc`-shared struct). The audio thread polls for changes at the start of each buffer.
+- The GUI communicates via `ControlMessage` → show loop → atomic writes. The GUI reads state from `AudioStateSnapshot` via `arc-swap`, not from the atomics directly.
+- Envelope data streams from the audio thread to the GUI via lock-free SPSC ring buffers (`EnvelopeProducer`/`EnvelopeStream` in `ring_buffer.rs`, backed by `rtrb`).
+- The `tunnels/src/audio/` module is a thin re-export layer plus the `ShowEmitter` adapter.
 - The render loop runs at 240fps. The audio buffer is ~1ms. The fast envelope follower's 4ms release matches the render frame budget.
 
 ## GUI architecture
@@ -40,12 +42,12 @@ See `tunnels/src/audio/CLAUDE.md` for detailed architecture. Key points:
 | Crate | Purpose |
 |-------|---------|
 | `tunnels` | Main library: show loop, audio, animation, clocks, MIDI, rendering |
+| `tunnels_audio` | Audio input, envelope extraction, wavelet decomposition, ring buffers |
 | `tunnels_lib` | Shared utilities: number types, colors, smoothing, prompts |
 | `console` | GUI binary (eframe/egui): show configuration, MIDI, audio, animation viz |
-| `audio_vis` | Dev tool: standalone audio visualization for DSP development |
 | `tunnelclient` | Render client |
 | `tunnel-bootstrap` | Client bootstrapping |
-| `gui_common` | Shared GUI components (status colors, modals, panels) |
+| `gui_common` | Shared GUI components (audio panel, envelope viewer, MIDI panel, scrolling plot) |
 | `stage_theme` | Dark egui theme for stage environments |
 | `midi_harness` | MIDI device management |
 | `zero_configure` | DNSSD service discovery |
