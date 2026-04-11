@@ -10,7 +10,7 @@ use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::Duration;
 
-use crate::processor::{Processor, ProcessorSettings};
+use crate::processor::{Processor, ProcessorSettings, UpdateRate};
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -24,7 +24,7 @@ impl ReconnectingInput {
     /// succeeds or fails, so the caller gets immediate error feedback.
     ///
     pub fn new(device_name: String, processor_settings: ProcessorSettings) -> Result<Self> {
-        let (result_tx, result_rx) = channel::<Result<()>>();
+        let (result_tx, result_rx) = channel::<Result<OpenResult>>();
         Ok(Self {
             stop: Some(reconnect(
                 device_name,
@@ -56,11 +56,16 @@ enum Cmd {
 
 /// Spawn the reconnect thread and perform the initial stream open on it.
 /// Blocks until the first open attempt completes, returning Err if it fails.
+/// Result sent from the reconnect thread back to the caller for the initial open.
+struct OpenResult {
+    update_rate: UpdateRate,
+}
+
 fn reconnect(
     device_name: String,
     processor_settings: ProcessorSettings,
-    result_tx: Sender<Result<()>>,
-    result_rx: &std::sync::mpsc::Receiver<Result<()>>,
+    result_tx: Sender<Result<OpenResult>>,
+    result_rx: &std::sync::mpsc::Receiver<Result<OpenResult>>,
 ) -> Result<StopReconnect> {
     use Cmd::*;
 
@@ -68,6 +73,7 @@ fn reconnect(
     // Signal the thread to do the initial open.
     send.send(Disconnected).unwrap();
     let stop_sender = send.clone();
+    let thread_settings = processor_settings.clone();
 
     let reconnect_thread = thread::spawn(move || {
         let mut _input_stream: Option<Stream> = None;
@@ -84,23 +90,24 @@ fn reconnect(
                     _input_stream = None;
 
                     let open_result = open_audio_device(&device_name).and_then(|d| {
-                        build_input_stream(&d, processor_settings.clone(), send.clone())
+                        build_input_stream(&d, thread_settings.clone(), send.clone())
                     });
 
                     match open_result {
-                        Ok(input) => {
+                        Ok((stream, update_rate)) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
-                                let _ = result_tx.send(Ok(()));
+                                let _ = result_tx.send(Ok(OpenResult { update_rate }));
                                 first_open = false;
                             } else {
                                 info!("Successfully reopened audio input {device_name}.");
+                                // On reconnect, update the rate directly (may have changed).
+                                thread_settings.set_update_rate(update_rate);
                             }
-                            _input_stream = Some(input);
+                            _input_stream = Some(stream);
                         }
                         Err(e) => {
                             if first_open {
-                                // Report the error to the caller and exit.
                                 let _ = result_tx.send(Err(e));
                                 return;
                             }
@@ -118,10 +125,12 @@ fn reconnect(
     });
 
     // Block until the initial open attempt completes on the thread.
-    let initial_result = result_rx
+    let open = result_rx
         .recv()
-        .map_err(|_| anyhow::anyhow!("Audio reconnect thread exited unexpectedly"))?;
-    initial_result?;
+        .map_err(|_| anyhow::anyhow!("Audio reconnect thread exited unexpectedly"))??;
+
+    // Write the update rate on the calling thread — no race with the show's snapshot.
+    processor_settings.set_update_rate(open.update_rate);
 
     Ok(Box::new(move || {
         stop_sender
@@ -163,7 +172,7 @@ fn build_input_stream(
     device: &Device,
     processor_settings: ProcessorSettings,
     disconnect_sender: Sender<Cmd>,
-) -> Result<Stream> {
+) -> Result<(Stream, UpdateRate)> {
     let supported = device.default_input_config()?;
 
     // Aim for about 1 ms of audio buffering latency.
@@ -199,10 +208,7 @@ fn build_input_stream(
     let mut config: cpal::StreamConfig = supported.into();
     config.buffer_size = BufferSize::Fixed(frame_count);
 
-    // Set the update rate once — this is the rate at which the audio callback
-    // fires and envelope ring buffers are pushed.
-    let update_rate = config.sample_rate.0 as f32 / frame_count as f32;
-    processor_settings.update_rate.set(update_rate);
+    let update_rate = UpdateRate::new(config.sample_rate.0, frame_count);
 
     let mut processor = Processor::new(
         processor_settings,
@@ -227,5 +233,5 @@ fn build_input_stream(
     let input_stream = device.build_input_stream(&config, handle_buffer, handle_error, None)?;
 
     input_stream.play()?;
-    Ok(input_stream)
+    Ok((input_stream, update_rate))
 }

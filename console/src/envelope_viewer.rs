@@ -1,6 +1,8 @@
 use eframe::egui::{self, Color32};
 use gui_common::scrolling_plot::ScrollingPlot;
-use tunnels::audio::processor::{NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, SharedEnvelopeHistory};
+use tunnels::audio::processor::{
+    NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, SharedEnvelopeHistory, UpdateRate,
+};
 
 const BAND_LABELS: [&str; NUM_OUTPUT_BANDS] = OUTPUT_BAND_LABELS;
 
@@ -43,7 +45,7 @@ impl EnvelopeViewerState {
         &mut self,
         ui: &mut egui::Ui,
         envelope_history: Option<&SharedEnvelopeHistory>,
-        update_rate: Option<f32>,
+        update_rate: Option<UpdateRate>,
     ) -> bool {
         let was_open = self.open;
         ui.checkbox(&mut self.open, "Envelope Viewer");
@@ -86,9 +88,10 @@ impl EnvelopeViewerState {
         // Drain and display.
         let now = self.start_time.elapsed().as_secs_f64();
         let Some(rate) = update_rate else {
-            return true; // no data yet
+            ui.label("Waiting for audio data...");
+            return true;
         };
-        let interval = 1.0 / rate as f64;
+        let interval = rate.interval_secs();
         let mut samples = Vec::new();
 
         let all_enabled = [true; NUM_OUTPUT_BANDS];

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
-use tunnels_audio::processor::{SharedEnvelopeHistory, TrackingMode};
+use tunnels_audio::processor::{SharedEnvelopeHistory, TrackingMode, UpdateRate};
 
 use crate::animation_visualizer::AnimationSnapshot;
 
@@ -36,7 +36,7 @@ pub struct AudioStateSnapshot {
     pub norm_floor_mode: TrackingMode,
     pub norm_ceiling_mode: TrackingMode,
     /// Audio callback rate (sample_rate / frames_per_buffer).
-    pub update_rate: Option<f32>,
+    pub update_rate: Option<UpdateRate>,
 }
 
 impl Default for AudioStateSnapshot {

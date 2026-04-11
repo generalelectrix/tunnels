@@ -179,7 +179,7 @@ pub fn run_config_gui(
 ) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 500.0])
+            .with_inner_size([864.0, 600.0])
             .with_icon(std::sync::Arc::new(egui::IconData::default())),
         ..Default::default()
     };

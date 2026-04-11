@@ -31,6 +31,24 @@ pub const NUM_OUTPUT_BANDS: usize = 8;
 /// Band labels in frequency-ascending output order (index 0 = lowpass sub-bass).
 pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
 
+/// Audio callback rate in Hz (sample_rate / frames_per_buffer).
+#[derive(Debug, Clone, Copy)]
+pub struct UpdateRate(f32);
+
+impl UpdateRate {
+    pub fn new(sample_rate: u32, frames_per_buffer: u32) -> Self {
+        Self(sample_rate as f32 / frames_per_buffer as f32)
+    }
+
+    pub fn as_hz(self) -> f32 {
+        self.0
+    }
+
+    pub fn interval_secs(self) -> f64 {
+        1.0 / self.0 as f64
+    }
+}
+
 /// Shared handle for streaming envelope history to the GUI.
 /// The audio thread writes, the GUI thread reads. The GUI sets `send_enabled`
 /// to control whether the audio thread populates the ring buffers.
@@ -98,6 +116,15 @@ impl ProcessorSettingsInner {
     const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
     const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
+
+    pub fn set_update_rate(&self, rate: UpdateRate) {
+        self.update_rate.set(rate.as_hz());
+    }
+
+    pub fn get_update_rate(&self) -> Option<UpdateRate> {
+        let hz = self.update_rate.get();
+        if hz > 0.0 { Some(UpdateRate(hz)) } else { None }
+    }
 
     pub fn reset_defaults(&self) {
         self.filter_cutoff.set(Self::DEFAULT_FILTER_CUTOFF);

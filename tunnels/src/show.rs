@@ -279,10 +279,7 @@ impl Show {
                 norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
                 norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
                 norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
-                update_rate: {
-                    let rate = ps.update_rate.get();
-                    if rate > 0.0 { Some(rate) } else { None }
-                },
+                update_rate: ps.get_update_rate(),
             }));
     }
 
