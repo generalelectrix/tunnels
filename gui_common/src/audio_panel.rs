@@ -154,24 +154,26 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.add_space(4.0);
 
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
-            // Input gain (dB).
-            ui.label("Gain:");
-            let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
-            if ui
-                .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
-                .changed()
-            {
-                self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
-            }
-            ui.end_row();
-
-            // Auto-trim toggle.
+            // Auto input level toggle.
             ui.label("Auto Input Level:");
             let mut enabled = self.snapshot.auto_trim_enabled;
             if ui.checkbox(&mut enabled, "").changed() {
                 self.commands.set_auto_trim_enabled(enabled);
             }
             ui.end_row();
+
+            // Manual gain — only shown when auto input level is off.
+            if !self.snapshot.auto_trim_enabled {
+                ui.label("Gain:");
+                let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
+                if ui
+                    .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
+                    .changed()
+                {
+                    self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
+                }
+                ui.end_row();
+            }
 
             // Lowpass cutoff.
             ui.label("Lowpass:");
