@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "tunnels_lib",
+    "tunnels_audio",
     "tunnels",
     "tunnelclient",
     "tunnel-bootstrap",

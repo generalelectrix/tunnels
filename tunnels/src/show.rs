@@ -2,7 +2,7 @@ use crate::{
     animation,
     animation_target::AnimationTarget,
     animation_visualizer::AnimationSnapshot,
-    audio::{self, AudioInput},
+    audio::{self, AudioInput, ShowEmitter},
     clock_bank::{self, ClockBank},
     clock_server::{self, ClockPublisher, SharedClockData, StaticClockBank},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
@@ -28,6 +28,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
+        atomic::Ordering,
         mpsc::{Receiver, Sender},
     },
     time::{Duration, Instant},
@@ -74,7 +75,13 @@ impl Show {
                 send_control_event,
                 recv_control_event,
             )?,
-            audio_input: AudioInput::new(audio_input_device)?,
+            audio_input: {
+                let (input, audio_streams) = AudioInput::new(audio_input_device)?;
+                if let (Some(audio_streams), Some(gs)) = (audio_streams, &gui_state) {
+                    *gs.envelope_streams.lock().unwrap() = Some(audio_streams);
+                }
+                input
+            },
             clock_publisher: if run_clock_service {
                 match clock_server::clock_publisher() {
                     Ok(publisher) => Some(publisher),
@@ -231,7 +238,8 @@ impl Show {
     }
 
     fn update_state(&mut self, delta_t: Duration) {
-        self.audio_input.update_state(delta_t, &mut self.dispatcher);
+        self.audio_input
+            .update_state(delta_t, &mut ShowEmitter(&mut self.dispatcher));
         let audio_envelope = self.audio_input.envelope();
         self.state
             .clocks
@@ -250,15 +258,36 @@ impl Show {
         );
     }
 
+    /// Push audio subsystem state to the GUI snapshot.
+    fn snapshot_audio_state(&self) {
+        let Some(gui_state) = &self.gui_state else {
+            return;
+        };
+        let ps = self.audio_input.processor_settings();
+        gui_state
+            .audio_state
+            .store(Arc::new(crate::gui_state::AudioStateSnapshot {
+                device_name: self.audio_input.device_name().to_string(),
+                filter_cutoff_hz: ps.filter_cutoff.get(),
+                envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
+                envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
+                output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
+                gain_linear: ps.gain.get() as f64,
+                auto_trim_enabled: ps.auto_trim_enabled.load(Ordering::Relaxed),
+                active_band: ps.active_band.load(Ordering::Relaxed),
+                norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
+                norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
+                norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
+                norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
+            }));
+    }
+
     /// Push the current animation state to the GUI, if the visualizer is active.
     fn snapshot_animation_state(&mut self) {
         let Some(gui_state) = &self.gui_state else {
             return;
         };
-        if !gui_state
-            .visualizer_active
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
+        if !gui_state.visualizer_active.load(Ordering::Relaxed) {
             return;
         }
         let animation = self
@@ -330,8 +359,19 @@ impl Show {
                 GuiDirty::MIDI_SLOTS
             }
             SetAudioDevice(name) => {
-                self.audio_input = AudioInput::new(name)?;
-                GuiDirty::AUDIO_DEVICE
+                let (input, audio_streams) = AudioInput::new(name)?;
+                self.audio_input = input;
+                if let (Some(audio_streams), Some(gui_state)) =
+                    (audio_streams, &self.gui_state)
+                {
+                    *gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
+                }
+                GuiDirty::AUDIO
+            }
+            AudioControl(msg) => {
+                self.audio_input
+                    .control(msg, &mut ShowEmitter(&mut self.dispatcher));
+                GuiDirty::AUDIO
             }
             StartClockService => {
                 if self.clock_publisher.is_some() {
@@ -361,16 +401,13 @@ impl Show {
                 .midi_slots
                 .store(Arc::new(self.dispatcher.midi_slot_statuses()));
         }
-        if dirty.contains(GuiDirty::AUDIO_DEVICE) {
-            gui_state
-                .audio_device
-                .store(Arc::new(self.audio_input.device_name().to_string()));
+        if dirty.contains(GuiDirty::AUDIO) {
+            self.snapshot_audio_state();
         }
         if dirty.contains(GuiDirty::CLOCK_SERVICE) {
-            gui_state.clock_service_running.store(
-                self.clock_publisher.is_some(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
+            gui_state
+                .clock_service_running
+                .store(self.clock_publisher.is_some(), Ordering::Relaxed);
         }
     }
 }
@@ -899,7 +936,12 @@ mod test {
                 "audio/envelope_release",
                 AU::EnvelopeRelease(Duration::from_millis(50)),
             );
-            au("audio/gain", AU::Gain(2.0));
+            au(
+                "audio/output_smoothing",
+                AU::OutputSmoothing(Duration::from_millis(8)),
+            );
+            au("audio/auto_trim_enabled", AU::AutoTrimEnabled(true));
+            au("audio/input_gain", AU::InputGain(2.0));
             au("audio/is_clipping", AU::IsClipping(true));
         }
 

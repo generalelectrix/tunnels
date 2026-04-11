@@ -12,11 +12,12 @@ use anyhow::Result;
 use eframe::egui;
 
 use admin_panel::{AdminPanelState, AdminService};
-use audio_panel::{AudioPanel, AudioPanelState};
-use gui_common::{CloseHandler, MessageModal};
+use audio_panel::AudioPanelState;
+use gui_common::envelope_viewer::EnvelopeViewerState;
+use gui_common::{CloseHandler, MessageModal, audio_panel::AudioSnapshot, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
-use tunnels::control::CommandClient;
+use tunnels::control::{CommandClient, MetaCommand};
 use tunnels::gui_state::SharedGuiState;
 use ui_util::GuiContext;
 
@@ -44,6 +45,7 @@ struct ConfigApp {
     /// to the main thread. Arc<AtomicBool> because the deferred closure is
     /// 'static + Send + Sync and can't hold a reference to ConfigApp fields.
     visualizer_detached: Arc<AtomicBool>,
+    envelope_viewer: EnvelopeViewerState,
     close_handler: CloseHandler,
     modal: MessageModal,
     active_tab: Tab,
@@ -98,21 +100,67 @@ impl eframe::App for ConfigApp {
                         slots: &midi_slots,
                     }
                     .ui(ui);
+
+                    ui.add_space(16.0);
+                    ui.separator();
+                    let clock_running =
+                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
+                    if let Some(action) = clock_panel::clock_service_ui(ui, clock_running) {
+                        let cmd = match action {
+                            clock_panel::ClockServiceAction::Start => {
+                                MetaCommand::StartClockService
+                            }
+                            clock_panel::ClockServiceAction::Stop => MetaCommand::StopClockService,
+                        };
+                        let mut ctx = GuiContext {
+                            modal: &mut self.modal,
+                            client: &self.client,
+                        };
+                        let _ = ctx.send_command(cmd);
+                    }
                 }
                 Tab::Audio => {
-                    let audio_device = self.gui_state.audio_device.load();
-                    let clock_service_running =
-                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
-                    AudioPanel {
-                        ctx: GuiContext {
+                    let audio_state = self.gui_state.audio_state.load();
+                    let snapshot = AudioSnapshot {
+                        device_name: audio_state.device_name.clone(),
+                        filter_cutoff_hz: audio_state.filter_cutoff_hz,
+                        envelope_attack: audio_state.envelope_attack,
+                        envelope_release: audio_state.envelope_release,
+                        output_smoothing: audio_state.output_smoothing,
+                        gain_linear: audio_state.gain_linear,
+                        auto_trim_enabled: audio_state.auto_trim_enabled,
+                        active_band: audio_state.active_band,
+                        norm_floor_halflife: audio_state.norm_floor_halflife,
+                        norm_ceiling_halflife: audio_state.norm_ceiling_halflife,
+                        norm_floor_mode: audio_state.norm_floor_mode,
+                        norm_ceiling_mode: audio_state.norm_ceiling_mode,
+                    };
+                    audio_panel::render_audio_panel(
+                        ui,
+                        GuiContext {
                             modal: &mut self.modal,
                             client: &self.client,
                         },
-                        state: &mut self.audio_panel,
-                        current_device: &audio_device,
-                        clock_service_running,
+                        &mut self.audio_panel,
+                        &snapshot,
+                    );
+
+                    if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {
+                        // Take new envelope streams from the show thread if available.
+                        if let Some((envelope_streams, update_rate)) =
+                            self.gui_state.envelope_streams.lock().unwrap().take()
+                        {
+                            self.envelope_viewer
+                                .set_envelope_streams(envelope_streams, update_rate);
+                        }
+
+                        ui.add_space(8.0);
+                        ui.separator();
+
+                        self.envelope_viewer.ui(ui);
+                    } else {
+                        self.envelope_viewer.set_open(false);
                     }
-                    .ui(ui);
                 }
                 Tab::Animation => {
                     animation_panel::ui(
@@ -138,13 +186,14 @@ pub fn run_config_gui(
 ) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 500.0])
+            .with_inner_size([864.0, 600.0])
             .with_icon(std::sync::Arc::new(egui::IconData::default())),
         ..Default::default()
     };
-    let audio_device = gui_state.audio_device.load();
-    let mut audio_panel = AudioPanelState::new();
-    audio_panel.sync_from_device_name(&audio_device);
+    let audio_state = gui_state.audio_state.load();
+    let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
+    let mut audio_panel = AudioPanelState::new(devices);
+    audio_panel.sync_from_device_name(&audio_state.device_name);
 
     let admin_panel = AdminPanelState::new(admin_service.clone(), hostname);
 
@@ -160,6 +209,7 @@ pub fn run_config_gui(
                 admin_service,
                 visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
                 visualizer_detached: Arc::new(AtomicBool::new(false)),
+                envelope_viewer: EnvelopeViewerState::new(),
                 close_handler: CloseHandler::default(),
                 modal: MessageModal::default(),
                 client,

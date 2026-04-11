@@ -1,5 +1,5 @@
 use crate::{
-    audio::AudioInput,
+    audio::{AudioInput, ShowEmitter},
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
     clock_bank::ClockBank,
@@ -105,7 +105,7 @@ impl MasterUI {
                 positions.control(cm);
             }
             Audio(cm) => {
-                audio_input.control(cm, emitter);
+                audio_input.control(cm, &mut ShowEmitter(emitter));
             }
             MasterUI(uim) => self.control(uim, mixer, emitter),
         }
@@ -126,7 +126,7 @@ impl MasterUI {
         mixer.emit_state(emitter);
         clocks.emit_state(emitter);
         color_palette.emit_state(emitter);
-        audio_input.emit_state(emitter);
+        audio_input.emit_state(&mut ShowEmitter(emitter));
     }
 
     /// Emit state for the beam store.

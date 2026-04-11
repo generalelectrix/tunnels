@@ -5,6 +5,7 @@ pub mod color;
 pub mod number;
 pub mod prompt;
 pub mod smooth;
+pub mod transient_indicator;
 
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
