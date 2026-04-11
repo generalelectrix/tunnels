@@ -28,6 +28,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
+        atomic::Ordering,
         mpsc::{Receiver, Sender},
     },
     time::{Duration, Instant},
@@ -272,18 +273,12 @@ impl Show {
                 envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
                 output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
                 gain_linear: ps.gain.get() as f64,
-                auto_trim_enabled: ps
-                    .auto_trim_enabled
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                active_band: ps.active_band.load(std::sync::atomic::Ordering::Relaxed),
+                auto_trim_enabled: ps.auto_trim_enabled.load(Ordering::Relaxed),
+                active_band: ps.active_band.load(Ordering::Relaxed),
                 norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
                 norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
-                norm_floor_mode: ps
-                    .norm_floor_mode
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                norm_ceiling_mode: ps
-                    .norm_ceiling_mode
-                    .load(std::sync::atomic::Ordering::Relaxed),
+                norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
+                norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
                 update_rate: {
                     let rate = ps.update_rate.get();
                     if rate > 0.0 { Some(rate) } else { None }
@@ -296,10 +291,7 @@ impl Show {
         let Some(gui_state) = &self.gui_state else {
             return;
         };
-        if !gui_state
-            .visualizer_active
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
+        if !gui_state.visualizer_active.load(Ordering::Relaxed) {
             return;
         }
         let animation = self
@@ -420,10 +412,9 @@ impl Show {
                 .store(Arc::new(self.audio_input.device_name().to_string()));
         }
         if dirty.contains(GuiDirty::CLOCK_SERVICE) {
-            gui_state.clock_service_running.store(
-                self.clock_publisher.is_some(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
+            gui_state
+                .clock_service_running
+                .store(self.clock_publisher.is_some(), Ordering::Relaxed);
         }
         if dirty.contains(GuiDirty::AUDIO_STATE) {
             self.snapshot_audio_state();

@@ -8,6 +8,7 @@ pub mod wavelet;
 use anyhow::{Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{info, warn};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
@@ -123,14 +124,12 @@ impl AudioInput {
         emitter.emit_audio_state_change(AutoTrimEnabled(
             self.processor_settings
                 .auto_trim_enabled
-                .load(std::sync::atomic::Ordering::Relaxed),
+                .load(Ordering::Relaxed),
         ));
         emitter.emit_audio_state_change(InputGain(self.processor_settings.gain.get() as f64));
         emitter.emit_audio_state_change(IsClipping(self.clip_indicator.state()));
         emitter.emit_audio_state_change(ActiveBand(
-            self.processor_settings
-                .active_band
-                .load(std::sync::atomic::Ordering::Relaxed),
+            self.processor_settings.active_band.load(Ordering::Relaxed),
         ));
         emitter.emit_audio_state_change(NormFloorHalflife(Duration::from_secs_f32(
             self.processor_settings.norm_floor_halflife.get(),
@@ -141,12 +140,12 @@ impl AudioInput {
         emitter.emit_audio_state_change(NormFloorMode(
             self.processor_settings
                 .norm_floor_mode
-                .load(std::sync::atomic::Ordering::Relaxed),
+                .load(Ordering::Relaxed),
         ));
         emitter.emit_audio_state_change(NormCeilingMode(
             self.processor_settings
                 .norm_ceiling_mode
-                .load(std::sync::atomic::Ordering::Relaxed),
+                .load(Ordering::Relaxed),
         ));
     }
 
@@ -197,7 +196,7 @@ impl AudioInput {
             AutoTrimEnabled(v) => {
                 self.processor_settings
                     .auto_trim_enabled
-                    .store(v, std::sync::atomic::Ordering::Relaxed);
+                    .store(v, Ordering::Relaxed);
             }
             InputGain(v) => {
                 if v < 0. {
@@ -210,7 +209,7 @@ impl AudioInput {
                 let clamped = v.min((NUM_OUTPUT_BANDS - 1) as u32);
                 self.processor_settings
                     .active_band
-                    .store(clamped, std::sync::atomic::Ordering::Relaxed);
+                    .store(clamped, Ordering::Relaxed);
             }
             NormFloorHalflife(v) => {
                 self.processor_settings
@@ -225,12 +224,12 @@ impl AudioInput {
             NormFloorMode(v) => {
                 self.processor_settings
                     .norm_floor_mode
-                    .store(v, std::sync::atomic::Ordering::Relaxed);
+                    .store(v, Ordering::Relaxed);
             }
             NormCeilingMode(v) => {
                 self.processor_settings
                     .norm_ceiling_mode
-                    .store(v, std::sync::atomic::Ordering::Relaxed);
+                    .store(v, Ordering::Relaxed);
             }
         };
         emitter.emit_audio_state_change(sc);

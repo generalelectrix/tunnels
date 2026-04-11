@@ -11,7 +11,7 @@ use audio_processor_traits::{AtomicF32, AudioContext, simple_processor::MonoAudi
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use log::debug;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::hilbert::HilbertTransform;
@@ -82,7 +82,7 @@ pub struct ProcessorSettingsInner {
     pub norm_ceiling_mode: AtomicTrackingMode,
 
     /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
-    pub active_band: std::sync::atomic::AtomicU32,
+    pub active_band: AtomicU32,
     /// Shared envelope history for GUI visualization.
     pub envelope_history: SharedEnvelopeHistory,
     /// Audio callback rate (sample_rate / frames_per_buffer), set once when the stream is created.
@@ -102,16 +102,14 @@ impl ProcessorSettingsInner {
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
         self.gain.set(1.0);
-        self.auto_trim_enabled
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.active_band
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.auto_trim_enabled.store(true, Ordering::Relaxed);
+        self.active_band.store(0, Ordering::Relaxed);
         self.norm_floor_halflife.set(10.0);
         self.norm_ceiling_halflife.set(5.0);
         self.norm_floor_mode
-            .store(TrackingMode::Average, std::sync::atomic::Ordering::Relaxed);
+            .store(TrackingMode::Average, Ordering::Relaxed);
         self.norm_ceiling_mode
-            .store(TrackingMode::Limit, std::sync::atomic::Ordering::Relaxed);
+            .store(TrackingMode::Limit, Ordering::Relaxed);
     }
 }
 
@@ -131,7 +129,7 @@ impl Default for ProcessorSettingsInner {
             norm_ceiling_halflife: AtomicF32::new(5.0),
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
             norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
-            active_band: std::sync::atomic::AtomicU32::new(0),
+            active_band: AtomicU32::new(0),
             envelope_history: Arc::new(EnvelopeHistory::new()),
             update_rate: AtomicF32::new(0.0),
         }
@@ -535,10 +533,7 @@ impl Processor {
 
         let mut raw_peak: f32 = 0.0;
         let mut input_peak: f32 = 0.0;
-        let auto_trim_enabled = self
-            .settings
-            .auto_trim_enabled
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let auto_trim_enabled = self.settings.auto_trim_enabled.load(Ordering::Relaxed);
 
         // Either manual gain or auto-trim, never both.
         let effective_gain = if auto_trim_enabled {
@@ -624,14 +619,8 @@ impl Processor {
             1000.0
         };
 
-        let floor_mode = self
-            .settings
-            .norm_floor_mode
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let ceil_mode = self
-            .settings
-            .norm_ceiling_mode
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let floor_mode = self.settings.norm_floor_mode.load(Ordering::Relaxed);
+        let ceil_mode = self.settings.norm_ceiling_mode.load(Ordering::Relaxed);
 
         self.lowpass_normalizer
             .set_params(floor_hl, ceil_hl, update_rate);
@@ -665,7 +654,7 @@ impl Processor {
             .settings
             .envelope_history
             .send_enabled
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(Ordering::Relaxed)
         {
             for (i, &val) in output_bands.iter().enumerate() {
                 self.settings.envelope_history.histories[i].push(val);
@@ -673,10 +662,7 @@ impl Processor {
         }
 
         // Write the active band's value to the shared envelope atomic.
-        let active = self
-            .settings
-            .active_band
-            .load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let active = self.settings.active_band.load(Ordering::Relaxed) as usize;
         let active = if active >= NUM_OUTPUT_BANDS {
             0
         } else {
@@ -814,9 +800,7 @@ mod tests {
     #[test]
     fn auto_trim_disabled_stays_at_unity() {
         let settings = ProcessorSettings::default();
-        settings
-            .auto_trim_enabled
-            .store(false, std::sync::atomic::Ordering::Relaxed); // disabled
+        settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disabled
         let mut processor = Processor::new(settings.clone(), 48000, 1);
 
         // Feed quiet signal — without trim, gain should stay at 1.0.
@@ -834,9 +818,7 @@ mod tests {
     #[test]
     fn processor_produces_envelope_from_sine() {
         let settings = ProcessorSettings::default();
-        settings
-            .auto_trim_enabled
-            .store(false, std::sync::atomic::Ordering::Relaxed); // disable trim for deterministic test
+        settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disable trim for deterministic test
         let mut processor = Processor::new(settings.clone(), 48000, 1);
 
         // Feed a 100Hz sine for 1 second.

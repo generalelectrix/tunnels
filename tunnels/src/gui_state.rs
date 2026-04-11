@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
-use tunnels_audio::processor::SharedEnvelopeHistory;
+use tunnels_audio::processor::{SharedEnvelopeHistory, TrackingMode};
 
 use crate::animation_visualizer::AnimationSnapshot;
 
@@ -33,8 +33,8 @@ pub struct AudioStateSnapshot {
     pub active_band: u32,
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
-    pub norm_floor_mode: tunnels_audio::processor::TrackingMode,
-    pub norm_ceiling_mode: tunnels_audio::processor::TrackingMode,
+    pub norm_floor_mode: TrackingMode,
+    pub norm_ceiling_mode: TrackingMode,
     /// Audio callback rate (sample_rate / frames_per_buffer).
     pub update_rate: Option<f32>,
 }
@@ -51,8 +51,8 @@ impl Default for AudioStateSnapshot {
             active_band: 0,
             norm_floor_halflife: Duration::from_secs(10),
             norm_ceiling_halflife: Duration::from_secs(5),
-            norm_floor_mode: tunnels_audio::processor::TrackingMode::Average,
-            norm_ceiling_mode: tunnels_audio::processor::TrackingMode::Limit,
+            norm_floor_mode: TrackingMode::Average,
+            norm_ceiling_mode: TrackingMode::Limit,
             update_rate: None,
         }
     }
