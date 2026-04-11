@@ -55,6 +55,12 @@ pub struct HilbertTransform {
     path1: [AllpassSection; 4],
 }
 
+impl Default for HilbertTransform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HilbertTransform {
     pub fn new() -> Self {
         Self {

@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn minus_30db_maps_to_half() {
         // -30 dB = ~0.0316 linear, should map to 0.5 with 60 dB range
-        let result = linear_to_perceptual(0.0316227766, 60.0);
+        let result = linear_to_perceptual(0.031622775, 60.0);
         assert!((result - 0.5).abs() < 0.01);
     }
 

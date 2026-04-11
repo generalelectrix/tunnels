@@ -94,9 +94,9 @@ impl SignalRingBuffer {
         let available = current_write.wrapping_sub(start);
 
         let to_read = available.min(dest.len());
-        for i in 0..to_read {
+        for (i, buf_val) in dest.iter_mut().enumerate().take(to_read) {
             let index = start.wrapping_add(i) & (self.capacity - 1);
-            dest[i] = self.buffer[index].get();
+            *buf_val = self.buffer[index].get();
         }
         // Fill remainder with silence.
         for s in &mut dest[to_read..] {

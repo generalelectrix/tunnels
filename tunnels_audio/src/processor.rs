@@ -36,6 +36,12 @@ pub struct EnvelopeHistory {
     pub send_enabled: AtomicBool,
 }
 
+impl Default for EnvelopeHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnvelopeHistory {
     pub fn new() -> Self {
         Self {
