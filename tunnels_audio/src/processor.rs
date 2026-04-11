@@ -57,26 +57,22 @@ pub struct EnvelopeHistory {
     pub send_enabled: AtomicBool,
 }
 
-impl Default for EnvelopeHistory {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl EnvelopeHistory {
-    pub fn new() -> Self {
-        Self {
-            histories: std::array::from_fn(|_| SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)),
-            send_enabled: AtomicBool::new(false),
+    pub fn new() -> anyhow::Result<Self> {
+        let mut histories = Vec::with_capacity(NUM_OUTPUT_BANDS);
+        for _ in 0..NUM_OUTPUT_BANDS {
+            histories.push(SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)?);
         }
+        Ok(Self {
+            histories: histories
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("wrong number of ring buffers"))?,
+            send_enabled: AtomicBool::new(false),
+        })
     }
 }
 
 pub type SharedEnvelopeHistory = Arc<EnvelopeHistory>;
-
-pub fn new_shared_envelope_history() -> SharedEnvelopeHistory {
-    Arc::new(EnvelopeHistory::new())
-}
 
 pub struct ProcessorSettingsInner {
     /// Current envelope value for the show loop (from active_band).
@@ -160,7 +156,9 @@ impl Default for ProcessorSettingsInner {
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
             norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
             active_band: AtomicU32::new(0),
-            envelope_history: Arc::new(EnvelopeHistory::new()),
+            envelope_history: Arc::new(
+                EnvelopeHistory::new().expect("envelope history capacity is a valid power of two"),
+            ),
             update_rate: AtomicF32::new(0.0),
         }
     }

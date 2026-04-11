@@ -5,6 +5,7 @@
 //! The consumer (GUI thread) reads all available samples each frame (~60Hz).
 //! When the buffer is full, new samples overwrite the oldest (lossy).
 
+use anyhow::{Result, bail};
 use audio_processor_traits::AtomicF32;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -18,18 +19,17 @@ pub struct SignalRingBuffer {
 
 impl SignalRingBuffer {
     /// Create a new ring buffer with the given capacity.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `capacity` is not a power of two or is zero.
-    pub fn new(capacity: usize) -> Self {
-        assert!(capacity.is_power_of_two() && capacity > 0);
+    /// Capacity must be a power of two and non-zero.
+    pub fn new(capacity: usize) -> Result<Self> {
+        if capacity == 0 || !capacity.is_power_of_two() {
+            bail!("Ring buffer capacity must be a non-zero power of two, got {capacity}");
+        }
         let buffer: Vec<AtomicF32> = (0..capacity).map(|_| AtomicF32::new(0.0)).collect();
-        Self {
+        Ok(Self {
             buffer: buffer.into_boxed_slice(),
             write_pos: AtomicUsize::new(0),
             capacity,
-        }
+        })
     }
 
     /// Push a sample. Called from the audio thread.
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn push_and_drain_basic() {
-        let rb = SignalRingBuffer::new(8);
+        let rb = SignalRingBuffer::new(8).unwrap();
         let mut last = rb.write_pos();
         let mut out = Vec::new();
 
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn drain_empty() {
-        let rb = SignalRingBuffer::new(8);
+        let rb = SignalRingBuffer::new(8).unwrap();
         let mut last = rb.write_pos();
         let mut out = Vec::new();
 
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn drain_incremental() {
-        let rb = SignalRingBuffer::new(8);
+        let rb = SignalRingBuffer::new(8).unwrap();
         let mut last = rb.write_pos();
         let mut out = Vec::new();
 
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn overflow_drops_oldest() {
-        let rb = SignalRingBuffer::new(4);
+        let rb = SignalRingBuffer::new(4).unwrap();
         let mut last = rb.write_pos();
         let mut out = Vec::new();
 
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn write_pos_initialized_skips_history() {
-        let rb = SignalRingBuffer::new(8);
+        let rb = SignalRingBuffer::new(8).unwrap();
 
         rb.push(1.0);
         rb.push(2.0);
@@ -201,14 +201,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn non_power_of_two_panics() {
-        SignalRingBuffer::new(5);
+    fn non_power_of_two_returns_error() {
+        assert!(SignalRingBuffer::new(5).is_err());
     }
 
     #[test]
-    #[should_panic]
-    fn zero_capacity_panics() {
-        SignalRingBuffer::new(0);
+    fn zero_capacity_returns_error() {
+        assert!(SignalRingBuffer::new(0).is_err());
     }
 }
