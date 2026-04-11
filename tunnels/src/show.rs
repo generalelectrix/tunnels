@@ -272,10 +272,12 @@ impl Show {
                 envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
                 output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
                 gain_linear: ps.gain.get() as f64,
-                auto_trim_enabled: ps.auto_trim_enabled.get() > 0.5,
+                auto_trim_enabled: ps
+                    .auto_trim_enabled
+                    .load(std::sync::atomic::Ordering::Relaxed),
                 active_band: ps.active_band.load(std::sync::atomic::Ordering::Relaxed),
-                norm_floor_halflife: ps.norm_floor_halflife.get(),
-                norm_ceiling_halflife: ps.norm_ceiling_halflife.get(),
+                norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
+                norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
                 norm_floor_mode: ps
                     .norm_floor_mode
                     .load(std::sync::atomic::Ordering::Relaxed),

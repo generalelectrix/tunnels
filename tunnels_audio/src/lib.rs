@@ -121,7 +121,9 @@ impl AudioInput {
             self.processor_settings.output_smoothing.get(),
         )));
         emitter.emit_audio_state_change(AutoTrimEnabled(
-            self.processor_settings.auto_trim_enabled.get() > 0.5,
+            self.processor_settings
+                .auto_trim_enabled
+                .load(std::sync::atomic::Ordering::Relaxed),
         ));
         emitter.emit_audio_state_change(InputGain(self.processor_settings.gain.get() as f64));
         emitter.emit_audio_state_change(IsClipping(self.clip_indicator.state()));
@@ -130,12 +132,12 @@ impl AudioInput {
                 .active_band
                 .load(std::sync::atomic::Ordering::Relaxed),
         ));
-        emitter.emit_audio_state_change(NormFloorHalflife(
+        emitter.emit_audio_state_change(NormFloorHalflife(Duration::from_secs_f32(
             self.processor_settings.norm_floor_halflife.get(),
-        ));
-        emitter.emit_audio_state_change(NormCeilingHalflife(
+        )));
+        emitter.emit_audio_state_change(NormCeilingHalflife(Duration::from_secs_f32(
             self.processor_settings.norm_ceiling_halflife.get(),
-        ));
+        )));
         emitter.emit_audio_state_change(NormFloorMode(
             self.processor_settings
                 .norm_floor_mode
@@ -195,7 +197,7 @@ impl AudioInput {
             AutoTrimEnabled(v) => {
                 self.processor_settings
                     .auto_trim_enabled
-                    .set(if v { 1.0 } else { 0.0 })
+                    .store(v, std::sync::atomic::Ordering::Relaxed);
             }
             InputGain(v) => {
                 if v < 0. {
@@ -211,10 +213,14 @@ impl AudioInput {
                     .store(clamped, std::sync::atomic::Ordering::Relaxed);
             }
             NormFloorHalflife(v) => {
-                self.processor_settings.norm_floor_halflife.set(v);
+                self.processor_settings
+                    .norm_floor_halflife
+                    .set(v.as_secs_f32());
             }
             NormCeilingHalflife(v) => {
-                self.processor_settings.norm_ceiling_halflife.set(v);
+                self.processor_settings
+                    .norm_ceiling_halflife
+                    .set(v.as_secs_f32());
             }
             NormFloorMode(v) => {
                 self.processor_settings
@@ -263,10 +269,10 @@ pub enum StateChange {
     InputGain(f64),
     IsClipping(bool),
     ActiveBand(u32),
-    NormFloorHalflife(f32),
-    NormCeilingHalflife(f32),
-    NormFloorMode(u32),
-    NormCeilingMode(u32),
+    NormFloorHalflife(Duration),
+    NormCeilingHalflife(Duration),
+    NormFloorMode(processor::TrackingMode),
+    NormCeilingMode(processor::TrackingMode),
 }
 
 #[derive(Debug, Clone)]

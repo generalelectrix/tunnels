@@ -72,29 +72,29 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
         ));
     }
 
-    fn set_norm_floor_halflife(&mut self, seconds: f32) {
+    fn set_norm_floor_halflife(&mut self, halflife: Duration) {
         let _ = self.ctx.send_command(MetaCommand::AudioControl(
             tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::NormFloorHalflife(
-                seconds,
+                halflife,
             )),
         ));
     }
 
-    fn set_norm_ceiling_halflife(&mut self, seconds: f32) {
+    fn set_norm_ceiling_halflife(&mut self, halflife: Duration) {
         let _ = self.ctx.send_command(MetaCommand::AudioControl(
             tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::NormCeilingHalflife(
-                seconds,
+                halflife,
             )),
         ));
     }
 
-    fn set_norm_floor_mode(&mut self, mode: u32) {
+    fn set_norm_floor_mode(&mut self, mode: tunnels::audio::processor::TrackingMode) {
         let _ = self.ctx.send_command(MetaCommand::AudioControl(
             tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::NormFloorMode(mode)),
         ));
     }
 
-    fn set_norm_ceiling_mode(&mut self, mode: u32) {
+    fn set_norm_ceiling_mode(&mut self, mode: tunnels::audio::processor::TrackingMode) {
         let _ = self.ctx.send_command(MetaCommand::AudioControl(
             tunnels::audio::ControlMessage::Set(tunnels::audio::StateChange::NormCeilingMode(mode)),
         ));

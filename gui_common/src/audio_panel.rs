@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::time::Duration;
+use tunnels_audio::processor::TrackingMode;
 
 use crate::STATUS_COLORS;
 
@@ -13,10 +14,10 @@ pub trait AudioCommands {
     fn set_gain(&mut self, gain_linear: f64);
     fn set_auto_trim_enabled(&mut self, enabled: bool);
     fn set_active_band(&mut self, band: u32);
-    fn set_norm_floor_halflife(&mut self, seconds: f32);
-    fn set_norm_ceiling_halflife(&mut self, seconds: f32);
-    fn set_norm_floor_mode(&mut self, mode: u32);
-    fn set_norm_ceiling_mode(&mut self, mode: u32);
+    fn set_norm_floor_halflife(&mut self, halflife: Duration);
+    fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
+    fn set_norm_floor_mode(&mut self, mode: TrackingMode);
+    fn set_norm_ceiling_mode(&mut self, mode: TrackingMode);
     fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
@@ -35,10 +36,10 @@ pub struct AudioSnapshot {
     pub gain_linear: f64,
     pub auto_trim_enabled: bool,
     pub active_band: u32,
-    pub norm_floor_halflife: f32,
-    pub norm_ceiling_halflife: f32,
-    pub norm_floor_mode: u32,
-    pub norm_ceiling_mode: u32,
+    pub norm_floor_halflife: Duration,
+    pub norm_ceiling_halflife: Duration,
+    pub norm_floor_mode: TrackingMode,
+    pub norm_ceiling_mode: TrackingMode,
 }
 
 impl Default for AudioSnapshot {
@@ -52,10 +53,10 @@ impl Default for AudioSnapshot {
             gain_linear: 1.0,
             auto_trim_enabled: true,
             active_band: 0,
-            norm_floor_halflife: 10.0,
-            norm_ceiling_halflife: 5.0,
-            norm_floor_mode: 0,
-            norm_ceiling_mode: 1,
+            norm_floor_halflife: Duration::from_secs(10),
+            norm_ceiling_halflife: Duration::from_secs(5),
+            norm_floor_mode: TrackingMode::Average,
+            norm_ceiling_mode: TrackingMode::Limit,
         }
     }
 }
@@ -263,16 +264,17 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
 
                 // Floor half-life.
                 ui.label("Floor half-life:");
-                let mut floor_hl = self.snapshot.norm_floor_halflife;
+                let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
                 if ui
                     .add(
-                        egui::Slider::new(&mut floor_hl, 0.5..=30.0)
+                        egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
                             .suffix(" s")
                             .logarithmic(true),
                     )
                     .changed()
                 {
-                    self.commands.set_norm_floor_halflife(floor_hl);
+                    self.commands
+                        .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
                 }
                 ui.end_row();
 
@@ -280,11 +282,17 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
                 ui.label("Floor mode:");
                 ui.horizontal(|ui| {
                     let mut mode = self.snapshot.norm_floor_mode;
-                    if ui.selectable_label(mode == 0, "Avg").clicked() {
-                        mode = 0;
+                    if ui
+                        .selectable_label(mode == TrackingMode::Average, "Avg")
+                        .clicked()
+                    {
+                        mode = TrackingMode::Average;
                     }
-                    if ui.selectable_label(mode == 1, "Min").clicked() {
-                        mode = 1;
+                    if ui
+                        .selectable_label(mode == TrackingMode::Limit, "Min")
+                        .clicked()
+                    {
+                        mode = TrackingMode::Limit;
                     }
                     if mode != self.snapshot.norm_floor_mode {
                         self.commands.set_norm_floor_mode(mode);
@@ -294,16 +302,17 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
 
                 // Ceiling half-life.
                 ui.label("Ceil half-life:");
-                let mut ceil_hl = self.snapshot.norm_ceiling_halflife;
+                let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
                 if ui
                     .add(
-                        egui::Slider::new(&mut ceil_hl, 0.5..=15.0)
+                        egui::Slider::new(&mut ceil_hl_s, 0.5..=15.0)
                             .suffix(" s")
                             .logarithmic(true),
                     )
                     .changed()
                 {
-                    self.commands.set_norm_ceiling_halflife(ceil_hl);
+                    self.commands
+                        .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
                 }
                 ui.end_row();
 
@@ -311,11 +320,17 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
                 ui.label("Ceil mode:");
                 ui.horizontal(|ui| {
                     let mut mode = self.snapshot.norm_ceiling_mode;
-                    if ui.selectable_label(mode == 0, "Avg").clicked() {
-                        mode = 0;
+                    if ui
+                        .selectable_label(mode == TrackingMode::Average, "Avg")
+                        .clicked()
+                    {
+                        mode = TrackingMode::Average;
                     }
-                    if ui.selectable_label(mode == 1, "Max").clicked() {
-                        mode = 1;
+                    if ui
+                        .selectable_label(mode == TrackingMode::Limit, "Max")
+                        .clicked()
+                    {
+                        mode = TrackingMode::Limit;
                     }
                     if mode != self.snapshot.norm_ceiling_mode {
                         self.commands.set_norm_ceiling_mode(mode);
@@ -361,10 +376,10 @@ mod tests {
         fn set_gain(&mut self, _gain_linear: f64) {}
         fn set_auto_trim_enabled(&mut self, _enabled: bool) {}
         fn set_active_band(&mut self, _band: u32) {}
-        fn set_norm_floor_halflife(&mut self, _seconds: f32) {}
-        fn set_norm_ceiling_halflife(&mut self, _seconds: f32) {}
-        fn set_norm_floor_mode(&mut self, _mode: u32) {}
-        fn set_norm_ceiling_mode(&mut self, _mode: u32) {}
+        fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
+        fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
+        fn set_norm_floor_mode(&mut self, _mode: TrackingMode) {}
+        fn set_norm_ceiling_mode(&mut self, _mode: TrackingMode) {}
         fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {

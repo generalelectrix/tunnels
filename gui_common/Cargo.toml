@@ -7,6 +7,7 @@ edition.workspace = true
 eframe = "0.33"
 egui_plot = "0.34"
 midi_harness = { path = "../midi_harness" }
+tunnels_audio = { path = "../tunnels_audio" }
 
 [dev-dependencies]
 egui_kittest = { version = "0.33", features = ["wgpu", "snapshot"] }

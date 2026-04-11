@@ -31,10 +31,10 @@ pub struct AudioStateSnapshot {
     pub gain_linear: f64,
     pub auto_trim_enabled: bool,
     pub active_band: u32,
-    pub norm_floor_halflife: f32,
-    pub norm_ceiling_halflife: f32,
-    pub norm_floor_mode: u32,
-    pub norm_ceiling_mode: u32,
+    pub norm_floor_halflife: Duration,
+    pub norm_ceiling_halflife: Duration,
+    pub norm_floor_mode: tunnels_audio::processor::TrackingMode,
+    pub norm_ceiling_mode: tunnels_audio::processor::TrackingMode,
     /// Audio callback rate (sample_rate / frames_per_buffer).
     pub update_rate: Option<f32>,
 }
@@ -49,10 +49,10 @@ impl Default for AudioStateSnapshot {
             gain_linear: 1.0,
             auto_trim_enabled: true,
             active_band: 0,
-            norm_floor_halflife: 10.0,
-            norm_ceiling_halflife: 5.0,
-            norm_floor_mode: 0,
-            norm_ceiling_mode: 1,
+            norm_floor_halflife: Duration::from_secs(10),
+            norm_ceiling_halflife: Duration::from_secs(5),
+            norm_floor_mode: tunnels_audio::processor::TrackingMode::Average,
+            norm_ceiling_mode: tunnels_audio::processor::TrackingMode::Limit,
             update_rate: None,
         }
     }

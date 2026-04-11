@@ -68,7 +68,7 @@ pub struct ProcessorSettingsInner {
     /// Symmetric output smoothing time constant (seconds). 0 = disabled.
     pub output_smoothing: AtomicF32,
     /// Whether the auto-trim is enabled.
-    pub auto_trim_enabled: AtomicF32,
+    pub auto_trim_enabled: AtomicBool,
     /// Current auto-trim gain factor (read by GUI for display).
     pub auto_trim_gain: AtomicF32,
     /// True if any raw input sample hit >= 1.0 before our gain (pre-gain clipping).
@@ -78,10 +78,8 @@ pub struct ProcessorSettingsInner {
     pub norm_floor_halflife: AtomicF32,
     /// Ceiling tracking half-life in seconds (moderate — tracks recent peaks).
     pub norm_ceiling_halflife: AtomicF32,
-    /// Floor tracking mode: 0 = Average, 1 = Limit (min-tracking).
-    pub norm_floor_mode: std::sync::atomic::AtomicU32,
-    /// Ceiling tracking mode: 0 = Average, 1 = Limit (max-tracking).
-    pub norm_ceiling_mode: std::sync::atomic::AtomicU32,
+    pub norm_floor_mode: AtomicTrackingMode,
+    pub norm_ceiling_mode: AtomicTrackingMode,
 
     /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
     pub active_band: std::sync::atomic::AtomicU32,
@@ -104,15 +102,16 @@ impl ProcessorSettingsInner {
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
         self.gain.set(1.0);
-        self.auto_trim_enabled.set(1.0);
+        self.auto_trim_enabled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         self.active_band
             .store(0, std::sync::atomic::Ordering::Relaxed);
         self.norm_floor_halflife.set(10.0);
         self.norm_ceiling_halflife.set(5.0);
         self.norm_floor_mode
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+            .store(TrackingMode::Average, std::sync::atomic::Ordering::Relaxed);
         self.norm_ceiling_mode
-            .store(1, std::sync::atomic::Ordering::Relaxed);
+            .store(TrackingMode::Limit, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -125,13 +124,13 @@ impl Default for ProcessorSettingsInner {
             envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
             gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
-            auto_trim_enabled: AtomicF32::new(1.0), // enabled by default
+            auto_trim_enabled: AtomicBool::new(true),
             auto_trim_gain: AtomicF32::new(1.0),
             pre_gain_clipping: AtomicF32::new(0.0),
             norm_floor_halflife: AtomicF32::new(10.0),
             norm_ceiling_halflife: AtomicF32::new(5.0),
-            norm_floor_mode: std::sync::atomic::AtomicU32::new(0), // Average
-            norm_ceiling_mode: std::sync::atomic::AtomicU32::new(1), // Limit
+            norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
+            norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
             active_band: std::sync::atomic::AtomicU32::new(0),
             envelope_history: Arc::new(EnvelopeHistory::new()),
             update_rate: AtomicF32::new(0.0),
@@ -225,16 +224,22 @@ impl AutoTrim {
 /// Tracking mode for floor/ceiling.
 /// - Average: asymmetric EMA tracking the general level
 /// - Limit: tracks the instantaneous min (floor) or max (ceiling) with slow decay
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
+#[derive(PartialEq, Eq)]
+#[atomic_enum::atomic_enum]
 pub enum TrackingMode {
     Average = 0,
     Limit = 1,
 }
 
-impl TrackingMode {
-    pub fn from_u32(v: u32) -> Self {
+impl From<u32> for TrackingMode {
+    fn from(v: u32) -> Self {
         if v == 1 { Self::Limit } else { Self::Average }
+    }
+}
+
+impl From<TrackingMode> for u32 {
+    fn from(m: TrackingMode) -> Self {
+        m as u32
     }
 }
 
@@ -530,7 +535,10 @@ impl Processor {
 
         let mut raw_peak: f32 = 0.0;
         let mut input_peak: f32 = 0.0;
-        let auto_trim_enabled = self.settings.auto_trim_enabled.get() > 0.5;
+        let auto_trim_enabled = self
+            .settings
+            .auto_trim_enabled
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         // Either manual gain or auto-trim, never both.
         let effective_gain = if auto_trim_enabled {
@@ -616,16 +624,14 @@ impl Processor {
             1000.0
         };
 
-        let floor_mode = TrackingMode::from_u32(
-            self.settings
-                .norm_floor_mode
-                .load(std::sync::atomic::Ordering::Relaxed),
-        );
-        let ceil_mode = TrackingMode::from_u32(
-            self.settings
-                .norm_ceiling_mode
-                .load(std::sync::atomic::Ordering::Relaxed),
-        );
+        let floor_mode = self
+            .settings
+            .norm_floor_mode
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let ceil_mode = self
+            .settings
+            .norm_ceiling_mode
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         self.lowpass_normalizer
             .set_params(floor_hl, ceil_hl, update_rate);
@@ -808,7 +814,9 @@ mod tests {
     #[test]
     fn auto_trim_disabled_stays_at_unity() {
         let settings = ProcessorSettings::default();
-        settings.auto_trim_enabled.set(0.0); // disabled
+        settings
+            .auto_trim_enabled
+            .store(false, std::sync::atomic::Ordering::Relaxed); // disabled
         let mut processor = Processor::new(settings.clone(), 48000, 1);
 
         // Feed quiet signal — without trim, gain should stay at 1.0.
@@ -826,7 +834,9 @@ mod tests {
     #[test]
     fn processor_produces_envelope_from_sine() {
         let settings = ProcessorSettings::default();
-        settings.auto_trim_enabled.set(0.0); // disable trim for deterministic test
+        settings
+            .auto_trim_enabled
+            .store(false, std::sync::atomic::Ordering::Relaxed); // disable trim for deterministic test
         let mut processor = Processor::new(settings.clone(), 48000, 1);
 
         // Feed a 100Hz sine for 1 second.
