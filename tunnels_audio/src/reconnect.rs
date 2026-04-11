@@ -111,9 +111,8 @@ fn reconnect(
                                 first_open = false;
                             } else {
                                 info!("Successfully reopened audio input {device_name}.");
-                                thread_settings.set_update_rate(update_rate);
-                                // Consumers from reconnect are dropped — the GUI
-                                // keeps the original envelope_streams which are now abandoned.
+                                // New envelope_streams are dropped — the GUI keeps
+                                // the original streams which are now abandoned.
                                 // The viewer will need to re-open to get fresh ones.
                             }
                             _input_stream = Some(stream);
@@ -140,9 +139,6 @@ fn reconnect(
     let open = result_rx
         .recv()
         .map_err(|_| anyhow::anyhow!("Audio reconnect thread exited unexpectedly"))??;
-
-    // Write the update rate on the calling thread — no race with the show's snapshot.
-    processor_settings.set_update_rate(open.update_rate);
 
     let stop = Box::new(move || {
         stop_sender

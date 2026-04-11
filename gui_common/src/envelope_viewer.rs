@@ -21,6 +21,7 @@ pub struct EnvelopeViewerState {
     open: bool,
     plot: ScrollingPlot,
     envelope_streams: Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>,
+    update_rate: Option<UpdateRate>,
     start_time: std::time::Instant,
 }
 
@@ -40,6 +41,7 @@ impl EnvelopeViewerState {
             open: false,
             plot,
             envelope_streams: None,
+            update_rate: None,
             start_time: std::time::Instant::now(),
         }
     }
@@ -55,16 +57,21 @@ impl EnvelopeViewerState {
     }
 
     /// Provide new envelope streams (e.g. after a device change).
-    pub fn set_envelope_streams(&mut self, envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS]) {
+    pub fn set_envelope_streams(
+        &mut self,
+        envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+        update_rate: UpdateRate,
+    ) {
         // Clear stale plot data from any previous device.
         for trace in &mut self.plot.traces {
             trace.points.clear();
         }
         self.envelope_streams = Some(envelope_streams);
+        self.update_rate = Some(update_rate);
     }
 
     /// Render the envelope viewer. Returns whether it's open (for layout purposes).
-    pub fn ui(&mut self, ui: &mut egui::Ui, update_rate: Option<UpdateRate>) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
         let was_open = self.open;
         ui.checkbox(&mut self.open, "Envelope Viewer");
 
@@ -98,7 +105,7 @@ impl EnvelopeViewerState {
 
         // Drain and display.
         let now = self.start_time.elapsed().as_secs_f64();
-        let Some(rate) = update_rate else {
+        let Some(rate) = self.update_rate else {
             ui.label("Waiting for audio data...");
             return true;
         };

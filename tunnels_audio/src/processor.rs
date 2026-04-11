@@ -63,8 +63,6 @@ pub struct ProcessorSettingsInner {
     pub auto_trim_enabled: AtomicBool,
     /// Current auto-trim gain factor (read by GUI for display).
     pub auto_trim_gain: AtomicF32,
-    /// True if any raw input sample hit >= 1.0 before our gain (pre-gain clipping).
-    pub pre_gain_clipping: AtomicF32,
 
     /// Floor tracking half-life in seconds (slow — adapts to ambient level).
     pub norm_floor_halflife: AtomicF32,
@@ -75,8 +73,6 @@ pub struct ProcessorSettingsInner {
 
     /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
     pub active_band: AtomicU32,
-    /// Audio callback rate (sample_rate / frames_per_buffer), set once when the stream is created.
-    pub update_rate: AtomicF32,
 }
 
 impl ProcessorSettingsInner {
@@ -85,15 +81,6 @@ impl ProcessorSettingsInner {
     const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
     const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
-
-    pub fn set_update_rate(&self, rate: UpdateRate) {
-        self.update_rate.set(rate.as_hz());
-    }
-
-    pub fn get_update_rate(&self) -> Option<UpdateRate> {
-        let hz = self.update_rate.get();
-        if hz > 0.0 { Some(UpdateRate(hz)) } else { None }
-    }
 
     pub fn reset_defaults(&self) {
         self.filter_cutoff.set(Self::DEFAULT_FILTER_CUTOFF);
@@ -123,13 +110,11 @@ impl Default for ProcessorSettingsInner {
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             auto_trim_enabled: AtomicBool::new(true),
             auto_trim_gain: AtomicF32::new(1.0),
-            pre_gain_clipping: AtomicF32::new(0.0),
             norm_floor_halflife: AtomicF32::new(10.0),
             norm_ceiling_halflife: AtomicF32::new(5.0),
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
             norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
             active_band: AtomicU32::new(0),
-            update_rate: AtomicF32::new(0.0),
         }
     }
 }
@@ -591,11 +576,6 @@ impl Processor {
             }
         }
 
-        // Pre-gain clipping indicator: did any raw sample hit >= 1.0?
-        self.settings
-            .pre_gain_clipping
-            .set(if raw_peak >= 1.0 { 1.0 } else { 0.0 });
-
         // Update auto-trim based on the pre-gain peak (raw signal level).
         // We feed raw_peak, not input_peak, to avoid a feedback loop where
         // the trim adjusts based on its own output.
@@ -782,28 +762,6 @@ mod tests {
             (trim.gain - 1.0).abs() < 0.01,
             "Trim should stay at 1.0 during silence, got {:.3}",
             trim.gain
-        );
-    }
-
-    #[test]
-    fn pre_gain_clipping_detected() {
-        let settings = ProcessorSettings::default();
-        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
-
-        // Feed a signal that clips at the input.
-        let buffer: Vec<f32> = vec![1.0; 48];
-        processor.process(&buffer);
-        assert!(
-            settings.pre_gain_clipping.get() > 0.5,
-            "Pre-gain clipping should be detected"
-        );
-
-        // Feed a normal signal.
-        let buffer: Vec<f32> = vec![0.5; 48];
-        processor.process(&buffer);
-        assert!(
-            settings.pre_gain_clipping.get() < 0.5,
-            "Pre-gain clipping should clear on normal signal"
         );
     }
 

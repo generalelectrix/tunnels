@@ -76,9 +76,9 @@ impl Show {
                 recv_control_event,
             )?,
             audio_input: {
-                let (input, envelope_streams) = AudioInput::new(audio_input_device)?;
-                if let (Some(envelope_streams), Some(gs)) = (envelope_streams, &gui_state) {
-                    *gs.envelope_streams.lock().unwrap() = Some(envelope_streams);
+                let (input, audio_streams) = AudioInput::new(audio_input_device)?;
+                if let (Some(audio_streams), Some(gs)) = (audio_streams, &gui_state) {
+                    *gs.envelope_streams.lock().unwrap() = Some(audio_streams);
                 }
                 input
             },
@@ -279,7 +279,6 @@ impl Show {
                 norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
                 norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
                 norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
-                update_rate: ps.get_update_rate(),
             }));
     }
 
@@ -360,12 +359,12 @@ impl Show {
                 GuiDirty::MIDI_SLOTS
             }
             SetAudioDevice(name) => {
-                let (input, envelope_streams) = AudioInput::new(name)?;
+                let (input, audio_streams) = AudioInput::new(name)?;
                 self.audio_input = input;
-                if let (Some(envelope_streams), Some(gui_state)) =
-                    (envelope_streams, &self.gui_state)
+                if let (Some(audio_streams), Some(gui_state)) =
+                    (audio_streams, &self.gui_state)
                 {
-                    *gui_state.envelope_streams.lock().unwrap() = Some(envelope_streams);
+                    *gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
                 }
                 GuiDirty::AUDIO
             }

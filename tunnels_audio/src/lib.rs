@@ -17,6 +17,7 @@ use tunnels_lib::transient_indicator::TransientIndicator;
 use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
+pub use self::processor::UpdateRate;
 
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
@@ -62,10 +63,13 @@ impl AudioInput {
     }
 
     /// Open an audio input device. Returns the AudioInput and, if a device
-    /// was opened, the envelope envelope_streams for the GUI viewer.
+    /// was opened, the envelope streams and update rate for the GUI viewer.
     pub fn new(
         device_name: Option<String>,
-    ) -> Result<(Self, Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>)> {
+    ) -> Result<(
+        Self,
+        Option<([EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)>,
+    )> {
         let device_name = match device_name {
             None => return Ok((Self::offline(), None)),
             Some(d) => d,
@@ -74,7 +78,7 @@ impl AudioInput {
         info!("Using audio input device {device_name}.");
 
         let processor_settings = ProcessorSettings::default();
-        let (input, envelope_streams, _update_rate) =
+        let (input, envelope_streams, update_rate) =
             ReconnectingInput::new(device_name.clone(), processor_settings.clone())?;
 
         Ok((
@@ -87,7 +91,7 @@ impl AudioInput {
                 clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
                 device_name,
             },
-            Some(envelope_streams),
+            Some((envelope_streams, update_rate)),
         ))
     }
 

@@ -147,16 +147,17 @@ impl eframe::App for ConfigApp {
 
                     if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {
                         // Take new envelope streams from the show thread if available.
-                        if let Some(envelope_streams) =
+                        if let Some((envelope_streams, update_rate)) =
                             self.gui_state.envelope_streams.lock().unwrap().take()
                         {
-                            self.envelope_viewer.set_envelope_streams(envelope_streams);
+                            self.envelope_viewer
+                                .set_envelope_streams(envelope_streams, update_rate);
                         }
 
                         ui.add_space(8.0);
                         ui.separator();
 
-                        self.envelope_viewer.ui(ui, audio_state.update_rate);
+                        self.envelope_viewer.ui(ui);
                     } else {
                         self.envelope_viewer.set_open(false);
                     }

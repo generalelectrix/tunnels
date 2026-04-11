@@ -34,8 +34,6 @@ pub struct AudioStateSnapshot {
     pub norm_ceiling_halflife: Duration,
     pub norm_floor_mode: TrackingMode,
     pub norm_ceiling_mode: TrackingMode,
-    /// Audio callback rate (sample_rate / frames_per_buffer).
-    pub update_rate: Option<UpdateRate>,
 }
 
 impl Default for AudioStateSnapshot {
@@ -53,7 +51,6 @@ impl Default for AudioStateSnapshot {
             norm_ceiling_halflife: Duration::from_secs(5),
             norm_floor_mode: TrackingMode::Average,
             norm_ceiling_mode: TrackingMode::Limit,
-            update_rate: None,
         }
     }
 }
@@ -64,9 +61,9 @@ pub struct GuiState {
     pub clock_service_running: AtomicBool,
     pub visualizer_active: AtomicBool,
     pub animation_state: ArcSwap<AnimationSnapshot>,
-    /// Envelope ring buffer consumers for the GUI viewer.
+    /// Envelope ring buffer streams and update rate for the GUI viewer.
     /// Placed by the show thread, taken by the GUI thread.
-    pub envelope_streams: Mutex<Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>>,
+    pub envelope_streams: Mutex<Option<([EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)>>,
 }
 
 pub type SharedGuiState = Arc<GuiState>;
