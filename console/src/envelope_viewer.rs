@@ -17,9 +17,6 @@ const BAND_COLORS: [Color32; NUM_OUTPUT_BANDS] = [
     Color32::from_rgb(255, 60, 60),   // 12-24k — red
 ];
 
-/// Approximate update rate (~1kHz buffer callbacks).
-const SAMPLE_RATE: f64 = 1000.0;
-
 pub struct EnvelopeViewerState {
     open: bool,
     plot: ScrollingPlot,
@@ -48,6 +45,7 @@ impl EnvelopeViewerState {
         &mut self,
         ui: &mut egui::Ui,
         envelope_history: Option<&SharedEnvelopeHistory>,
+        update_rate: Option<f32>,
     ) -> bool {
         let was_open = self.open;
         ui.checkbox(&mut self.open, "Envelope Viewer");
@@ -89,7 +87,10 @@ impl EnvelopeViewerState {
 
         // Drain and display.
         let now = self.start_time.elapsed().as_secs_f64();
-        let interval = 1.0 / SAMPLE_RATE;
+        let Some(rate) = update_rate else {
+            return true; // no data yet
+        };
+        let interval = 1.0 / rate as f64;
         let mut samples = Vec::new();
 
         let all_enabled = [true; NUM_OUTPUT_BANDS];

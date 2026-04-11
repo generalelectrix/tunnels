@@ -282,6 +282,10 @@ impl Show {
                 norm_ceiling_mode: ps
                     .norm_ceiling_mode
                     .load(std::sync::atomic::Ordering::Relaxed),
+                update_rate: {
+                    let rate = ps.update_rate.get();
+                    if rate > 0.0 { Some(rate) } else { None }
+                },
             }));
     }
 

@@ -35,6 +35,8 @@ pub struct AudioStateSnapshot {
     pub norm_ceiling_halflife: f32,
     pub norm_floor_mode: u32,
     pub norm_ceiling_mode: u32,
+    /// Audio callback rate (sample_rate / frames_per_buffer).
+    pub update_rate: Option<f32>,
 }
 
 impl Default for AudioStateSnapshot {
@@ -51,6 +53,7 @@ impl Default for AudioStateSnapshot {
             norm_ceiling_halflife: 5.0,
             norm_floor_mode: 0,
             norm_ceiling_mode: 1,
+            update_rate: None,
         }
     }
 }

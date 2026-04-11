@@ -81,6 +81,8 @@ pub struct ProcessorSettingsInner {
     pub active_band: std::sync::atomic::AtomicU32,
     /// Shared envelope history for GUI visualization.
     pub envelope_history: SharedEnvelopeHistory,
+    /// Audio callback rate (sample_rate / frames_per_buffer), set once when the stream is created.
+    pub update_rate: AtomicF32,
 }
 
 impl ProcessorSettingsInner {
@@ -126,6 +128,7 @@ impl Default for ProcessorSettingsInner {
             norm_ceiling_mode: std::sync::atomic::AtomicU32::new(1), // Limit
             active_band: std::sync::atomic::AtomicU32::new(0),
             envelope_history: Arc::new(EnvelopeHistory::new()),
+            update_rate: AtomicF32::new(0.0),
         }
     }
 }

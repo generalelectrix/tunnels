@@ -152,7 +152,8 @@ impl eframe::App for ConfigApp {
                     // Envelope viewer: read the shared handle from gui_state.
                     let envelope_history_guard = self.gui_state.envelope_history.load();
                     let envelope_history = envelope_history_guard.as_ref().as_ref();
-                    self.envelope_viewer.ui(ui, envelope_history);
+                    self.envelope_viewer
+                        .ui(ui, envelope_history, audio_state.update_rate);
                 }
                 Tab::Animation => {
                     animation_panel::ui(

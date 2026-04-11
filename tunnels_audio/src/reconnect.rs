@@ -203,6 +203,11 @@ fn build_input_stream(
     let mut config: cpal::StreamConfig = supported.into();
     config.buffer_size = BufferSize::Fixed(frame_count);
 
+    // Set the update rate once — this is the rate at which the audio callback
+    // fires and envelope ring buffers are pushed.
+    let update_rate = config.sample_rate.0 as f32 / frame_count as f32;
+    processor_settings.update_rate.set(update_rate);
+
     let mut processor = Processor::new(
         processor_settings,
         config.sample_rate.0,
