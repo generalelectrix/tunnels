@@ -267,6 +267,7 @@ impl Show {
         gui_state
             .audio_state
             .store(Arc::new(crate::gui_state::AudioStateSnapshot {
+                device_name: self.audio_input.device_name().to_string(),
                 filter_cutoff_hz: ps.filter_cutoff.get(),
                 envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
                 envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
@@ -402,9 +403,6 @@ impl Show {
                 .store(Arc::new(self.dispatcher.midi_slot_statuses()));
         }
         if dirty.contains(GuiDirty::AUDIO) {
-            gui_state
-                .audio_device
-                .store(Arc::new(self.audio_input.device_name().to_string()));
             self.snapshot_audio_state();
         }
         if dirty.contains(GuiDirty::CLOCK_SERVICE) {

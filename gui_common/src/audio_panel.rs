@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::time::Duration;
+use tunnels_audio::OFFLINE_DEVICE_NAME;
 use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
 
 /// Abstraction over project-specific command dispatch for audio panels.
@@ -43,7 +44,7 @@ pub struct AudioSnapshot {
 impl Default for AudioSnapshot {
     fn default() -> Self {
         Self {
-            device_name: "Offline".to_string(),
+            device_name: OFFLINE_DEVICE_NAME.to_string(),
             filter_cutoff_hz: 200.0,
             envelope_attack: Duration::from_millis(10),
             envelope_release: Duration::from_millis(50),
@@ -93,7 +94,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
     pub fn ui(mut self, ui: &mut egui::Ui) {
         self.device_selection(ui);
 
-        if self.snapshot.device_name == "Offline" {
+        if self.snapshot.device_name == OFFLINE_DEVICE_NAME {
             return;
         }
 
@@ -129,7 +130,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             egui::ComboBox::from_id_salt("audio_device")
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.state.selected_audio, None, "Offline");
+                    ui.selectable_value(&mut self.state.selected_audio, None, OFFLINE_DEVICE_NAME);
                     for (i, device) in self.state.audio_devices.iter().enumerate() {
                         ui.selectable_value(&mut self.state.selected_audio, Some(i), device);
                     }

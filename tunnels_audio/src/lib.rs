@@ -18,6 +18,9 @@ use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
 
+/// Device name used when no audio device is connected.
+pub const OFFLINE_DEVICE_NAME: &str = "Offline";
+
 pub struct AudioInput {
     _input: Option<ReconnectingInput>,
     processor_settings: ProcessorSettings,
@@ -54,7 +57,7 @@ impl AudioInput {
             monitor: false,
             monitor_update_age: Duration::ZERO,
             clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
-            device_name: "Offline".to_string(),
+            device_name: OFFLINE_DEVICE_NAME.to_string(),
         }
     }
 

@@ -121,9 +121,8 @@ impl eframe::App for ConfigApp {
                 }
                 Tab::Audio => {
                     let audio_state = self.gui_state.audio_state.load();
-                    let audio_device = self.gui_state.audio_device.load();
                     let snapshot = AudioSnapshot {
-                        device_name: audio_device.as_ref().clone(),
+                        device_name: audio_state.device_name.clone(),
                         filter_cutoff_hz: audio_state.filter_cutoff_hz,
                         envelope_attack: audio_state.envelope_attack,
                         envelope_release: audio_state.envelope_release,
@@ -146,7 +145,7 @@ impl eframe::App for ConfigApp {
                         &snapshot,
                     );
 
-                    if audio_device.as_ref() != "Offline" {
+                    if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {
                         // Take new envelope streams from the show thread if available.
                         if let Some(envelope_streams) =
                             self.gui_state.envelope_streams.lock().unwrap().take()
@@ -190,10 +189,10 @@ pub fn run_config_gui(
             .with_icon(std::sync::Arc::new(egui::IconData::default())),
         ..Default::default()
     };
-    let audio_device = gui_state.audio_device.load();
+    let audio_state = gui_state.audio_state.load();
     let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
     let mut audio_panel = AudioPanelState::new(devices);
-    audio_panel.sync_from_device_name(&audio_device);
+    audio_panel.sync_from_device_name(&audio_state.device_name);
 
     let admin_panel = AdminPanelState::new(admin_service.clone(), hostname);
 
