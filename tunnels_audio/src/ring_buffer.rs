@@ -34,11 +34,10 @@ impl EnvelopeStream {
     /// Discard all pending data without reading it.
     pub fn clear(&mut self) {
         let available = self.0.slots();
-        if available > 0 {
-            if let Ok(chunk) = self.0.read_chunk(available) {
+        if available > 0
+            && let Ok(chunk) = self.0.read_chunk(available) {
                 chunk.commit_all();
             }
-        }
     }
 }
 

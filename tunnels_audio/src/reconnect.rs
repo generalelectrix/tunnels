@@ -13,7 +13,7 @@ use std::time::Duration;
 use crate::processor::{
     ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
 };
-use crate::ring_buffer::{EnvelopeStream, EnvelopeProducer, envelope_ring_buffer};
+use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -32,12 +32,8 @@ impl ReconnectingInput {
         processor_settings: ProcessorSettings,
     ) -> Result<(Self, [EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)> {
         let (result_tx, result_rx) = channel::<Result<OpenResult>>();
-        let (stop, envelope_streams, update_rate) = reconnect(
-            device_name,
-            processor_settings,
-            result_tx,
-            &result_rx,
-        )?;
+        let (stop, envelope_streams, update_rate) =
+            reconnect(device_name, processor_settings, result_tx, &result_rx)?;
         Ok((Self { stop: Some(stop) }, envelope_streams, update_rate))
     }
 }
@@ -73,7 +69,11 @@ fn reconnect(
     processor_settings: ProcessorSettings,
     result_tx: Sender<Result<OpenResult>>,
     result_rx: &std::sync::mpsc::Receiver<Result<OpenResult>>,
-) -> Result<(StopReconnect, [EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)> {
+) -> Result<(
+    StopReconnect,
+    [EnvelopeStream; NUM_OUTPUT_BANDS],
+    UpdateRate,
+)> {
     use Cmd::*;
 
     let (send, recv) = channel::<Cmd>();
@@ -104,8 +104,10 @@ fn reconnect(
                         Ok((stream, update_rate, envelope_streams)) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
-                                let _ =
-                                    result_tx.send(Ok(OpenResult { update_rate, envelope_streams }));
+                                let _ = result_tx.send(Ok(OpenResult {
+                                    update_rate,
+                                    envelope_streams,
+                                }));
                                 first_open = false;
                             } else {
                                 info!("Successfully reopened audio input {device_name}.");

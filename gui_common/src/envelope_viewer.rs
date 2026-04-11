@@ -24,6 +24,12 @@ pub struct EnvelopeViewerState {
     start_time: std::time::Instant,
 }
 
+impl Default for EnvelopeViewerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnvelopeViewerState {
     pub fn new() -> Self {
         let mut plot = ScrollingPlot::new(3.0, 0.0, 1.1);
