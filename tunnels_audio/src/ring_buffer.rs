@@ -1,127 +1,46 @@
 //! Lock-free single-producer single-consumer ring buffer for streaming
-//! time-series data from the audio thread to the GUI thread.
+//! f32 samples from the audio thread to the GUI thread.
 //!
-//! The producer (audio thread) pushes one sample per buffer callback (~1kHz).
-//! The consumer (GUI thread) reads all available samples each frame (~60Hz).
-//! When the buffer is full, new samples overwrite the oldest (lossy).
+//! Thin wrappers over `rtrb` that expose only the operations we need
+//! and keep the dependency from leaking into the rest of the codebase.
 
-use anyhow::{Result, bail};
-use audio_processor_traits::AtomicF32;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-pub struct SignalRingBuffer {
-    buffer: Box<[AtomicF32]>,
-    /// Monotonically increasing write position. Wraps via bitmask.
-    write_pos: AtomicUsize,
-    /// Capacity must be a power of two.
-    capacity: usize,
+/// Create a producer/consumer pair backed by a ring buffer of the given capacity.
+pub fn envelope_ring_buffer(capacity: usize) -> (EnvelopeProducer, EnvelopeStream) {
+    let (producer, consumer) = rtrb::RingBuffer::new(capacity);
+    (EnvelopeProducer(producer), EnvelopeStream(consumer))
 }
 
-impl SignalRingBuffer {
-    /// Create a new ring buffer with the given capacity.
-    /// Capacity must be a power of two and non-zero.
-    pub fn new(capacity: usize) -> Result<Self> {
-        if capacity == 0 || !capacity.is_power_of_two() {
-            bail!("Ring buffer capacity must be a non-zero power of two, got {capacity}");
-        }
-        let buffer: Vec<AtomicF32> = (0..capacity).map(|_| AtomicF32::new(0.0)).collect();
-        Ok(Self {
-            buffer: buffer.into_boxed_slice(),
-            write_pos: AtomicUsize::new(0),
-            capacity,
-        })
-    }
+/// Producer side of an envelope ring buffer. Lives on the audio thread.
+pub struct EnvelopeProducer(rtrb::Producer<f32>);
 
-    /// Push a sample. Called from the audio thread.
-    /// Lock-free, wait-free, single-producer only.
-    pub fn push(&self, value: f32) {
-        let pos = self.write_pos.load(Ordering::Relaxed);
-        let index = pos & (self.capacity - 1);
-        self.buffer[index].store(value, Ordering::Relaxed);
-        // Release ensures the store above is visible before the position update.
-        self.write_pos.store(pos.wrapping_add(1), Ordering::Release);
-    }
-
-    /// Read all samples written since the last read.
-    /// Returns them in chronological order.
-    /// Called from the GUI thread (single consumer).
-    ///
-    /// `last_read_pos` is caller-owned state tracking where we left off.
-    pub fn drain_into(&self, dest: &mut Vec<f32>, last_read_pos: &mut usize) {
-        // Acquire ensures we see all stores that happened before the position update.
-        let current_write = self.write_pos.load(Ordering::Acquire);
-
-        let available = current_write.wrapping_sub(*last_read_pos);
-
-        if available == 0 {
-            return;
-        }
-
-        // If we've fallen behind by more than the buffer capacity,
-        // skip to the oldest available data.
-        let (start, count) = if available > self.capacity {
-            (current_write - self.capacity, self.capacity)
-        } else {
-            (*last_read_pos, available)
-        };
-
-        dest.reserve(count);
-        for i in 0..count {
-            let index = start.wrapping_add(i) & (self.capacity - 1);
-            // Relaxed is fine here — the Acquire on write_pos already
-            // established the happens-before relationship.
-            dest.push(self.buffer[index].get());
-        }
-
-        *last_read_pos = current_write;
-    }
-
-    /// Read up to `dest.len()` samples into a slice, returning the number
-    /// of samples actually written. Fills the remainder with 0.0 on underrun.
-    /// Called from the output audio callback (single consumer).
-    ///
-    /// `last_read_pos` is caller-owned state tracking where we left off.
-    pub fn read_into_slice(&self, dest: &mut [f32], last_read_pos: &mut usize) -> usize {
-        let current_write = self.write_pos.load(Ordering::Acquire);
-        let available = current_write.wrapping_sub(*last_read_pos);
-
-        // If we've fallen behind, skip to the most recent data.
-        let start = if available > self.capacity {
-            current_write - self.capacity
-        } else {
-            *last_read_pos
-        };
-        let available = current_write.wrapping_sub(start);
-
-        let to_read = available.min(dest.len());
-        for (i, buf_val) in dest.iter_mut().enumerate().take(to_read) {
-            let index = start.wrapping_add(i) & (self.capacity - 1);
-            *buf_val = self.buffer[index].get();
-        }
-        // Fill remainder with silence.
-        for s in &mut dest[to_read..] {
-            *s = 0.0;
-        }
-        *last_read_pos = start.wrapping_add(to_read);
-        to_read
-    }
-
-    /// Return the current write position (for initializing a consumer's last_read_pos).
-    pub fn write_pos(&self) -> usize {
-        self.write_pos.load(Ordering::Acquire)
-    }
-
-    /// Return the capacity of the buffer.
-    pub fn capacity(&self) -> usize {
-        self.capacity
+impl EnvelopeProducer {
+    /// Push a sample. If the buffer is full, the sample is silently dropped.
+    pub fn push(&mut self, value: f32) {
+        let _ = self.0.push(value);
     }
 }
 
-// Safety: SignalRingBuffer is Send+Sync because all fields are atomic.
-// The buffer is a Box<[AtomicF32]> which is Send+Sync, and the
-// write_pos is AtomicUsize which is Send+Sync.
-unsafe impl Send for SignalRingBuffer {}
-unsafe impl Sync for SignalRingBuffer {}
+/// Consumer side of an envelope ring buffer. Lives on the GUI thread.
+pub struct EnvelopeStream(rtrb::Consumer<f32>);
+
+impl EnvelopeStream {
+    /// Read all available samples into `dest`.
+    pub fn drain_into(&mut self, dest: &mut Vec<f32>) {
+        while let Ok(value) = self.0.pop() {
+            dest.push(value);
+        }
+    }
+
+    /// Discard all pending data without reading it.
+    pub fn clear(&mut self) {
+        let available = self.0.slots();
+        if available > 0 {
+            if let Ok(chunk) = self.0.read_chunk(available) {
+                chunk.commit_all();
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -129,84 +48,69 @@ mod tests {
 
     #[test]
     fn push_and_drain_basic() {
-        let rb = SignalRingBuffer::new(8).unwrap();
-        let mut last = rb.write_pos();
+        let (mut p, mut c) = envelope_ring_buffer(8);
         let mut out = Vec::new();
 
-        rb.push(1.0);
-        rb.push(2.0);
-        rb.push(3.0);
+        p.push(1.0);
+        p.push(2.0);
+        p.push(3.0);
 
-        rb.drain_into(&mut out, &mut last);
+        c.drain_into(&mut out);
         assert_eq!(out, vec![1.0, 2.0, 3.0]);
     }
 
     #[test]
     fn drain_empty() {
-        let rb = SignalRingBuffer::new(8).unwrap();
-        let mut last = rb.write_pos();
+        let (_p, mut c) = envelope_ring_buffer(8);
         let mut out = Vec::new();
 
-        rb.drain_into(&mut out, &mut last);
+        c.drain_into(&mut out);
         assert!(out.is_empty());
     }
 
     #[test]
     fn drain_incremental() {
-        let rb = SignalRingBuffer::new(8).unwrap();
-        let mut last = rb.write_pos();
+        let (mut p, mut c) = envelope_ring_buffer(8);
         let mut out = Vec::new();
 
-        rb.push(1.0);
-        rb.push(2.0);
-        rb.drain_into(&mut out, &mut last);
+        p.push(1.0);
+        p.push(2.0);
+        c.drain_into(&mut out);
         assert_eq!(out, vec![1.0, 2.0]);
 
         out.clear();
-        rb.push(3.0);
-        rb.drain_into(&mut out, &mut last);
+        p.push(3.0);
+        c.drain_into(&mut out);
         assert_eq!(out, vec![3.0]);
     }
 
     #[test]
-    fn overflow_drops_oldest() {
-        let rb = SignalRingBuffer::new(4).unwrap();
-        let mut last = rb.write_pos();
+    fn full_buffer_drops_new_samples() {
+        let (mut p, mut c) = envelope_ring_buffer(4);
         let mut out = Vec::new();
 
-        // Write 6 samples into a 4-slot buffer.
+        // Write 6 samples into a 4-slot buffer — last 2 are dropped.
         for i in 0..6 {
-            rb.push(i as f32);
+            p.push(i as f32);
         }
 
-        rb.drain_into(&mut out, &mut last);
-        // Should get the last 4 samples.
-        assert_eq!(out, vec![2.0, 3.0, 4.0, 5.0]);
+        c.drain_into(&mut out);
+        // rtrb is non-lossy: the first 4 are kept, the last 2 are dropped.
+        assert_eq!(out, vec![0.0, 1.0, 2.0, 3.0]);
     }
 
     #[test]
-    fn write_pos_initialized_skips_history() {
-        let rb = SignalRingBuffer::new(8).unwrap();
+    fn clear_discards_data() {
+        let (mut p, mut c) = envelope_ring_buffer(8);
 
-        rb.push(1.0);
-        rb.push(2.0);
+        p.push(1.0);
+        p.push(2.0);
+        p.push(3.0);
 
-        // Initialize last_read_pos now — should not see the previous 2 samples.
-        let mut last = rb.write_pos();
+        c.clear();
+
         let mut out = Vec::new();
-
-        rb.push(3.0);
-        rb.drain_into(&mut out, &mut last);
-        assert_eq!(out, vec![3.0]);
-    }
-
-    #[test]
-    fn non_power_of_two_returns_error() {
-        assert!(SignalRingBuffer::new(5).is_err());
-    }
-
-    #[test]
-    fn zero_capacity_returns_error() {
-        assert!(SignalRingBuffer::new(0).is_err());
+        c.drain_into(&mut out);
+        assert!(out.is_empty());
     }
 }

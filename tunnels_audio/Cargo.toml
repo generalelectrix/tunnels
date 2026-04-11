@@ -10,5 +10,6 @@ augmented-dsp-filters = "2"
 audio-processor-analysis = "2"
 audio-processor-traits = "4"
 atomic_enum = "0.3"
+rtrb = "0.3"
 anyhow.workspace = true
 log.workspace = true

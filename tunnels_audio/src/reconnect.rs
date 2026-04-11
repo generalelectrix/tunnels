@@ -10,7 +10,10 @@ use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::Duration;
 
-use crate::processor::{Processor, ProcessorSettings, UpdateRate};
+use crate::processor::{
+    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
+};
+use crate::ring_buffer::{EnvelopeStream, EnvelopeProducer, envelope_ring_buffer};
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -23,16 +26,19 @@ impl ReconnectingInput {
     /// Stream is not Send on macOS), but this method blocks until it either
     /// succeeds or fails, so the caller gets immediate error feedback.
     ///
-    pub fn new(device_name: String, processor_settings: ProcessorSettings) -> Result<Self> {
+    /// Returns `(self, envelope_streams, update_rate)` on success.
+    pub fn new(
+        device_name: String,
+        processor_settings: ProcessorSettings,
+    ) -> Result<(Self, [EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)> {
         let (result_tx, result_rx) = channel::<Result<OpenResult>>();
-        Ok(Self {
-            stop: Some(reconnect(
-                device_name,
-                processor_settings,
-                result_tx,
-                &result_rx,
-            )?),
-        })
+        let (stop, envelope_streams, update_rate) = reconnect(
+            device_name,
+            processor_settings,
+            result_tx,
+            &result_rx,
+        )?;
+        Ok((Self { stop: Some(stop) }, envelope_streams, update_rate))
     }
 }
 
@@ -54,19 +60,20 @@ enum Cmd {
     Disconnected,
 }
 
-/// Spawn the reconnect thread and perform the initial stream open on it.
-/// Blocks until the first open attempt completes, returning Err if it fails.
 /// Result sent from the reconnect thread back to the caller for the initial open.
 struct OpenResult {
     update_rate: UpdateRate,
+    envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
 }
 
+/// Spawn the reconnect thread and perform the initial stream open on it.
+/// Blocks until the first open attempt completes, returning Err if it fails.
 fn reconnect(
     device_name: String,
     processor_settings: ProcessorSettings,
     result_tx: Sender<Result<OpenResult>>,
     result_rx: &std::sync::mpsc::Receiver<Result<OpenResult>>,
-) -> Result<StopReconnect> {
+) -> Result<(StopReconnect, [EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)> {
     use Cmd::*;
 
     let (send, recv) = channel::<Cmd>();
@@ -94,15 +101,18 @@ fn reconnect(
                     });
 
                     match open_result {
-                        Ok((stream, update_rate)) => {
+                        Ok((stream, update_rate, envelope_streams)) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
-                                let _ = result_tx.send(Ok(OpenResult { update_rate }));
+                                let _ =
+                                    result_tx.send(Ok(OpenResult { update_rate, envelope_streams }));
                                 first_open = false;
                             } else {
                                 info!("Successfully reopened audio input {device_name}.");
-                                // On reconnect, update the rate directly (may have changed).
                                 thread_settings.set_update_rate(update_rate);
+                                // Consumers from reconnect are dropped — the GUI
+                                // keeps the original envelope_streams which are now abandoned.
+                                // The viewer will need to re-open to get fresh ones.
                             }
                             _input_stream = Some(stream);
                         }
@@ -132,14 +142,15 @@ fn reconnect(
     // Write the update rate on the calling thread — no race with the show's snapshot.
     processor_settings.set_update_rate(open.update_rate);
 
-    Ok(Box::new(move || {
+    let stop = Box::new(move || {
         stop_sender
             .send(Cmd::Stop)
             .expect("Sending stop to reconnect thread failed");
         reconnect_thread
             .join()
             .expect("Joining reconnect thread failed");
-    }))
+    });
+    Ok((stop, open.envelope_streams, open.update_rate))
 }
 
 fn open_audio_device(name: &str) -> Result<Device> {
@@ -172,7 +183,7 @@ fn build_input_stream(
     device: &Device,
     processor_settings: ProcessorSettings,
     disconnect_sender: Sender<Cmd>,
-) -> Result<(Stream, UpdateRate)> {
+) -> Result<(Stream, UpdateRate, [EnvelopeStream; NUM_OUTPUT_BANDS])> {
     let supported = device.default_input_config()?;
 
     // Aim for about 1 ms of audio buffering latency.
@@ -210,10 +221,28 @@ fn build_input_stream(
 
     let update_rate = UpdateRate::new(config.sample_rate.0, frame_count);
 
+    // Create envelope ring buffers — producers go to the processor, envelope_streams to the GUI.
+    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
+    let mut envelope_streams = Vec::with_capacity(NUM_OUTPUT_BANDS);
+    for _ in 0..NUM_OUTPUT_BANDS {
+        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
+        producers.push(p);
+        envelope_streams.push(c);
+    }
+    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] = producers
+        .try_into()
+        .ok()
+        .expect("correct number of producers");
+    let envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS] = envelope_streams
+        .try_into()
+        .ok()
+        .expect("correct number of envelope_streams");
+
     let mut processor = Processor::new(
         processor_settings,
         config.sample_rate.0,
         config.channels as usize,
+        producers,
     );
 
     let handle_buffer = move |interleaved_buffer: &[f32], _: &cpal::InputCallbackInfo| {
@@ -233,5 +262,5 @@ fn build_input_stream(
     let input_stream = device.build_input_stream(&config, handle_buffer, handle_error, None)?;
 
     input_stream.play()?;
-    Ok((input_stream, update_rate))
+    Ok((input_stream, update_rate, envelope_streams))
 }

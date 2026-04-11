@@ -75,7 +75,13 @@ impl Show {
                 send_control_event,
                 recv_control_event,
             )?,
-            audio_input: AudioInput::new(audio_input_device)?,
+            audio_input: {
+                let (input, envelope_streams) = AudioInput::new(audio_input_device)?;
+                if let (Some(envelope_streams), Some(gs)) = (envelope_streams, &gui_state) {
+                    *gs.envelope_streams.lock().unwrap() = Some(envelope_streams);
+                }
+                input
+            },
             clock_publisher: if run_clock_service {
                 match clock_server::clock_publisher() {
                     Ok(publisher) => Some(publisher),
@@ -166,13 +172,6 @@ impl Show {
     /// Run the show in the current thread.
     pub fn run(&mut self, update_interval: Duration) -> Result<()> {
         info!("Show is starting.");
-
-        // Share the envelope history handle with the GUI.
-        if let Some(gui_state) = &self.gui_state {
-            gui_state
-                .envelope_history
-                .store(Arc::new(Some(self.audio_input.envelope_history())));
-        }
 
         // Emit initial UI state.
         self.refresh_ui();
@@ -360,13 +359,10 @@ impl Show {
                 GuiDirty::MIDI_SLOTS
             }
             SetAudioDevice(name) => {
-                self.audio_input = AudioInput::new(name)?;
-                // Re-share the envelope history handle so the GUI sees the new
-                // processor's ring buffers.
-                if let Some(gui_state) = &self.gui_state {
-                    gui_state
-                        .envelope_history
-                        .store(Arc::new(Some(self.audio_input.envelope_history())));
+                let (input, envelope_streams) = AudioInput::new(name)?;
+                self.audio_input = input;
+                if let (Some(envelope_streams), Some(gui_state)) = (envelope_streams, &self.gui_state) {
+                    *gui_state.envelope_streams.lock().unwrap() = Some(envelope_streams);
                 }
                 GuiDirty::AUDIO
             }

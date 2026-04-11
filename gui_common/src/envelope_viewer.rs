@@ -1,7 +1,6 @@
 use eframe::egui::{self, Color32};
-use tunnels_audio::processor::{
-    NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, SharedEnvelopeHistory, UpdateRate,
-};
+use tunnels_audio::EnvelopeStream;
+use tunnels_audio::processor::{NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, UpdateRate};
 
 use crate::scrolling_plot::ScrollingPlot;
 
@@ -21,8 +20,7 @@ const BAND_COLORS: [Color32; NUM_OUTPUT_BANDS] = [
 pub struct EnvelopeViewerState {
     open: bool,
     plot: ScrollingPlot,
-    read_positions: [usize; NUM_OUTPUT_BANDS],
-    initialized: bool,
+    envelope_streams: Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>,
     start_time: std::time::Instant,
 }
 
@@ -35,59 +33,61 @@ impl EnvelopeViewerState {
         Self {
             open: false,
             plot,
-            read_positions: [0; NUM_OUTPUT_BANDS],
-            initialized: false,
+            envelope_streams: None,
             start_time: std::time::Instant::now(),
         }
     }
 
     pub fn set_open(&mut self, open: bool) {
         self.open = open;
+        if !open {
+            // Clear the plot when closing.
+            for trace in &mut self.plot.traces {
+                trace.points.clear();
+            }
+        }
+    }
+
+    /// Provide new envelope streams (e.g. after a device change).
+    pub fn set_envelope_streams(&mut self, envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS]) {
+        // Clear stale plot data from any previous device.
+        for trace in &mut self.plot.traces {
+            trace.points.clear();
+        }
+        self.envelope_streams = Some(envelope_streams);
     }
 
     /// Render the envelope viewer. Returns whether it's open (for layout purposes).
-    pub fn ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        envelope_history: Option<&SharedEnvelopeHistory>,
-        update_rate: Option<UpdateRate>,
-    ) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui, update_rate: Option<UpdateRate>) -> bool {
         let was_open = self.open;
         ui.checkbox(&mut self.open, "Envelope Viewer");
 
-        let Some(history) = envelope_history else {
+        let Some(envelope_streams) = &mut self.envelope_streams else {
             if self.open {
                 ui.label("No audio input connected.");
             }
             return self.open;
         };
 
-        // Handle open/close transitions.
-        if self.open && !was_open {
-            // Just opened: enable streaming, initialize read positions.
-            history
-                .send_enabled
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            for i in 0..NUM_OUTPUT_BANDS {
-                self.read_positions[i] = history.histories[i].write_pos();
-            }
-            self.initialized = true;
-        } else if !self.open && was_open {
-            // Just closed: disable streaming, drain buffers, clear plot.
-            history
-                .send_enabled
-                .store(false, std::sync::atomic::Ordering::Relaxed);
-            for i in 0..NUM_OUTPUT_BANDS {
-                self.read_positions[i] = history.histories[i].write_pos();
+        // Handle close transition: clear the plot and drain stale data.
+        if !self.open && was_open {
+            for stream in envelope_streams.iter_mut() {
+                stream.clear();
             }
             for trace in &mut self.plot.traces {
                 trace.points.clear();
             }
-            self.initialized = false;
         }
 
         if !self.open {
             return false;
+        }
+
+        // Handle open transition: drain any stale data from before we started watching.
+        if self.open && !was_open {
+            for stream in envelope_streams.iter_mut() {
+                stream.clear();
+            }
         }
 
         // Drain and display.
@@ -99,24 +99,24 @@ impl EnvelopeViewerState {
         let interval = rate.interval_secs();
         let mut samples = Vec::new();
 
-        let all_enabled = [true; NUM_OUTPUT_BANDS];
-        for i in 0..NUM_OUTPUT_BANDS {
+        for (i, stream) in envelope_streams.iter_mut().enumerate() {
             samples.clear();
-            history.histories[i].drain_into(&mut samples, &mut self.read_positions[i]);
+            stream.drain_into(&mut samples);
             self.plot.traces[i].ingest(&samples, interval, now);
         }
         self.plot.trim(now);
 
         // Render the plot — fill remaining vertical space, minimum 150px.
         let height = ui.available_height().max(150.0);
+        let all_enabled = [true; NUM_OUTPUT_BANDS];
         self.plot.ui_with_options(
             ui,
             "envelope_viewer",
             &all_enabled,
-            None, // no per-trace scaling
-            None, // no link group
+            None,
+            None,
             Some(height),
-            None, // no custom Y axis
+            None,
         );
 
         // Continuously repaint while the viewer is open.

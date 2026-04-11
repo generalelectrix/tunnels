@@ -15,11 +15,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::hilbert::HilbertTransform;
-use crate::ring_buffer::SignalRingBuffer;
+use crate::ring_buffer::EnvelopeProducer;
 use crate::wavelet::{NUM_BANDS, NUM_LEVELS, WaveletDecomposition, WaveletType};
-
-/// 16384 slots ≈ 16 seconds of history at ~1kHz buffer rate.
-const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
 /// Fast envelope follower: catches every peak within a cycle.
 const FAST_ATTACK: Duration = Duration::from_millis(1);
@@ -27,6 +24,9 @@ const FAST_RELEASE: Duration = Duration::new(0, 4_000_000); // 4ms
 
 /// Number of output bands: 1 lowpass sub-bass + 7 wavelet bands.
 pub const NUM_OUTPUT_BANDS: usize = 8;
+
+/// Ring buffer capacity: ~16 seconds of history at ~1kHz buffer rate.
+pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
 /// Band labels in frequency-ascending output order (index 0 = lowpass sub-bass).
 pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
@@ -48,31 +48,6 @@ impl UpdateRate {
         1.0 / self.0 as f64
     }
 }
-
-/// Shared handle for streaming envelope history to the GUI.
-/// The audio thread writes, the GUI thread reads. The GUI sets `send_enabled`
-/// to control whether the audio thread populates the ring buffers.
-pub struct EnvelopeHistory {
-    pub histories: [SignalRingBuffer; NUM_OUTPUT_BANDS],
-    pub send_enabled: AtomicBool,
-}
-
-impl EnvelopeHistory {
-    pub fn new() -> anyhow::Result<Self> {
-        let mut histories = Vec::with_capacity(NUM_OUTPUT_BANDS);
-        for _ in 0..NUM_OUTPUT_BANDS {
-            histories.push(SignalRingBuffer::new(ENVELOPE_HISTORY_CAPACITY)?);
-        }
-        Ok(Self {
-            histories: histories
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("wrong number of ring buffers"))?,
-            send_enabled: AtomicBool::new(false),
-        })
-    }
-}
-
-pub type SharedEnvelopeHistory = Arc<EnvelopeHistory>;
 
 pub struct ProcessorSettingsInner {
     /// Current envelope value for the show loop (from active_band).
@@ -100,8 +75,6 @@ pub struct ProcessorSettingsInner {
 
     /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
     pub active_band: AtomicU32,
-    /// Shared envelope history for GUI visualization.
-    pub envelope_history: SharedEnvelopeHistory,
     /// Audio callback rate (sample_rate / frames_per_buffer), set once when the stream is created.
     pub update_rate: AtomicF32,
 }
@@ -156,9 +129,6 @@ impl Default for ProcessorSettingsInner {
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
             norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
             active_band: AtomicU32::new(0),
-            envelope_history: Arc::new(
-                EnvelopeHistory::new().expect("envelope history capacity is a valid power of two"),
-            ),
             update_rate: AtomicF32::new(0.0),
         }
     }
@@ -376,6 +346,9 @@ pub struct Processor {
     channel_count: usize,
     context: AudioContext,
 
+    /// Envelope ring buffer producers — one per output band.
+    envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
+
     filters: Vec<FilterProcessor<f32>>,
     hilberts: Vec<HilbertTransform>,
     fast_envelopes: Vec<EnvelopeFollowerProcessor>,
@@ -414,7 +387,12 @@ fn make_envelope(
 }
 
 impl Processor {
-    pub fn new(handle: ProcessorSettings, sample_rate: u32, channel_count: usize) -> Self {
+    pub fn new(
+        handle: ProcessorSettings,
+        sample_rate: u32,
+        channel_count: usize,
+        envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
+    ) -> Self {
         let mut context: AudioContext = AudioProcessorSettings {
             sample_rate: sample_rate as f32,
             input_channels: channel_count,
@@ -482,6 +460,7 @@ impl Processor {
             settings: handle,
             channel_count: n,
             context,
+            envelope_producers,
             filters,
             hilberts,
             fast_envelopes,
@@ -677,16 +656,9 @@ impl Processor {
             }
         }
 
-        // Gated ring buffer push — only write when the GUI is listening.
-        if self
-            .settings
-            .envelope_history
-            .send_enabled
-            .load(Ordering::Relaxed)
-        {
-            for (i, &val) in output_bands.iter().enumerate() {
-                self.settings.envelope_history.histories[i].push(val);
-            }
+        // Push normalized envelopes to ring buffers for the GUI viewer.
+        for (producer, &val) in self.envelope_producers.iter_mut().zip(&output_bands) {
+            producer.push(val);
         }
 
         // Write the active band's value to the shared envelope atomic.
@@ -703,6 +675,16 @@ impl Processor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ring_buffer::envelope_ring_buffer;
+
+    fn test_producers() -> [EnvelopeProducer; NUM_OUTPUT_BANDS] {
+        let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
+        for _ in 0..NUM_OUTPUT_BANDS {
+            let (p, _c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
+            producers.push(p);
+        }
+        producers.try_into().ok().expect("correct count")
+    }
 
     #[test]
     fn auto_trim_boosts_quiet_signal() {
@@ -806,7 +788,7 @@ mod tests {
     #[test]
     fn pre_gain_clipping_detected() {
         let settings = ProcessorSettings::default();
-        let mut processor = Processor::new(settings.clone(), 48000, 1);
+        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
 
         // Feed a signal that clips at the input.
         let buffer: Vec<f32> = vec![1.0; 48];
@@ -829,7 +811,7 @@ mod tests {
     fn auto_trim_disabled_stays_at_unity() {
         let settings = ProcessorSettings::default();
         settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disabled
-        let mut processor = Processor::new(settings.clone(), 48000, 1);
+        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
 
         // Feed quiet signal — without trim, gain should stay at 1.0.
         let buffer: Vec<f32> = vec![0.1; 48];
@@ -847,7 +829,7 @@ mod tests {
     fn processor_produces_envelope_from_sine() {
         let settings = ProcessorSettings::default();
         settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disable trim for deterministic test
-        let mut processor = Processor::new(settings.clone(), 48000, 1);
+        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
 
         // Feed a 100Hz sine for 1 second.
         let sample_rate = 48000.0_f32;
@@ -885,7 +867,7 @@ mod tests {
         let sample_rate = 48000_u32;
         let buffer_size = 48;
         let total_samples = (duration_secs * sample_rate as f32) as usize;
-        let mut processor = Processor::new(settings.clone(), sample_rate, 1);
+        let mut processor = Processor::new(settings.clone(), sample_rate, 1, test_producers());
 
         let mut idx = 0;
         while idx < total_samples {

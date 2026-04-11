@@ -1,9 +1,10 @@
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
-use tunnels_audio::processor::{SharedEnvelopeHistory, TrackingMode, UpdateRate};
+use tunnels_audio::EnvelopeStream;
+use tunnels_audio::processor::{NUM_OUTPUT_BANDS, TrackingMode, UpdateRate};
 
 use crate::animation_visualizer::AnimationSnapshot;
 
@@ -64,9 +65,9 @@ pub struct GuiState {
     pub clock_service_running: AtomicBool,
     pub visualizer_active: AtomicBool,
     pub animation_state: ArcSwap<AnimationSnapshot>,
-    /// Shared envelope ring buffers for the envelope viewer panel.
-    /// Set by the show thread once `AudioInput` is initialized.
-    pub envelope_history: ArcSwap<Option<SharedEnvelopeHistory>>,
+    /// Envelope ring buffer consumers for the GUI viewer.
+    /// Placed by the show thread, taken by the GUI thread.
+    pub envelope_streams: Mutex<Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>>,
 }
 
 pub type SharedGuiState = Arc<GuiState>;
@@ -80,7 +81,7 @@ impl Default for GuiState {
             clock_service_running: AtomicBool::new(false),
             visualizer_active: AtomicBool::new(false),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),
-            envelope_history: ArcSwap::from_pointee(None),
+            envelope_streams: Mutex::new(None),
         }
     }
 }

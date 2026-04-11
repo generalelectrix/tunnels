@@ -14,8 +14,9 @@ use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 use tunnels_lib::transient_indicator::TransientIndicator;
 
-use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, SharedEnvelopeHistory};
+use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
 use self::reconnect::ReconnectingInput;
+pub use self::ring_buffer::EnvelopeStream;
 
 pub struct AudioInput {
     _input: Option<ReconnectingInput>,
@@ -57,36 +58,39 @@ impl AudioInput {
         }
     }
 
-    pub fn new(device_name: Option<String>) -> Result<Self> {
+    /// Open an audio input device. Returns the AudioInput and, if a device
+    /// was opened, the envelope envelope_streams for the GUI viewer.
+    pub fn new(
+        device_name: Option<String>,
+    ) -> Result<(Self, Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>)> {
         let device_name = match device_name {
-            None => return Ok(Self::offline()),
+            None => return Ok((Self::offline(), None)),
             Some(d) => d,
         };
 
         info!("Using audio input device {device_name}.");
 
         let processor_settings = ProcessorSettings::default();
-        let input = ReconnectingInput::new(device_name.clone(), processor_settings.clone())?;
+        let (input, envelope_streams, _update_rate) =
+            ReconnectingInput::new(device_name.clone(), processor_settings.clone())?;
 
-        Ok(Self {
-            _input: Some(input),
-            processor_settings,
-            envelope_value: UnipolarFloat::ZERO,
-            monitor: false,
-            monitor_update_age: Duration::ZERO,
-            clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
-            device_name,
-        })
+        Ok((
+            Self {
+                _input: Some(input),
+                processor_settings,
+                envelope_value: UnipolarFloat::ZERO,
+                monitor: false,
+                monitor_update_age: Duration::ZERO,
+                clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
+                device_name,
+            },
+            Some(envelope_streams),
+        ))
     }
 
     /// Return the processor settings handle (for visualization tools).
     pub fn processor_settings(&self) -> &ProcessorSettings {
         &self.processor_settings
-    }
-
-    /// Return the shared envelope history handle for GUI visualization.
-    pub fn envelope_history(&self) -> SharedEnvelopeHistory {
-        self.processor_settings.envelope_history.clone()
     }
 
     /// Update the state of audio control.

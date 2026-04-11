@@ -147,17 +147,18 @@ impl eframe::App for ConfigApp {
                     );
 
                     if audio_device.as_ref() != "Offline" {
+                        // Take new envelope streams from the show thread if available.
+                        if let Some(envelope_streams) =
+                            self.gui_state.envelope_streams.lock().unwrap().take()
+                        {
+                            self.envelope_viewer.set_envelope_streams(envelope_streams);
+                        }
+
                         ui.add_space(8.0);
                         ui.separator();
 
-                        // Envelope viewer: read the shared handle from gui_state.
-                        let envelope_history_guard = self.gui_state.envelope_history.load();
-                        let envelope_history = envelope_history_guard.as_ref().as_ref();
-                        self.envelope_viewer
-                            .ui(ui, envelope_history, audio_state.update_rate);
+                        self.envelope_viewer.ui(ui, audio_state.update_rate);
                     } else {
-                        // Force the viewer closed when offline so it re-initializes
-                        // when a device is connected.
                         self.envelope_viewer.set_open(false);
                     }
                 }
