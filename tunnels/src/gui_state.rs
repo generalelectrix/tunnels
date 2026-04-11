@@ -13,9 +13,8 @@ bitflags::bitflags! {
     pub struct GuiDirty: u8 {
         const CLEAN         = 0b0000_0000;
         const MIDI_SLOTS    = 0b0000_0001;
-        const AUDIO_DEVICE  = 0b0000_0010;
+        const AUDIO         = 0b0000_0010;
         const CLOCK_SERVICE = 0b0000_0100;
-        const AUDIO_STATE   = 0b0000_1000;
     }
 }
 

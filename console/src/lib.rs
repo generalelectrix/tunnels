@@ -2,7 +2,6 @@ pub mod admin_panel;
 mod animation_panel;
 mod audio_panel;
 pub mod bootstrap_controller;
-mod envelope_viewer;
 mod midi_panel;
 mod ui_util;
 
@@ -14,6 +13,7 @@ use eframe::egui;
 
 use admin_panel::{AdminPanelState, AdminService};
 use audio_panel::AudioPanelState;
+use gui_common::envelope_viewer::EnvelopeViewerState;
 use gui_common::{CloseHandler, MessageModal, audio_panel::AudioSnapshot, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
@@ -45,7 +45,7 @@ struct ConfigApp {
     /// to the main thread. Arc<AtomicBool> because the deferred closure is
     /// 'static + Send + Sync and can't hold a reference to ConfigApp fields.
     visualizer_detached: Arc<AtomicBool>,
-    envelope_viewer: envelope_viewer::EnvelopeViewerState,
+    envelope_viewer: EnvelopeViewerState,
     close_handler: CloseHandler,
     modal: MessageModal,
     active_tab: Tab,
@@ -146,14 +146,20 @@ impl eframe::App for ConfigApp {
                         &snapshot,
                     );
 
-                    ui.add_space(8.0);
-                    ui.separator();
+                    if audio_device.as_ref() != "Offline" {
+                        ui.add_space(8.0);
+                        ui.separator();
 
-                    // Envelope viewer: read the shared handle from gui_state.
-                    let envelope_history_guard = self.gui_state.envelope_history.load();
-                    let envelope_history = envelope_history_guard.as_ref().as_ref();
-                    self.envelope_viewer
-                        .ui(ui, envelope_history, audio_state.update_rate);
+                        // Envelope viewer: read the shared handle from gui_state.
+                        let envelope_history_guard = self.gui_state.envelope_history.load();
+                        let envelope_history = envelope_history_guard.as_ref().as_ref();
+                        self.envelope_viewer
+                            .ui(ui, envelope_history, audio_state.update_rate);
+                    } else {
+                        // Force the viewer closed when offline so it re-initializes
+                        // when a device is connected.
+                        self.envelope_viewer.set_open(false);
+                    }
                 }
                 Tab::Animation => {
                     animation_panel::ui(
@@ -202,7 +208,7 @@ pub fn run_config_gui(
                 admin_service,
                 visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
                 visualizer_detached: Arc::new(AtomicBool::new(false)),
-                envelope_viewer: envelope_viewer::EnvelopeViewerState::new(),
+                envelope_viewer: EnvelopeViewerState::new(),
                 close_handler: CloseHandler::default(),
                 modal: MessageModal::default(),
                 client,

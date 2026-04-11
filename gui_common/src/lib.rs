@@ -1,5 +1,6 @@
 pub mod audio_panel;
 pub mod clock_panel;
+pub mod envelope_viewer;
 pub mod midi_panel;
 pub mod scrolling_plot;
 

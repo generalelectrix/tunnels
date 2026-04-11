@@ -123,7 +123,11 @@ impl ScrollingPlot {
             .allow_zoom(false)
             .allow_scroll(false)
             .show_axes([false, true])
-            .legend(egui_plot::Legend::default());
+            .legend(
+                egui_plot::Legend::default()
+                    .position(egui_plot::Corner::LeftTop)
+                    .follow_insertion_order(true),
+            );
 
         if let Some(group) = link_group {
             plot = plot

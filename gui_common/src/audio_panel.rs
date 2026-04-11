@@ -178,7 +178,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             let mut cutoff = self.snapshot.filter_cutoff_hz;
             if ui
                 .add(
-                    egui::Slider::new(&mut cutoff, 40.0..=1040.0)
+                    egui::Slider::new(&mut cutoff, 40.0..=240.0)
                         .suffix(" Hz")
                         .logarithmic(true),
                 )

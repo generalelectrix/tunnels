@@ -368,12 +368,12 @@ impl Show {
                         .envelope_history
                         .store(Arc::new(Some(self.audio_input.envelope_history())));
                 }
-                GuiDirty::AUDIO_DEVICE
+                GuiDirty::AUDIO
             }
             AudioControl(msg) => {
                 self.audio_input
                     .control(msg, &mut ShowEmitter(&mut self.dispatcher));
-                GuiDirty::AUDIO_STATE
+                GuiDirty::AUDIO
             }
             StartClockService => {
                 if self.clock_publisher.is_some() {
@@ -403,18 +403,16 @@ impl Show {
                 .midi_slots
                 .store(Arc::new(self.dispatcher.midi_slot_statuses()));
         }
-        if dirty.contains(GuiDirty::AUDIO_DEVICE) {
+        if dirty.contains(GuiDirty::AUDIO) {
             gui_state
                 .audio_device
                 .store(Arc::new(self.audio_input.device_name().to_string()));
+            self.snapshot_audio_state();
         }
         if dirty.contains(GuiDirty::CLOCK_SERVICE) {
             gui_state
                 .clock_service_running
                 .store(self.clock_publisher.is_some(), Ordering::Relaxed);
-        }
-        if dirty.contains(GuiDirty::AUDIO_STATE) {
-            self.snapshot_audio_state();
         }
     }
 }
