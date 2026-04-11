@@ -32,7 +32,7 @@ pub enum MetaCommand {
         device_id: midi_harness::DeviceId,
         kind: midi_harness::DeviceKind,
     },
-    SetAudioDevice(Option<tunnels_audio::AudioDevice>),
+    SetAudioDevice(Option<String>),
     AudioControl(crate::audio::ControlMessage),
     StartClockService,
     StopClockService,

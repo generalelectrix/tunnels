@@ -23,19 +23,11 @@ impl ReconnectingInput {
     /// Stream is not Send on macOS), but this method blocks until it either
     /// succeeds or fails, so the caller gets immediate error feedback.
     ///
-    /// The provided `device` is used for the initial open, avoiding device
-    /// re-enumeration. On reconnection after a disconnect, the device is
-    /// looked up by name.
-    pub fn new(
-        device_name: String,
-        device: Device,
-        processor_settings: ProcessorSettings,
-    ) -> Result<Self> {
+    pub fn new(device_name: String, processor_settings: ProcessorSettings) -> Result<Self> {
         let (result_tx, result_rx) = channel::<Result<()>>();
         Ok(Self {
             stop: Some(reconnect(
                 device_name,
-                device,
                 processor_settings,
                 result_tx,
                 &result_rx,
@@ -66,7 +58,6 @@ enum Cmd {
 /// Blocks until the first open attempt completes, returning Err if it fails.
 fn reconnect(
     device_name: String,
-    device: Device,
     processor_settings: ProcessorSettings,
     result_tx: Sender<Result<()>>,
     result_rx: &std::sync::mpsc::Receiver<Result<()>>,
@@ -92,15 +83,7 @@ fn reconnect(
                     // Drop the existing stream.
                     _input_stream = None;
 
-                    // For the initial open, use the device handle directly (no
-                    // enumeration). For reconnection, look up by name.
-                    let device_result = if first_open {
-                        Ok(device.clone())
-                    } else {
-                        find_device_by_name(&device_name)
-                    };
-
-                    let open_result = device_result.and_then(|d| {
+                    let open_result = open_audio_device(&device_name).and_then(|d| {
                         build_input_stream(&d, processor_settings.clone(), send.clone())
                     });
 
@@ -150,17 +133,30 @@ fn reconnect(
     }))
 }
 
-/// Find a device by name. Used only for reconnection after a disconnect.
-fn find_device_by_name(name: &str) -> Result<Device> {
+fn open_audio_device(name: &str) -> Result<Device> {
+    let mut errors: Vec<String> = Vec::new();
     let host = cpal::default_host();
-    for device in host.devices()? {
-        match device.name() {
-            Ok(n) if n == name => return Ok(device),
+    for input in host.input_devices()? {
+        match input.name() {
+            Ok(n) if n == name => {
+                return Ok(input);
+            }
             Ok(_) => (),
-            Err(_) => (),
+            Err(e) => {
+                errors.push(e.to_string());
+            }
         }
     }
-    bail!("audio device {name} not found");
+    let mut err_msg = format!("audio input {name} not found");
+    if !errors.is_empty() {
+        err_msg = format!(
+            "{}; some device errors occurred: {}",
+            err_msg,
+            errors.join(", ")
+        )
+    }
+
+    bail!(err_msg);
 }
 
 fn build_input_stream(

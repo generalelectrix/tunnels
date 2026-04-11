@@ -4,41 +4,19 @@ use gui_common::audio_panel::{
     AudioCommands, AudioPanel as SharedAudioPanel, AudioPanelState as SharedAudioPanelState,
     AudioSnapshot,
 };
-use tunnels::audio::AudioDevice;
 use tunnels::control::MetaCommand;
 
 use crate::ui_util::GuiContext;
 
-/// Console-specific audio panel state that holds the full device handles.
-pub struct AudioPanelState {
-    pub inner: SharedAudioPanelState,
-    devices: Vec<AudioDevice>,
-}
+pub type AudioPanelState = SharedAudioPanelState;
 
-impl AudioPanelState {
-    pub fn new(devices: Vec<AudioDevice>) -> Self {
-        let names: Vec<String> = devices.iter().map(|d| d.name.clone()).collect();
-        Self {
-            inner: SharedAudioPanelState::new(names),
-            devices,
-        }
-    }
-
-    pub fn sync_from_device_name(&mut self, device_name: &str) {
-        self.inner.sync_from_device_name(device_name);
-    }
-}
-
-/// Adapter that implements AudioCommands using the console's GuiContext
-/// and the stored device list.
+/// Adapter that implements AudioCommands using the console's GuiContext.
 struct ConsoleAudioCommands<'a> {
     ctx: GuiContext<'a>,
-    devices: &'a mut Vec<AudioDevice>,
 }
 
 impl AudioCommands for ConsoleAudioCommands<'_> {
-    fn set_device(&mut self, device_index: Option<usize>) {
-        let device = device_index.and_then(|i| self.devices.get(i).cloned());
+    fn set_device(&mut self, device: Option<String>) {
         let _ = self.ctx.send_command(MetaCommand::SetAudioDevice(device));
     }
 
@@ -136,12 +114,7 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
 
     fn list_devices(&mut self) -> Vec<String> {
         match tunnels::audio::AudioInput::devices() {
-            Ok(new_devices) => {
-                let names: Vec<String> = new_devices.iter().map(|d| d.name.clone()).collect();
-                self.devices.clear();
-                self.devices.extend(new_devices);
-                names
-            }
+            Ok(d) => d,
             Err(e) => {
                 self.ctx
                     .report_error(format_args!("Failed to refresh audio devices: {e}"));
@@ -162,13 +135,10 @@ pub(crate) fn render_audio_panel(
     state: &mut AudioPanelState,
     snapshot: &AudioSnapshot,
 ) {
-    let mut commands = ConsoleAudioCommands {
-        ctx,
-        devices: &mut state.devices,
-    };
+    let mut commands = ConsoleAudioCommands { ctx };
     SharedAudioPanel {
         commands: &mut commands,
-        state: &mut state.inner,
+        state,
         snapshot,
     }
     .ui(ui);

@@ -54,7 +54,7 @@ impl Show {
         osc_devices: Vec<OscDeviceSpec>,
         send_control_event: Sender<ControlEvent>,
         recv_control_event: Receiver<ControlEvent>,
-        audio_input_device: Option<audio::AudioDevice>,
+        audio_input_device: Option<String>,
         run_clock_service: bool,
         save_path: Option<PathBuf>,
         gui_state: Option<SharedGuiState>,
@@ -368,8 +368,8 @@ impl Show {
                 self.refresh_ui();
                 GuiDirty::MIDI_SLOTS
             }
-            SetAudioDevice(device) => {
-                self.audio_input = AudioInput::new(device)?;
+            SetAudioDevice(name) => {
+                self.audio_input = AudioInput::new(name)?;
                 // Re-share the envelope history handle so the GUI sees the new
                 // processor's ring buffers.
                 if let Some(gui_state) = &self.gui_state {

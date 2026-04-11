@@ -5,8 +5,7 @@ use crate::STATUS_COLORS;
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
-    /// Select a device by index into the device list, or None for offline.
-    fn set_device(&mut self, device_index: Option<usize>);
+    fn set_device(&mut self, device: Option<String>);
     fn set_filter_cutoff(&mut self, hz: f32);
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
@@ -143,7 +142,8 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             });
 
         if self.state.selected_audio != prev_audio {
-            self.commands.set_device(self.state.selected_audio);
+            let device_name = self.state.current_audio_device();
+            self.commands.set_device(device_name);
         }
     }
 
@@ -353,7 +353,7 @@ mod tests {
     }
 
     impl AudioCommands for MockAudioCommands {
-        fn set_device(&mut self, _device_index: Option<usize>) {}
+        fn set_device(&mut self, _device: Option<String>) {}
         fn set_filter_cutoff(&mut self, _hz: f32) {}
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}
