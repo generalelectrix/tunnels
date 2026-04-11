@@ -1,6 +1,6 @@
 use eframe::egui;
 use std::time::Duration;
-use tunnels_audio::processor::TrackingMode;
+use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
 
 use crate::STATUS_COLORS;
 
@@ -236,9 +236,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
     }
 
     fn band_and_agc_controls(&mut self, ui: &mut egui::Ui) {
-        const BAND_LABELS: [&str; 8] = [
-            "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
-        ];
+        const BAND_LABELS: [&str; 8] = OUTPUT_BAND_LABELS;
 
         ui.heading("Band / AGC");
         ui.add_space(4.0);

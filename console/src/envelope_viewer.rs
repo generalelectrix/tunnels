@@ -1,10 +1,8 @@
 use eframe::egui::{self, Color32};
 use gui_common::scrolling_plot::ScrollingPlot;
-use tunnels::audio::processor::{NUM_OUTPUT_BANDS, SharedEnvelopeHistory};
+use tunnels::audio::processor::{NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, SharedEnvelopeHistory};
 
-const BAND_LABELS: [&str; NUM_OUTPUT_BANDS] = [
-    "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
-];
+const BAND_LABELS: [&str; NUM_OUTPUT_BANDS] = OUTPUT_BAND_LABELS;
 
 const BAND_COLORS: [Color32; NUM_OUTPUT_BANDS] = [
     Color32::from_rgb(160, 160, 160), // sub-bass — grey

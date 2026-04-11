@@ -28,6 +28,9 @@ const FAST_RELEASE: Duration = Duration::new(0, 4_000_000); // 4ms
 /// Number of output bands: 1 lowpass sub-bass + 7 wavelet bands.
 pub const NUM_OUTPUT_BANDS: usize = 8;
 
+/// Band labels in frequency-ascending output order (index 0 = lowpass sub-bass).
+pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
+
 /// Shared handle for streaming envelope history to the GUI.
 /// The audio thread writes, the GUI thread reads. The GUI sets `send_enabled`
 /// to control whether the audio thread populates the ring buffers.

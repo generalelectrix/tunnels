@@ -141,9 +141,11 @@ pub const NUM_LEVELS: usize = 7;
 /// Total number of output bands: NUM_LEVELS high bands + 1 residual low band.
 pub const NUM_BANDS: usize = NUM_LEVELS + 1;
 
-/// Band labels for display, from highest to lowest frequency.
+/// Band labels in frequency-ascending order, matching the output band indices
+/// used by the processor (index 0 = lowpass sub-bass, 7 = highest wavelet band).
+/// Valid for 48kHz sample rate with NUM_LEVELS = 7.
 pub const BAND_LABELS: [&str; NUM_BANDS] = [
-    "12-24k", "6-12k", "3-6k", "1.5-3k", "750-1.5k", "375-750", "187-375", "<187",
+    "Lowpass", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
 ];
 
 /// Streaming wavelet decomposition.
