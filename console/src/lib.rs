@@ -14,6 +14,7 @@ use eframe::egui;
 use admin_panel::{AdminPanelState, AdminService};
 use audio_panel::AudioPanelState;
 use gui_common::envelope_viewer::EnvelopeViewerState;
+use gui_common::tracked::TrackedBool;
 use gui_common::{CloseHandler, MessageModal, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
@@ -52,7 +53,7 @@ pub struct ConfigApp {
     close_handler: CloseHandler,
     modal: MessageModal,
     active_tab: Tab,
-    last_visualizer_active: bool,
+    visualizer_active: TrackedBool,
     gui_state: SharedGuiState,
 }
 
@@ -71,13 +72,13 @@ impl eframe::App for ConfigApp {
 
         // Notify the show when the visualizer is visible (either tab or detached window).
         let detached = self.visualizer_detached.load(Ordering::Relaxed);
-        let visualizer_active = detached || self.active_tab == Tab::Animation;
-        if visualizer_active != self.last_visualizer_active {
-            let _ = self
-                .client
-                .send_command(MetaCommand::SetVisualizerActive(visualizer_active));
-            self.last_visualizer_active = visualizer_active;
-        }
+        self.visualizer_active
+            .update(detached || self.active_tab == Tab::Animation)
+            .if_changed(|v| {
+                let _ = self
+                    .client
+                    .send_command(MetaCommand::SetVisualizerActive(v));
+            });
 
         // Detached animation visualizer -- separate OS window via deferred viewport.
         if detached {
@@ -202,7 +203,7 @@ impl ConfigApp {
             modal: MessageModal::default(),
             client,
             active_tab: Tab::default(),
-            last_visualizer_active: false,
+            visualizer_active: TrackedBool::new(false),
             gui_state,
         }
     }
