@@ -323,6 +323,50 @@ impl AdaptiveNormalizer {
     }
 }
 
+/// Symmetric one-pole IIR smoother: `y[n] = coeff * y[n-1] + (1 - coeff) * x[n]`.
+/// Coefficient is supplied per update since it is typically shared across
+/// many smoother instances.
+#[derive(Default)]
+struct OnePoleSmoother {
+    state: f32,
+}
+
+impl OnePoleSmoother {
+    fn update(&mut self, coeff: f32, input: f32) -> f32 {
+        self.state = coeff * self.state + (1.0 - coeff) * input;
+        self.state
+    }
+}
+
+/// A one-pole smoother coefficient derived from a time constant and the audio
+/// buffer update rate. Recomputes the expensive `exp()` only when the time
+/// constant changes.
+#[derive(Default)]
+struct SmootherCoeff {
+    time_secs: f32,
+    coeff: f32,
+}
+
+impl SmootherCoeff {
+    /// Refresh the cached coefficient from the current time constant and
+    /// update rate. Safe to call every tick.
+    fn refresh(&mut self, time_secs: f32, update_rate: f32) {
+        if time_secs == self.time_secs {
+            return;
+        }
+        self.time_secs = time_secs;
+        self.coeff = if time_secs <= 0.0 || update_rate <= 0.0 {
+            0.0
+        } else {
+            (-1.0 / (time_secs * update_rate)).exp()
+        };
+    }
+
+    fn get(&self) -> f32 {
+        self.coeff
+    }
+}
+
 /// Per-audio-channel processing chain for the lowpass path.
 struct LowpassChannel {
     filter: FilterProcessor<f32>,
@@ -331,15 +375,48 @@ struct LowpassChannel {
     slow_envelope: EnvelopeFollowerProcessor,
 }
 
+impl LowpassChannel {
+    /// Run one input sample through the full chain:
+    /// lowpass → Hilbert |z(t)| → fast envelope → slow envelope.
+    fn process_sample(&mut self, sample: f32, ctx: &mut AudioContext) {
+        let filtered = self.filter.m_process(ctx, sample);
+        let amplitude = self.hilbert.envelope(filtered as f64) as f32;
+        self.fast_envelope.m_process(ctx, amplitude);
+        let fast_val = self.fast_envelope.handle().state();
+        self.slow_envelope.m_process(ctx, fast_val);
+    }
+
+    fn slow_envelope_state(&self) -> f32 {
+        self.slow_envelope.handle().state()
+    }
+}
+
 /// Per-frequency-band processing chain for the wavelet path. Operates on
 /// the mono mix at a band-specific (decimated) sample rate.
 struct WaveletBand {
     hilbert: HilbertTransform,
     fast_envelope: EnvelopeFollowerProcessor,
     slow_envelope: EnvelopeFollowerProcessor,
-    smoothed: f32,
+    smoother: OnePoleSmoother,
     normalizer: AdaptiveNormalizer,
     context: AudioContext,
+}
+
+impl WaveletBand {
+    /// Run one decimated sample through the full chain:
+    /// whitening → Hilbert → fast envelope → slow envelope.
+    fn process_sample(&mut self, sample: f32, whiten: f32) {
+        let amp = self.hilbert.envelope((sample * whiten) as f64) as f32;
+        self.fast_envelope.m_process(&mut self.context, amp);
+        let fast_val = self.fast_envelope.handle().state();
+        self.slow_envelope.m_process(&mut self.context, fast_val);
+    }
+
+    /// Read the slow envelope and push it through the output smoother.
+    fn smoothed_envelope(&mut self, coeff: f32) -> f32 {
+        let env_val = self.slow_envelope.handle().state();
+        self.smoother.update(coeff, env_val)
+    }
 }
 
 pub struct Processor {
@@ -356,14 +433,13 @@ pub struct Processor {
     /// Lowpass chain: one per audio channel.
     lowpass: Vec<LowpassChannel>,
 
-    /// Symmetric one-pole smoother state (one value, not per-channel —
-    /// applied after the per-channel envelopes are averaged).
-    smoothed_value: f32,
+    /// Output smoother for the lowpass path (applied after per-channel averaging).
+    lowpass_smoother: OnePoleSmoother,
     /// Adaptive normalizer for the lowpass envelope.
     lowpass_normalizer: AdaptiveNormalizer,
-    /// Cached smoother coefficient, recomputed when output_smoothing changes.
-    smooth_coeff: f32,
-    smooth_time: f32,
+    /// Cached smoother coefficient shared across the lowpass smoother and
+    /// every wavelet-band smoother.
+    smooth_coeff: SmootherCoeff,
 
     /// Automatic input gain trim.
     auto_trim: AutoTrim,
@@ -441,7 +517,7 @@ impl Processor {
                 hilbert: HilbertTransform::new(),
                 fast_envelope: make_envelope(&mut band_ctx, FAST_ATTACK, FAST_RELEASE),
                 slow_envelope: make_envelope(&mut band_ctx, slow_attack, slow_release),
-                smoothed: 0.0,
+                smoother: OnePoleSmoother::default(),
                 normalizer: AdaptiveNormalizer::new(),
                 context: band_ctx,
             }
@@ -456,26 +532,16 @@ impl Processor {
             context,
             envelope_producers,
             lowpass,
-            smoothed_value: 0.0,
+            lowpass_smoother: OnePoleSmoother::default(),
             lowpass_normalizer: AdaptiveNormalizer::new(),
-            smooth_coeff: 0.0,
-            smooth_time: 0.0,
+            smooth_coeff: SmootherCoeff::default(),
             auto_trim: AutoTrim::new(),
             wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
             wavelet_bands,
         }
     }
 
-    /// Compute the one-pole coefficient from a time constant and the
-    /// actual buffer update rate (sample_rate / frames_per_buffer).
-    fn compute_smooth_coeff(time_secs: f32, update_rate: f32) -> f32 {
-        if time_secs <= 0.0 || update_rate <= 0.0 {
-            return 0.0; // disabled
-        }
-        (-1.0 / (time_secs * update_rate)).exp()
-    }
-
-    fn maybe_update_parameters(&mut self) {
+    fn maybe_update_parameters(&mut self, update_rate: f32) {
         let new_filter_cutoff = self.settings.filter_cutoff.get();
         if new_filter_cutoff != self.filter_cutoff {
             debug!("Updating filter cutoff to {new_filter_cutoff}");
@@ -502,6 +568,9 @@ impl Processor {
                 band.slow_envelope.handle().set_release(release);
             }
         }
+
+        self.smooth_coeff
+            .refresh(self.settings.output_smoothing.get(), update_rate);
     }
 
     /// Process a buffer of interleaved audio data.
@@ -510,19 +579,14 @@ impl Processor {
             return;
         }
 
-        self.maybe_update_parameters();
+        let frames = interleaved_buffer.len() / self.channel_count.max(1);
+        let update_rate = if frames > 0 {
+            self.context.settings.sample_rate / frames as f32
+        } else {
+            1000.0
+        };
 
-        // Recompute smoothing coefficient if the time constant changed,
-        // using the actual buffer size to determine the update rate.
-        let new_smooth = self.settings.output_smoothing.get();
-        if new_smooth != self.smooth_time {
-            self.smooth_time = new_smooth;
-            let frames = interleaved_buffer.len() / self.channel_count.max(1);
-            if frames > 0 {
-                let update_rate = self.context.settings.sample_rate / frames as f32;
-                self.smooth_coeff = Self::compute_smooth_coeff(new_smooth, update_rate);
-            }
-        }
+        self.maybe_update_parameters(update_rate);
 
         let mut raw_peak: f32 = 0.0;
         let mut input_peak: f32 = 0.0;
@@ -545,34 +609,22 @@ impl Processor {
                 raw_peak = raw_peak.max(raw_sample.abs());
                 let sample = *raw_sample * effective_gain;
                 input_peak = input_peak.max(sample.abs());
-
-                // lowpass -> Hilbert |z(t)| -> fast envelope -> slow envelope
-                let filtered = chan.filter.m_process(&mut self.context, sample);
-                let amplitude = chan.hilbert.envelope(filtered as f64) as f32;
-                chan.fast_envelope.m_process(&mut self.context, amplitude);
-                let fast_val = chan.fast_envelope.handle().state();
-                chan.slow_envelope.m_process(&mut self.context, fast_val);
+                chan.process_sample(sample, &mut self.context);
             }
 
             // Wavelet decomposition -> per-band envelope extraction.
             // Whitening: multiply by 2^(NUM_LEVELS - level) to correct for
             // the 1/f power spectrum of music. Higher bands get more boost.
             let mono_gained = mono * effective_gain;
-            {
-                let bands = &mut self.wavelet_bands;
-                self.wavelet.push(mono_gained, |band, sample| {
-                    // Skip the residual band (== lowpass, redundant with our LP chain).
-                    if band == NUM_LEVELS {
-                        return;
-                    }
-                    let whiten = (1 << (NUM_LEVELS - band)) as f32;
-                    let b = &mut bands[band];
-                    let amp = b.hilbert.envelope((sample * whiten) as f64) as f32;
-                    b.fast_envelope.m_process(&mut b.context, amp);
-                    let fv = b.fast_envelope.handle().state();
-                    b.slow_envelope.m_process(&mut b.context, fv);
-                });
-            }
+            let bands = &mut self.wavelet_bands;
+            self.wavelet.push(mono_gained, |band, sample| {
+                // Skip the residual band (== lowpass, redundant with our LP chain).
+                if band == NUM_LEVELS {
+                    return;
+                }
+                let whiten = (1 << (NUM_LEVELS - band)) as f32;
+                bands[band].process_sample(sample, whiten);
+            });
         }
 
         // Update auto-trim based on the pre-gain peak (raw signal level).
@@ -587,32 +639,24 @@ impl Processor {
         let envelope = self
             .lowpass
             .iter()
-            .map(|c| c.slow_envelope.handle().state())
+            .map(LowpassChannel::slow_envelope_state)
             .sum::<f32>()
             / ch_count;
 
-        // Symmetric one-pole smoothing: y[n] = coeff * y[n-1] + (1 - coeff) * x[n]
-        let coeff = self.smooth_coeff;
-        self.smoothed_value = coeff * self.smoothed_value + (1.0 - coeff) * envelope;
+        let coeff = self.smooth_coeff.get();
+        let smoothed_lowpass = self.lowpass_smoother.update(coeff, envelope);
 
         // Normalization params (shared between lowpass and wavelet normalizers).
         let floor_hl = self.settings.norm_floor_halflife.get();
         let ceil_hl = self.settings.norm_ceiling_halflife.get();
-        let frames = interleaved_buffer.len() / self.channel_count.max(1);
-        let update_rate = if frames > 0 {
-            self.context.settings.sample_rate / frames as f32
-        } else {
-            1000.0
-        };
-
         let floor_mode = self.settings.norm_floor_mode.load(Ordering::Relaxed);
         let ceil_mode = self.settings.norm_ceiling_mode.load(Ordering::Relaxed);
 
         self.lowpass_normalizer
             .set_params(floor_hl, ceil_hl, update_rate);
-        let lowpass_norm =
-            self.lowpass_normalizer
-                .process(self.smoothed_value, floor_mode, ceil_mode);
+        let lowpass_norm = self
+            .lowpass_normalizer
+            .process(smoothed_lowpass, floor_mode, ceil_mode);
 
         // Wavelet band smoothing + normalization.
         // Build the output array: [lowpass_norm, wavelet_band_6_norm, ..., wavelet_band_0_norm]
@@ -621,11 +665,8 @@ impl Processor {
 
         for (i, band) in self.wavelet_bands.iter_mut().enumerate() {
             band.normalizer.set_params(floor_hl, ceil_hl, update_rate);
-            let env_val = band.slow_envelope.handle().state();
-            band.smoothed = coeff * band.smoothed + (1.0 - coeff) * env_val;
-            let normalized = band
-                .normalizer
-                .process(band.smoothed, floor_mode, ceil_mode);
+            let smoothed = band.smoothed_envelope(coeff);
+            let normalized = band.normalizer.process(smoothed, floor_mode, ceil_mode);
             // Map wavelet bands 0-6 to output indices 7-1.
             // output_index = NUM_LEVELS - wavelet_band_index (for bands 0..NUM_LEVELS).
             if i < NUM_LEVELS {
