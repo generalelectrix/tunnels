@@ -515,6 +515,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "atomic_enum"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99e1aca718ea7b89985790c94aad72d77533063fe00bc497bb79a7c2dae6a661"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.103",
+]
+
+[[package]]
 name = "atspi"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2432,7 +2443,9 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui_kittest",
+ "egui_plot",
  "midi_harness",
+ "tunnels_audio",
 ]
 
 [[package]]
@@ -4857,6 +4870,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtrb"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7204ed6420f698836b76d4d5c2ec5dec7585fd5c3a788fd1cde855d1de598239"
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4879,9 +4898,9 @@ dependencies = [
 
 [[package]]
 name = "rustfft"
-version = "6.4.0"
+version = "6.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6f140db74548f7c9d7cce60912c9ac414e74df5e718dc947d514b051b42f3f4"
+checksum = "21db5f9893e91f41798c88680037dba611ca6674703c1a18601b01a72c8adb89"
 dependencies = [
  "num-complex",
  "num-integer",
@@ -5739,11 +5758,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
- "audio-processor-analysis",
- "audio-processor-traits",
- "augmented-dsp-filters",
  "bitflags 2.11.0",
- "cpal",
  "derive_more 2.0.1",
  "eframe",
  "egui_plot",
@@ -5759,8 +5774,24 @@ dependencies = [
  "serde",
  "serde_yaml",
  "simplelog",
+ "tunnels_audio",
  "tunnels_lib",
  "zero_configure",
+]
+
+[[package]]
+name = "tunnels_audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atomic_enum",
+ "audio-processor-analysis",
+ "audio-processor-traits",
+ "augmented-dsp-filters",
+ "cpal",
+ "log",
+ "rtrb",
+ "tunnels_lib",
 ]
 
 [[package]]
@@ -5768,6 +5799,7 @@ name = "tunnels_lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "number",
  "ordered-float",
  "serde",

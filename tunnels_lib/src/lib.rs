@@ -2,9 +2,12 @@
 
 pub mod bootstrap;
 pub mod color;
+pub mod notified;
 pub mod number;
 pub mod prompt;
+pub mod repaint;
 pub mod smooth;
+pub mod transient_indicator;
 
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};

@@ -33,8 +33,11 @@ pub enum MetaCommand {
         kind: midi_harness::DeviceKind,
     },
     SetAudioDevice(Option<String>),
+    AudioControl(crate::audio::ControlMessage),
     StartClockService,
     StopClockService,
+    /// Whether the animation visualizer is currently visible.
+    SetVisualizerActive(bool),
 }
 
 /// A handle for sending commands to the show and waiting for responses.

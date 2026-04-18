@@ -1,8 +1,9 @@
 use crate::{
-    audio::AudioInput,
+    audio::{AudioInput, ShowEmitter},
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
     clock_bank::ClockBank,
+    gui_state::GuiDirty,
     midi_controls::MIXER_CHANNELS_PER_PAGE,
     mixer::{ChannelIdx, Mixer},
     palette::ColorPalette,
@@ -74,40 +75,53 @@ impl MasterUI {
         positions: &mut PositionBank,
         audio_input: &mut AudioInput,
         emitter: &mut E,
-    ) {
+    ) -> GuiDirty {
         use ShowControlMessage::*;
         match msg {
-            Tunnel(tm) => match self.current_beam(mixer) {
-                Beam::Look(_) => (),
-                Beam::Tunnel(t) => t.control(tm, emitter),
-            },
+            Tunnel(tm) => {
+                match self.current_beam(mixer) {
+                    Beam::Look(_) => (),
+                    Beam::Tunnel(t) => t.control(tm, emitter),
+                }
+                GuiDirty::CLEAN
+            }
             Animation(am) => {
                 if let Some(a) = self.current_animation(mixer) {
                     a.animation.control(am, emitter);
                 }
+                GuiDirty::CLEAN
             }
             AnimationTarget(at) => {
                 if let Some(a) = self.current_animation(mixer) {
                     a.target = at;
                     emitter.emit(ShowStateChange::AnimationTarget(at));
                 }
+                GuiDirty::CLEAN
             }
             Mixer(mm) => {
                 mixer.control(mm, emitter);
+                GuiDirty::CLEAN
             }
             Clock(cm) => {
                 clocks.control(cm, emitter);
+                GuiDirty::CLEAN
             }
             ColorPalette(cm) => {
                 color_palette.control(cm, emitter);
+                GuiDirty::CLEAN
             }
             Position(cm) => {
                 positions.control(cm);
+                GuiDirty::CLEAN
             }
             Audio(cm) => {
-                audio_input.control(cm, emitter);
+                audio_input.control(cm, &mut ShowEmitter(emitter));
+                GuiDirty::AUDIO
             }
-            MasterUI(uim) => self.control(uim, mixer, emitter),
+            MasterUI(uim) => {
+                self.control(uim, mixer, emitter);
+                GuiDirty::CLEAN
+            }
         }
     }
 
@@ -126,7 +140,7 @@ impl MasterUI {
         mixer.emit_state(emitter);
         clocks.emit_state(emitter);
         color_palette.emit_state(emitter);
-        audio_input.emit_state(emitter);
+        audio_input.emit_state(&mut ShowEmitter(emitter));
     }
 
     /// Emit state for the beam store.

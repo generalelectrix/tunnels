@@ -111,6 +111,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+echo "==> Signing app bundle..."
+codesign -s - --force --deep --identifier com.generalelectrix.tunnels "$APP"
+
 echo "==> Creating DMG..."
 BG_PNG="$PROJECT_DIR/dist/dmg-background.png"
 rsvg-convert -w 600 -h 400 "$PROJECT_DIR/resources/dmg-background.svg" > "$BG_PNG"

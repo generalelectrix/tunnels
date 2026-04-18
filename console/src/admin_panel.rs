@@ -9,6 +9,8 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
+use tunnels_lib::repaint::RepaintSignal;
 
 /// Abstraction over the network admin operations so we can mock them in tests.
 pub trait AdminService: Send + Sync {
@@ -106,6 +108,7 @@ fn tunnelclient_path() -> Result<std::path::PathBuf, String> {
 pub struct AdminPanelState {
     admin_service: Arc<dyn AdminService>,
     hostname: String,
+    repaint: RepaintSignal,
 
     // UI state
     selected_target: Option<Target>,
@@ -126,11 +129,16 @@ pub struct AdminPanelState {
 }
 
 impl AdminPanelState {
-    pub fn new(admin_service: Arc<dyn AdminService>, hostname: String) -> Self {
+    pub fn new(
+        admin_service: Arc<dyn AdminService>,
+        hostname: String,
+        repaint: RepaintSignal,
+    ) -> Self {
         let (w, h) = ResolutionPreset::P1080.resolution().unwrap();
         Self {
             admin_service,
             hostname,
+            repaint,
             selected_target: Some(Target::Monitor),
             video_channel: 0,
             resolution_preset: ResolutionPreset::P1080,
@@ -251,6 +259,7 @@ impl AdminPanelState {
 
         let state = self.config_send_state.clone();
         let children = self.monitor_children.clone();
+        let repaint = self.repaint.clone();
         thread::spawn(move || {
             let result = (|| -> Result<String, String> {
                 let serialized = rmp_serde::to_vec(&config)
@@ -306,6 +315,8 @@ impl AdminPanelState {
                     message: e,
                 },
             });
+            drop(guard);
+            repaint();
         });
     }
 
@@ -334,6 +345,7 @@ impl AdminPanelState {
         let admin = self.admin_service.clone();
         let state = self.config_send_state.clone();
         let name = client_name.clone();
+        let repaint = self.repaint.clone();
         thread::spawn(move || {
             let result = (|| -> anyhow::Result<String> {
                 let exe = tunnelclient_path().map_err(|e| anyhow::anyhow!(e))?;
@@ -350,6 +362,8 @@ impl AdminPanelState {
                     message: e.to_string(),
                 },
             });
+            drop(guard);
+            repaint();
         });
     }
 
@@ -402,9 +416,15 @@ impl AdminPanelState {
     pub fn render(&mut self, ctx: &egui::Context, clients: &[String]) {
         let is_sending = self.config_send_state.lock().unwrap().is_some();
 
+        // Keep the spinner animating while a send is in-flight. Completion
+        // wakes the GUI via the `RepaintSignal` in the worker thread.
         if is_sending {
             ctx.request_repaint();
         }
+
+        // mDNS client discovery runs on a background thread with no wake hook,
+        // so poll twice a second while this tab is visible.
+        ctx.request_repaint_after(Duration::from_millis(500));
 
         // Invalidate selection if the selected remote client has disappeared.
         if let Some(Target::RemoteClient(ref name)) = self.selected_target
@@ -573,7 +593,11 @@ mod tests {
             let admin: Arc<dyn AdminService> = Arc::new(MockAdminService {
                 clients: clients.clone(),
             });
-            AdminPanelState::new(admin, "test-host".to_string())
+            AdminPanelState::new(
+                admin,
+                "test-host".to_string(),
+                tunnels_lib::repaint::noop_repaint(),
+            )
         }
     }
 

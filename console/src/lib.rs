@@ -6,18 +6,22 @@ mod midi_panel;
 mod ui_util;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
 use eframe::egui;
 
 use admin_panel::{AdminPanelState, AdminService};
-use audio_panel::{AudioPanel, AudioPanelState};
-use gui_common::{CloseHandler, MessageModal};
+use audio_panel::AudioPanelState;
+use gui_common::envelope_viewer::EnvelopeViewerState;
+use gui_common::tracked::TrackedBool;
+use gui_common::{CloseHandler, MessageModal, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
-use tunnels::control::CommandClient;
+use tunnels::audio::EnvelopeStreams;
+use tunnels::control::{CommandClient, MetaCommand};
 use tunnels::gui_state::SharedGuiState;
+use tunnels_lib::repaint::RepaintSignal;
 use ui_util::GuiContext;
 
 #[derive(Default, PartialEq, Clone, Copy)]
@@ -29,7 +33,7 @@ enum Tab {
     Clients,
 }
 
-struct ConfigApp {
+pub struct ConfigApp {
     client: CommandClient,
     midi_panel: MidiPanelState,
     audio_panel: AudioPanelState,
@@ -44,9 +48,12 @@ struct ConfigApp {
     /// to the main thread. Arc<AtomicBool> because the deferred closure is
     /// 'static + Send + Sync and can't hold a reference to ConfigApp fields.
     visualizer_detached: Arc<AtomicBool>,
+    envelope_viewer: EnvelopeViewerState,
+    envelope_streams_rx: Receiver<EnvelopeStreams>,
     close_handler: CloseHandler,
     modal: MessageModal,
     active_tab: Tab,
+    visualizer_active: TrackedBool,
     gui_state: SharedGuiState,
 }
 
@@ -65,10 +72,13 @@ impl eframe::App for ConfigApp {
 
         // Notify the show when the visualizer is visible (either tab or detached window).
         let detached = self.visualizer_detached.load(Ordering::Relaxed);
-        self.gui_state.visualizer_active.store(
-            detached || self.active_tab == Tab::Animation,
-            Ordering::Relaxed,
-        );
+        self.visualizer_active
+            .update(detached || self.active_tab == Tab::Animation)
+            .if_changed(|v| {
+                let _ = self
+                    .client
+                    .send_command(MetaCommand::SetVisualizerActive(v));
+            });
 
         // Detached animation visualizer -- separate OS window via deferred viewport.
         if detached {
@@ -98,21 +108,52 @@ impl eframe::App for ConfigApp {
                         slots: &midi_slots,
                     }
                     .ui(ui);
+
+                    ui.add_space(16.0);
+                    ui.separator();
+                    let clock_running =
+                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
+                    if let Some(action) = clock_panel::clock_service_ui(ui, clock_running) {
+                        let cmd = match action {
+                            clock_panel::ClockServiceAction::Start => {
+                                MetaCommand::StartClockService
+                            }
+                            clock_panel::ClockServiceAction::Stop => MetaCommand::StopClockService,
+                        };
+                        let mut ctx = GuiContext {
+                            modal: &mut self.modal,
+                            client: &self.client,
+                        };
+                        let _ = ctx.send_command(cmd);
+                    }
                 }
                 Tab::Audio => {
-                    let audio_device = self.gui_state.audio_device.load();
-                    let clock_service_running =
-                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
-                    AudioPanel {
-                        ctx: GuiContext {
+                    let audio_state = self.gui_state.audio_state.load();
+                    audio_panel::render_audio_panel(
+                        ui,
+                        GuiContext {
                             modal: &mut self.modal,
                             client: &self.client,
                         },
-                        state: &mut self.audio_panel,
-                        current_device: &audio_device,
-                        clock_service_running,
+                        &mut self.audio_panel,
+                        &audio_state,
+                    );
+
+                    if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {
+                        // Drain new envelope streams from the audio reconnect
+                        // thread. If multiple have accumulated, the most recent
+                        // wins — `set_envelope_streams` fully resets the viewer.
+                        while let Ok(envelope_streams) = self.envelope_streams_rx.try_recv() {
+                            self.envelope_viewer.set_envelope_streams(envelope_streams);
+                        }
+
+                        ui.add_space(8.0);
+                        ui.separator();
+
+                        self.envelope_viewer.ui(ui);
+                    } else {
+                        self.envelope_viewer.set_open(false);
                     }
-                    .ui(ui);
                 }
                 Tab::Animation => {
                     animation_panel::ui(
@@ -130,44 +171,50 @@ impl eframe::App for ConfigApp {
     }
 }
 
-pub fn run_config_gui(
-    client: CommandClient,
-    gui_state: SharedGuiState,
-    admin_service: Arc<dyn AdminService>,
-    hostname: String,
-) -> Result<()> {
-    let options = eframe::NativeOptions {
+impl ConfigApp {
+    /// Build the console GUI. Must be called from inside the eframe creator
+    /// closure so the `RepaintSignal` can wrap `cc.egui_ctx`.
+    pub fn new(
+        client: CommandClient,
+        gui_state: SharedGuiState,
+        admin_service: Arc<dyn AdminService>,
+        hostname: String,
+        repaint: RepaintSignal,
+        envelope_streams_rx: Receiver<EnvelopeStreams>,
+    ) -> Self {
+        let audio_state = gui_state.audio_state.load();
+        let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
+        let mut audio_panel = AudioPanelState::new(devices);
+        audio_panel.sync_from_device_name(&audio_state.device_name);
+        drop(audio_state);
+
+        let admin_panel = AdminPanelState::new(admin_service.clone(), hostname, repaint);
+
+        Self {
+            midi_panel: MidiPanelState::default(),
+            audio_panel,
+            admin_panel,
+            admin_service,
+            visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
+            visualizer_detached: Arc::new(AtomicBool::new(false)),
+            envelope_viewer: EnvelopeViewerState::new(),
+            envelope_streams_rx,
+            close_handler: CloseHandler::default(),
+            modal: MessageModal::default(),
+            client,
+            active_tab: Tab::default(),
+            visualizer_active: TrackedBool::new(false),
+            gui_state,
+        }
+    }
+}
+
+/// Default native options for the console window.
+pub fn native_options() -> eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 500.0])
+            .with_inner_size([864.0, 600.0])
             .with_icon(std::sync::Arc::new(egui::IconData::default())),
         ..Default::default()
-    };
-    let audio_device = gui_state.audio_device.load();
-    let mut audio_panel = AudioPanelState::new();
-    audio_panel.sync_from_device_name(&audio_device);
-
-    let admin_panel = AdminPanelState::new(admin_service.clone(), hostname);
-
-    eframe::run_native(
-        "Tunnels",
-        options,
-        Box::new(move |cc| {
-            stage_theme::apply(&cc.egui_ctx);
-            Ok(Box::new(ConfigApp {
-                midi_panel: MidiPanelState::default(),
-                audio_panel,
-                admin_panel,
-                admin_service,
-                visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
-                visualizer_detached: Arc::new(AtomicBool::new(false)),
-                close_handler: CloseHandler::default(),
-                modal: MessageModal::default(),
-                client,
-                active_tab: Tab::default(),
-                gui_state,
-            }))
-        }),
-    )
-    .unwrap();
-    Ok(())
+    }
 }

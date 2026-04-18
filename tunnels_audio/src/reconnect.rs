@@ -6,11 +6,14 @@ use cpal::SupportedBufferSize;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamError};
 use log::{info, warn};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::Duration;
 
-use super::processor::{Processor, ProcessorSettings};
+use crate::processor::{
+    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
+};
+use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -18,12 +21,28 @@ pub struct ReconnectingInput {
 
 impl ReconnectingInput {
     /// Create a new self-reconnecting input.
-    /// Device disconnection is handled asynchronously and will attempt to
-    /// reconnect the device until this struct is dropped.
-    pub fn new(device_name: String, processor_settings: ProcessorSettings) -> Self {
-        Self {
-            stop: Some(reconnect(device_name, processor_settings)),
-        }
+    ///
+    /// The initial stream open happens on the reconnect thread (because cpal's
+    /// Stream is not Send on macOS), but this method blocks until it either
+    /// succeeds or fails.
+    ///
+    /// Every successful open — initial and each reconnect — sends a fresh
+    /// `EnvelopeStreams` bundle on `envelope_tx`. If the receiver is gone the
+    /// send errors silently and the reconnect loop continues.
+    pub fn new(
+        device_name: String,
+        processor_settings: ProcessorSettings,
+        envelope_tx: Sender<crate::EnvelopeStreams>,
+    ) -> Result<Self> {
+        let (result_tx, result_rx) = channel::<Result<()>>();
+        let stop = reconnect(
+            device_name,
+            processor_settings,
+            result_tx,
+            &result_rx,
+            envelope_tx,
+        )?;
+        Ok(Self { stop: Some(stop) })
     }
 }
 
@@ -40,23 +59,32 @@ type StopReconnect = Box<dyn FnOnce()>;
 /// Try to reconnect a disconnected audio input this often.
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Spawn a thread to handle device disconnection.
-/// Return a closure that can be called to terminate the input stream, blocking
-/// until it completes.
-fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> StopReconnect {
-    enum Cmd {
-        Stop,
-        Disconnected,
-    }
+enum Cmd {
+    Stop,
+    Disconnected,
+}
+
+/// Spawn the reconnect thread and perform the initial stream open on it.
+/// Blocks until the first open attempt completes, returning Err if it fails.
+fn reconnect(
+    device_name: String,
+    processor_settings: ProcessorSettings,
+    result_tx: Sender<Result<()>>,
+    result_rx: &std::sync::mpsc::Receiver<Result<()>>,
+    envelope_tx: Sender<crate::EnvelopeStreams>,
+) -> Result<StopReconnect> {
     use Cmd::*;
 
     let (send, recv) = channel::<Cmd>();
-    // Load an initial command into the queue to open input.
-    send.send(Cmd::Disconnected).unwrap();
-    let disconnected_sender = send.clone();
+    // Signal the thread to do the initial open.
+    send.send(Disconnected).unwrap();
+    let stop_sender = send.clone();
+    let thread_settings = processor_settings.clone();
 
     let reconnect_thread = thread::spawn(move || {
-        let mut _input_stream = None;
+        let mut _input_stream: Option<Stream> = None;
+        let mut first_open = true;
+
         for event in recv {
             match event {
                 Stop => {
@@ -65,26 +93,34 @@ fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> Stop
                 }
                 Disconnected => {
                     // Drop the existing stream.
-                    {
-                        _input_stream = None;
-                    }
-                    // Try to re-open.
-                    let sender = disconnected_sender.clone();
-                    let reopen_result =
-                        create_input_stream(&device_name, processor_settings.clone(), move || {
-                            sender.send(Disconnected).ok();
-                            warn!("Audio input disconnected.");
-                        });
+                    _input_stream = None;
 
-                    match reopen_result {
-                        Ok(input) => {
-                            info!("Successfully opened audio input {device_name}.");
-                            _input_stream = Some(input);
+                    let open_result = open_audio_device(&device_name).and_then(|d| {
+                        build_input_stream(&d, thread_settings.clone(), send.clone())
+                    });
+
+                    match open_result {
+                        Ok((stream, update_rate, streams)) => {
+                            if first_open {
+                                info!("Successfully opened audio input {device_name}.");
+                                let _ = result_tx.send(Ok(()));
+                                first_open = false;
+                            } else {
+                                info!("Successfully reopened audio input {device_name}.");
+                            }
+                            let _ = envelope_tx.send(crate::EnvelopeStreams {
+                                streams,
+                                update_rate,
+                            });
+                            _input_stream = Some(stream);
                         }
                         Err(e) => {
+                            if first_open {
+                                let _ = result_tx.send(Err(e));
+                                return;
+                            }
                             warn!("Unable to reopen audio input {device_name}: {e}.");
-                            let sender = disconnected_sender.clone();
-                            // Spawn a thread to wake us up and try again after a delay.
+                            let sender = send.clone();
                             thread::spawn(move || {
                                 thread::sleep(RECONNECT_INTERVAL);
                                 sender.send(Disconnected).ok();
@@ -96,13 +132,20 @@ fn reconnect(device_name: String, processor_settings: ProcessorSettings) -> Stop
         }
     });
 
-    Box::new(move || {
-        send.send(Stop)
+    // Block until the initial open attempt completes on the thread.
+    result_rx
+        .recv()
+        .map_err(|_| anyhow::anyhow!("Audio reconnect thread exited unexpectedly"))??;
+
+    let stop = Box::new(move || {
+        stop_sender
+            .send(Cmd::Stop)
             .expect("Sending stop to reconnect thread failed");
         reconnect_thread
             .join()
             .expect("Joining reconnect thread failed");
-    })
+    });
+    Ok(stop)
 }
 
 fn open_audio_device(name: &str) -> Result<Device> {
@@ -131,15 +174,11 @@ fn open_audio_device(name: &str) -> Result<Device> {
     bail!(err_msg);
 }
 
-fn create_input_stream<F>(
-    device_name: &str,
+fn build_input_stream(
+    device: &Device,
     processor_settings: ProcessorSettings,
-    mut on_disconnect: F,
-) -> Result<Stream>
-where
-    F: FnMut() + Send + 'static,
-{
-    let device = open_audio_device(device_name)?;
+    disconnect_sender: Sender<Cmd>,
+) -> Result<(Stream, UpdateRate, [EnvelopeStream; NUM_OUTPUT_BANDS])> {
     let supported = device.default_input_config()?;
 
     // Aim for about 1 ms of audio buffering latency.
@@ -175,10 +214,30 @@ where
     let mut config: cpal::StreamConfig = supported.into();
     config.buffer_size = BufferSize::Fixed(frame_count);
 
+    let update_rate = UpdateRate::new(config.sample_rate.0, frame_count);
+
+    // Create envelope ring buffers — producers go to the processor, envelope_streams to the GUI.
+    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
+    let mut envelope_streams = Vec::with_capacity(NUM_OUTPUT_BANDS);
+    for _ in 0..NUM_OUTPUT_BANDS {
+        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
+        producers.push(p);
+        envelope_streams.push(c);
+    }
+    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] = producers
+        .try_into()
+        .ok()
+        .expect("correct number of producers");
+    let envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS] = envelope_streams
+        .try_into()
+        .ok()
+        .expect("correct number of envelope_streams");
+
     let mut processor = Processor::new(
         processor_settings,
         config.sample_rate.0,
         config.channels as usize,
+        producers,
     );
 
     let handle_buffer = move |interleaved_buffer: &[f32], _: &cpal::InputCallbackInfo| {
@@ -190,12 +249,13 @@ where
             eprintln!("An audio input error occurred: {err}");
         }
         StreamError::DeviceNotAvailable => {
-            on_disconnect();
+            disconnect_sender.send(Cmd::Disconnected).ok();
+            warn!("Audio input disconnected.");
         }
     };
 
     let input_stream = device.build_input_stream(&config, handle_buffer, handle_error, None)?;
 
     input_stream.play()?;
-    Ok(input_stream)
+    Ok((input_stream, update_rate, envelope_streams))
 }
