@@ -1,5 +1,5 @@
 use eframe::egui::{self, Color32};
-use tunnels_audio::EnvelopeStream;
+use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
 use tunnels_audio::processor::{NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, UpdateRate};
 
 use crate::scrolling_plot::ScrollingPlot;
@@ -57,17 +57,13 @@ impl EnvelopeViewerState {
     }
 
     /// Provide new envelope streams (e.g. after a device change).
-    pub fn set_envelope_streams(
-        &mut self,
-        envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
-        update_rate: UpdateRate,
-    ) {
+    pub fn set_envelope_streams(&mut self, new_streams: EnvelopeStreams) {
         // Clear stale plot data from any previous device.
         for trace in &mut self.plot.traces {
             trace.points.clear();
         }
-        self.envelope_streams = Some(envelope_streams);
-        self.update_rate = Some(update_rate);
+        self.envelope_streams = Some(new_streams.streams);
+        self.update_rate = Some(new_streams.update_rate);
     }
 
     /// Render the envelope viewer. Returns whether it's open (for layout purposes).

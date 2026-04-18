@@ -35,9 +35,10 @@ impl EnvelopeStream {
     pub fn clear(&mut self) {
         let available = self.0.slots();
         if available > 0
-            && let Ok(chunk) = self.0.read_chunk(available) {
-                chunk.commit_all();
-            }
+            && let Ok(chunk) = self.0.read_chunk(available)
+        {
+            chunk.commit_all();
+        }
     }
 }
 

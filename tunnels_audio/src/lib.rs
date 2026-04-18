@@ -14,13 +14,19 @@ use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 use tunnels_lib::transient_indicator::TransientIndicator;
 
+pub use self::processor::UpdateRate;
 use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
-pub use self::processor::UpdateRate;
 
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
+
+/// Envelope data streams from the audio thread, bundled with the callback rate.
+pub struct EnvelopeStreams {
+    pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+    pub update_rate: UpdateRate,
+}
 
 pub struct AudioInput {
     _input: Option<ReconnectingInput>,
@@ -63,13 +69,8 @@ impl AudioInput {
     }
 
     /// Open an audio input device. Returns the AudioInput and, if a device
-    /// was opened, the envelope streams and update rate for the GUI viewer.
-    pub fn new(
-        device_name: Option<String>,
-    ) -> Result<(
-        Self,
-        Option<([EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)>,
-    )> {
+    /// was opened, the envelope streams for the GUI viewer.
+    pub fn new(device_name: Option<String>) -> Result<(Self, Option<EnvelopeStreams>)> {
         let device_name = match device_name {
             None => return Ok((Self::offline(), None)),
             Some(d) => d,
@@ -78,7 +79,7 @@ impl AudioInput {
         info!("Using audio input device {device_name}.");
 
         let processor_settings = ProcessorSettings::default();
-        let (input, envelope_streams, update_rate) =
+        let (input, streams, update_rate) =
             ReconnectingInput::new(device_name.clone(), processor_settings.clone())?;
 
         Ok((
@@ -91,7 +92,10 @@ impl AudioInput {
                 clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
                 device_name,
             },
-            Some((envelope_streams, update_rate)),
+            Some(EnvelopeStreams {
+                streams,
+                update_rate,
+            }),
         ))
     }
 

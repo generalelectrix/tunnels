@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
-use tunnels_audio::EnvelopeStream;
-use tunnels_audio::processor::{NUM_OUTPUT_BANDS, TrackingMode, UpdateRate};
+use tunnels_audio::EnvelopeStreams;
+use tunnels_audio::processor::TrackingMode;
 
 use crate::animation_visualizer::AnimationSnapshot;
 
@@ -63,7 +63,7 @@ pub struct GuiState {
     pub animation_state: ArcSwap<AnimationSnapshot>,
     /// Envelope ring buffer streams and update rate for the GUI viewer.
     /// Placed by the show thread, taken by the GUI thread.
-    pub envelope_streams: Mutex<Option<([EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)>>,
+    pub envelope_streams: Mutex<Option<EnvelopeStreams>>,
 }
 
 pub type SharedGuiState = Arc<GuiState>;

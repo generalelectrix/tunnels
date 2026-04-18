@@ -361,9 +361,7 @@ impl Show {
             SetAudioDevice(name) => {
                 let (input, audio_streams) = AudioInput::new(name)?;
                 self.audio_input = input;
-                if let (Some(audio_streams), Some(gui_state)) =
-                    (audio_streams, &self.gui_state)
-                {
+                if let (Some(audio_streams), Some(gui_state)) = (audio_streams, &self.gui_state) {
                     *gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
                 }
                 GuiDirty::AUDIO
