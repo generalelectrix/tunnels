@@ -9,6 +9,7 @@ use anyhow::{Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{info, warn};
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::Sender;
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
@@ -68,35 +69,33 @@ impl AudioInput {
         }
     }
 
-    /// Open an audio input device. Returns the AudioInput and, if a device
-    /// was opened, the envelope streams for the GUI viewer.
-    pub fn new(device_name: Option<String>) -> Result<(Self, Option<EnvelopeStreams>)> {
+    /// Open an audio input device. The GUI-side viewer receives the envelope
+    /// consumer handles via `envelope_tx` — once on initial open, and again
+    /// on every successful reconnect.
+    pub fn new(
+        device_name: Option<String>,
+        envelope_tx: Sender<EnvelopeStreams>,
+    ) -> Result<Self> {
         let device_name = match device_name {
-            None => return Ok((Self::offline(), None)),
+            None => return Ok(Self::offline()),
             Some(d) => d,
         };
 
         info!("Using audio input device {device_name}.");
 
         let processor_settings = ProcessorSettings::default();
-        let (input, streams, update_rate) =
-            ReconnectingInput::new(device_name.clone(), processor_settings.clone())?;
+        let input =
+            ReconnectingInput::new(device_name.clone(), processor_settings.clone(), envelope_tx)?;
 
-        Ok((
-            Self {
-                _input: Some(input),
-                processor_settings,
-                envelope_value: UnipolarFloat::ZERO,
-                monitor: false,
-                monitor_update_age: Duration::ZERO,
-                clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
-                device_name,
-            },
-            Some(EnvelopeStreams {
-                streams,
-                update_rate,
-            }),
-        ))
+        Ok(Self {
+            _input: Some(input),
+            processor_settings,
+            envelope_value: UnipolarFloat::ZERO,
+            monitor: false,
+            monitor_update_age: Duration::ZERO,
+            clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
+            device_name,
+        })
     }
 
     /// Return the processor settings handle (for visualization tools).

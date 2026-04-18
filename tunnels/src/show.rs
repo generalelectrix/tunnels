@@ -26,6 +26,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tunnels_audio::EnvelopeStreams;
+
+use crate::midi::MidiDeviceInit;
 
 pub struct Show {
     dispatcher: Dispatcher,
@@ -33,24 +36,26 @@ pub struct Show {
     clock_publisher: Option<ClockPublisher>,
     state: ShowState,
     gui_state: SharedGuiState,
+    envelope_streams_tx: Sender<EnvelopeStreams>,
 }
 
 impl Show {
     /// Create a new show. The GUI drives all mutable configuration (MIDI
-    /// device assignment, audio device selection, clock service, save path)
-    /// via `MetaCommand`s, so startup is minimal: empty MIDI slots, offline
-    /// audio, no clock service, no save path.
+    /// device assignment, audio device selection, clock service) via
+    /// `MetaCommand`s, so startup is minimal: empty MIDI slots, offline
+    /// audio, no clock service.
     pub fn new(
         send_control_event: Sender<ControlEvent>,
         recv_control_event: Receiver<ControlEvent>,
         gui_state: SharedGuiState,
+        envelope_streams_tx: Sender<EnvelopeStreams>,
     ) -> Result<Self> {
         let midi_devices = default_midi_slots();
 
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices.iter().any(|init| match init {
-            crate::midi::MidiDeviceInit::Connected(spec) => spec.device == Device::AkaiApc20,
-            crate::midi::MidiDeviceInit::Slot { device, .. } => *device == Device::AkaiApc20,
+            MidiDeviceInit::Connected(spec) => spec.device == Device::AkaiApc20,
+            MidiDeviceInit::Slot { device, .. } => *device == Device::AkaiApc20,
         });
 
         let n_pages = if use_wing { 2 } else { 1 };
@@ -62,13 +67,7 @@ impl Show {
                 send_control_event,
                 recv_control_event,
             )?,
-            audio_input: {
-                let (input, audio_streams) = AudioInput::new(None)?;
-                if let Some(audio_streams) = audio_streams {
-                    *gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
-                }
-                input
-            },
+            audio_input: AudioInput::new(None, envelope_streams_tx.clone())?,
             clock_publisher: None,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
@@ -78,6 +77,7 @@ impl Show {
                 color_palette: ColorPalette::new(),
             },
             gui_state,
+            envelope_streams_tx,
         };
         Ok(show)
     }
@@ -276,11 +276,7 @@ impl Show {
                 GuiDirty::MIDI_SLOTS
             }
             SetAudioDevice(name) => {
-                let (input, audio_streams) = AudioInput::new(name)?;
-                self.audio_input = input;
-                if let Some(audio_streams) = audio_streams {
-                    *self.gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
-                }
+                self.audio_input = AudioInput::new(name, self.envelope_streams_tx.clone())?;
                 GuiDirty::AUDIO
             }
             AudioControl(msg) => {
@@ -378,7 +374,8 @@ mod test {
     #[test]
     fn test_render() -> Result<()> {
         let (send, recv) = channel();
-        let mut show = Show::new(send, recv, test_gui_state())?;
+        let (envelope_tx, _envelope_rx) = channel();
+        let mut show = Show::new(send, recv, test_gui_state(), envelope_tx)?;
 
         show.test_mode(stress);
 
@@ -974,7 +971,8 @@ mod test {
         /// Create a minimal test Show with default MIDI slots but no hardware.
         fn test_new() -> (Self, Sender<ControlEvent>) {
             let (send, recv) = channel();
-            let show = Show::new(send.clone(), recv, test_gui_state()).unwrap();
+            let (envelope_tx, _envelope_rx) = channel();
+            let show = Show::new(send.clone(), recv, test_gui_state(), envelope_tx).unwrap();
             (show, send)
         }
     }

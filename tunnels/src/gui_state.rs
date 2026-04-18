@@ -1,9 +1,8 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
-use tunnels_audio::EnvelopeStreams;
 use tunnels_audio::processor::TrackingMode;
 use tunnels_lib::notified::{Notified, NotifiedAtomicBool};
 use tunnels_lib::repaint::RepaintSignal;
@@ -72,10 +71,6 @@ pub struct GuiState {
     /// show to decide whether to snapshot animation state. No repaint needed
     /// (the GUI is the writer).
     pub visualizer_active: AtomicBool,
-    /// Envelope ring buffer streams and update rate for the GUI viewer.
-    /// Placed by the show thread on device change, taken by the GUI thread.
-    /// The envelope viewer drives its own continuous repaint while open.
-    pub envelope_streams: Mutex<Option<EnvelopeStreams>>,
 }
 
 pub type SharedGuiState = Arc<GuiState>;
@@ -88,7 +83,6 @@ impl GuiState {
             clock_service_running: NotifiedAtomicBool::new(false, repaint),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),
             visualizer_active: AtomicBool::new(false),
-            envelope_streams: Mutex::new(None),
         }
     }
 }

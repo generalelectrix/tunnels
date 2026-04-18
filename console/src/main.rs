@@ -102,8 +102,10 @@ fn main() -> Result<()> {
             let gui_state = Arc::new(GuiState::new(repaint.clone()));
             let show_gui_state = gui_state.clone();
 
+            let (envelope_tx, envelope_rx) = channel();
+
             std::thread::spawn(move || {
-                let mut show = Show::new(send, recv, show_gui_state)
+                let mut show = Show::new(send, recv, show_gui_state, envelope_tx)
                     .expect("show construction should not fail at startup");
                 loop {
                     if let Err(e) = show.run(RENDER_INTERVAL) {
@@ -113,7 +115,7 @@ fn main() -> Result<()> {
             });
 
             Ok(Box::new(console::ConfigApp::new(
-                client, gui_state, admin, hostname, repaint,
+                client, gui_state, admin, hostname, repaint, envelope_rx,
             )))
         }),
     )

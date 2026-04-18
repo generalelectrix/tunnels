@@ -26,15 +26,23 @@ impl ReconnectingInput {
     /// Stream is not Send on macOS), but this method blocks until it either
     /// succeeds or fails, so the caller gets immediate error feedback.
     ///
-    /// Returns `(self, envelope_streams, update_rate)` on success.
+    /// Every successful open — initial and each reconnect — sends a fresh
+    /// `EnvelopeStreams` bundle on `envelope_tx`. If the receiver is gone the
+    /// send errors silently and the reconnect loop continues.
     pub fn new(
         device_name: String,
         processor_settings: ProcessorSettings,
-    ) -> Result<(Self, [EnvelopeStream; NUM_OUTPUT_BANDS], UpdateRate)> {
-        let (result_tx, result_rx) = channel::<Result<OpenResult>>();
-        let (stop, envelope_streams, update_rate) =
-            reconnect(device_name, processor_settings, result_tx, &result_rx)?;
-        Ok((Self { stop: Some(stop) }, envelope_streams, update_rate))
+        envelope_tx: Sender<crate::EnvelopeStreams>,
+    ) -> Result<Self> {
+        let (result_tx, result_rx) = channel::<Result<()>>();
+        let stop = reconnect(
+            device_name,
+            processor_settings,
+            result_tx,
+            &result_rx,
+            envelope_tx,
+        )?;
+        Ok(Self { stop: Some(stop) })
     }
 }
 
@@ -56,24 +64,15 @@ enum Cmd {
     Disconnected,
 }
 
-/// Result sent from the reconnect thread back to the caller for the initial open.
-struct OpenResult {
-    update_rate: UpdateRate,
-    envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
-}
-
 /// Spawn the reconnect thread and perform the initial stream open on it.
 /// Blocks until the first open attempt completes, returning Err if it fails.
 fn reconnect(
     device_name: String,
     processor_settings: ProcessorSettings,
-    result_tx: Sender<Result<OpenResult>>,
-    result_rx: &std::sync::mpsc::Receiver<Result<OpenResult>>,
-) -> Result<(
-    StopReconnect,
-    [EnvelopeStream; NUM_OUTPUT_BANDS],
-    UpdateRate,
-)> {
+    result_tx: Sender<Result<()>>,
+    result_rx: &std::sync::mpsc::Receiver<Result<()>>,
+    envelope_tx: Sender<crate::EnvelopeStreams>,
+) -> Result<StopReconnect> {
     use Cmd::*;
 
     let (send, recv) = channel::<Cmd>();
@@ -101,20 +100,18 @@ fn reconnect(
                     });
 
                     match open_result {
-                        Ok((stream, update_rate, envelope_streams)) => {
+                        Ok((stream, update_rate, streams)) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
-                                let _ = result_tx.send(Ok(OpenResult {
-                                    update_rate,
-                                    envelope_streams,
-                                }));
+                                let _ = result_tx.send(Ok(()));
                                 first_open = false;
                             } else {
                                 info!("Successfully reopened audio input {device_name}.");
-                                // New envelope_streams are dropped — the GUI keeps
-                                // the original streams which are now abandoned.
-                                // The viewer will need to re-open to get fresh ones.
                             }
+                            let _ = envelope_tx.send(crate::EnvelopeStreams {
+                                streams,
+                                update_rate,
+                            });
                             _input_stream = Some(stream);
                         }
                         Err(e) => {
@@ -136,7 +133,7 @@ fn reconnect(
     });
 
     // Block until the initial open attempt completes on the thread.
-    let open = result_rx
+    result_rx
         .recv()
         .map_err(|_| anyhow::anyhow!("Audio reconnect thread exited unexpectedly"))??;
 
@@ -148,7 +145,7 @@ fn reconnect(
             .join()
             .expect("Joining reconnect thread failed");
     });
-    Ok((stop, open.envelope_streams, open.update_rate))
+    Ok(stop)
 }
 
 fn open_audio_device(name: &str) -> Result<Device> {

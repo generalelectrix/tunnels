@@ -6,6 +6,7 @@ mod midi_panel;
 mod ui_util;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
@@ -16,6 +17,7 @@ use gui_common::envelope_viewer::EnvelopeViewerState;
 use gui_common::{CloseHandler, MessageModal, audio_panel::AudioSnapshot, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
+use tunnels::audio::EnvelopeStreams;
 use tunnels::control::{CommandClient, MetaCommand};
 use tunnels::gui_state::SharedGuiState;
 use tunnels_lib::repaint::RepaintSignal;
@@ -46,6 +48,9 @@ pub struct ConfigApp {
     /// 'static + Send + Sync and can't hold a reference to ConfigApp fields.
     visualizer_detached: Arc<AtomicBool>,
     envelope_viewer: EnvelopeViewerState,
+    /// Receives fresh `EnvelopeStreams` bundles from the audio reconnect thread.
+    /// Drained each frame; the most recent bundle wins.
+    envelope_streams_rx: Receiver<EnvelopeStreams>,
     close_handler: CloseHandler,
     modal: MessageModal,
     active_tab: Tab,
@@ -146,10 +151,10 @@ impl eframe::App for ConfigApp {
                     );
 
                     if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {
-                        // Take new envelope streams from the show thread if available.
-                        if let Some(envelope_streams) =
-                            self.gui_state.envelope_streams.lock().unwrap().take()
-                        {
+                        // Drain new envelope streams from the audio reconnect
+                        // thread. If multiple have accumulated, the most recent
+                        // wins — `set_envelope_streams` fully resets the viewer.
+                        while let Ok(envelope_streams) = self.envelope_streams_rx.try_recv() {
                             self.envelope_viewer.set_envelope_streams(envelope_streams);
                         }
 
@@ -186,6 +191,7 @@ impl ConfigApp {
         admin_service: Arc<dyn AdminService>,
         hostname: String,
         repaint: RepaintSignal,
+        envelope_streams_rx: Receiver<EnvelopeStreams>,
     ) -> Self {
         let audio_state = gui_state.audio_state.load();
         let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
@@ -203,6 +209,7 @@ impl ConfigApp {
             visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
             visualizer_detached: Arc::new(AtomicBool::new(false)),
             envelope_viewer: EnvelopeViewerState::new(),
+            envelope_streams_rx,
             close_handler: CloseHandler::default(),
             modal: MessageModal::default(),
             client,
