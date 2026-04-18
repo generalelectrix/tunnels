@@ -8,10 +8,9 @@ use crate::{
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
     gui_state::{GuiDirty, SharedGuiState},
     master_ui::{self, MasterUI},
-    midi::MidiDeviceInit,
+    midi::default_midi_slots,
     midi_controls::Device,
     mixer::{self, Mixer},
-    osc::DeviceSpec as OscDeviceSpec,
     palette::{self, ColorPalette},
     position_bank::{self, PositionBank},
     send::{Frame, start_render_service},
@@ -20,50 +19,38 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use log::{self, error, info, warn};
-use rmp_serde::{Deserializer, Serializer};
-use serde::{Deserialize, Serialize};
 use std::{
-    fs::File,
-    io::BufWriter,
-    path::{Path, PathBuf},
     sync::{
-        Arc,
         atomic::Ordering,
         mpsc::{Receiver, Sender},
     },
     time::{Duration, Instant},
 };
 
-/// How often should we autosave the show?
-pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
-
 pub struct Show {
     dispatcher: Dispatcher,
     audio_input: AudioInput,
     clock_publisher: Option<ClockPublisher>,
     state: ShowState,
-    save_path: Option<PathBuf>,
-    last_save: Option<Instant>,
-    gui_state: Option<SharedGuiState>,
+    gui_state: SharedGuiState,
 }
 
 impl Show {
-    #[expect(clippy::too_many_arguments)]
-    /// Create a new show from the provided config.
+    /// Create a new show. The GUI drives all mutable configuration (MIDI
+    /// device assignment, audio device selection, clock service, save path)
+    /// via `MetaCommand`s, so startup is minimal: empty MIDI slots, offline
+    /// audio, no clock service, no save path.
     pub fn new(
-        midi_devices: Vec<MidiDeviceInit>,
-        osc_devices: Vec<OscDeviceSpec>,
         send_control_event: Sender<ControlEvent>,
         recv_control_event: Receiver<ControlEvent>,
-        audio_input_device: Option<String>,
-        run_clock_service: bool,
-        save_path: Option<PathBuf>,
-        gui_state: Option<SharedGuiState>,
+        gui_state: SharedGuiState,
     ) -> Result<Self> {
+        let midi_devices = default_midi_slots();
+
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices.iter().any(|init| match init {
-            MidiDeviceInit::Connected(spec) => spec.device == Device::AkaiApc20,
-            MidiDeviceInit::Slot { device, .. } => *device == Device::AkaiApc20,
+            crate::midi::MidiDeviceInit::Connected(spec) => spec.device == Device::AkaiApc20,
+            crate::midi::MidiDeviceInit::Slot { device, .. } => *device == Device::AkaiApc20,
         });
 
         let n_pages = if use_wing { 2 } else { 1 };
@@ -71,28 +58,18 @@ impl Show {
         let show = Self {
             dispatcher: Dispatcher::new(
                 midi_devices,
-                osc_devices,
+                Vec::new(),
                 send_control_event,
                 recv_control_event,
             )?,
             audio_input: {
-                let (input, audio_streams) = AudioInput::new(audio_input_device)?;
-                if let (Some(audio_streams), Some(gs)) = (audio_streams, &gui_state) {
-                    *gs.envelope_streams.lock().unwrap() = Some(audio_streams);
+                let (input, audio_streams) = AudioInput::new(None)?;
+                if let Some(audio_streams) = audio_streams {
+                    *gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
                 }
                 input
             },
-            clock_publisher: if run_clock_service {
-                match clock_server::clock_publisher() {
-                    Ok(publisher) => Some(publisher),
-                    Err(e) => {
-                        error!("Failed to start clock service: {e:#}");
-                        None
-                    }
-                }
-            } else {
-                None
-            },
+            clock_publisher: None,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
@@ -100,63 +77,9 @@ impl Show {
                 positions: PositionBank::default(),
                 color_palette: ColorPalette::new(),
             },
-            save_path,
-            last_save: None,
             gui_state,
         };
         Ok(show)
-    }
-
-    /// Load the saved show at file into self.
-    /// Return an error if the dimensions of the loaded data don't match the
-    /// current show.
-    pub fn load(&mut self, path: &Path) -> Result<()> {
-        let file = File::open(path)?;
-        let loaded_state = ShowState::deserialize(&mut Deserializer::new(file))?;
-        if loaded_state.mixer.channel_count() != self.state.mixer.channel_count() {
-            bail!(
-                "Mixer size mismatch. Loaded: {}, show: {}.",
-                loaded_state.mixer.channel_count(),
-                self.state.mixer.channel_count()
-            );
-        }
-        if loaded_state.ui.n_pages() != self.state.ui.n_pages() {
-            bail!(
-                "UI page count mismatch. Loaded: {}, show: {}.",
-                loaded_state.ui.n_pages(),
-                self.state.ui.n_pages()
-            );
-        }
-        self.state = loaded_state;
-        Ok(())
-    }
-
-    /// Save the show into the provided file.
-    fn save(&self, path: &Path) -> Result<()> {
-        let mut file = File::create(path)?;
-        self.state
-            .serialize(&mut Serializer::new(BufWriter::new(&mut file)))?;
-        Ok(())
-    }
-
-    /// If a save path is set and we're due to save, save the show.
-    fn autosave(&mut self) -> Result<()> {
-        if let Some(path) = &self.save_path {
-            let now = Instant::now();
-            let should_save = match self.last_save {
-                Some(t) => (t + AUTOSAVE_INTERVAL) <= now,
-                None => true,
-            };
-            if should_save {
-                info!("Autosaving.");
-                let result = self.save(path);
-                if result.is_ok() {
-                    self.last_save = Some(now);
-                }
-                return result;
-            }
-        }
-        Ok(())
     }
 
     /// Set up the show in a test mode, defined by the provided setup function.
@@ -207,11 +130,6 @@ impl Show {
                 self.snapshot_animation_state();
             }
 
-            // Consider autosaving the show.
-            if let Err(e) = self.autosave() {
-                error!("Autosave error: {e}.");
-            }
-
             // Process a control event for a fraction of the time between now
             // and when we need to update state again.
             if let Some(time_to_next_update) =
@@ -260,13 +178,10 @@ impl Show {
 
     /// Push audio subsystem state to the GUI snapshot.
     fn snapshot_audio_state(&self) {
-        let Some(gui_state) = &self.gui_state else {
-            return;
-        };
         let ps = self.audio_input.processor_settings();
-        gui_state
+        self.gui_state
             .audio_state
-            .store(Arc::new(crate::gui_state::AudioStateSnapshot {
+            .store(crate::gui_state::AudioStateSnapshot {
                 device_name: self.audio_input.device_name().to_string(),
                 filter_cutoff_hz: ps.filter_cutoff.get(),
                 envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
@@ -279,15 +194,12 @@ impl Show {
                 norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
                 norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
                 norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
-            }));
+            });
     }
 
     /// Push the current animation state to the GUI, if the visualizer is active.
     fn snapshot_animation_state(&mut self) {
-        let Some(gui_state) = &self.gui_state else {
-            return;
-        };
-        if !gui_state.visualizer_active.load(Ordering::Relaxed) {
+        if !self.gui_state.visualizer_active.load(Ordering::Relaxed) {
             return;
         }
         let animation = self
@@ -296,14 +208,16 @@ impl Show {
             .current_animation(&mut self.state.mixer)
             .map(|a| a.animation.clone())
             .unwrap_or_default();
-        gui_state.animation_state.store(Arc::new(AnimationSnapshot {
-            animation,
-            clocks: SharedClockData {
-                clock_bank: StaticClockBank(self.state.clocks.as_static()),
-                audio_envelope: self.audio_input.envelope(),
-            },
-            fixture_count: 0,
-        }));
+        self.gui_state
+            .animation_state
+            .store(std::sync::Arc::new(AnimationSnapshot {
+                animation,
+                clocks: SharedClockData {
+                    clock_bank: StaticClockBank(self.state.clocks.as_static()),
+                    audio_envelope: self.audio_input.envelope(),
+                },
+                fixture_count: 0,
+            }));
     }
 
     fn service_control_event(&mut self, timeout: Duration) {
@@ -317,15 +231,18 @@ impl Show {
                     self.snapshot_gui_state(dirty);
                 }
             }
-            Ok(Some(ReceivedEvent::Control(msg))) => self.state.ui.handle_control_message(
-                msg,
-                &mut self.state.mixer,
-                &mut self.state.clocks,
-                &mut self.state.color_palette,
-                &mut self.state.positions,
-                &mut self.audio_input,
-                &mut self.dispatcher,
-            ),
+            Ok(Some(ReceivedEvent::Control(msg))) => {
+                let dirty = self.state.ui.handle_control_message(
+                    msg,
+                    &mut self.state.mixer,
+                    &mut self.state.clocks,
+                    &mut self.state.color_palette,
+                    &mut self.state.positions,
+                    &mut self.audio_input,
+                    &mut self.dispatcher,
+                );
+                self.snapshot_gui_state(dirty);
+            }
             Ok(None) => (),
             Err(e) => {
                 warn!("{e}");
@@ -361,8 +278,8 @@ impl Show {
             SetAudioDevice(name) => {
                 let (input, audio_streams) = AudioInput::new(name)?;
                 self.audio_input = input;
-                if let (Some(audio_streams), Some(gui_state)) = (audio_streams, &self.gui_state) {
-                    *gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
+                if let Some(audio_streams) = audio_streams {
+                    *self.gui_state.envelope_streams.lock().unwrap() = Some(audio_streams);
                 }
                 GuiDirty::AUDIO
             }
@@ -391,19 +308,16 @@ impl Show {
     }
 
     fn snapshot_gui_state(&self, dirty: GuiDirty) {
-        let Some(gui_state) = &self.gui_state else {
-            return;
-        };
         if dirty.contains(GuiDirty::MIDI_SLOTS) {
-            gui_state
+            self.gui_state
                 .midi_slots
-                .store(Arc::new(self.dispatcher.midi_slot_statuses()));
+                .store(self.dispatcher.midi_slot_statuses());
         }
         if dirty.contains(GuiDirty::AUDIO) {
             self.snapshot_audio_state();
         }
         if dirty.contains(GuiDirty::CLOCK_SERVICE) {
-            gui_state
+            self.gui_state
                 .clock_service_running
                 .store(self.clock_publisher.is_some(), Ordering::Relaxed);
         }
@@ -435,8 +349,7 @@ pub enum StateChange {
     MasterUI(master_ui::StateChange),
 }
 
-/// Proxy type for easily saving and loading show state.
-#[derive(Serialize, Deserialize)]
+/// The mutable state owned by a `Show`.
 pub struct ShowState {
     pub ui: MasterUI,
     pub mixer: Mixer,
@@ -464,18 +377,8 @@ mod test {
     /// tunnel state or rendering algorithm.
     #[test]
     fn test_render() -> Result<()> {
-        use crate::midi::default_midi_slots;
         let (send, recv) = channel();
-        let mut show = Show::new(
-            default_midi_slots(),
-            Vec::new(),
-            send,
-            recv,
-            None,
-            false,
-            None,
-            None,
-        )?;
+        let mut show = Show::new(send, recv, test_gui_state())?;
 
         show.test_mode(stress);
 
@@ -1070,21 +973,16 @@ mod test {
     impl Show {
         /// Create a minimal test Show with default MIDI slots but no hardware.
         fn test_new() -> (Self, Sender<ControlEvent>) {
-            use crate::midi::default_midi_slots;
             let (send, recv) = channel();
-            let show = Show::new(
-                default_midi_slots(),
-                Vec::new(),
-                send.clone(),
-                recv,
-                None,
-                false,
-                None,
-                None,
-            )
-            .unwrap();
+            let show = Show::new(send.clone(), recv, test_gui_state()).unwrap();
             (show, send)
         }
+    }
+
+    fn test_gui_state() -> crate::gui_state::SharedGuiState {
+        std::sync::Arc::new(crate::gui_state::GuiState::new(
+            tunnels_lib::repaint::noop_repaint(),
+        ))
     }
 
     /// Stand up a test Show on a background thread, return a CommandClient.
@@ -1107,7 +1005,7 @@ mod test {
                         }
                     }
                     Ok(Some(ReceivedEvent::Control(msg))) => {
-                        show.state.ui.handle_control_message(
+                        let dirty = show.state.ui.handle_control_message(
                             msg,
                             &mut show.state.mixer,
                             &mut show.state.clocks,
@@ -1116,6 +1014,7 @@ mod test {
                             &mut show.audio_input,
                             &mut show.dispatcher,
                         );
+                        show.snapshot_gui_state(dirty);
                     }
                     Ok(None) => {}
                     Err(_) => break,

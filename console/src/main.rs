@@ -9,8 +9,9 @@ use midi_harness::install_midi_device_change_handler;
 
 use tunnels::control::CommandClient;
 use tunnels::gui_state::GuiState;
-use tunnels::midi::{ControlEventHandler, default_midi_slots};
+use tunnels::midi::ControlEventHandler;
 use tunnels::show::Show;
+use tunnels_lib::repaint::RepaintSignal;
 
 /// Approximately 240 fps.
 const RENDER_INTERVAL: Duration = Duration::from_nanos(16666667 / 4);
@@ -73,32 +74,6 @@ fn main() -> Result<()> {
     install_midi_device_change_handler(ControlEventHandler(send_control_event.clone()))?;
 
     let client = CommandClient::new(send_control_event.clone());
-    let gui_state = Arc::new(GuiState::default());
-    let show_gui_state = gui_state.clone();
-
-    // Show worker thread — starts with empty config, GUI sends MetaCommands.
-    std::thread::spawn(move || {
-        let show = Show::new(
-            default_midi_slots(),
-            vec![],
-            send_control_event,
-            recv_control_event,
-            None,
-            false,
-            None,
-            Some(show_gui_state),
-        );
-        match show {
-            Ok(mut show) => {
-                if let Err(e) = show.run(RENDER_INTERVAL) {
-                    error!("Show error: {e:#}");
-                }
-            }
-            Err(e) => {
-                error!("Failed to create show: {e:#}");
-            }
-        }
-    });
 
     let admin: Arc<dyn console::admin_panel::AdminService> =
         Arc::new(BootstrapController::new(Some(Duration::from_secs(10))));
@@ -107,5 +82,41 @@ fn main() -> Result<()> {
         .map(|h| h.into_string().unwrap_or_else(|_| "unknown".to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
 
-    console::run_config_gui(client, gui_state, admin, hostname)
+    // Moved into the creator closure.
+    let mut startup = Some((send_control_event, recv_control_event, client, admin, hostname));
+
+    eframe::run_native(
+        "Tunnels",
+        console::native_options(),
+        Box::new(move |cc| {
+            stage_theme::apply(&cc.egui_ctx);
+
+            let (send, recv, client, admin, hostname) =
+                startup.take().expect("creator closure called once");
+
+            let repaint: RepaintSignal = {
+                let ctx = cc.egui_ctx.clone();
+                Arc::new(move || ctx.request_repaint())
+            };
+
+            let gui_state = Arc::new(GuiState::new(repaint.clone()));
+            let show_gui_state = gui_state.clone();
+
+            std::thread::spawn(move || {
+                let mut show = Show::new(send, recv, show_gui_state)
+                    .expect("show construction should not fail at startup");
+                loop {
+                    if let Err(e) = show.run(RENDER_INTERVAL) {
+                        error!("Show error: {e:#} — restarting show loop");
+                    }
+                }
+            });
+
+            Ok(Box::new(console::ConfigApp::new(
+                client, gui_state, admin, hostname, repaint,
+            )))
+        }),
+    )
+    .unwrap();
+    Ok(())
 }

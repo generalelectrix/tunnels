@@ -5,6 +5,8 @@ use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
 use tunnels_audio::EnvelopeStreams;
 use tunnels_audio::processor::TrackingMode;
+use tunnels_lib::notified::{Notified, NotifiedAtomicBool};
+use tunnels_lib::repaint::RepaintSignal;
 
 use crate::animation_visualizer::AnimationSnapshot;
 
@@ -56,26 +58,36 @@ impl Default for AudioStateSnapshot {
 }
 
 pub struct GuiState {
-    pub midi_slots: ArcSwap<Vec<SlotStatus>>,
-    pub audio_state: ArcSwap<AudioStateSnapshot>,
-    pub clock_service_running: AtomicBool,
-    pub visualizer_active: AtomicBool,
+    /// Show → GUI: MIDI slot statuses. Wakes the GUI on write.
+    pub midi_slots: Notified<Vec<SlotStatus>>,
+    /// Show → GUI: audio subsystem snapshot. Wakes the GUI on write.
+    pub audio_state: Notified<AudioStateSnapshot>,
+    /// Show → GUI: whether the clock publisher service is running. Wakes the GUI on write.
+    pub clock_service_running: NotifiedAtomicBool,
+    /// Show → GUI: animation state streamed at render rate while the visualizer
+    /// is active. The visualizer panel drives its own repaint — wrapping in
+    /// `Notified` here would just collapse to continuous repaint.
     pub animation_state: ArcSwap<AnimationSnapshot>,
+    /// GUI → Show: whether the animation visualizer is visible. Read by the
+    /// show to decide whether to snapshot animation state. No repaint needed
+    /// (the GUI is the writer).
+    pub visualizer_active: AtomicBool,
     /// Envelope ring buffer streams and update rate for the GUI viewer.
-    /// Placed by the show thread, taken by the GUI thread.
+    /// Placed by the show thread on device change, taken by the GUI thread.
+    /// The envelope viewer drives its own continuous repaint while open.
     pub envelope_streams: Mutex<Option<EnvelopeStreams>>,
 }
 
 pub type SharedGuiState = Arc<GuiState>;
 
-impl Default for GuiState {
-    fn default() -> Self {
+impl GuiState {
+    pub fn new(repaint: RepaintSignal) -> Self {
         Self {
-            midi_slots: ArcSwap::from_pointee(Vec::new()),
-            audio_state: ArcSwap::from_pointee(AudioStateSnapshot::default()),
-            clock_service_running: AtomicBool::new(false),
-            visualizer_active: AtomicBool::new(false),
+            midi_slots: Notified::new(Vec::new(), repaint.clone()),
+            audio_state: Notified::new(AudioStateSnapshot::default(), repaint.clone()),
+            clock_service_running: NotifiedAtomicBool::new(false, repaint),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),
+            visualizer_active: AtomicBool::new(false),
             envelope_streams: Mutex::new(None),
         }
     }

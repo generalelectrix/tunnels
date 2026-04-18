@@ -8,7 +8,6 @@ mod ui_util;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
 use eframe::egui;
 
 use admin_panel::{AdminPanelState, AdminService};
@@ -19,6 +18,7 @@ use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
 use tunnels::control::{CommandClient, MetaCommand};
 use tunnels::gui_state::SharedGuiState;
+use tunnels_lib::repaint::RepaintSignal;
 use ui_util::GuiContext;
 
 #[derive(Default, PartialEq, Clone, Copy)]
@@ -30,7 +30,7 @@ enum Tab {
     Clients,
 }
 
-struct ConfigApp {
+pub struct ConfigApp {
     client: CommandClient,
     midi_panel: MidiPanelState,
     audio_panel: AudioPanelState,
@@ -177,46 +177,47 @@ impl eframe::App for ConfigApp {
     }
 }
 
-pub fn run_config_gui(
-    client: CommandClient,
-    gui_state: SharedGuiState,
-    admin_service: Arc<dyn AdminService>,
-    hostname: String,
-) -> Result<()> {
-    let options = eframe::NativeOptions {
+impl ConfigApp {
+    /// Build the console GUI. Must be called from inside the eframe creator
+    /// closure so the `RepaintSignal` can wrap `cc.egui_ctx`.
+    pub fn new(
+        client: CommandClient,
+        gui_state: SharedGuiState,
+        admin_service: Arc<dyn AdminService>,
+        hostname: String,
+        repaint: RepaintSignal,
+    ) -> Self {
+        let audio_state = gui_state.audio_state.load();
+        let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
+        let mut audio_panel = AudioPanelState::new(devices);
+        audio_panel.sync_from_device_name(&audio_state.device_name);
+        drop(audio_state);
+
+        let admin_panel = AdminPanelState::new(admin_service.clone(), hostname, repaint);
+
+        Self {
+            midi_panel: MidiPanelState::default(),
+            audio_panel,
+            admin_panel,
+            admin_service,
+            visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
+            visualizer_detached: Arc::new(AtomicBool::new(false)),
+            envelope_viewer: EnvelopeViewerState::new(),
+            close_handler: CloseHandler::default(),
+            modal: MessageModal::default(),
+            client,
+            active_tab: Tab::default(),
+            gui_state,
+        }
+    }
+}
+
+/// Default native options for the console window.
+pub fn native_options() -> eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([864.0, 600.0])
             .with_icon(std::sync::Arc::new(egui::IconData::default())),
         ..Default::default()
-    };
-    let audio_state = gui_state.audio_state.load();
-    let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
-    let mut audio_panel = AudioPanelState::new(devices);
-    audio_panel.sync_from_device_name(&audio_state.device_name);
-
-    let admin_panel = AdminPanelState::new(admin_service.clone(), hostname);
-
-    eframe::run_native(
-        "Tunnels",
-        options,
-        Box::new(move |cc| {
-            stage_theme::apply(&cc.egui_ctx);
-            Ok(Box::new(ConfigApp {
-                midi_panel: MidiPanelState::default(),
-                audio_panel,
-                admin_panel,
-                admin_service,
-                visualizer_panel: Arc::new(Mutex::new(VisualizerPanelState::default())),
-                visualizer_detached: Arc::new(AtomicBool::new(false)),
-                envelope_viewer: EnvelopeViewerState::new(),
-                close_handler: CloseHandler::default(),
-                modal: MessageModal::default(),
-                client,
-                active_tab: Tab::default(),
-                gui_state,
-            }))
-        }),
-    )
-    .unwrap();
-    Ok(())
+    }
 }
