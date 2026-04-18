@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
-
-use crate::transient_indicator::TransientIndicator;
+use tunnels_lib::transient_indicator::TransientIndicator;
 
 /// The number of times a clock has ticked.
 /// Signed to support negative rates.
