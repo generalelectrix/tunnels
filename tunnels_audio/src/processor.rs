@@ -323,6 +323,25 @@ impl AdaptiveNormalizer {
     }
 }
 
+/// Per-audio-channel processing chain for the lowpass path.
+struct LowpassChannel {
+    filter: FilterProcessor<f32>,
+    hilbert: HilbertTransform,
+    fast_envelope: EnvelopeFollowerProcessor,
+    slow_envelope: EnvelopeFollowerProcessor,
+}
+
+/// Per-frequency-band processing chain for the wavelet path. Operates on
+/// the mono mix at a band-specific (decimated) sample rate.
+struct WaveletBand {
+    hilbert: HilbertTransform,
+    fast_envelope: EnvelopeFollowerProcessor,
+    slow_envelope: EnvelopeFollowerProcessor,
+    smoothed: f32,
+    normalizer: AdaptiveNormalizer,
+    context: AudioContext,
+}
+
 pub struct Processor {
     settings: ProcessorSettings,
     filter_cutoff: f32,
@@ -334,10 +353,8 @@ pub struct Processor {
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
 
-    filters: Vec<FilterProcessor<f32>>,
-    hilberts: Vec<HilbertTransform>,
-    fast_envelopes: Vec<EnvelopeFollowerProcessor>,
-    slow_envelopes: Vec<EnvelopeFollowerProcessor>,
+    /// Lowpass chain: one per audio channel.
+    lowpass: Vec<LowpassChannel>,
 
     /// Symmetric one-pole smoother state (one value, not per-channel —
     /// applied after the per-channel envelopes are averaged).
@@ -351,14 +368,10 @@ pub struct Processor {
     /// Automatic input gain trim.
     auto_trim: AutoTrim,
 
-    // === Wavelet decomposition (D4) + per-band envelope extraction ===
+    /// Wavelet decomposition (D4) + per-band envelope extraction.
     wavelet: WaveletDecomposition,
-    wavelet_hilberts: [HilbertTransform; NUM_BANDS],
-    wavelet_fast_envs: Vec<EnvelopeFollowerProcessor>,
-    wavelet_slow_envs: Vec<EnvelopeFollowerProcessor>,
-    wavelet_smoothed: [f32; NUM_BANDS],
-    wavelet_normalizers: [AdaptiveNormalizer; NUM_BANDS],
-    wavelet_contexts: Vec<AudioContext>,
+    /// One chain per frequency band. Indexed by wavelet band, not audio channel.
+    wavelet_bands: [WaveletBand; NUM_BANDS],
 }
 
 fn make_envelope(
@@ -393,50 +406,46 @@ impl Processor {
         let slow_attack = Duration::from_secs_f32(envelope_attack);
         let slow_release = Duration::from_secs_f32(envelope_release);
 
-        let mut filters = vec![];
-        let mut hilberts = vec![];
-        let mut fast_envelopes = vec![];
-        let mut slow_envelopes = vec![];
-
-        for _ in 0..n {
-            let mut filter = FilterProcessor::new(FilterType::LowPass);
-            filter.set_cutoff(filter_cutoff);
-            filter.m_prepare(&mut context);
-            filters.push(filter);
-
-            hilberts.push(HilbertTransform::new());
-            fast_envelopes.push(make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE));
-            slow_envelopes.push(make_envelope(&mut context, slow_attack, slow_release));
-        }
-
-        // Create per-band envelope chains for the wavelet decomposition.
-        let base_sr = sample_rate as f32;
-        let make_wavelet_envs = |slow_attack: Duration, slow_release: Duration| {
-            let mut fast_envs = Vec::with_capacity(NUM_BANDS);
-            let mut slow_envs = Vec::with_capacity(NUM_BANDS);
-            let mut contexts = Vec::with_capacity(NUM_BANDS);
-            for band in 0..NUM_BANDS {
-                let level = if band < NUM_LEVELS {
-                    band
-                } else {
-                    NUM_LEVELS - 1
-                };
-                let band_sr = base_sr / (1 << (level + 1)) as f32;
-                let mut band_ctx: AudioContext = AudioProcessorSettings {
-                    sample_rate: band_sr,
-                    input_channels: 1,
-                    output_channels: 1,
-                    ..Default::default()
+        let lowpass = (0..n)
+            .map(|_| {
+                let mut filter = FilterProcessor::new(FilterType::LowPass);
+                filter.set_cutoff(filter_cutoff);
+                filter.m_prepare(&mut context);
+                LowpassChannel {
+                    filter,
+                    hilbert: HilbertTransform::new(),
+                    fast_envelope: make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE),
+                    slow_envelope: make_envelope(&mut context, slow_attack, slow_release),
                 }
-                .into();
-                fast_envs.push(make_envelope(&mut band_ctx, FAST_ATTACK, FAST_RELEASE));
-                slow_envs.push(make_envelope(&mut band_ctx, slow_attack, slow_release));
-                contexts.push(band_ctx);
+            })
+            .collect();
+
+        // Per-band envelope chains for the wavelet decomposition. Each band
+        // runs at a decimated sample rate (base / 2^(level+1)).
+        let base_sr = sample_rate as f32;
+        let wavelet_bands = std::array::from_fn(|band| {
+            let level = if band < NUM_LEVELS {
+                band
+            } else {
+                NUM_LEVELS - 1
+            };
+            let band_sr = base_sr / (1 << (level + 1)) as f32;
+            let mut band_ctx: AudioContext = AudioProcessorSettings {
+                sample_rate: band_sr,
+                input_channels: 1,
+                output_channels: 1,
+                ..Default::default()
             }
-            (fast_envs, slow_envs, contexts)
-        };
-        let (wavelet_fast_envs, wavelet_slow_envs, wavelet_contexts) =
-            make_wavelet_envs(slow_attack, slow_release);
+            .into();
+            WaveletBand {
+                hilbert: HilbertTransform::new(),
+                fast_envelope: make_envelope(&mut band_ctx, FAST_ATTACK, FAST_RELEASE),
+                slow_envelope: make_envelope(&mut band_ctx, slow_attack, slow_release),
+                smoothed: 0.0,
+                normalizer: AdaptiveNormalizer::new(),
+                context: band_ctx,
+            }
+        });
 
         Self {
             filter_cutoff,
@@ -446,22 +455,14 @@ impl Processor {
             channel_count: n,
             context,
             envelope_producers,
-            filters,
-            hilberts,
-            fast_envelopes,
-            slow_envelopes,
+            lowpass,
             smoothed_value: 0.0,
             lowpass_normalizer: AdaptiveNormalizer::new(),
             smooth_coeff: 0.0,
             smooth_time: 0.0,
             auto_trim: AutoTrim::new(),
             wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
-            wavelet_hilberts: std::array::from_fn(|_| HilbertTransform::new()),
-            wavelet_fast_envs,
-            wavelet_slow_envs,
-            wavelet_smoothed: [0.0; NUM_BANDS],
-            wavelet_normalizers: std::array::from_fn(|_| AdaptiveNormalizer::new()),
-            wavelet_contexts,
+            wavelet_bands,
         }
     }
 
@@ -479,8 +480,8 @@ impl Processor {
         if new_filter_cutoff != self.filter_cutoff {
             debug!("Updating filter cutoff to {new_filter_cutoff}");
             self.filter_cutoff = new_filter_cutoff;
-            for filter in &mut self.filters {
-                filter.set_cutoff(new_filter_cutoff);
+            for chan in &mut self.lowpass {
+                chan.filter.set_cutoff(new_filter_cutoff);
             }
         }
 
@@ -492,13 +493,13 @@ impl Processor {
             self.envelope_release = new_release;
             let attack = Duration::from_secs_f32(new_attack);
             let release = Duration::from_secs_f32(new_release);
-            for env in &mut self.slow_envelopes {
-                env.handle().set_attack(attack);
-                env.handle().set_release(release);
+            for chan in &mut self.lowpass {
+                chan.slow_envelope.handle().set_attack(attack);
+                chan.slow_envelope.handle().set_release(release);
             }
-            for env in &mut self.wavelet_slow_envs {
-                env.handle().set_attack(attack);
-                env.handle().set_release(release);
+            for band in &mut self.wavelet_bands {
+                band.slow_envelope.handle().set_attack(attack);
+                band.slow_envelope.handle().set_release(release);
             }
         }
     }
@@ -540,17 +541,17 @@ impl Processor {
             // Compute mono mix for wavelet input.
             let mono = frame.iter().sum::<f32>() / ch_count_f;
 
-            for (ch, raw_sample) in frame.iter().enumerate() {
+            for (chan, raw_sample) in self.lowpass.iter_mut().zip(frame) {
                 raw_peak = raw_peak.max(raw_sample.abs());
                 let sample = *raw_sample * effective_gain;
                 input_peak = input_peak.max(sample.abs());
 
                 // lowpass -> Hilbert |z(t)| -> fast envelope -> slow envelope
-                let filtered = self.filters[ch].m_process(&mut self.context, sample);
-                let amplitude = self.hilberts[ch].envelope(filtered as f64) as f32;
-                self.fast_envelopes[ch].m_process(&mut self.context, amplitude);
-                let fast_val = self.fast_envelopes[ch].handle().state();
-                self.slow_envelopes[ch].m_process(&mut self.context, fast_val);
+                let filtered = chan.filter.m_process(&mut self.context, sample);
+                let amplitude = chan.hilbert.envelope(filtered as f64) as f32;
+                chan.fast_envelope.m_process(&mut self.context, amplitude);
+                let fast_val = chan.fast_envelope.handle().state();
+                chan.slow_envelope.m_process(&mut self.context, fast_val);
             }
 
             // Wavelet decomposition -> per-band envelope extraction.
@@ -558,20 +559,18 @@ impl Processor {
             // the 1/f power spectrum of music. Higher bands get more boost.
             let mono_gained = mono * effective_gain;
             {
-                let h = &mut self.wavelet_hilberts;
-                let fe = &mut self.wavelet_fast_envs;
-                let se = &mut self.wavelet_slow_envs;
-                let cx = &mut self.wavelet_contexts;
+                let bands = &mut self.wavelet_bands;
                 self.wavelet.push(mono_gained, |band, sample| {
                     // Skip the residual band (== lowpass, redundant with our LP chain).
                     if band == NUM_LEVELS {
                         return;
                     }
                     let whiten = (1 << (NUM_LEVELS - band)) as f32;
-                    let amp = h[band].envelope((sample * whiten) as f64) as f32;
-                    fe[band].m_process(&mut cx[band], amp);
-                    let fv = fe[band].handle().state();
-                    se[band].m_process(&mut cx[band], fv);
+                    let b = &mut bands[band];
+                    let amp = b.hilbert.envelope((sample * whiten) as f64) as f32;
+                    b.fast_envelope.m_process(&mut b.context, amp);
+                    let fv = b.fast_envelope.handle().state();
+                    b.slow_envelope.m_process(&mut b.context, fv);
                 });
             }
         }
@@ -586,9 +585,9 @@ impl Processor {
 
         let ch_count = self.channel_count as f32;
         let envelope = self
-            .slow_envelopes
+            .lowpass
             .iter()
-            .map(|e| e.handle().state())
+            .map(|c| c.slow_envelope.handle().state())
             .sum::<f32>()
             / ch_count;
 
@@ -620,15 +619,13 @@ impl Processor {
         let mut output_bands = [0.0_f32; NUM_OUTPUT_BANDS];
         output_bands[0] = lowpass_norm;
 
-        for i in 0..NUM_BANDS {
-            self.wavelet_normalizers[i].set_params(floor_hl, ceil_hl, update_rate);
-            let env_val = self.wavelet_slow_envs[i].handle().state();
-            self.wavelet_smoothed[i] = coeff * self.wavelet_smoothed[i] + (1.0 - coeff) * env_val;
-            let normalized = self.wavelet_normalizers[i].process(
-                self.wavelet_smoothed[i],
-                floor_mode,
-                ceil_mode,
-            );
+        for (i, band) in self.wavelet_bands.iter_mut().enumerate() {
+            band.normalizer.set_params(floor_hl, ceil_hl, update_rate);
+            let env_val = band.slow_envelope.handle().state();
+            band.smoothed = coeff * band.smoothed + (1.0 - coeff) * env_val;
+            let normalized = band
+                .normalizer
+                .process(band.smoothed, floor_mode, ceil_mode);
             // Map wavelet bands 0-6 to output indices 7-1.
             // output_index = NUM_LEVELS - wavelet_band_index (for bands 0..NUM_LEVELS).
             if i < NUM_LEVELS {
