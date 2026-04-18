@@ -19,7 +19,12 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use log::{self, error, info, warn};
+use rmp_serde::{Deserializer, Serializer};
+use serde::{Deserialize, Serialize};
 use std::{
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
     sync::{
         atomic::Ordering,
         mpsc::{Receiver, Sender},
@@ -30,11 +35,16 @@ use tunnels_audio::EnvelopeStreams;
 
 use crate::midi::MidiDeviceInit;
 
+/// How often should we autosave the show?
+pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
+
 pub struct Show {
     dispatcher: Dispatcher,
     audio_input: AudioInput,
     clock_publisher: Option<ClockPublisher>,
     state: ShowState,
+    save_path: Option<PathBuf>,
+    last_save: Option<Instant>,
     gui_state: SharedGuiState,
     envelope_streams_tx: Sender<EnvelopeStreams>,
     /// Whether the GUI has the animation visualizer visible.
@@ -76,11 +86,65 @@ impl Show {
                 positions: PositionBank::default(),
                 color_palette: ColorPalette::new(),
             },
+            save_path: None,
+            last_save: None,
             gui_state,
             envelope_streams_tx,
             visualizer_active: false,
         };
         Ok(show)
+    }
+
+    /// Load the saved show at file into self.
+    /// Return an error if the dimensions of the loaded data don't match the
+    /// current show.
+    pub fn load(&mut self, path: &Path) -> Result<()> {
+        let file = File::open(path)?;
+        let loaded_state = ShowState::deserialize(&mut Deserializer::new(file))?;
+        if loaded_state.mixer.channel_count() != self.state.mixer.channel_count() {
+            bail!(
+                "Mixer size mismatch. Loaded: {}, show: {}.",
+                loaded_state.mixer.channel_count(),
+                self.state.mixer.channel_count()
+            );
+        }
+        if loaded_state.ui.n_pages() != self.state.ui.n_pages() {
+            bail!(
+                "UI page count mismatch. Loaded: {}, show: {}.",
+                loaded_state.ui.n_pages(),
+                self.state.ui.n_pages()
+            );
+        }
+        self.state = loaded_state;
+        Ok(())
+    }
+
+    /// Save the show into the provided file.
+    fn save(&self, path: &Path) -> Result<()> {
+        let mut file = File::create(path)?;
+        self.state
+            .serialize(&mut Serializer::new(BufWriter::new(&mut file)))?;
+        Ok(())
+    }
+
+    /// If a save path is set and we're due to save, save the show.
+    fn autosave(&mut self) -> Result<()> {
+        if let Some(path) = &self.save_path {
+            let now = Instant::now();
+            let should_save = match self.last_save {
+                Some(t) => (t + AUTOSAVE_INTERVAL) <= now,
+                None => true,
+            };
+            if should_save {
+                info!("Autosaving.");
+                let result = self.save(path);
+                if result.is_ok() {
+                    self.last_save = Some(now);
+                }
+                return result;
+            }
+        }
+        Ok(())
     }
 
     /// Set up the show in a test mode, defined by the provided setup function.
@@ -129,6 +193,11 @@ impl Show {
                 frame_number += 1;
                 self.send_clock_data();
                 self.snapshot_animation_state();
+            }
+
+            // Consider autosaving the show.
+            if let Err(e) = self.autosave() {
+                error!("Autosave error: {e}.");
             }
 
             // Process a control event for a fraction of the time between now
@@ -334,7 +403,9 @@ pub enum StateChange {
     MasterUI(master_ui::StateChange),
 }
 
-/// The mutable state owned by a `Show`.
+/// The mutable state owned by a `Show`. Serializable so it can be saved
+/// and loaded from disk.
+#[derive(Serialize, Deserialize)]
 pub struct ShowState {
     pub ui: MasterUI,
     pub mixer: Mixer,
