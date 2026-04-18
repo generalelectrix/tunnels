@@ -82,8 +82,15 @@ fn main() -> Result<()> {
         .map(|h| h.into_string().unwrap_or_else(|_| "unknown".to_string()))
         .unwrap_or_else(|_| "unknown".to_string());
 
-    // Moved into the creator closure.
-    let mut startup = Some((send_control_event, recv_control_event, client, admin, hostname));
+    // eframe's creator closure is FnMut; `Option::take` is the idiomatic way
+    // to hand ownership of move-only setup values into a FnOnce-shaped body.
+    let mut startup = Some((
+        send_control_event,
+        recv_control_event,
+        client,
+        admin,
+        hostname,
+    ));
 
     eframe::run_native(
         "Tunnels",
@@ -115,7 +122,12 @@ fn main() -> Result<()> {
             });
 
             Ok(Box::new(console::ConfigApp::new(
-                client, gui_state, admin, hostname, repaint, envelope_rx,
+                client,
+                gui_state,
+                admin,
+                hostname,
+                repaint,
+                envelope_rx,
             )))
         }),
     )

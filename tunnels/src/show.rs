@@ -37,13 +37,13 @@ pub struct Show {
     state: ShowState,
     gui_state: SharedGuiState,
     envelope_streams_tx: Sender<EnvelopeStreams>,
+    /// Whether the GUI has the animation visualizer visible.
+    visualizer_active: bool,
 }
 
 impl Show {
-    /// Create a new show. The GUI drives all mutable configuration (MIDI
-    /// device assignment, audio device selection, clock service) via
-    /// `MetaCommand`s, so startup is minimal: empty MIDI slots, offline
-    /// audio, no clock service.
+    /// Create a new show with minimal startup state: empty MIDI slots,
+    /// offline audio, no clock service.
     pub fn new(
         send_control_event: Sender<ControlEvent>,
         recv_control_event: Receiver<ControlEvent>,
@@ -78,6 +78,7 @@ impl Show {
             },
             gui_state,
             envelope_streams_tx,
+            visualizer_active: false,
         };
         Ok(show)
     }
@@ -176,30 +177,14 @@ impl Show {
         );
     }
 
-    /// Push audio subsystem state to the GUI snapshot.
     fn snapshot_audio_state(&self) {
-        let ps = self.audio_input.processor_settings();
         self.gui_state
             .audio_state
-            .store(crate::gui_state::AudioStateSnapshot {
-                device_name: self.audio_input.device_name().to_string(),
-                filter_cutoff_hz: ps.filter_cutoff.get(),
-                envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
-                envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
-                output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
-                gain_linear: ps.gain.get() as f64,
-                auto_trim_enabled: ps.auto_trim_enabled.load(Ordering::Relaxed),
-                active_band: ps.active_band.load(Ordering::Relaxed),
-                norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
-                norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
-                norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
-                norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
-            });
+            .store(self.audio_input.snapshot());
     }
 
-    /// Push the current animation state to the GUI, if the visualizer is active.
     fn snapshot_animation_state(&mut self) {
-        if !self.gui_state.visualizer_active.load(Ordering::Relaxed) {
+        if !self.visualizer_active {
             return;
         }
         let animation = self
@@ -299,6 +284,10 @@ impl Show {
                 self.clock_publisher = None;
                 info!("Clock service stopped.");
                 GuiDirty::CLOCK_SERVICE
+            }
+            SetVisualizerActive(active) => {
+                self.visualizer_active = active;
+                GuiDirty::CLEAN
             }
         })
     }
@@ -1074,5 +1063,55 @@ mod test {
         assert!(err.to_string().contains("unknown device slot"), "{err}");
         // Should still work after error.
         client.send_command(MetaCommand::RefreshUI).unwrap();
+    }
+
+    #[test]
+    fn meta_stop_clock_service_when_not_running_fails() {
+        let client = test_show_client();
+        let err = client
+            .send_command(MetaCommand::StopClockService)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not running"),
+            "expected 'not running', got: {err}"
+        );
+    }
+
+    #[test]
+    fn meta_start_clock_service_when_running_fails() {
+        let client = test_show_client();
+        client.send_command(MetaCommand::StartClockService).unwrap();
+        let err = client
+            .send_command(MetaCommand::StartClockService)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("already running"),
+            "expected 'already running', got: {err}"
+        );
+        // Show drops the clock publisher when the client disconnects.
+    }
+
+    #[test]
+    fn snapshot_animation_state_stores_only_when_visualizer_active() {
+        let (mut show, _send) = Show::test_new();
+
+        // Visualizer off: snapshot should early-return, leaving the stored Arc
+        // pointer unchanged.
+        let ptr_initial = Arc::as_ptr(&show.gui_state.animation_state.load());
+        show.snapshot_animation_state();
+        let ptr_after_off = Arc::as_ptr(&show.gui_state.animation_state.load());
+        assert_eq!(
+            ptr_initial, ptr_after_off,
+            "visualizer off should not install a new Arc"
+        );
+
+        // Turn on, snapshot should install a fresh Arc every call.
+        show.visualizer_active = true;
+        show.snapshot_animation_state();
+        let ptr_after_on = Arc::as_ptr(&show.gui_state.animation_state.load());
+        assert_ne!(
+            ptr_initial, ptr_after_on,
+            "visualizer on should install a new Arc"
+        );
     }
 }

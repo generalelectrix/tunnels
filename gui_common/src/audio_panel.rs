@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::time::Duration;
+pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
 use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
 
@@ -21,43 +22,6 @@ pub trait AudioCommands {
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
     fn report_error(&mut self, error: impl std::fmt::Display);
-}
-
-/// Read-only snapshot of audio parameter state for display.
-/// Contains only values that change on user action (not streaming data).
-#[derive(Debug, Clone)]
-pub struct AudioSnapshot {
-    pub device_name: String,
-    pub filter_cutoff_hz: f32,
-    pub envelope_attack: Duration,
-    pub envelope_release: Duration,
-    pub output_smoothing: Duration,
-    pub gain_linear: f64,
-    pub auto_trim_enabled: bool,
-    pub active_band: u32,
-    pub norm_floor_halflife: Duration,
-    pub norm_ceiling_halflife: Duration,
-    pub norm_floor_mode: TrackingMode,
-    pub norm_ceiling_mode: TrackingMode,
-}
-
-impl Default for AudioSnapshot {
-    fn default() -> Self {
-        Self {
-            device_name: OFFLINE_DEVICE_NAME.to_string(),
-            filter_cutoff_hz: 200.0,
-            envelope_attack: Duration::from_millis(10),
-            envelope_release: Duration::from_millis(50),
-            output_smoothing: Duration::from_millis(8),
-            gain_linear: 1.0,
-            auto_trim_enabled: true,
-            active_band: 0,
-            norm_floor_halflife: Duration::from_secs(10),
-            norm_ceiling_halflife: Duration::from_secs(5),
-            norm_floor_mode: TrackingMode::Average,
-            norm_ceiling_mode: TrackingMode::Limit,
-        }
-    }
 }
 
 pub struct AudioPanelState {

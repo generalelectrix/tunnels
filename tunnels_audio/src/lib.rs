@@ -16,7 +16,7 @@ use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 use tunnels_lib::transient_indicator::TransientIndicator;
 
 pub use self::processor::UpdateRate;
-use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
+use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, TrackingMode};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
 
@@ -27,6 +27,42 @@ pub const OFFLINE_DEVICE_NAME: &str = "Offline";
 pub struct EnvelopeStreams {
     pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
     pub update_rate: UpdateRate,
+}
+
+/// A flat, read-only view of the audio input's current parameter state.
+#[derive(Debug, Clone)]
+pub struct AudioSnapshot {
+    pub device_name: String,
+    pub filter_cutoff_hz: f32,
+    pub envelope_attack: Duration,
+    pub envelope_release: Duration,
+    pub output_smoothing: Duration,
+    pub gain_linear: f64,
+    pub auto_trim_enabled: bool,
+    pub active_band: u32,
+    pub norm_floor_halflife: Duration,
+    pub norm_ceiling_halflife: Duration,
+    pub norm_floor_mode: TrackingMode,
+    pub norm_ceiling_mode: TrackingMode,
+}
+
+impl Default for AudioSnapshot {
+    fn default() -> Self {
+        Self {
+            device_name: OFFLINE_DEVICE_NAME.to_string(),
+            filter_cutoff_hz: 200.0,
+            envelope_attack: Duration::from_millis(10),
+            envelope_release: Duration::from_millis(50),
+            output_smoothing: Duration::from_millis(8),
+            gain_linear: 1.0,
+            auto_trim_enabled: true,
+            active_band: 0,
+            norm_floor_halflife: Duration::from_secs(10),
+            norm_ceiling_halflife: Duration::from_secs(5),
+            norm_floor_mode: TrackingMode::Average,
+            norm_ceiling_mode: TrackingMode::Limit,
+        }
+    }
 }
 
 pub struct AudioInput {
@@ -69,13 +105,10 @@ impl AudioInput {
         }
     }
 
-    /// Open an audio input device. The GUI-side viewer receives the envelope
-    /// consumer handles via `envelope_tx` — once on initial open, and again
-    /// on every successful reconnect.
-    pub fn new(
-        device_name: Option<String>,
-        envelope_tx: Sender<EnvelopeStreams>,
-    ) -> Result<Self> {
+    /// Open an audio input device. On every successful open — initial and
+    /// each subsequent reconnect — a fresh `EnvelopeStreams` bundle is sent
+    /// on `envelope_tx`.
+    pub fn new(device_name: Option<String>, envelope_tx: Sender<EnvelopeStreams>) -> Result<Self> {
         let device_name = match device_name {
             None => return Ok(Self::offline()),
             Some(d) => d,
@@ -101,6 +134,28 @@ impl AudioInput {
     /// Return the processor settings handle (for visualization tools).
     pub fn processor_settings(&self) -> &ProcessorSettings {
         &self.processor_settings
+    }
+
+    /// Read the current audio parameter state.
+    ///
+    /// Individual fields are self-consistent; the overall struct is not a
+    /// torn-free snapshot across all fields.
+    pub fn snapshot(&self) -> AudioSnapshot {
+        let ps = &self.processor_settings;
+        AudioSnapshot {
+            device_name: self.device_name.clone(),
+            filter_cutoff_hz: ps.filter_cutoff.get(),
+            envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
+            envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
+            output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
+            gain_linear: ps.gain.get() as f64,
+            auto_trim_enabled: ps.auto_trim_enabled.load(Ordering::Relaxed),
+            active_band: ps.active_band.load(Ordering::Relaxed),
+            norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
+            norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
+            norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
+            norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
+        }
     }
 
     /// Update the state of audio control.

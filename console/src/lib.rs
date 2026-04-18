@@ -14,7 +14,7 @@ use eframe::egui;
 use admin_panel::{AdminPanelState, AdminService};
 use audio_panel::AudioPanelState;
 use gui_common::envelope_viewer::EnvelopeViewerState;
-use gui_common::{CloseHandler, MessageModal, audio_panel::AudioSnapshot, clock_panel};
+use gui_common::{CloseHandler, MessageModal, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
 use tunnels::animation_visualizer::VisualizerPanelState;
 use tunnels::audio::EnvelopeStreams;
@@ -48,12 +48,11 @@ pub struct ConfigApp {
     /// 'static + Send + Sync and can't hold a reference to ConfigApp fields.
     visualizer_detached: Arc<AtomicBool>,
     envelope_viewer: EnvelopeViewerState,
-    /// Receives fresh `EnvelopeStreams` bundles from the audio reconnect thread.
-    /// Drained each frame; the most recent bundle wins.
     envelope_streams_rx: Receiver<EnvelopeStreams>,
     close_handler: CloseHandler,
     modal: MessageModal,
     active_tab: Tab,
+    last_visualizer_active: bool,
     gui_state: SharedGuiState,
 }
 
@@ -72,10 +71,13 @@ impl eframe::App for ConfigApp {
 
         // Notify the show when the visualizer is visible (either tab or detached window).
         let detached = self.visualizer_detached.load(Ordering::Relaxed);
-        self.gui_state.visualizer_active.store(
-            detached || self.active_tab == Tab::Animation,
-            Ordering::Relaxed,
-        );
+        let visualizer_active = detached || self.active_tab == Tab::Animation;
+        if visualizer_active != self.last_visualizer_active {
+            let _ = self
+                .client
+                .send_command(MetaCommand::SetVisualizerActive(visualizer_active));
+            self.last_visualizer_active = visualizer_active;
+        }
 
         // Detached animation visualizer -- separate OS window via deferred viewport.
         if detached {
@@ -126,20 +128,6 @@ impl eframe::App for ConfigApp {
                 }
                 Tab::Audio => {
                     let audio_state = self.gui_state.audio_state.load();
-                    let snapshot = AudioSnapshot {
-                        device_name: audio_state.device_name.clone(),
-                        filter_cutoff_hz: audio_state.filter_cutoff_hz,
-                        envelope_attack: audio_state.envelope_attack,
-                        envelope_release: audio_state.envelope_release,
-                        output_smoothing: audio_state.output_smoothing,
-                        gain_linear: audio_state.gain_linear,
-                        auto_trim_enabled: audio_state.auto_trim_enabled,
-                        active_band: audio_state.active_band,
-                        norm_floor_halflife: audio_state.norm_floor_halflife,
-                        norm_ceiling_halflife: audio_state.norm_ceiling_halflife,
-                        norm_floor_mode: audio_state.norm_floor_mode,
-                        norm_ceiling_mode: audio_state.norm_ceiling_mode,
-                    };
                     audio_panel::render_audio_panel(
                         ui,
                         GuiContext {
@@ -147,7 +135,7 @@ impl eframe::App for ConfigApp {
                             client: &self.client,
                         },
                         &mut self.audio_panel,
-                        &snapshot,
+                        &audio_state,
                     );
 
                     if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {
@@ -214,6 +202,7 @@ impl ConfigApp {
             modal: MessageModal::default(),
             client,
             active_tab: Tab::default(),
+            last_visualizer_active: false,
             gui_state,
         }
     }

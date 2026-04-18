@@ -24,7 +24,7 @@ impl ReconnectingInput {
     ///
     /// The initial stream open happens on the reconnect thread (because cpal's
     /// Stream is not Send on macOS), but this method blocks until it either
-    /// succeeds or fails, so the caller gets immediate error feedback.
+    /// succeeds or fails.
     ///
     /// Every successful open — initial and each reconnect — sends a fresh
     /// `EnvelopeStreams` bundle on `envelope_tx`. If the receiver is gone the
