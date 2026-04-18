@@ -252,13 +252,15 @@ echo "ERROR: something went wrong""#
 
         // Script that dumps stdin to a marker file, then prints OK.
         let managed_path = dir.path().join("managed");
-        let mut f = fs::File::create(&managed_path).unwrap();
-        writeln!(
-            f,
-            "#!/bin/sh\ncat > {}\necho OK\nsleep 3600",
-            marker_path.display()
-        )
-        .unwrap();
+        {
+            let mut f = fs::File::create(&managed_path).unwrap();
+            writeln!(
+                f,
+                "#!/bin/sh\ncat > {}\necho OK\nsleep 3600",
+                marker_path.display()
+            )
+            .unwrap();
+        }
         fs::set_permissions(&managed_path, fs::Permissions::from_mode(0o755)).unwrap();
 
         let payload = fs::read(&managed_path).unwrap();

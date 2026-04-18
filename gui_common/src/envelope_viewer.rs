@@ -1,6 +1,6 @@
 use eframe::egui::{self, Color32};
-use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
 use tunnels_audio::processor::{NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, UpdateRate};
+use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
 
 use crate::scrolling_plot::ScrollingPlot;
 
