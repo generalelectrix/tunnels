@@ -65,12 +65,14 @@ for bin in tunnelclient tunnel-bootstrap bootstrap-deploy; do
   chmod +x "$APP/Contents/MacOS/$bin"
 done
 
-# Helper script for viewing logs.
-cat > "$APP/Contents/MacOS/view-logs.sh" <<'LOGSCRIPT'
+# Helper script for viewing logs. Lives in Resources/ rather than MacOS/
+# because Contents/MacOS/ is conventionally Mach-O-only and codesign
+# refuses non-Mach-O subcomponents there when signing without --deep.
+cat > "$APP/Contents/Resources/view-logs.sh" <<'LOGSCRIPT'
 #!/bin/bash
 log stream --predicate 'subsystem == "com.generalelectrix.tunnels"'
 LOGSCRIPT
-chmod +x "$APP/Contents/MacOS/view-logs.sh"
+chmod +x "$APP/Contents/Resources/view-logs.sh"
 
 cp "$ICNS" "$APP/Contents/Resources/Tunnels.icns"
 cp "$PROJECT_DIR/controller_templates/tunnels.touchosc" "$APP/Contents/Resources/tunnels.touchosc"
@@ -111,8 +113,26 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+echo "==> Signing helper binaries..."
+# Each helper gets its own ad-hoc identity. tunnelclient especially must NOT
+# inherit the bundle's CFBundleIdentifier — it gets pushed to remote render
+# machines by tunnel-bootstrap and runs there free-standing, without the
+# bundle's Info.plist context. Identifying as the bundle there causes macOS
+# TCC's Local Network privacy gate to silently deny its outbound LAN
+# connection to the show host. (See v2026.04.18-1 regression.)
+for bin in tunnelclient tunnel-bootstrap bootstrap-deploy; do
+  codesign -s - --force \
+    --identifier "com.generalelectrix.tunnels.$bin" \
+    "$APP/Contents/MacOS/$bin"
+done
+
 echo "==> Signing app bundle..."
-codesign -s - --force --deep --identifier com.generalelectrix.tunnels "$APP"
+# Bundle-level sign handles the main executable AND the resources
+# manifest. No --deep — helpers are pre-signed above with their own
+# identifiers, and we want to preserve those.
+codesign -s - --force \
+  --identifier com.generalelectrix.tunnels \
+  "$APP"
 
 echo "==> Creating DMG..."
 BG_PNG="$PROJECT_DIR/dist/dmg-background.png"

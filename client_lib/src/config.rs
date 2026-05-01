@@ -5,14 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::fs::File;
 use std::io::Read;
-use std::time::Duration;
 use yaml_rust::YamlLoader;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum SnapshotManagement {
-    /// Always render the latest snapshot.
-    Single,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -20,10 +13,6 @@ pub struct ClientConfig {
     pub server_hostname: String,
     /// Virtual video channel to listen to.
     pub video_channel: u64,
-    /// UNUSED - preserved until client machines are updated
-    pub render_delay: Duration,
-    /// UNUSED - preserved until client machines are updated
-    pub snapshot_management: SnapshotManagement,
     pub x_resolution: u32,
     pub y_resolution: u32,
     /// If true, set the window to fullscreen on creation.
@@ -61,7 +50,6 @@ impl ClientConfig {
         ClientConfig {
             server_hostname: host,
             video_channel,
-            render_delay: Default::default(),
             x_resolution,
             y_resolution,
             fullscreen,
@@ -72,7 +60,6 @@ impl ClientConfig {
             y_center: f64::from(y_resolution / 2),
             transformation,
             log_level_debug,
-            snapshot_management: SnapshotManagement::Single,
         }
     }
 
