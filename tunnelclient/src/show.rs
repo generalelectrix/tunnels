@@ -1,12 +1,13 @@
 use anyhow::{Result, anyhow};
 use client_lib::config::ClientConfig;
-use graphics::clear;
+use graphics::{CircleArc, Context, clear};
 use log::{error, info};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_lib::Snapshot;
@@ -21,6 +22,8 @@ pub struct Show {
     cfg: ClientConfig,
     run_flag: RunFlag,
     window: PistonWindow<Sdl2Window>,
+    /// Reference instant for animating the waiting-for-snapshot spinner.
+    start_time: Instant,
 }
 
 impl Show {
@@ -57,6 +60,7 @@ impl Show {
             cfg,
             run_flag,
             window,
+            start_time: Instant::now(),
         })
     }
 
@@ -78,19 +82,42 @@ impl Show {
     }
 
     /// Render a frame to the window.
+    ///
+    /// Always clears to black, then either draws the latest snapshot's
+    /// layers or — if no snapshot has arrived yet — a small spinner
+    /// indicating the client is up and waiting. The unconditional clear
+    /// is what keeps an unfed client from showing uninitialized GPU
+    /// memory as static gray noise.
     fn render(&mut self, args: &RenderArgs) {
-        let Some(snapshot) = self.snapshot_manager.lock().unwrap().clone() else {
-            return;
-        };
-
+        let snapshot = self.snapshot_manager.lock().unwrap().clone();
         self.gl.draw(args.viewport(), |c, gl| {
-            // Clear the screen.
             clear([0.0, 0.0, 0.0, 1.0], gl);
-
-            // Draw everything.
-            snapshot.layers.draw(&c, gl, &self.cfg);
+            match snapshot {
+                Some(snapshot) => snapshot.layers.draw(&c, gl, &self.cfg),
+                None => draw_waiting_spinner(&c, gl, &self.cfg, self.start_time.elapsed()),
+            }
         });
     }
+}
+
+/// Draw a small dark-gray rotating arc at screen center as a "this client
+/// is alive but hasn't received a snapshot yet" indicator.
+fn draw_waiting_spinner(c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig, elapsed: Duration) {
+    use std::f64::consts::{PI, TAU};
+    let cx = f64::from(cfg.x_resolution) / 2.0;
+    let cy = f64::from(cfg.y_resolution) / 2.0;
+    let radius = 20.0;
+    let thickness = 2.0;
+    // One revolution every 2 seconds.
+    let phase = elapsed.as_secs_f64() * 0.5 * TAU;
+    let arc = 1.5 * PI; // 270°
+    let bounds = [cx - radius, cy - radius, radius * 2.0, radius * 2.0];
+    CircleArc::new([0.25, 0.25, 0.25, 1.0], thickness, phase, phase + arc).draw(
+        bounds,
+        &c.draw_state,
+        c.transform,
+        gl,
+    );
 }
 
 /// Spawn a thread to receive snapshots.
