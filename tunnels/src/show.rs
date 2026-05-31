@@ -25,10 +25,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::{Path, PathBuf},
-    sync::{
-        atomic::Ordering,
-        mpsc::{Receiver, Sender},
-    },
+    sync::mpsc::{Receiver, Sender},
     time::{Duration, Instant},
 };
 use tunnels_audio::EnvelopeStreams;
@@ -373,7 +370,7 @@ impl Show {
         if dirty.contains(GuiDirty::CLOCK_SERVICE) {
             self.gui_state
                 .clock_service_running
-                .store(self.clock_publisher.is_some(), Ordering::Relaxed);
+                .store(self.clock_publisher.is_some());
         }
     }
 }
