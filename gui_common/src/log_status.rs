@@ -176,15 +176,16 @@ impl Scrollback {
     }
 
     /// All retained records at or above `min_level`, merged across the
-    /// per-severity rings into a single chronological stream. Each ring is
-    /// already time-ordered (records are appended in arrival order), so this is a
-    /// lazy k-way merge — a heap of at most one head per ring, no full-list
-    /// allocation or per-render sort. Older records of a rare severity interleave
-    /// correctly with newer frequent ones.
-    pub fn ordered(&self, min_level: LevelFilter) -> impl Iterator<Item = &LogRecord> {
+    /// per-severity rings **newest first** (so the most recent message renders at
+    /// the top of the panel). Each ring is appended in arrival order, so iterating
+    /// it back-to-front is newest-first; this is a lazy descending k-way merge — a
+    /// heap of at most one head per ring, no full-list allocation or per-render
+    /// sort. An old record of a rare severity still interleaves into its correct
+    /// time position among newer frequent ones.
+    pub fn newest_first(&self, min_level: LevelFilter) -> impl Iterator<Item = &LogRecord> {
         itertools::kmerge_by(
-            self.by_level.iter().map(VecDeque::iter),
-            |a: &&LogRecord, b: &&LogRecord| a.timestamp <= b.timestamp,
+            self.by_level.iter().map(|ring| ring.iter().rev()),
+            |a: &&LogRecord, b: &&LogRecord| a.timestamp >= b.timestamp,
         )
         .filter(move |record| record.level.to_level_filter() <= min_level)
     }
@@ -238,10 +239,11 @@ fn process_record(record: LogRecord, tally: &mut AlertTally, scrollback: &mut Sc
 }
 
 /// Rolled-up alert state derived from the live tally versus the last viewed one.
+/// `Warn`/`Error` carry the count of unacknowledged records at that severity.
 pub enum Alert {
     Calm,
-    Warn,
-    Error,
+    Warn(u32),
+    Error(u32),
 }
 
 /// Panel state owned by the App. Holds the shared alert/scrollback handles plus
@@ -283,14 +285,17 @@ impl LogStatusState {
         self.viewing.store(active, Ordering::Relaxed);
     }
 
-    /// Current rolled-up alert: `Error` if new errors since last viewed, else
-    /// `Warn` if new warnings, else `Calm`.
+    /// Current rolled-up alert: `Error` with the unacknowledged error count if any
+    /// new errors since last viewed, else `Warn` with the unacknowledged warn count
+    /// if any new warnings, else `Calm`.
     pub fn alert(&self) -> Alert {
         let tally = self.alert.tally();
-        if tally.errors > self.acked.errors {
-            Alert::Error
-        } else if tally.warns > self.acked.warns {
-            Alert::Warn
+        let unacked_errors = tally.errors.saturating_sub(self.acked.errors);
+        let unacked_warns = tally.warns.saturating_sub(self.acked.warns);
+        if unacked_errors > 0 {
+            Alert::Error(unacked_errors)
+        } else if unacked_warns > 0 {
+            Alert::Warn(unacked_warns)
         } else {
             Alert::Calm
         }
@@ -368,7 +373,7 @@ impl LogStatusPanel<'_> {
 
         let scrollback = self.state.scrollback.lock().unwrap();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for record in scrollback.ordered(self.state.min_level) {
+            for record in scrollback.newest_first(self.state.min_level) {
                 let color = match record.level {
                     Level::Error => STATUS_COLORS.error,
                     Level::Warn => STATUS_COLORS.warning,
@@ -389,15 +394,22 @@ impl LogStatusPanel<'_> {
     }
 }
 
-/// Tab-bar label for every page: a colored "⏺ Status" when an unviewed
-/// warn/error is pending (error → `STATUS_COLORS.error`, warn →
-/// `STATUS_COLORS.warning`), or a plain "Status" when calm.
-pub fn status_tab_label(state: &LogStatusState) -> RichText {
-    match state.alert() {
-        Alert::Error => RichText::new("⏺ Status").color(STATUS_COLORS.error),
-        Alert::Warn => RichText::new("⏺ Status").color(STATUS_COLORS.warning),
-        Alert::Calm => RichText::new("Status"),
-    }
+/// Render the Status tab in a tab bar, returning `true` if it was clicked this
+/// frame. When calm it's an ordinary selectable tab labelled "Status" (matching
+/// its neighbors). When an unviewed warn/error is pending the whole tab becomes a
+/// solid-colored button — red `Error: <count>` for errors, amber `Warn: <count>`
+/// for warnings — in dark text, where `<count>` is the number of unacknowledged
+/// records at that severity.
+pub fn status_tab(ui: &mut egui::Ui, selected: bool, state: &LogStatusState) -> bool {
+    let (text, color) = match state.alert() {
+        Alert::Calm => return ui.selectable_label(selected, "Status").clicked(),
+        Alert::Warn(count) => (format!("Warn: {count}"), STATUS_COLORS.warning),
+        Alert::Error(count) => (format!("Error: {count}"), STATUS_COLORS.error),
+    };
+    // `egui::Button` paints its fill unconditionally (unlike a selectable, which
+    // only fills when selected/hovered), so the whole tab shows the alert color.
+    let label = RichText::new(text).color(egui::Color32::from_gray(20));
+    ui.add(egui::Button::new(label).fill(color)).clicked()
 }
 
 #[cfg(test)]
@@ -486,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_merges_severities_chronologically() {
+    fn newest_first_merges_across_severities() {
         let t = |h, m, s| Local.with_ymd_and_hms(2026, 5, 31, h, m, s).unwrap();
         let mut sb = Scrollback::new(16);
         // Pushed out of time order across severities (as separate rings would hold them).
@@ -495,25 +507,26 @@ mod tests {
         sb.push(rec(Level::Info, "info :16", t(16, 55, 16)));
         sb.push(rec(Level::Error, "error :30", t(16, 55, 30)));
 
+        // Newest first, so the most recent message renders at the top of the panel.
         let order: Vec<&str> = sb
-            .ordered(LevelFilter::Info)
+            .newest_first(LevelFilter::Info)
             .map(|r| r.message.as_str())
             .collect();
         assert_eq!(
             order,
-            ["info :16", "warn :21", "error :30", "warn :39"],
-            "records merge into one chronological stream across the per-severity rings"
+            ["warn :39", "error :30", "warn :21", "info :16"],
+            "records merge newest-first across the per-severity rings"
         );
 
-        // The display filter still applies; survivors stay time-ordered.
+        // The display filter still applies; survivors stay newest-first.
         let warn_and_up: Vec<&str> = sb
-            .ordered(LevelFilter::Warn)
+            .newest_first(LevelFilter::Warn)
             .map(|r| r.message.as_str())
             .collect();
         assert_eq!(
             warn_and_up,
-            ["warn :21", "error :30", "warn :39"],
-            "Info excluded at the Warn filter; remainder still chronological"
+            ["warn :39", "error :30", "warn :21"],
+            "Info excluded at the Warn filter; remainder still newest-first"
         );
     }
 
@@ -533,13 +546,17 @@ mod tests {
         // Constructed after the error, so acked already includes it: calm.
         assert!(matches!(state.alert(), Alert::Calm));
 
-        // A fresh error after construction lights red and stays red until viewed.
+        // Two more errors after construction light red, reporting the unacked count
+        // (3 total - 1 acked = 2), and stay lit until viewed.
         alert.counts.store(AlertTally {
-            errors: 2,
+            errors: 3,
             warns: 0,
         });
-        assert!(matches!(state.alert(), Alert::Error));
-        assert!(matches!(state.alert(), Alert::Error), "sticky until viewed");
+        assert!(matches!(state.alert(), Alert::Error(2)));
+        assert!(
+            matches!(state.alert(), Alert::Error(2)),
+            "sticky until viewed"
+        );
 
         // Render the panel (marks viewed) → calm.
         {
@@ -551,12 +568,12 @@ mod tests {
         }
         assert!(matches!(state.alert(), Alert::Calm), "viewing clears alert");
 
-        // A later warning lights yellow.
+        // A later warning lights yellow with its own unacked count.
         alert.counts.store(AlertTally {
-            errors: 2,
+            errors: 3,
             warns: 1,
         });
-        assert!(matches!(state.alert(), Alert::Warn));
+        assert!(matches!(state.alert(), Alert::Warn(1)));
     }
 
     #[test]
@@ -691,8 +708,8 @@ mod tests {
     #[test]
     fn snapshot_tab_label_states() {
         use egui_kittest::Harness;
-        // Three independent states rendered as labels so the tab icon's color is
-        // captured: calm (plain), warn (yellow ⏺), error (red ⏺).
+        // Three independent states rendered as tabs in a row: calm (plain tab),
+        // warn (amber "Status N" button), error (red "Status N" button).
         let calm = LogStatusState::new(
             Arc::new(LogAlert::new(noop_repaint())),
             Arc::new(Mutex::new(Scrollback::new(1))),
@@ -706,7 +723,7 @@ mod tests {
         );
         warn_alert.counts.store(AlertTally {
             errors: 0,
-            warns: 1,
+            warns: 3,
         });
         let error_alert = Arc::new(LogAlert::new(noop_repaint()));
         let error = LogStatusState::new(
@@ -715,16 +732,16 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         );
         error_alert.counts.store(AlertTally {
-            errors: 1,
+            errors: 2,
             warns: 0,
         });
 
         let mut harness = Harness::new_ui(|ui| {
-            ui.label(status_tab_label(&calm));
-            ui.separator();
-            ui.label(status_tab_label(&warn));
-            ui.separator();
-            ui.label(status_tab_label(&error));
+            ui.horizontal(|ui| {
+                let _ = status_tab(ui, false, &calm);
+                let _ = status_tab(ui, false, &warn);
+                let _ = status_tab(ui, false, &error);
+            });
         });
         harness.run();
         harness.snapshot("log_status_tab_label");
@@ -788,34 +805,31 @@ mod tests {
     }
 
     #[test]
-    fn status_tab_label_reflects_alert_state() {
+    fn alert_reports_severity_and_unacked_count() {
         let alert = Arc::new(LogAlert::new(noop_repaint()));
         let scrollback = Arc::new(Mutex::new(Scrollback::new(16)));
         let viewing = Arc::new(AtomicBool::new(false));
         let mut state = LogStatusState::new(alert.clone(), scrollback, viewing);
 
-        // Calm: the plain label, no alert glyph.
-        assert_eq!(status_tab_label(&state).text(), "Status");
+        // Fresh state: calm.
+        assert!(matches!(state.alert(), Alert::Calm));
 
-        // A warning lights the indicator (glyph appears).
+        // Warnings light amber and report their count.
         alert.counts.store(AlertTally {
             errors: 0,
-            warns: 1,
+            warns: 4,
         });
-        assert!(matches!(state.alert(), Alert::Warn));
-        assert_eq!(status_tab_label(&state).text(), "⏺ Status");
+        assert!(matches!(state.alert(), Alert::Warn(4)));
 
-        // An error supersedes the warning; still lit.
+        // Any unacked error supersedes warnings, reporting the error count.
         alert.counts.store(AlertTally {
-            errors: 1,
-            warns: 1,
+            errors: 2,
+            warns: 4,
         });
-        assert!(matches!(state.alert(), Alert::Error));
-        assert_eq!(status_tab_label(&state).text(), "⏺ Status");
+        assert!(matches!(state.alert(), Alert::Error(2)));
 
-        // Acknowledging (viewing) returns to the plain label.
+        // Acknowledging (viewing) clears the alert.
         state.mark_viewed();
         assert!(matches!(state.alert(), Alert::Calm));
-        assert_eq!(status_tab_label(&state).text(), "Status");
     }
 }

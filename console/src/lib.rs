@@ -70,11 +70,9 @@ impl eframe::App for ConfigApp {
                 ui.selectable_value(&mut self.active_tab, Tab::Audio, "Audio");
                 ui.selectable_value(&mut self.active_tab, Tab::Animation, "Animation");
                 ui.selectable_value(&mut self.active_tab, Tab::Clients, "Clients");
-                ui.selectable_value(
-                    &mut self.active_tab,
-                    Tab::Status,
-                    log_status::status_tab_label(&self.log_status),
-                );
+                if log_status::status_tab(ui, self.active_tab == Tab::Status, &self.log_status) {
+                    self.active_tab = Tab::Status;
+                }
             });
         });
 
