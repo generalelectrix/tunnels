@@ -1065,7 +1065,6 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "rmp-serde",
  "sha2",
- "simplelog",
  "stage_theme",
  "tunnels",
  "tunnels_lib",
@@ -2431,9 +2430,9 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "egui_plot",
+ "itertools",
  "log",
  "midi_harness",
- "simplelog",
  "tunnels_audio",
  "tunnels_lib",
 ]

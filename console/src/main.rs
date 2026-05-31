@@ -59,17 +59,12 @@ fn install_terminate_override() {
 }
 
 fn main() -> Result<()> {
-    // The application logs at Warn. Capture records into the in-GUI status view
-    // (Warn floor, matching the stderr logger) in addition to stderr. On macOS,
-    // Console.app still captures stderr from SimpleLogger under the `.app` route,
-    // so dropping oslog loses nothing.
-    let (capture, log_rx) =
-        gui_common::log_status::channel(LOG_CHANNEL_CAPACITY, simplelog::LevelFilter::Warn);
-    simplelog::CombinedLogger::init(vec![
-        simplelog::SimpleLogger::new(simplelog::LevelFilter::Warn, simplelog::Config::default()),
-        Box::new(capture),
-    ])
-    .expect("failed to initialize logger");
+    // The in-GUI Status view is the only log destination — no stderr/terminal output.
+    // The sink captures whatever passes the global gate; the GUI "Capture" dropdown owns
+    // that gate via `log::set_max_level`. Start at Warn.
+    let (capture, log_rx) = gui_common::log_status::channel(LOG_CHANNEL_CAPACITY);
+    log::set_boxed_logger(Box::new(capture)).expect("failed to initialize logger");
+    log::set_max_level(log::LevelFilter::Warn);
 
     #[cfg(target_os = "macos")]
     install_terminate_override();

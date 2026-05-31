@@ -7,9 +7,9 @@ edition.workspace = true
 chrono = "0.4"
 eframe = "0.33"
 egui_plot = "0.34"
+itertools = "0.12"
 log = "0.4"
 midi_harness = { path = "../midi_harness" }
-simplelog = "0.12"
 tunnels_audio = { path = "../tunnels_audio" }
 tunnels_lib = { path = "../tunnels_lib" }
 

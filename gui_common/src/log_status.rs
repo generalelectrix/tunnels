@@ -94,23 +94,22 @@ impl LogAlert {
     }
 }
 
-/// Producer-side `log` sink. Installed in `main()` before the GUI exists and
-/// slotted into a `CombinedLogger`. Captured records are pushed to the drain
-/// thread over a bounded channel; the path never blocks or locks.
+/// Producer-side `log` sink, installed as the global logger in `main()` before
+/// the GUI exists (the in-GUI Status view is the only log destination — there is
+/// no stderr/terminal output). Captured records are pushed to the drain thread
+/// over a bounded channel; the path never blocks or locks.
 pub struct CaptureLogger {
     tx: SyncSender<LogRecord>,
-    level: LevelFilter,
 }
 
 impl log::Log for CaptureLogger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= self.level
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        // The global `log::max_level` (driven by the GUI "Capture" dropdown) is
+        // the sole gate; this sink captures whatever it's handed.
+        true
     }
 
     fn log(&self, record: &log::Record) {
-        if !self.enabled(record.metadata()) {
-            return;
-        }
         let captured = LogRecord {
             level: record.level(),
             target: record.target().to_string(),
@@ -127,33 +126,11 @@ impl log::Log for CaptureLogger {
     fn flush(&self) {}
 }
 
-impl simplelog::SharedLogger for CaptureLogger {
-    fn level(&self) -> LevelFilter {
-        self.level
-    }
-
-    fn config(&self) -> Option<&simplelog::Config> {
-        None
-    }
-
-    fn as_log(self: Box<Self>) -> Box<dyn log::Log> {
-        self
-    }
-}
-
-/// Build a bounded capture channel. `capacity` bounds the in-flight backlog;
-/// `capture_level` is the floor below which records are dropped at the producer.
+/// Build a bounded capture channel. `capacity` bounds the in-flight backlog.
 /// The returned `Receiver` is handed to `spawn_drain_thread`.
-pub fn channel(
-    capacity: usize,
-    capture_level: LevelFilter,
-) -> (CaptureLogger, Receiver<LogRecord>) {
+pub fn channel(capacity: usize) -> (CaptureLogger, Receiver<LogRecord>) {
     let (tx, rx) = sync_channel(capacity);
-    let logger = CaptureLogger {
-        tx,
-        level: capture_level,
-    };
-    (logger, rx)
+    (CaptureLogger { tx }, rx)
 }
 
 /// Number of `log::Level` variants (Error..Trace), used to size the scrollback.
@@ -196,6 +173,20 @@ impl Scrollback {
     pub fn level(&self, level: Level) -> impl Iterator<Item = &LogRecord> {
         let idx = (level as usize).saturating_sub(1).min(NUM_LEVELS - 1);
         self.by_level[idx].iter()
+    }
+
+    /// All retained records at or above `min_level`, merged across the
+    /// per-severity rings into a single chronological stream. Each ring is
+    /// already time-ordered (records are appended in arrival order), so this is a
+    /// lazy k-way merge — a heap of at most one head per ring, no full-list
+    /// allocation or per-render sort. Older records of a rare severity interleave
+    /// correctly with newer frequent ones.
+    pub fn ordered(&self, min_level: LevelFilter) -> impl Iterator<Item = &LogRecord> {
+        itertools::kmerge_by(
+            self.by_level.iter().map(VecDeque::iter),
+            |a: &&LogRecord, b: &&LogRecord| a.timestamp <= b.timestamp,
+        )
+        .filter(move |record| record.level.to_level_filter() <= min_level)
     }
 }
 
@@ -254,19 +245,22 @@ pub enum Alert {
 }
 
 /// Panel state owned by the App. Holds the shared alert/scrollback handles plus
-/// the private `acked` snapshot that implements sticky-until-viewed, and the
-/// display `min_level` filter (default `Warn`).
+/// the private `acked` snapshot that implements sticky-until-viewed, the display
+/// `min_level` filter (the "Show" combo), and the `capture_level` mirror of the
+/// global log floor (the "Capture" combo). Both default to `Warn`.
 pub struct LogStatusState {
     alert: Arc<LogAlert>,
     scrollback: Arc<Mutex<Scrollback>>,
     viewing: Arc<AtomicBool>,
     acked: AlertTally,
     min_level: LevelFilter,
+    capture_level: LevelFilter,
 }
 
 impl LogStatusState {
     /// Construct from the same handles the drain thread received. `acked` starts
-    /// at the current tally so a fresh state opens Calm.
+    /// at the current tally so a fresh state opens Calm. `capture_level` mirrors
+    /// the global log floor set by `main` at startup (`Warn`).
     pub fn new(
         alert: Arc<LogAlert>,
         scrollback: Arc<Mutex<Scrollback>>,
@@ -279,6 +273,7 @@ impl LogStatusState {
             viewing,
             acked,
             min_level: LevelFilter::Warn,
+            capture_level: LevelFilter::Warn,
         }
     }
 
@@ -308,6 +303,26 @@ impl LogStatusState {
     }
 }
 
+/// Severity levels offered by the Show and Capture dropdowns, most severe first.
+/// Trace is intentionally omitted — this project never logs at that level.
+const FILTER_LEVELS: [LevelFilter; 4] = [
+    LevelFilter::Error,
+    LevelFilter::Warn,
+    LevelFilter::Info,
+    LevelFilter::Debug,
+];
+
+/// A level's combo label, colored to match its severity: Error red, Warn amber,
+/// the rest the default text color.
+fn level_label(level: LevelFilter) -> RichText {
+    let label = RichText::new(format!("{level}"));
+    match level {
+        LevelFilter::Error => label.color(STATUS_COLORS.error),
+        LevelFilter::Warn => label.color(STATUS_COLORS.warning),
+        _ => label,
+    }
+}
+
 /// Render wrapper for the Status panel. Rendering marks the alert viewed.
 pub struct LogStatusPanel<'a> {
     pub state: &'a mut LogStatusState,
@@ -319,42 +334,56 @@ impl LogStatusPanel<'_> {
         self.state.mark_viewed();
 
         ui.horizontal(|ui| {
+            // "Show" filters what the panel displays from what's already captured.
             ui.label("Show:");
             egui::ComboBox::from_id_salt("log_status_min_level")
-                .selected_text(format!("{}", self.state.min_level))
+                .selected_text(level_label(self.state.min_level))
                 .show_ui(ui, |ui| {
-                    // The app logs at Warn, so only Error and Warn are ever captured.
-                    for level in [LevelFilter::Error, LevelFilter::Warn] {
-                        ui.selectable_value(&mut self.state.min_level, level, format!("{level}"));
+                    for level in FILTER_LEVELS {
+                        ui.selectable_value(&mut self.state.min_level, level, level_label(level));
                     }
                 });
+
+            // "Capture" is the global log floor: changing it sets `log::max_level`
+            // directly, so more (or fewer) records are emitted app-wide.
+            ui.label("Capture:");
+            let previous_capture = self.state.capture_level;
+            egui::ComboBox::from_id_salt("log_status_capture_level")
+                .selected_text(level_label(self.state.capture_level))
+                .show_ui(ui, |ui| {
+                    for level in FILTER_LEVELS {
+                        ui.selectable_value(
+                            &mut self.state.capture_level,
+                            level,
+                            level_label(level),
+                        );
+                    }
+                });
+            if self.state.capture_level != previous_capture {
+                log::set_max_level(self.state.capture_level);
+            }
         });
 
         ui.separator();
 
         let scrollback = self.state.scrollback.lock().unwrap();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for level in [Level::Error, Level::Warn] {
-                if level.to_level_filter() > self.state.min_level {
-                    continue;
-                }
-                let color = match level {
+            for record in scrollback.ordered(self.state.min_level) {
+                let color = match record.level {
                     Level::Error => STATUS_COLORS.error,
                     Level::Warn => STATUS_COLORS.warning,
                     _ => ui.style().visuals.text_color(),
                 };
-                for record in scrollback.level(level) {
-                    ui.label(
-                        RichText::new(format!(
-                            "{} [{}] {}: {}",
-                            record.timestamp.format("%H:%M:%S"),
-                            record.level,
-                            record.target,
-                            record.message
-                        ))
-                        .color(color),
-                    );
-                }
+                ui.label(
+                    RichText::new(format!(
+                        "{} [{}] {}: {}",
+                        record.timestamp.format("%H:%M:%S"),
+                        record.level,
+                        record.target,
+                        record.message
+                    ))
+                    .color(color),
+                );
             }
         });
     }
@@ -400,9 +429,18 @@ mod tests {
         );
     }
 
+    fn rec(level: Level, message: &str, ts: DateTime<Local>) -> LogRecord {
+        LogRecord {
+            level,
+            target: "t".into(),
+            message: message.into(),
+            timestamp: ts,
+        }
+    }
+
     #[test]
     fn capture_logger_drops_on_full_without_blocking() {
-        let (logger, rx) = channel(2, LevelFilter::Info);
+        let (logger, rx) = channel(2);
 
         // Five records into a depth-2 channel that nobody is draining. `try_send`
         // is non-blocking, so this returns (rather than hanging): the first two
@@ -416,19 +454,6 @@ mod tests {
         assert_eq!(first.message, "msg 0");
         assert_eq!(second.message, "msg 1");
         assert!(rx.try_recv().is_err(), "only two records should remain");
-    }
-
-    #[test]
-    fn capture_logger_gates_below_capture_level() {
-        let (logger, rx) = channel(8, LevelFilter::Warn);
-
-        emit(&logger, Level::Info, "info dropped by gate");
-        emit(&logger, Level::Error, "error kept");
-
-        let kept = rx.try_recv().expect("error should pass the gate");
-        assert_eq!(kept.message, "error kept");
-        assert_eq!(kept.level, Level::Error);
-        assert!(rx.try_recv().is_err(), "gated info must not be enqueued");
     }
 
     #[test]
@@ -458,6 +483,38 @@ mod tests {
         // Oldest warns evicted: newest four remain.
         assert_eq!(warns[0].message, "warn 96");
         assert_eq!(warns[3].message, "warn 99");
+    }
+
+    #[test]
+    fn ordered_merges_severities_chronologically() {
+        let t = |h, m, s| Local.with_ymd_and_hms(2026, 5, 31, h, m, s).unwrap();
+        let mut sb = Scrollback::new(16);
+        // Pushed out of time order across severities (as separate rings would hold them).
+        sb.push(rec(Level::Warn, "warn :21", t(16, 55, 21)));
+        sb.push(rec(Level::Warn, "warn :39", t(16, 56, 39)));
+        sb.push(rec(Level::Info, "info :16", t(16, 55, 16)));
+        sb.push(rec(Level::Error, "error :30", t(16, 55, 30)));
+
+        let order: Vec<&str> = sb
+            .ordered(LevelFilter::Info)
+            .map(|r| r.message.as_str())
+            .collect();
+        assert_eq!(
+            order,
+            ["info :16", "warn :21", "error :30", "warn :39"],
+            "records merge into one chronological stream across the per-severity rings"
+        );
+
+        // The display filter still applies; survivors stay time-ordered.
+        let warn_and_up: Vec<&str> = sb
+            .ordered(LevelFilter::Warn)
+            .map(|r| r.message.as_str())
+            .collect();
+        assert_eq!(
+            warn_and_up,
+            ["warn :21", "error :30", "warn :39"],
+            "Info excluded at the Warn filter; remainder still chronological"
+        );
     }
 
     #[test]
@@ -548,7 +605,7 @@ mod tests {
         let scrollback = Arc::new(Mutex::new(Scrollback::new(16)));
         let viewing = Arc::new(AtomicBool::new(false));
 
-        let (logger, rx) = channel(16, LevelFilter::Info);
+        let (logger, rx) = channel(16);
         let handle = spawn_drain_thread(rx, scrollback.clone(), alert.clone(), viewing.clone());
 
         emit(&logger, Level::Error, "boom");
@@ -686,7 +743,7 @@ mod tests {
         let scrollback = Arc::new(Mutex::new(Scrollback::new(16)));
         let viewing = Arc::new(AtomicBool::new(viewing));
 
-        let (logger, rx) = channel(16, LevelFilter::Info);
+        let (logger, rx) = channel(16);
         let handle = spawn_drain_thread(rx, scrollback.clone(), alert.clone(), viewing);
 
         emit(&logger, level, message);
