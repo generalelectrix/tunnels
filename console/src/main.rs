@@ -16,6 +16,14 @@ use tunnels_lib::repaint::RepaintSignal;
 /// Approximately 240 fps.
 const RENDER_INTERVAL: Duration = Duration::from_nanos(16666667 / 4);
 
+/// Backlog of in-flight log records between the producer and the drain thread.
+/// Records are dropped (and counted) when this fills, so logging never blocks
+/// a real-time thread.
+const LOG_CHANNEL_CAPACITY: usize = 1024;
+
+/// Per-severity scrollback retained for the in-GUI log view.
+const LOG_SCROLLBACK_PER_SEVERITY: usize = 500;
+
 /// Override NSApplication's terminate: to send performClose: to the key
 /// window instead of killing the process. This converts Cmd+Q into the
 /// same close event as clicking the red window button, which our
@@ -50,22 +58,13 @@ fn install_terminate_override() {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn init_logger() {
-    oslog::OsLogger::new("com.generalelectrix.tunnels")
-        .level_filter(log::LevelFilter::Info)
-        .init()
-        .expect("failed to initialize os_log");
-}
-
-#[cfg(not(target_os = "macos"))]
-fn init_logger() {
-    simplelog::SimpleLogger::init(simplelog::LevelFilter::Info, simplelog::Config::default())
-        .expect("failed to initialize logger");
-}
-
 fn main() -> Result<()> {
-    init_logger();
+    // The in-GUI Status view is the only log destination — no stderr/terminal output.
+    // The sink captures whatever passes the global gate; the GUI "Capture" dropdown owns
+    // that gate via `log::set_max_level`. Start at Warn.
+    let (capture, log_rx) = gui_common::log_status::channel(LOG_CHANNEL_CAPACITY);
+    log::set_boxed_logger(Box::new(capture)).expect("failed to initialize logger");
+    log::set_max_level(log::LevelFilter::Warn);
 
     #[cfg(target_os = "macos")]
     install_terminate_override();
@@ -90,6 +89,7 @@ fn main() -> Result<()> {
         client,
         admin,
         hostname,
+        log_rx,
     ));
 
     eframe::run_native(
@@ -98,13 +98,29 @@ fn main() -> Result<()> {
         Box::new(move |cc| {
             stage_theme::apply(&cc.egui_ctx);
 
-            let (send, recv, client, admin, hostname) =
+            let (send, recv, client, admin, hostname, log_rx) =
                 startup.take().expect("creator closure called once");
 
             let repaint: RepaintSignal = {
                 let ctx = cc.egui_ctx.clone();
                 Arc::new(move || ctx.request_repaint())
             };
+
+            // Build the in-GUI log surfaces and spawn the drain thread that
+            // moves captured records into scrollback and fires the repaint.
+            let log_alert = Arc::new(gui_common::log_status::LogAlert::new(repaint.clone()));
+            let scrollback = Arc::new(std::sync::Mutex::new(
+                gui_common::log_status::Scrollback::new(LOG_SCROLLBACK_PER_SEVERITY),
+            ));
+            let viewing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            gui_common::log_status::spawn_drain_thread(
+                log_rx,
+                scrollback.clone(),
+                log_alert.clone(),
+                viewing.clone(),
+            );
+            let log_status =
+                gui_common::log_status::LogStatusState::new(log_alert, scrollback, viewing);
 
             let gui_state = Arc::new(GuiState::new(repaint.clone()));
             let show_gui_state = gui_state.clone();
@@ -128,6 +144,7 @@ fn main() -> Result<()> {
                 hostname,
                 repaint,
                 envelope_rx,
+                log_status,
             )))
         }),
     )

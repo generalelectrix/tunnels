@@ -14,6 +14,7 @@ use eframe::egui;
 use admin_panel::{AdminPanelState, AdminService};
 use audio_panel::AudioPanelState;
 use gui_common::envelope_viewer::EnvelopeViewerState;
+use gui_common::log_status::{self, LogStatusPanel, LogStatusState};
 use gui_common::tracked::TrackedBool;
 use gui_common::{CloseHandler, MessageModal, clock_panel};
 use midi_panel::{MidiPanel, MidiPanelState};
@@ -31,6 +32,7 @@ enum Tab {
     Audio,
     Animation,
     Clients,
+    Status,
 }
 
 pub struct ConfigApp {
@@ -55,6 +57,7 @@ pub struct ConfigApp {
     active_tab: Tab,
     visualizer_active: TrackedBool,
     gui_state: SharedGuiState,
+    log_status: LogStatusState,
 }
 
 impl eframe::App for ConfigApp {
@@ -67,8 +70,15 @@ impl eframe::App for ConfigApp {
                 ui.selectable_value(&mut self.active_tab, Tab::Audio, "Audio");
                 ui.selectable_value(&mut self.active_tab, Tab::Animation, "Animation");
                 ui.selectable_value(&mut self.active_tab, Tab::Clients, "Clients");
+                if log_status::status_tab(ui, self.active_tab == Tab::Status, &self.log_status) {
+                    self.active_tab = Tab::Status;
+                }
             });
         });
+
+        // Let the drain thread know whether the live log view is in front, so
+        // it wakes the GUI on plain records only while the Status tab is open.
+        self.log_status.set_viewing(self.active_tab == Tab::Status);
 
         // Notify the show when the visualizer is visible (either tab or detached window).
         let detached = self.visualizer_detached.load(Ordering::Relaxed);
@@ -111,8 +121,7 @@ impl eframe::App for ConfigApp {
 
                     ui.add_space(16.0);
                     ui.separator();
-                    let clock_running =
-                        self.gui_state.clock_service_running.load(Ordering::Relaxed);
+                    let clock_running = self.gui_state.clock_service_running.load();
                     if let Some(action) = clock_panel::clock_service_ui(ui, clock_running) {
                         let cmd = match action {
                             clock_panel::ClockServiceAction::Start => {
@@ -163,6 +172,12 @@ impl eframe::App for ConfigApp {
                         &self.visualizer_detached,
                     );
                 }
+                Tab::Status => {
+                    LogStatusPanel {
+                        state: &mut self.log_status,
+                    }
+                    .ui(ui);
+                }
                 Tab::Clients => {} // handled above
             });
         }
@@ -181,6 +196,7 @@ impl ConfigApp {
         hostname: String,
         repaint: RepaintSignal,
         envelope_streams_rx: Receiver<EnvelopeStreams>,
+        log_status: LogStatusState,
     ) -> Self {
         let audio_state = gui_state.audio_state.load();
         let devices = tunnels::audio::AudioInput::devices().unwrap_or_default();
@@ -205,6 +221,7 @@ impl ConfigApp {
             active_tab: Tab::default(),
             visualizer_active: TrackedBool::new(false),
             gui_state,
+            log_status,
         }
     }
 }
