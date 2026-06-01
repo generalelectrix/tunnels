@@ -45,6 +45,11 @@ pub struct AlertTally {
 
 /// Atomic cell holding an `AlertTally` packed as `(errors << 32) | warns` in a
 /// single `AtomicU64`. The packing is private; callers see only `AlertTally`.
+///
+/// The single-`u64` packing is load-bearing: it lets the GUI read both counts in
+/// one atomic load, so errors and warns are always a matched (tear-free) pair. Do
+/// NOT split this into two separate atomics — that would reintroduce a torn read
+/// where the GUI could observe a new error count against a stale warn count.
 pub struct AlertCounts(AtomicU64);
 
 impl AtomicValue for AlertCounts {
@@ -148,7 +153,8 @@ pub struct Scrollback {
 impl Scrollback {
     pub fn new(per_severity_cap: usize) -> Self {
         Self {
-            by_level: std::array::from_fn(|_| VecDeque::new()),
+            // Pre-sized to the cap so the rings never reallocate during warm-up.
+            by_level: std::array::from_fn(|_| VecDeque::with_capacity(per_severity_cap)),
             cap: per_severity_cap,
         }
     }
@@ -372,25 +378,35 @@ impl LogStatusPanel<'_> {
         ui.separator();
 
         let scrollback = self.state.scrollback.lock().unwrap();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for record in scrollback.newest_first(self.state.min_level) {
-                let color = match record.level {
-                    Level::Error => STATUS_COLORS.error,
-                    Level::Warn => STATUS_COLORS.warning,
-                    _ => ui.style().visuals.text_color(),
-                };
-                ui.label(
-                    RichText::new(format!(
+        // Collect the newest-first merge once (cheap — references, already ordered),
+        // then virtualize: `show_rows` only invokes the closure for the visible row
+        // range, so layout cost is bounded by the viewport, not the whole buffer.
+        // Rows are single-line monospace (uniform height, required by `show_rows`);
+        // long lines are truncated rather than wrapped.
+        let rows: Vec<&LogRecord> = scrollback.newest_first(self.state.min_level).collect();
+        let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show_rows(ui, row_height, rows.len(), |ui, row_range| {
+                for record in row_range.filter_map(|i| rows.get(i).copied()) {
+                    let color = match record.level {
+                        Level::Error => STATUS_COLORS.error,
+                        Level::Warn => STATUS_COLORS.warning,
+                        _ => ui.style().visuals.text_color(),
+                    };
+                    let text = format!(
                         "{} [{}] {}: {}",
                         record.timestamp.format("%H:%M:%S"),
                         record.level,
                         record.target,
                         record.message
-                    ))
-                    .color(color),
-                );
-            }
-        });
+                    );
+                    ui.add(
+                        egui::Label::new(RichText::new(text).monospace().color(color))
+                            .wrap_mode(egui::TextWrapMode::Truncate),
+                    );
+                }
+            });
     }
 }
 
