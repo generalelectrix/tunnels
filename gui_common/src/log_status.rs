@@ -1,16 +1,15 @@
 //! In-GUI logging capture and rolled-up status indicator.
 //!
-//! Captures `log` records on a lock-free, non-blocking producer path (the show
-//! loop and other real-time threads log here, so it must never block or lock),
-//! keeps a finite per-severity scrollback, and derives a sticky-until-viewed
-//! alert that wakes an idle GUI the instant a warn/error occurs.
+//! Captures `log` records on a lock-free, non-blocking producer path that never
+//! blocks or locks, so it is safe to call from a real-time context. Retains a
+//! finite per-severity scrollback and derives a sticky-until-viewed alert that
+//! requests a repaint the instant a warn/error is captured.
 //!
 //! Three roles, two boundaries:
 //! - Producer (`CaptureLogger`) → drain thread: a bounded `std::sync::mpsc`
-//!   channel; `try_send` is lock-free and drops the record when full rather than
-//!   blocking a real-time thread.
-//! - Drain thread → GUI: a `NotifiedAtomic<AlertCounts>` whose `store` fires the
-//!   `RepaintSignal` with no per-update heap allocation.
+//!   channel; `try_send` drops the record when full rather than blocking.
+//! - Drain thread → consumer: a `NotifiedAtomic<AlertCounts>` whose `store`
+//!   fires the `RepaintSignal` with no per-update heap allocation.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -26,8 +25,8 @@ use tunnels_lib::repaint::RepaintSignal;
 
 use crate::STATUS_COLORS;
 
-/// One captured log line. `timestamp` is the local wall-clock time when the
-/// producer observed the record, rendered as-is in the GUI (no per-frame work).
+/// One captured log line. `timestamp` is the local wall-clock time at which the
+/// record was observed.
 pub struct LogRecord {
     pub level: Level,
     pub target: String,
@@ -35,8 +34,8 @@ pub struct LogRecord {
     pub timestamp: DateTime<Local>,
 }
 
-/// Monotonic per-severity counts of captured records, as the GUI consumes them.
-/// Comparing a snapshot against a remembered one yields the sticky alert state.
+/// Monotonic per-severity counts of captured records. Comparing a current
+/// snapshot against a remembered one yields the sticky alert state.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct AlertTally {
     pub errors: u32,
@@ -46,10 +45,8 @@ pub struct AlertTally {
 /// Atomic cell holding an `AlertTally` packed as `(errors << 32) | warns` in a
 /// single `AtomicU64`. The packing is private; callers see only `AlertTally`.
 ///
-/// The single-`u64` packing is load-bearing: it lets the GUI read both counts in
-/// one atomic load, so errors and warns are always a matched (tear-free) pair. Do
-/// NOT split this into two separate atomics — that would reintroduce a torn read
-/// where the GUI could observe a new error count against a stale warn count.
+/// Packing both counts in one `u64` means a single atomic load returns errors
+/// and warns as a matched, tear-free pair.
 pub struct AlertCounts(AtomicU64);
 
 impl AtomicValue for AlertCounts {
@@ -79,9 +76,8 @@ fn unpack_tally(bits: u64) -> AlertTally {
     }
 }
 
-/// The shared alert surface written by the drain thread and read by the GUI.
-/// The monotonic per-severity `counts` are the only thing that wakes the GUI
-/// (a store fires the `RepaintSignal`).
+/// Shared alert surface: monotonic per-severity counts written by the drain
+/// thread. A store fires the `RepaintSignal`; reads do not.
 pub struct LogAlert {
     counts: NotifiedAtomic<AlertCounts>,
 }
@@ -93,16 +89,15 @@ impl LogAlert {
         }
     }
 
-    /// Current per-severity tally. Reading this never wakes the GUI.
+    /// Current per-severity tally. Reading does not fire the `RepaintSignal`.
     pub fn tally(&self) -> AlertTally {
         self.counts.load()
     }
 }
 
-/// Producer-side `log` sink, installed as the global logger in `main()` before
-/// the GUI exists (the in-GUI Status view is the only log destination — there is
-/// no stderr/terminal output). Captured records are pushed to the drain thread
-/// over a bounded channel; the path never blocks or locks.
+/// Producer-side `log` sink. Captured records are pushed to the drain thread
+/// over a bounded channel; the path never blocks or locks, so it is safe to call
+/// from a real-time context.
 pub struct CaptureLogger {
     tx: SyncSender<LogRecord>,
 }
@@ -252,10 +247,10 @@ pub enum Alert {
     Error(u32),
 }
 
-/// Panel state owned by the App. Holds the shared alert/scrollback handles plus
-/// the private `acked` snapshot that implements sticky-until-viewed, the display
-/// `min_level` filter (the "Show" combo), and the `capture_level` mirror of the
-/// global log floor (the "Capture" combo). Both default to `Warn`.
+/// Holds the shared alert and scrollback handles, the `acked` snapshot that
+/// implements sticky-until-viewed, the `min_level` filter applied when listing
+/// retained records, and `capture_level`, which mirrors the global log floor.
+/// `min_level` and `capture_level` default to `Warn`.
 pub struct LogStatusState {
     alert: Arc<LogAlert>,
     scrollback: Arc<Mutex<Scrollback>>,
@@ -267,8 +262,8 @@ pub struct LogStatusState {
 
 impl LogStatusState {
     /// Construct from the same handles the drain thread received. `acked` starts
-    /// at the current tally so a fresh state opens Calm. `capture_level` mirrors
-    /// the global log floor set by `main` at startup (`Warn`).
+    /// at the current tally so a fresh state opens Calm. `min_level` and
+    /// `capture_level` both initialize to `Warn`.
     pub fn new(
         alert: Arc<LogAlert>,
         scrollback: Arc<Mutex<Scrollback>>,
@@ -285,8 +280,7 @@ impl LogStatusState {
         }
     }
 
-    /// Report whether the Status tab is currently in view. Drives the drain
-    /// thread's wake-on-info behavior.
+    /// Record whether the live log view is currently in front.
     pub fn set_viewing(&self, active: bool) {
         self.viewing.store(active, Ordering::Relaxed);
     }
@@ -411,11 +405,11 @@ impl LogStatusPanel<'_> {
 }
 
 /// Render the Status tab in a tab bar, returning `true` if it was clicked this
-/// frame. When calm it's an ordinary selectable tab labelled "Status" (matching
-/// its neighbors). When an unviewed warn/error is pending the whole tab becomes a
-/// solid-colored button — red `Error: <count>` for errors, amber `Warn: <count>`
-/// for warnings — in dark text, where `<count>` is the number of unacknowledged
-/// records at that severity.
+/// frame. When calm it renders as an ordinary selectable tab labelled "Status".
+/// When an unviewed warn/error is pending the whole tab becomes a solid-colored
+/// button — red `Error: <count>` for errors, amber `Warn: <count>` for warnings —
+/// in dark text, where `<count>` is the number of unacknowledged records at that
+/// severity.
 pub fn status_tab(ui: &mut egui::Ui, selected: bool, state: &LogStatusState) -> bool {
     let (text, color) = match state.alert() {
         Alert::Calm => return ui.selectable_label(selected, "Status").clicked(),

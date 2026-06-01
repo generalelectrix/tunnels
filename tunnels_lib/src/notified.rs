@@ -35,9 +35,8 @@ impl<T> Notified<T> {
 }
 
 /// An atomic cell whose value loads and stores as a named `Value` type.
-/// Ordering is `Relaxed` internally and intentionally not exposed: every atomic
-/// in this codebase carries a self-contained payload, so no stronger ordering is
-/// load-bearing, and the whole codebase already uses Relaxed exclusively.
+/// Ordering is `Relaxed` internally and intentionally not exposed: each value is
+/// a self-contained payload, so no stronger ordering is load-bearing.
 pub trait AtomicValue {
     type Value: Copy;
     fn new(value: Self::Value) -> Self;
@@ -58,8 +57,8 @@ impl AtomicValue for AtomicBool {
     }
 }
 
-/// Atomic sibling of `Notified<T>`: a store fires the `RepaintSignal` atomically
-/// with the write, with no heap allocation (unlike `Notified<T>`, which is `ArcSwap`).
+/// Atomic sibling of `Notified<T>`: a store atomically writes the value and fires
+/// the `RepaintSignal`, with no heap allocation per update.
 pub struct NotifiedAtomic<A: AtomicValue> {
     value: A,
     repaint: RepaintSignal,
@@ -81,7 +80,7 @@ impl<A: AtomicValue> NotifiedAtomic<A> {
     }
 }
 
-/// Backwards-compatible alias for the old concrete type.
+/// A `NotifiedAtomic` over a `bool`.
 pub type NotifiedAtomicBool = NotifiedAtomic<AtomicBool>;
 
 #[cfg(test)]
