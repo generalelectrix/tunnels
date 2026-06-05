@@ -176,6 +176,13 @@ impl Scrollback {
         self.by_level[idx].iter()
     }
 
+    /// Remove every retained record at all severities.
+    pub fn clear(&mut self) {
+        for ring in &mut self.by_level {
+            ring.clear();
+        }
+    }
+
     /// All retained records at or above `min_level`, merged across the
     /// per-severity rings **newest first** (so the most recent message renders at
     /// the top of the panel). Each ring is appended in arrival order, so iterating
@@ -338,6 +345,7 @@ impl LogStatusPanel<'_> {
         // Opening the tab clears the sticky alert.
         self.state.mark_viewed();
 
+        let mut clear_clicked = false;
         ui.horizontal(|ui| {
             // "Show" filters what the panel displays from what's already captured.
             ui.label("Show:");
@@ -367,7 +375,16 @@ impl LogStatusPanel<'_> {
             if self.state.capture_level != previous_capture {
                 log::set_max_level(self.state.capture_level);
             }
+
+            // "Clear" pins to the right edge of the row.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                clear_clicked = ui.button("Clear").clicked();
+            });
         });
+
+        if clear_clicked {
+            self.state.scrollback.lock().unwrap().clear();
+        }
 
         ui.separator();
 
@@ -505,6 +522,27 @@ mod tests {
         // Oldest warns evicted: newest four remain.
         assert_eq!(warns[0].message, "warn 96");
         assert_eq!(warns[3].message, "warn 99");
+    }
+
+    #[test]
+    fn clear_empties_all_severities() {
+        let now = Local::now();
+        let mut sb = Scrollback::new(16);
+        sb.push(rec(Level::Error, "err", now));
+        sb.push(rec(Level::Warn, "warn", now));
+        sb.push(rec(Level::Info, "info", now));
+        assert_eq!(sb.newest_first(LevelFilter::Trace).count(), 3);
+
+        sb.clear();
+
+        assert_eq!(
+            sb.newest_first(LevelFilter::Trace).count(),
+            0,
+            "clear empties every severity"
+        );
+        assert_eq!(sb.level(Level::Error).count(), 0);
+        assert_eq!(sb.level(Level::Warn).count(), 0);
+        assert_eq!(sb.level(Level::Info).count(), 0);
     }
 
     #[test]
