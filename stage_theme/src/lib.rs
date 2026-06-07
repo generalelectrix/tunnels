@@ -39,6 +39,11 @@ const BORDER_VISIBLE: Color32 = Color32::from_rgb(80, 80, 100);
 /// Call this once at initialization time (e.g. in the `CreationContext` callback).
 /// The style persists across all subsequent frames.
 pub fn apply(ctx: &egui::Context) {
+    // Pin the theme to dark so it never follows the OS appearance. egui defaults
+    // to `ThemePreference::System`, which resolves to light on systems without a
+    // dark mode (e.g. macOS before Mojave).
+    ctx.set_theme(egui::ThemePreference::Dark);
+
     let mut visuals = egui::Visuals::dark();
 
     // Ultra-dark backgrounds
