@@ -1,11 +1,10 @@
 use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock::Ticks;
-use crate::clock_bank::{ClockIdxExt, ClockStore};
+use crate::clock_bank::ClockStore;
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms::WaveformArgs;
 use crate::{clock_bank::ClockIdx, waveforms};
-use log::error;
 use noise::NoiseFn;
 use noise::Simplex;
 use serde::{Deserialize, Serialize};
@@ -287,16 +286,6 @@ impl Animation {
         match msg {
             Set(sc) => self.handle_state_change(sc, emitter),
             SetClockSource(source) => {
-                let source: Option<ClockIdx> = match source {
-                    Some(s) => match s.try_into() {
-                        Ok(s) => Some(s),
-                        Err(e) => {
-                            error!("could not process animation control message: {e}");
-                            return;
-                        }
-                    },
-                    None => None,
-                };
                 self.handle_state_change(StateChange::ClockSource(source), emitter);
             }
             TogglePulse => {
@@ -363,11 +352,8 @@ pub enum StateChange {
 #[derive(Debug, Clone)]
 pub enum ControlMessage {
     Set(StateChange),
-    /// Since clock IDs need to be validated, this path handles the fallible case.
-    /// FIXME: it would be nicer to validate this at control message creation time,
-    /// but at the moment control message creator functions are infallible and
-    /// that's more refactoring than I want to deal with right now.
-    SetClockSource(Option<ClockIdxExt>),
+    /// Set the clock that drives this animation, or `None` for the internal clock.
+    SetClockSource(Option<ClockIdx>),
     TogglePulse,
     ToggleStanding,
     ToggleInvert,

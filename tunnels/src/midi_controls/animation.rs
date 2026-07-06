@@ -1,6 +1,6 @@
 use crate::{
     animation::{ControlMessage, StateChange, Waveform as WaveformType},
-    clock_bank::{ClockIdxExt, N_CLOCKS},
+    clock_bank::{ClockIdx, DEFAULT_N_CLOCKS},
     midi::{Event, EventType, Mapping, MidiOutput, cc_ch0, event, note_on_ch0, note_on_ch1},
     midi_controls::Device,
     show::ControlMessage::Animation,
@@ -43,7 +43,7 @@ lazy_static! {
     };
     static ref CLOCK_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
-        mappings: (-1..N_CLOCKS as i32)
+        mappings: (-1..DEFAULT_N_CLOCKS as i32)
             .map(|clock_id| note_on_ch0((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
             .collect(),
         off: 0,
@@ -78,13 +78,13 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         m if m.event_type == EventType::NoteOn
             && m.channel == 0
             && m.control >= (CLOCK_SELECT_CONTROL_OFFSET - 1) as u8
-            && m.control < (CLOCK_SELECT_CONTROL_OFFSET + N_CLOCKS as i32) as u8 =>
+            && m.control < (CLOCK_SELECT_CONTROL_OFFSET + DEFAULT_N_CLOCKS as i32) as u8 =>
         {
             let clock_id = m.control as i32 - CLOCK_SELECT_CONTROL_OFFSET;
             if clock_id < 0 {
                 Animation(Set(ClockSource(None)))
             } else {
-                Animation(SetClockSource(Some(ClockIdxExt(clock_id as usize))))
+                Animation(SetClockSource(Some(ClockIdx(clock_id as usize))))
             }
         }
         _ => return None,
@@ -125,7 +125,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut impl MidiOutput) 
         Pulse(v) => send(event(PULSE, v as u8)),
         ClockSource(v) => {
             let index = match v {
-                Some(source) => usize::from(source) as i32,
+                Some(source) => source.0 as i32,
                 None => -1,
             };
             CLOCK_SELECT_BUTTONS.select(

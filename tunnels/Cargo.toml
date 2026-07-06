@@ -19,6 +19,7 @@ rmp-serde.workspace = true
 
 rosc = "0.11"
 noise = "0.9.0"
+arrayvec = { version = "0.7", features = ["serde"] }
 
 egui_plot = "0.34"
 eframe = "0.33"

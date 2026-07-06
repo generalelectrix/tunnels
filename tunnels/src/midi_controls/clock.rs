@@ -5,9 +5,9 @@ use crate::midi::Event as MidiEvent;
 use crate::{
     clock::ControlMessage as ClockControlMessage,
     clock::StateChange as ClockStateChange,
-    clock_bank::ClockIdxExt,
+    clock_bank::ClockIdx,
     clock_bank::ControlMessage,
-    clock_bank::N_CLOCKS,
+    clock_bank::DEFAULT_N_CLOCKS,
     clock_bank::StateChange,
     midi::{Mapping, MidiOutput, cc, event, note_on},
     midi_controls::Device,
@@ -74,10 +74,10 @@ fn interpret_with_mapping_fn(
     use ClockStateChange::*;
     let v = event.value;
 
-    for channel in 0..N_CLOCKS {
+    for channel in 0..DEFAULT_N_CLOCKS {
         let mkmsg = |msg| {
             crate::show::ControlMessage::Clock(ControlMessage {
-                channel: ClockIdxExt(channel),
+                channel: ClockIdx(channel),
                 msg,
             })
         };
@@ -123,10 +123,10 @@ pub fn update_clock_control(sc: StateChange, manager: &mut impl MidiOutput) {
     use ClockStateChange::*;
 
     let mut send = |control, value| {
-        if let Some(mapping) = mapping_cmd_mm1(control, sc.channel.into()) {
+        if let Some(mapping) = mapping_cmd_mm1(control, sc.channel.0) {
             manager.send(&Device::BehringerCmdMM1, event(mapping, value));
         }
-        if let Some(mapping) = mapping_touchosc(control, sc.channel.into()) {
+        if let Some(mapping) = mapping_touchosc(control, sc.channel.0) {
             manager.send(&Device::TouchOsc, event(mapping, value));
         }
     };

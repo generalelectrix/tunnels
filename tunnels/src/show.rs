@@ -681,7 +681,7 @@ mod test {
         {
             use crate::animation::StateChange as A;
             use crate::animation::Waveform;
-            use crate::clock_bank::ClockIdxExt;
+            use crate::clock_bank::ClockIdx;
             let mut a = |name, sc| changes.push((name, StateChange::Animation(sc)));
             a("anim/speed", A::Speed(bip));
             a("anim/size", A::Size(uni));
@@ -699,14 +699,8 @@ mod test {
             a("anim/invert_on", A::Invert(true));
             a("anim/standing_on", A::Standing(true));
             a("anim/clock_internal", A::ClockSource(None));
-            a(
-                "anim/clock_0",
-                A::ClockSource(Some(ClockIdxExt(0).try_into().unwrap())),
-            );
-            a(
-                "anim/clock_1",
-                A::ClockSource(Some(ClockIdxExt(1).try_into().unwrap())),
-            );
+            a("anim/clock_0", A::ClockSource(Some(ClockIdx(0))));
+            a("anim/clock_1", A::ClockSource(Some(ClockIdx(1))));
             a("anim/use_audio_size_on", A::UseAudioSize(true));
             a("anim/use_audio_speed_on", A::UseAudioSpeed(true));
         }
@@ -805,12 +799,12 @@ mod test {
         // Clock state changes -- test multiple clock channels.
         {
             use crate::clock::StateChange as CS;
-            use crate::clock_bank::{ClockIdxExt, StateChange as CBS};
+            use crate::clock_bank::{ClockIdx, StateChange as CBS};
             let mut c = |name, ch: usize, sc| {
                 changes.push((
                     name,
                     StateChange::Clock(CBS {
-                        channel: ClockIdxExt(ch).try_into().unwrap(),
+                        channel: ClockIdx(ch),
                         change: sc,
                     }),
                 ))
