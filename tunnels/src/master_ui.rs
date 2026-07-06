@@ -2,7 +2,7 @@ use crate::{
     audio::{AudioInput, ShowEmitter},
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
-    clock_bank::ClockBank,
+    clock_bank::{ClockBank, ClockStore},
     gui_state::GuiDirty,
     midi_controls::MIXER_CHANNELS_PER_PAGE,
     mixer::{ChannelIdx, Mixer},
@@ -12,6 +12,7 @@ use crate::{
     tunnel::{AnimationIdx, TargetedAnimation},
 };
 
+use log::error;
 use serde::{Deserialize, Serialize};
 
 /// Manage stateful aspects of the UI.
@@ -86,7 +87,15 @@ impl MasterUI {
                 GuiDirty::CLEAN
             }
             Animation(am) => {
-                if let Some(a) = self.current_animation(mixer) {
+                if let crate::animation::ControlMessage::SetClockSource(Some(clock_id)) = am
+                    && clock_id.0 >= clocks.len()
+                {
+                    error!(
+                        "clock ID {} out of range, only {} clocks are configured",
+                        clock_id.0,
+                        clocks.len()
+                    );
+                } else if let Some(a) = self.current_animation(mixer) {
                     a.animation.control(am, emitter);
                 }
                 GuiDirty::CLEAN
