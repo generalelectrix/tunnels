@@ -56,8 +56,9 @@ impl Show {
         recv_control_event: Receiver<ControlEvent>,
         gui_state: SharedGuiState,
         envelope_streams_tx: Sender<EnvelopeStreams>,
+        n_clock_wings: usize,
     ) -> Result<Self> {
-        let midi_devices = default_midi_slots();
+        let midi_devices = default_midi_slots(n_clock_wings);
 
         // Determine if we need to configure a double-wide mixer for APC20 wing.
         let use_wing = midi_devices.iter().any(|init| match init {
@@ -79,7 +80,7 @@ impl Show {
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
-                clocks: ClockBank::default(),
+                clocks: ClockBank::new(n_clock_wings * clock_bank::CLOCKS_PER_WING),
                 positions: PositionBank::default(),
                 color_palette: ColorPalette::new(),
             },
@@ -432,7 +433,7 @@ mod test {
     fn test_render() -> Result<()> {
         let (send, recv) = channel();
         let (envelope_tx, _envelope_rx) = channel();
-        let mut show = Show::new(send, recv, test_gui_state(), envelope_tx)?;
+        let mut show = Show::new(send, recv, test_gui_state(), envelope_tx, 1)?;
 
         show.test_mode(stress);
 
@@ -535,7 +536,7 @@ mod test {
             Device::AkaiApc40,
             Device::AkaiApc20,
             Device::TouchOsc,
-            Device::BehringerCmdMM1,
+            Device::BehringerCmdMM1 { channel_offset: 0 },
         ];
         let event_types = [
             EventType::NoteOn,
@@ -1023,7 +1024,7 @@ mod test {
         fn test_new() -> (Self, Sender<ControlEvent>) {
             let (send, recv) = channel();
             let (envelope_tx, _envelope_rx) = channel();
-            let show = Show::new(send.clone(), recv, test_gui_state(), envelope_tx).unwrap();
+            let show = Show::new(send.clone(), recv, test_gui_state(), envelope_tx, 1).unwrap();
             (show, send)
         }
     }

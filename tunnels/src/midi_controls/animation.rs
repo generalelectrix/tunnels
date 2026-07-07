@@ -43,6 +43,9 @@ lazy_static! {
     };
     static ref CLOCK_SELECT_BUTTONS: RadioButtons = RadioButtons {
         // -1 corresponds to "internal", the rest as global clock IDs.
+        // NOTE: expanding this past a handful of clocks collides with other APC40
+        // control numbers (offset 112 + clock id); a wider MIDI clock-source
+        // selector needs a deliberate control-layout change.
         mappings: (-1..DEFAULT_N_CLOCKS as i32)
             .map(|clock_id| note_on_ch0((clock_id + CLOCK_SELECT_CONTROL_OFFSET) as u8))
             .collect(),

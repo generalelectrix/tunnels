@@ -46,6 +46,9 @@ pub const MAX_CLOCKS: usize = 12;
 /// The number of clocks in a bank when no count is otherwise specified.
 pub const DEFAULT_N_CLOCKS: usize = 4;
 
+/// The number of clocks contributed by one clock wing.
+pub const CLOCKS_PER_WING: usize = 4;
+
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 /// Index of a clock in a bank.
 ///

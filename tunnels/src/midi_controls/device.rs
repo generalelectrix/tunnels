@@ -10,7 +10,11 @@ pub enum Device {
     AkaiApc40,
     AkaiApc20,
     TouchOsc,
-    BehringerCmdMM1,
+    /// A CMD MM-1 acting as a clock wing. `channel_offset` is the index of the
+    /// first clock it controls.
+    BehringerCmdMM1 {
+        channel_offset: usize,
+    },
 }
 
 impl std::fmt::Display for Device {
@@ -24,7 +28,7 @@ impl Device {
         vec![
             Self::AkaiApc40,
             Self::TouchOsc,
-            Self::BehringerCmdMM1,
+            Self::BehringerCmdMM1 { channel_offset: 0 },
             // TODO: update support for Apc20.
         ]
     }
@@ -42,7 +46,7 @@ impl InitMidiDevice for Device {
             Self::AkaiApc40 => init_apc_40(out),
             Self::AkaiApc20 => init_apc_20(out),
             Self::TouchOsc => Ok(()),
-            Self::BehringerCmdMM1 => Ok(()),
+            Self::BehringerCmdMM1 { .. } => Ok(()),
         }
     }
 }
@@ -54,7 +58,7 @@ impl MidiDevice for Device {
             Self::AkaiApc40 => "Akai APC40",
             Self::AkaiApc20 => "Akai APC20",
             Self::TouchOsc => "TouchOSC Bridge",
-            Self::BehringerCmdMM1 => "CMD MM-1",
+            Self::BehringerCmdMM1 { .. } => "CMD MM-1",
         }
     }
 }
@@ -145,8 +149,8 @@ impl MidiHandler for Device {
                 .or_else(|| super::master_ui::interpret(event, 0))
                 .or_else(|| super::clock::interpret_touchosc(event))
                 .or_else(|| super::audio::interpret_touchosc(event)),
-            Device::BehringerCmdMM1 => None
-                .or_else(|| super::clock::interpret_cmdmm1(event))
+            Device::BehringerCmdMM1 { channel_offset } => None
+                .or_else(|| super::clock::interpret_cmdmm1(event, *channel_offset))
                 .or_else(|| super::audio::interpret_cmdmm1(event)),
         }
     }

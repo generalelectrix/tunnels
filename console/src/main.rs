@@ -128,7 +128,9 @@ fn main() -> Result<()> {
             let (envelope_tx, envelope_rx) = channel();
 
             std::thread::spawn(move || {
-                let mut show = Show::new(send, recv, show_gui_state, envelope_tx)
+                // TODO(C1b): replace the hardcoded wing count with the startup splash answer.
+                let n_clock_wings = 1;
+                let mut show = Show::new(send, recv, show_gui_state, envelope_tx, n_clock_wings)
                     .expect("show construction should not fail at startup");
                 loop {
                     if let Err(e) = show.run(RENDER_INTERVAL) {

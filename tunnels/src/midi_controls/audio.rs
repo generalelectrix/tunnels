@@ -60,15 +60,16 @@ pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutpu
     match sc {
         EnvelopeValue(v) => {
             send(event(MONITOR, unipolar_to_midi(v)));
+            // Audio metering is global; address the first (canonical) clock wing.
             manager.send(
-                &Device::BehringerCmdMM1,
+                &Device::BehringerCmdMM1 { channel_offset: 0 },
                 event(CMD_MM1_VU_METER, 48 + (v.val() * 15.) as u8),
             );
         }
         Monitor(v) => {
             send(event(MONITOR_TOGGLE, v as u8));
             manager.send(
-                &Device::BehringerCmdMM1,
+                &Device::BehringerCmdMM1 { channel_offset: 0 },
                 event(CMD_MM1_MONITOR_TOGGLE, v as u8),
             );
         }
