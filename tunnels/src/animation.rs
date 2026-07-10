@@ -238,8 +238,12 @@ impl Animation {
         if let Some(id) = self.clock_source {
             // A selected clock that no longer exists reads as the neutral default
             // (submaster 0 → this animation contributes nothing).
-            v *= external_clocks.submaster_level(id).unwrap_or_default().val();
-            use_audio_size = use_audio_size || external_clocks.use_audio_size(id).unwrap_or_default();
+            v *= external_clocks
+                .submaster_level(id)
+                .unwrap_or_default()
+                .val();
+            use_audio_size =
+                use_audio_size || external_clocks.use_audio_size(id).unwrap_or_default();
         }
         // scale this animation by audio envelope if set
         if use_audio_size {
