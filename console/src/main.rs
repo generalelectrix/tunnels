@@ -72,6 +72,13 @@ fn main() -> Result<()> {
     let (send_control_event, recv_control_event) = channel();
     install_midi_device_change_handler(ControlEventHandler(send_control_event.clone()))?;
 
+    // Ask how many clock wings to configure before opening the main window.
+    // Closing the splash without starting exits cleanly.
+    let Some(config) = console::startup_config::run_startup_config()? else {
+        return Ok(());
+    };
+    let n_clock_wings = config.n_clock_wings;
+
     let client = CommandClient::new(send_control_event.clone());
 
     let admin: Arc<dyn console::admin_panel::AdminService> =
@@ -128,8 +135,6 @@ fn main() -> Result<()> {
             let (envelope_tx, envelope_rx) = channel();
 
             std::thread::spawn(move || {
-                // TODO(C1b): replace the hardcoded wing count with the startup splash answer.
-                let n_clock_wings = 1;
                 let mut show = Show::new(send, recv, show_gui_state, envelope_tx, n_clock_wings)
                     .expect("show construction should not fail at startup");
                 loop {
