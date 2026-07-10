@@ -23,20 +23,22 @@ pub trait ClockStore {
         self.len() == 0
     }
 
-    /// Return the current phase of this clock.
-    fn phase(&self, index: ClockIdx) -> Phase;
+    /// Return the phase of the clock at `index`, or `None` if it does not exist.
+    fn phase(&self, index: ClockIdx) -> Option<Phase>;
 
-    /// Returnt the absolute number of ticks.
-    fn ticks(&self, index: ClockIdx) -> Ticks;
+    /// Return the absolute number of ticks of the clock at `index`, or `None` if
+    /// it does not exist.
+    fn ticks(&self, index: ClockIdx) -> Option<Ticks>;
 
-    /// Return the current submaster level of this clock.
-    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat;
+    /// Return the submaster level of the clock at `index`, or `None` if it does
+    /// not exist.
+    fn submaster_level(&self, index: ClockIdx) -> Option<UnipolarFloat>;
 
-    /// Return true if we should use audio envelope to scale submaster level.
-    /// This is returned independently, rather than applied to the submaster
-    /// level directly, to allow clients of the submaster to avoid double-
-    /// modulating with audio envelope.
-    fn use_audio_size(&self, index: ClockIdx) -> bool;
+    /// Return whether the clock at `index` scales its submaster by the audio
+    /// envelope, or `None` if it does not exist. This is returned independently,
+    /// rather than applied to the submaster level directly, to allow clients to
+    /// avoid double-modulating with the audio envelope.
+    fn use_audio_size(&self, index: ClockIdx) -> Option<bool>;
 }
 
 /// The maximum number of clocks a bank can hold. The number in use is a runtime
@@ -53,7 +55,7 @@ pub const CLOCKS_PER_WING: usize = 4;
 /// Index of a clock in a bank.
 ///
 /// Not a proof of validity: the clock count is dynamic, so a read for an
-/// out-of-range index yields a neutral default rather than a value.
+/// out-of-range index returns `None`.
 pub struct ClockIdx(pub usize);
 
 /// Maintain an indexable collection of clocks.
@@ -71,22 +73,20 @@ impl ClockStore for ClockBank {
         self.0.len()
     }
 
-    fn phase(&self, index: ClockIdx) -> Phase {
-        self.get(index).map(|c| c.phase()).unwrap_or(Phase::ZERO)
+    fn phase(&self, index: ClockIdx) -> Option<Phase> {
+        self.get(index).map(|c| c.phase())
     }
 
-    fn ticks(&self, index: ClockIdx) -> Ticks {
-        self.get(index).map(|c| c.ticks()).unwrap_or(0)
+    fn ticks(&self, index: ClockIdx) -> Option<Ticks> {
+        self.get(index).map(|c| c.ticks())
     }
 
-    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
-        self.get(index)
-            .map(|c| c.submaster_level())
-            .unwrap_or(UnipolarFloat::ZERO)
+    fn submaster_level(&self, index: ClockIdx) -> Option<UnipolarFloat> {
+        self.get(index).map(|c| c.submaster_level())
     }
 
-    fn use_audio_size(&self, index: ClockIdx) -> bool {
-        self.get(index).map(|c| c.use_audio_size()).unwrap_or(false)
+    fn use_audio_size(&self, index: ClockIdx) -> Option<bool> {
+        self.get(index).map(|c| c.use_audio_size())
     }
 }
 
@@ -201,13 +201,15 @@ mod tests {
     }
 
     #[test]
-    fn out_of_range_index_reads_are_neutral() {
+    fn out_of_range_index_reads_are_none() {
         let bank = ClockBank::new(4);
         let missing = ClockIdx(9);
         assert!(bank.get(missing).is_none());
-        assert_eq!(bank.phase(missing), Phase::ZERO);
-        assert_eq!(bank.ticks(missing), 0);
-        assert_eq!(bank.submaster_level(missing), UnipolarFloat::ZERO);
-        assert!(!bank.use_audio_size(missing));
+        assert!(bank.phase(missing).is_none());
+        assert!(bank.ticks(missing).is_none());
+        assert!(bank.submaster_level(missing).is_none());
+        assert!(bank.use_audio_size(missing).is_none());
+        // In-range reads return Some.
+        assert!(bank.phase(ClockIdx(0)).is_some());
     }
 }

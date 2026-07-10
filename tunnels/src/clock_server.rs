@@ -82,22 +82,20 @@ impl ClockStore for StaticClockBank {
         self.0.len()
     }
 
-    fn phase(&self, index: ClockIdx) -> Phase {
-        self.get(index).map(|c| c.phase).unwrap_or(Phase::ZERO)
+    fn phase(&self, index: ClockIdx) -> Option<Phase> {
+        self.get(index).map(|c| c.phase)
     }
 
-    fn ticks(&self, index: ClockIdx) -> crate::clock::Ticks {
-        self.get(index).map(|c| c.ticks).unwrap_or(0)
+    fn ticks(&self, index: ClockIdx) -> Option<crate::clock::Ticks> {
+        self.get(index).map(|c| c.ticks)
     }
 
-    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
-        self.get(index)
-            .map(|c| c.submaster_level)
-            .unwrap_or(UnipolarFloat::ZERO)
+    fn submaster_level(&self, index: ClockIdx) -> Option<UnipolarFloat> {
+        self.get(index).map(|c| c.submaster_level)
     }
 
-    fn use_audio_size(&self, index: ClockIdx) -> bool {
-        self.get(index).map(|c| c.use_audio_size).unwrap_or(false)
+    fn use_audio_size(&self, index: ClockIdx) -> Option<bool> {
+        self.get(index).map(|c| c.use_audio_size)
     }
 }
 
@@ -208,13 +206,15 @@ mod tests {
     }
 
     #[test]
-    fn out_of_range_reads_return_neutral_defaults() {
+    fn out_of_range_reads_return_none() {
         let b = bank(4);
         let missing = ClockIdx(9);
-        assert_eq!(b.phase(missing), Phase::ZERO);
-        assert_eq!(b.ticks(missing), 0);
-        assert_eq!(b.submaster_level(missing), UnipolarFloat::ZERO);
-        assert!(!b.use_audio_size(missing));
+        assert!(b.phase(missing).is_none());
+        assert!(b.ticks(missing).is_none());
+        assert!(b.submaster_level(missing).is_none());
+        assert!(b.use_audio_size(missing).is_none());
         assert_eq!(b.len(), 4);
+        // In-range reads return Some.
+        assert!(b.phase(ClockIdx(0)).is_some());
     }
 }
