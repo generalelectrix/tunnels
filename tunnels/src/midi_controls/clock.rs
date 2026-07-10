@@ -182,7 +182,9 @@ mod tests {
                 Some(crate::show::ControlMessage::Clock(ControlMessage { channel, .. })) => {
                     assert_eq!(channel.0, expected, "wing offset {offset}");
                 }
-                other => panic!("expected a clock control message for offset {offset}, got {other:?}"),
+                other => {
+                    panic!("expected a clock control message for offset {offset}, got {other:?}")
+                }
             }
         }
     }
