@@ -9,7 +9,7 @@ use crate::{
     master_ui::EmitStateChange as EmitShowStateChange,
 };
 use arrayvec::ArrayVec;
-use log::{error, warn};
+use log::error;
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 
@@ -95,19 +95,6 @@ impl ClockBank {
     pub fn new(n: usize) -> Self {
         let n = n.min(MAX_CLOCKS);
         Self((0..n).map(|_| ControllableClock::default()).collect())
-    }
-
-    /// Grow or shrink the bank to hold `n` clocks, clamped to [`MAX_CLOCKS`].
-    /// New clocks are added in their default state; removed clocks are dropped.
-    pub fn set_clock_count(&mut self, n: usize) {
-        let clamped = n.min(MAX_CLOCKS);
-        if clamped != n {
-            warn!("requested {n} clocks exceeds the maximum of {MAX_CLOCKS}; clamping.");
-        }
-        while self.0.len() < clamped {
-            self.0.push(ControllableClock::default());
-        }
-        self.0.truncate(clamped);
     }
 
     pub fn update_state<E: EmitStateChange>(
@@ -204,21 +191,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clock_count_grows_shrinks_and_clamps() {
-        let mut bank = ClockBank::new(4);
+    fn new_sizes_the_bank_and_clamps_to_max() {
+        let bank = ClockBank::new(4);
         assert_eq!(bank.len(), 4);
         assert_eq!(bank.as_static().len(), 4);
 
-        bank.set_clock_count(8);
-        assert_eq!(bank.len(), 8);
-        assert_eq!(bank.as_static().len(), 8);
-
-        bank.set_clock_count(4);
-        assert_eq!(bank.len(), 4);
-
-        // Requests beyond MAX_CLOCKS clamp rather than overflow.
-        bank.set_clock_count(MAX_CLOCKS + 5);
-        assert_eq!(bank.len(), MAX_CLOCKS);
+        // Construction beyond MAX_CLOCKS clamps rather than overflowing.
         assert_eq!(ClockBank::new(MAX_CLOCKS + 5).len(), MAX_CLOCKS);
     }
 
