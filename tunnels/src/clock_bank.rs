@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use crate::typed_index::typed_index;
 use crate::{
     clock::{
         ControlMessage as ClockControlMessage, ControllableClock,
@@ -9,78 +8,95 @@ use crate::{
     },
     master_ui::EmitStateChange as EmitShowStateChange,
 };
-use anyhow::{Error, Result, bail};
+use arrayvec::ArrayVec;
 use log::error;
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 
 /// Read-only interface to the state of a collection of clocks.
 pub trait ClockStore {
-    /// Return the current phase of this clock.
-    fn phase(&self, index: ClockIdx) -> Phase;
+    /// Return the number of clocks in the bank.
+    fn len(&self) -> usize;
 
-    /// Returnt the absolute number of ticks.
-    fn ticks(&self, index: ClockIdx) -> Ticks;
+    /// Return true if the bank contains no clocks.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
-    /// Return the current submaster level of this clock.
-    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat;
+    /// Return the phase of the clock at `index`, or `None` if it does not exist.
+    fn phase(&self, index: ClockIdx) -> Option<Phase>;
 
-    /// Return true if we should use audio envelope to scale submaster level.
-    /// This is returned independently, rather than applied to the submaster
-    /// level directly, to allow clients of the submaster to avoid double-
-    /// modulating with audio envelope.
-    fn use_audio_size(&self, index: ClockIdx) -> bool;
+    /// Return the absolute number of ticks of the clock at `index`, or `None` if
+    /// it does not exist.
+    fn ticks(&self, index: ClockIdx) -> Option<Ticks>;
+
+    /// Return the submaster level of the clock at `index`, or `None` if it does
+    /// not exist.
+    fn submaster_level(&self, index: ClockIdx) -> Option<UnipolarFloat>;
+
+    /// Return whether the clock at `index` scales its submaster by the audio
+    /// envelope, or `None` if it does not exist. This is returned independently,
+    /// rather than applied to the submaster level directly, to allow clients to
+    /// avoid double-modulating with the audio envelope.
+    fn use_audio_size(&self, index: ClockIdx) -> Option<bool>;
 }
 
-/// how many globally-available clocks?
-pub const N_CLOCKS: usize = 4;
+/// The maximum number of clocks a bank can hold. The number in use is a runtime
+/// value that can vary up to this bound.
+pub const MAX_CLOCKS: usize = 12;
+
+/// The number of clocks in a bank when no count is otherwise specified.
+pub const DEFAULT_N_CLOCKS: usize = 4;
+
+/// The number of clocks contributed by one clock wing.
+pub const CLOCKS_PER_WING: usize = 4;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
-/// Index of a clock in the bank.
-/// Care should be taken to ensure that these values are always valid.
-/// External input should be accepted through ClockIdxExt and validated
-/// using from.
-pub struct ClockIdx(usize);
-typed_index!(ClockIdx, ControllableClock);
+/// Index of a clock in a bank.
+///
+/// Not a proof of validity: the clock count is dynamic, so a read for an
+/// out-of-range index returns `None`.
+pub struct ClockIdx(pub usize);
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
-/// Public-facing "request" for a clock index.
-/// Must be validated to become a proper ClockIdx.
-pub struct ClockIdxExt(pub usize);
+/// Maintain an indexable collection of clocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClockBank(ArrayVec<ControllableClock, MAX_CLOCKS>);
 
-impl TryFrom<ClockIdxExt> for ClockIdx {
-    type Error = Error;
-    fn try_from(value: ClockIdxExt) -> Result<Self> {
-        if value.0 >= N_CLOCKS {
-            bail!("clock index {} out of range", value.0);
-        }
-        Ok(ClockIdx(value.0))
+impl Default for ClockBank {
+    fn default() -> Self {
+        Self::new(DEFAULT_N_CLOCKS)
     }
 }
-
-/// Maintain a indexable collection of clocks.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ClockBank([ControllableClock; N_CLOCKS]);
 
 impl ClockStore for ClockBank {
-    fn phase(&self, index: ClockIdx) -> Phase {
-        self.get(index).phase()
+    fn len(&self) -> usize {
+        self.0.len()
     }
 
-    fn ticks(&self, index: ClockIdx) -> Ticks {
-        self.get(index).ticks()
+    fn phase(&self, index: ClockIdx) -> Option<Phase> {
+        self.get(index).map(|c| c.phase())
     }
 
-    fn submaster_level(&self, index: ClockIdx) -> UnipolarFloat {
-        self.get(index).submaster_level()
+    fn ticks(&self, index: ClockIdx) -> Option<Ticks> {
+        self.get(index).map(|c| c.ticks())
     }
 
-    fn use_audio_size(&self, index: ClockIdx) -> bool {
-        self.get(index).use_audio_size()
+    fn submaster_level(&self, index: ClockIdx) -> Option<UnipolarFloat> {
+        self.get(index).map(|c| c.submaster_level())
+    }
+
+    fn use_audio_size(&self, index: ClockIdx) -> Option<bool> {
+        self.get(index).map(|c| c.use_audio_size())
     }
 }
 
 impl ClockBank {
+    /// Create a bank with `n` clocks, clamped to [`MAX_CLOCKS`].
+    pub fn new(n: usize) -> Self {
+        let n = n.min(MAX_CLOCKS);
+        Self((0..n).map(|_| ControllableClock::default()).collect())
+    }
+
     pub fn update_state<E: EmitStateChange>(
         &mut self,
         delta_t: Duration,
@@ -99,20 +115,14 @@ impl ClockBank {
         }
     }
 
-    pub fn get(&self, index: ClockIdx) -> &ControllableClock {
-        &self.0[index]
+    /// Return the clock at `index`, or `None` if the index is out of range.
+    pub fn get(&self, index: ClockIdx) -> Option<&ControllableClock> {
+        self.0.get(index.0)
     }
 
     /// Return a static snapshot of the state of this clock bank.
-    pub fn as_static(&self) -> [StaticClock; N_CLOCKS] {
-        // FIXME: need this method to avoid having to write this out explicitly
-        // https://doc.rust-lang.org/std/primitive.array.html#method.each_ref
-        [
-            self.0[0].as_static(),
-            self.0[1].as_static(),
-            self.0[2].as_static(),
-            self.0[3].as_static(),
-        ]
+    pub fn as_static(&self) -> ArrayVec<StaticClock, MAX_CLOCKS> {
+        self.0.iter().map(|c| c.as_static()).collect()
     }
 
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
@@ -125,14 +135,16 @@ impl ClockBank {
     }
 
     pub fn control<E: EmitStateChange>(&mut self, msg: ControlMessage, emitter: &mut E) {
-        let channel: ClockIdx = match msg.channel.try_into() {
-            Ok(id) => id,
-            Err(e) => {
-                error!("could not process clock control message {msg:?}: {e}");
-                return;
-            }
+        let channel = msg.channel;
+        let Some(clock) = self.0.get_mut(channel.0) else {
+            error!(
+                "could not process clock control message {msg:?}: channel {} is out of range for {} clocks",
+                channel.0,
+                self.0.len()
+            );
+            return;
         };
-        self.0[channel].control(msg.msg, &mut ChannelEmitter { channel, emitter })
+        clock.control(msg.msg, &mut ChannelEmitter { channel, emitter })
     }
 }
 
@@ -153,7 +165,7 @@ impl<'e, E: EmitStateChange> EmitClockStateChange for ChannelEmitter<'e, E> {
 
 #[derive(Debug, Clone)]
 pub struct ControlMessage {
-    pub channel: ClockIdxExt,
+    pub channel: ClockIdx,
     pub msg: ClockControlMessage,
 }
 
@@ -171,5 +183,33 @@ impl<T: EmitShowStateChange> EmitStateChange for T {
     fn emit_clock_bank_state_change(&mut self, sc: StateChange) {
         use crate::show::StateChange as ShowStateChange;
         self.emit(ShowStateChange::Clock(sc))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_sizes_the_bank_and_clamps_to_max() {
+        let bank = ClockBank::new(4);
+        assert_eq!(bank.len(), 4);
+        assert_eq!(bank.as_static().len(), 4);
+
+        // Construction beyond MAX_CLOCKS clamps rather than overflowing.
+        assert_eq!(ClockBank::new(MAX_CLOCKS + 5).len(), MAX_CLOCKS);
+    }
+
+    #[test]
+    fn out_of_range_index_reads_are_none() {
+        let bank = ClockBank::new(4);
+        let missing = ClockIdx(9);
+        assert!(bank.get(missing).is_none());
+        assert!(bank.phase(missing).is_none());
+        assert!(bank.ticks(missing).is_none());
+        assert!(bank.submaster_level(missing).is_none());
+        assert!(bank.use_audio_size(missing).is_none());
+        // In-range reads return Some.
+        assert!(bank.phase(ClockIdx(0)).is_some());
     }
 }

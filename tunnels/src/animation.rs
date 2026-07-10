@@ -1,11 +1,10 @@
 use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock::Ticks;
-use crate::clock_bank::{ClockIdxExt, ClockStore};
+use crate::clock_bank::ClockStore;
 use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms::WaveformArgs;
 use crate::{clock_bank::ClockIdx, waveforms};
-use log::error;
 use noise::NoiseFn;
 use noise::Simplex;
 use serde::{Deserialize, Serialize};
@@ -106,14 +105,15 @@ impl Animation {
     fn phase(&self, external_clocks: &impl ClockStore) -> Phase {
         match self.clock_source {
             None => self.internal_clock.phase(),
-            Some(id) => external_clocks.phase(id),
+            // A selected clock that no longer exists reads as the neutral default.
+            Some(id) => external_clocks.phase(id).unwrap_or_default(),
         }
     }
 
     fn ticks(&self, external_clocks: &impl ClockStore) -> Ticks {
         match self.clock_source {
             None => self.internal_clock.ticks(),
-            Some(id) => external_clocks.ticks(id),
+            Some(id) => external_clocks.ticks(id).unwrap_or_default(),
         }
     }
 
@@ -236,8 +236,14 @@ impl Animation {
         // scale this animation by submaster level if using external clock
         let mut use_audio_size = self.use_audio_size;
         if let Some(id) = self.clock_source {
-            v *= external_clocks.submaster_level(id).val();
-            use_audio_size = use_audio_size || external_clocks.use_audio_size(id);
+            // A selected clock that no longer exists reads as the neutral default
+            // (submaster 0 → this animation contributes nothing).
+            v *= external_clocks
+                .submaster_level(id)
+                .unwrap_or_default()
+                .val();
+            use_audio_size =
+                use_audio_size || external_clocks.use_audio_size(id).unwrap_or_default();
         }
         // scale this animation by audio envelope if set
         if use_audio_size {
@@ -287,16 +293,6 @@ impl Animation {
         match msg {
             Set(sc) => self.handle_state_change(sc, emitter),
             SetClockSource(source) => {
-                let source: Option<ClockIdx> = match source {
-                    Some(s) => match s.try_into() {
-                        Ok(s) => Some(s),
-                        Err(e) => {
-                            error!("could not process animation control message: {e}");
-                            return;
-                        }
-                    },
-                    None => None,
-                };
                 self.handle_state_change(StateChange::ClockSource(source), emitter);
             }
             TogglePulse => {
@@ -363,11 +359,8 @@ pub enum StateChange {
 #[derive(Debug, Clone)]
 pub enum ControlMessage {
     Set(StateChange),
-    /// Since clock IDs need to be validated, this path handles the fallible case.
-    /// FIXME: it would be nicer to validate this at control message creation time,
-    /// but at the moment control message creator functions are infallible and
-    /// that's more refactoring than I want to deal with right now.
-    SetClockSource(Option<ClockIdxExt>),
+    /// Set the clock that drives this animation, or `None` for the internal clock.
+    SetClockSource(Option<ClockIdx>),
     TogglePulse,
     ToggleStanding,
     ToggleInvert,

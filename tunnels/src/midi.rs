@@ -8,6 +8,7 @@ use std::sync::mpsc::Sender;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 use crate::{
+    clock_bank::CLOCKS_PER_WING,
     control::ControlEvent,
     midi_controls::{Device, MidiDevice},
 };
@@ -21,9 +22,15 @@ pub enum MidiDeviceInit {
     Slot { name: String, device: Device },
 }
 
-/// The standard set of MIDI device slots for a tunnels show.
-pub fn default_midi_slots() -> Vec<MidiDeviceInit> {
-    vec![
+/// The name of the clock-wing slot at the given zero-based wing index.
+pub fn clock_wing_slot_name(wing: usize) -> String {
+    format!("Clock Wing {}", wing + 1)
+}
+
+/// The standard set of MIDI device slots for a tunnels show, with `n_clock_wings`
+/// CMD MM-1 clock wings each mapped to a contiguous block of clocks.
+pub fn default_midi_slots(n_clock_wings: usize) -> Vec<MidiDeviceInit> {
+    let mut slots = vec![
         MidiDeviceInit::Slot {
             name: "APC-40".into(),
             device: Device::AkaiApc40,
@@ -32,11 +39,16 @@ pub fn default_midi_slots() -> Vec<MidiDeviceInit> {
             name: "TouchOSC".into(),
             device: Device::TouchOsc,
         },
-        MidiDeviceInit::Slot {
-            name: "Clock Wing".into(),
-            device: Device::BehringerCmdMM1,
-        },
-    ]
+    ];
+    for wing in 0..n_clock_wings {
+        slots.push(MidiDeviceInit::Slot {
+            name: clock_wing_slot_name(wing),
+            device: Device::BehringerCmdMM1 {
+                channel_offset: wing * CLOCKS_PER_WING,
+            },
+        });
+    }
+    slots
 }
 
 pub use midi_harness::event::*;
@@ -203,4 +215,31 @@ fn prompt_input_output<D: MidiDevice>(
         input_id,
         output_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clock_wings_get_cumulative_offsets() {
+        let wings: Vec<(String, usize)> = default_midi_slots(3)
+            .into_iter()
+            .filter_map(|s| match s {
+                MidiDeviceInit::Slot {
+                    name,
+                    device: Device::BehringerCmdMM1 { channel_offset },
+                } => Some((name, channel_offset)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            wings,
+            vec![
+                ("Clock Wing 1".to_string(), 0),
+                ("Clock Wing 2".to_string(), 4),
+                ("Clock Wing 3".to_string(), 8),
+            ]
+        );
+    }
 }

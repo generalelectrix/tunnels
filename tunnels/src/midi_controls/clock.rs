@@ -5,9 +5,9 @@ use crate::midi::Event as MidiEvent;
 use crate::{
     clock::ControlMessage as ClockControlMessage,
     clock::StateChange as ClockStateChange,
-    clock_bank::ClockIdxExt,
+    clock_bank::CLOCKS_PER_WING,
+    clock_bank::ClockIdx,
     clock_bank::ControlMessage,
-    clock_bank::N_CLOCKS,
     clock_bank::StateChange,
     midi::{Mapping, MidiOutput, cc, event, note_on},
     midi_controls::Device,
@@ -66,44 +66,51 @@ fn mapping_touchosc(control: Control, channel: usize) -> Option<Mapping> {
     })
 }
 
+/// TouchOSC clock control maps one MIDI channel per clock starting at channel 9,
+/// so it can only address clocks that fit within the MIDI channel range. The
+/// primary clock surface is the CMD MM-1 wings.
+const TOUCHOSC_CLOCK_CHANNELS: usize = 4;
+
 fn interpret_with_mapping_fn(
     event: &MidiEvent,
     get_mapping: fn(Control, usize) -> Option<Mapping>,
+    channel_offset: usize,
+    n_channels: usize,
 ) -> Option<crate::show::ControlMessage> {
     use ClockControlMessage::*;
     use ClockStateChange::*;
     let v = event.value;
 
-    for channel in 0..N_CLOCKS {
+    for local in 0..n_channels {
         let mkmsg = |msg| {
             crate::show::ControlMessage::Clock(ControlMessage {
-                channel: ClockIdxExt(channel),
+                channel: ClockIdx(local + channel_offset),
                 msg,
             })
         };
 
-        if get_mapping(Control::Rate, channel) == Some(event.mapping) {
+        if get_mapping(Control::Rate, local) == Some(event.mapping) {
             return Some(mkmsg(Set(Rate(bipolar_from_midi(v)))));
         }
-        if get_mapping(Control::RateFine, channel) == Some(event.mapping) {
+        if get_mapping(Control::RateFine, local) == Some(event.mapping) {
             return Some(mkmsg(Set(RateFine(bipolar_from_midi(v)))));
         }
-        if get_mapping(Control::Level, channel) == Some(event.mapping) {
+        if get_mapping(Control::Level, local) == Some(event.mapping) {
             return Some(mkmsg(Set(SubmasterLevel(unipolar_from_midi(v)))));
         }
-        if get_mapping(Control::Tap, channel) == Some(event.mapping) {
+        if get_mapping(Control::Tap, local) == Some(event.mapping) {
             return Some(mkmsg(Tap));
         }
-        if get_mapping(Control::OneShot, channel) == Some(event.mapping) {
+        if get_mapping(Control::OneShot, local) == Some(event.mapping) {
             return Some(mkmsg(ToggleOneShot));
         }
-        if get_mapping(Control::Retrigger, channel) == Some(event.mapping) {
+        if get_mapping(Control::Retrigger, local) == Some(event.mapping) {
             return Some(mkmsg(Retrigger));
         }
-        if get_mapping(Control::AudioSize, channel) == Some(event.mapping) {
+        if get_mapping(Control::AudioSize, local) == Some(event.mapping) {
             return Some(mkmsg(ToggleUseAudioSize));
         }
-        if get_mapping(Control::AudioSpeed, channel) == Some(event.mapping) {
+        if get_mapping(Control::AudioSpeed, local) == Some(event.mapping) {
             return Some(mkmsg(ToggleUseAudioSpeed));
         }
     }
@@ -111,22 +118,39 @@ fn interpret_with_mapping_fn(
 }
 
 pub fn interpret_touchosc(event: &MidiEvent) -> Option<crate::show::ControlMessage> {
-    interpret_with_mapping_fn(event, mapping_touchosc)
+    interpret_with_mapping_fn(event, mapping_touchosc, 0, TOUCHOSC_CLOCK_CHANNELS)
 }
 
-pub fn interpret_cmdmm1(event: &MidiEvent) -> Option<crate::show::ControlMessage> {
-    interpret_with_mapping_fn(event, mapping_cmd_mm1)
+/// Interpret a CMD MM-1 clock-wing event, mapping its physical faders to the
+/// clocks starting at `channel_offset`.
+pub fn interpret_cmdmm1(
+    event: &MidiEvent,
+    channel_offset: usize,
+) -> Option<crate::show::ControlMessage> {
+    interpret_with_mapping_fn(event, mapping_cmd_mm1, channel_offset, CLOCKS_PER_WING)
 }
 
 /// Emit midi messages to update UIs given the provided state change.
 pub fn update_clock_control(sc: StateChange, manager: &mut impl MidiOutput) {
     use ClockStateChange::*;
 
+    // Route feedback to the wing that owns this clock, at its local fader index.
+    let global = sc.channel.0;
+    let wing_offset = (global / CLOCKS_PER_WING) * CLOCKS_PER_WING;
+    let local = global % CLOCKS_PER_WING;
+
     let mut send = |control, value| {
-        if let Some(mapping) = mapping_cmd_mm1(control, sc.channel.into()) {
-            manager.send(&Device::BehringerCmdMM1, event(mapping, value));
+        if let Some(mapping) = mapping_cmd_mm1(control, local) {
+            manager.send(
+                &Device::BehringerCmdMM1 {
+                    channel_offset: wing_offset,
+                },
+                event(mapping, value),
+            );
         }
-        if let Some(mapping) = mapping_touchosc(control, sc.channel.into()) {
+        if global < TOUCHOSC_CLOCK_CHANNELS
+            && let Some(mapping) = mapping_touchosc(control, global)
+        {
             manager.send(&Device::TouchOsc, event(mapping, value));
         }
     };
@@ -139,5 +163,29 @@ pub fn update_clock_control(sc: StateChange, manager: &mut impl MidiOutput) {
         SubmasterLevel(v) => send(Control::Level, unipolar_to_midi(v)),
         UseAudioSize(v) => send(Control::AudioSize, v as u8),
         UseAudioSpeed(v) => send(Control::AudioSpeed, v as u8),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cmdmm1_wing_offset_selects_the_right_clock() {
+        // The Rate control for a wing's first fader is cc(4, 6).
+        let event = MidiEvent {
+            mapping: cc(4, 6),
+            value: 64,
+        };
+        for (offset, expected) in [(0usize, 0usize), (4, 4), (8, 8)] {
+            match interpret_cmdmm1(&event, offset) {
+                Some(crate::show::ControlMessage::Clock(ControlMessage { channel, .. })) => {
+                    assert_eq!(channel.0, expected, "wing offset {offset}");
+                }
+                other => {
+                    panic!("expected a clock control message for offset {offset}, got {other:?}")
+                }
+            }
+        }
     }
 }

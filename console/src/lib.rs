@@ -3,6 +3,7 @@ mod animation_panel;
 mod audio_panel;
 pub mod bootstrap_controller;
 mod midi_panel;
+pub mod startup_config;
 mod ui_util;
 
 use std::sync::atomic::{AtomicBool, Ordering};
