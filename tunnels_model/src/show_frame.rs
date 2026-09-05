@@ -55,6 +55,8 @@ impl ShowFrame {
     ///
     /// Every way the bytes can be wrong is an error, never a panic: a mangled
     /// or truncated payload costs the frame it arrived in and nothing more.
+    /// That includes bytes asserting more nesting than a look is allowed, which
+    /// are refused before the nesting is followed rather than after.
     pub fn decode(bytes: &[u8]) -> Result<Self, FrameCodecError> {
         let (decoded_len, compressed) =
             uncompressed_size(bytes).map_err(FrameCodecError::Decompress)?;
@@ -340,7 +342,11 @@ pub mod fixture {
 mod tests {
     use super::fixture::NamedFrame;
     use super::*;
-    use crate::mixer::{Mixer, VideoChannel};
+    use crate::beam::Beam;
+    use crate::look::{Look, MAX_NESTING_DEPTH};
+    use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
+    use crate::tunnel::Tunnel;
+    use std::collections::HashSet;
     use tunnels_lib::{LayerCollection, ShapeGeometry};
 
     fn frame() -> ShowFrame {
@@ -459,6 +465,47 @@ mod tests {
         assert_eq!(decoded.frame_number, 7);
         assert_eq!(decoded.audio_envelope, UnipolarFloat::new(0.5));
         assert_eq!(decoded.mixer.channel_count(), 8);
+    }
+
+    /// A beam wrapping a tunnel in `depth` levels of nested look.
+    ///
+    /// Built by growing outwards rather than by recursing, so that producing
+    /// the tree costs no more stack than producing one level of it.
+    fn nested_beam(depth: usize) -> Beam {
+        let mut beam = Beam::Tunnel(Tunnel::default());
+        for _ in 0..depth {
+            beam = Beam::Look(Look::from_channels(vec![Channel {
+                beam,
+                level: UnipolarFloat::ONE,
+                bump: false,
+                mask: false,
+                video_outs: HashSet::from([VideoChannel(0)]),
+            }]));
+        }
+        beam
+    }
+
+    /// A look nests without bound, so bytes claiming unbounded nesting have to
+    /// be refused rather than followed.
+    #[test]
+    fn nesting_past_the_limit_is_rejected_without_overflowing() {
+        let mut deepest_allowed = frame();
+        *deepest_allowed.mixer.beam(ChannelIdx(0)) = nested_beam(MAX_NESTING_DEPTH);
+        assert!(
+            ShowFrame::decode(&deepest_allowed.encode().unwrap()).is_ok(),
+            "a look nested to the limit is still a look"
+        );
+
+        // One level past the limit, and no deeper: the tree is built and
+        // dropped here too, and dropping it is as recursive as decoding it.
+        let mut too_deep = frame();
+        *too_deep.mixer.beam(ChannelIdx(0)) = nested_beam(MAX_NESTING_DEPTH + 1);
+        let err = ShowFrame::decode(&too_deep.encode().unwrap())
+            .expect_err("nesting past the limit must not decode");
+        assert!(
+            matches!(err, FrameCodecError::Deserialize(_)),
+            "expected a deserialization failure, got {err}"
+        );
     }
 
     #[test]
