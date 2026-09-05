@@ -119,8 +119,8 @@ impl ClockBank {
     }
 
     /// Return a static snapshot of the state of this clock bank.
-    pub fn as_static(&self) -> ArrayVec<StaticClock, MAX_CLOCKS> {
-        self.0.iter().map(|c| c.as_static()).collect()
+    pub fn as_static(&self) -> StaticClockBank {
+        StaticClockBank(self.0.iter().map(|c| c.as_static()).collect())
     }
 
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
@@ -193,7 +193,7 @@ impl ClockStore for StaticClockBank {
         self.get(index).map(|c| c.phase)
     }
 
-    fn ticks(&self, index: ClockIdx) -> Option<crate::clock::Ticks> {
+    fn ticks(&self, index: ClockIdx) -> Option<Ticks> {
         self.get(index).map(|c| c.ticks)
     }
 

@@ -4,7 +4,7 @@ use crate::{
     animation_visualizer::AnimationSnapshot,
     audio::{self, AudioInput, ShowEmitter},
     clock_bank::{self, ClockBank},
-    clock_server::{self, ClockPublisher, SharedClockData, StaticClockBank},
+    clock_server::{self, ClockPublisher, SharedClockData},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
     gui_state::{GuiDirty, SharedGuiState},
     master_ui::{self, MasterUI},
@@ -214,7 +214,7 @@ impl Show {
     fn send_clock_data(&mut self) {
         if let Some(ref mut publisher) = self.clock_publisher {
             let data = SharedClockData {
-                clock_bank: StaticClockBank(self.state.clocks.as_static()),
+                clock_bank: self.state.clocks.as_static(),
                 audio_envelope: self.audio_input.envelope(),
             };
             if let Err(e) = publisher.send(&data) {
@@ -265,7 +265,7 @@ impl Show {
             .store(std::sync::Arc::new(AnimationSnapshot {
                 animation,
                 clocks: SharedClockData {
-                    clock_bank: StaticClockBank(self.state.clocks.as_static()),
+                    clock_bank: self.state.clocks.as_static(),
                     audio_envelope: self.audio_input.envelope(),
                 },
                 fixture_count: 0,
