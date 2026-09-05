@@ -406,12 +406,12 @@ mod tests {
     use super::fixture::NamedFrame;
     use super::*;
     use crate::beam::Beam;
+    use crate::layer::{LayerCollection, ShapeGeometry};
     use crate::look::{Look, MAX_NESTING_DEPTH};
     use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
     use crate::tunnel::Tunnel;
     use std::collections::BTreeSet;
     use std::fmt;
-    use tunnels_lib::{LayerCollection, ShapeGeometry};
 
     fn frame() -> ShowFrame {
         ShowFrame {

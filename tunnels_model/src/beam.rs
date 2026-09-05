@@ -1,8 +1,8 @@
+use crate::layer::Layer;
 use crate::render_context::RenderContext;
 use crate::{look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tunnels_lib::Layer;
 use tunnels_lib::number::UnipolarFloat;
 
 /// Union type for all of the kinds of beams we can have.

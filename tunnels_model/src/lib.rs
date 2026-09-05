@@ -10,6 +10,7 @@ pub mod animation_target;
 pub mod beam;
 pub mod clock;
 pub mod clock_bank;
+pub mod layer;
 mod look;
 pub mod mixer;
 pub mod palette;

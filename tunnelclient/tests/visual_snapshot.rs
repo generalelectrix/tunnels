@@ -7,7 +7,7 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::draw::Draw;
-use tunnels_lib::{Layer, LayerCollection, PathShape, RenderMode, ShapeGeometry};
+use tunnels_model::layer::{Layer, LayerCollection, PathShape, RenderMode, ShapeGeometry};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;

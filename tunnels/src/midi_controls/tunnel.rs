@@ -110,11 +110,11 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         NUDGE_CCW => Tunnel(NudgeCCW),
         POSITION_X => Tunnel(Set(PositionX(bipolar_from_midi(v).val()))),
         POSITION_Y => Tunnel(Set(PositionY(bipolar_from_midi(v).val()))),
-        RENDER_MODE_ARC => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Arc))),
-        RENDER_MODE_DOT => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Dot))),
-        RENDER_MODE_SAUCER => Tunnel(Set(RenderMode(tunnels_lib::RenderMode::Saucer))),
-        PATH_SHAPE_ELLIPSE => Tunnel(Set(PathShape(tunnels_lib::PathShape::Ellipse))),
-        PATH_SHAPE_LINE => Tunnel(Set(PathShape(tunnels_lib::PathShape::Line))),
+        RENDER_MODE_ARC => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Arc))),
+        RENDER_MODE_DOT => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Dot))),
+        RENDER_MODE_SAUCER => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Saucer))),
+        PATH_SHAPE_ELLIPSE => Tunnel(Set(PathShape(tunnels_model::layer::PathShape::Ellipse))),
+        PATH_SHAPE_LINE => Tunnel(Set(PathShape(tunnels_model::layer::PathShape::Line))),
         m if m.event_type == crate::midi::EventType::NoteOn
             && m.channel == 8
             && m.control >= (PALETTE_SELECT_CONTROL_OFFSET - 1) as u8
@@ -169,7 +169,7 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
         PositionY(v) => send(event(POSITION_Y, bipolar_to_midi(BipolarFloat::new(v)))),
         SpinSpeed(v) => send(event(SPIN_SPEED, bipolar_to_midi(v))),
         RenderMode(v) => {
-            use tunnels_lib::RenderMode::*;
+            use tunnels_model::layer::RenderMode::*;
             RENDER_MODE_BUTTONS.select(
                 match v {
                     Arc => RENDER_MODE_ARC,
@@ -180,7 +180,7 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
             );
         }
         PathShape(v) => {
-            use tunnels_lib::PathShape::*;
+            use tunnels_model::layer::PathShape::*;
             PATH_SHAPE_BUTTONS.select(
                 match v {
                     Ellipse => PATH_SHAPE_ELLIPSE,

@@ -1,10 +1,10 @@
+use crate::layer::{Layer, LayerCollection};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
-use tunnels_lib::{Layer, LayerCollection};
 
 /// The number of mixer channels on a single mixer page.
 pub const MIXER_CHANNELS_PER_PAGE: usize = 8;

@@ -6,7 +6,7 @@ use graphics::Context;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::PI;
-use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry};
+use tunnels_model::layer::{Layer, PathShape, RenderMode, ShapeGeometry};
 
 const TWOPI: f64 = 2.0 * PI;
 

@@ -417,7 +417,8 @@ pub struct ShowState {
 mod test {
     use std::sync::{Arc, mpsc::channel};
 
-    use tunnels_lib::{Layer, LayerCollection, ShapeGeometry, number::UnipolarFloat};
+    use tunnels_lib::number::UnipolarFloat;
+    use tunnels_model::layer::{Layer, LayerCollection, ShapeGeometry};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
@@ -639,7 +640,7 @@ mod test {
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
         use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-        use tunnels_lib::{PathShape, RenderMode};
+        use tunnels_model::layer::{PathShape, RenderMode};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);

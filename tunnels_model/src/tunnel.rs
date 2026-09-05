@@ -1,3 +1,4 @@
+use crate::layer::{Layer, PathShape, RenderMode, ShapeGeometry};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::waveforms::sawtooth;
@@ -10,7 +11,6 @@ use std::cmp::max;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
-use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -515,8 +515,8 @@ pub mod fixture {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::layer::{Layer, LayerCollection, PathShape, RenderMode};
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-    use tunnels_lib::{Layer, LayerCollection, PathShape, RenderMode};
 
     use crate::animation::{
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,

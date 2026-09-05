@@ -1,10 +1,10 @@
+use crate::layer::Layer;
 use crate::mixer::Channel;
 use crate::render_context::RenderContext;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::time::Duration;
-use tunnels_lib::Layer;
 use tunnels_lib::number::UnipolarFloat;
 
 /// A look is a beam that is essentially the contents of an entire mixer.
