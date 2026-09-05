@@ -283,10 +283,6 @@ impl Tunnel {
                 + marquee_interval * (seg_num as f64)
                 + marquee_angle_adjust;
 
-            // this angle may exceed 1.0; this is important for correctly displaying
-            // arcs that cross the angular origin.
-            let stop_angle = start_angle.val() + marquee_interval;
-
             let rot_angle = self.curr_rot_angle + rot_angle_adjust;
             let spin_angle = self.curr_spin_angle + spin_angle_adjust;
 
@@ -302,7 +298,6 @@ impl Tunnel {
                     extent_x,
                     extent_y,
                     start: start_angle.val(),
-                    stop: stop_angle,
                     rot_angle: rot_angle.val(),
                     spin_angle: spin_angle.val(),
                 }
@@ -335,14 +330,13 @@ impl Tunnel {
                     extent_x,
                     extent_y,
                     start: start_angle.val(),
-                    stop: stop_angle,
                     rot_angle: rot_angle.val(),
                     spin_angle: spin_angle.val(),
                 }
             };
             arcs.push(arc);
         }
-        Layer::new(self.render_mode, self.path_shape, arcs)
+        Layer::new(self.render_mode, self.path_shape, marquee_interval, arcs)
     }
 
     /// Emit the current value of all controllable tunnel state.

@@ -113,12 +113,13 @@ fn assert_images_match_with_limit(
     }
 }
 
-/// Wrap shapes in a layer drawn with the default render mode and path shape.
-fn default_layer(shapes: Vec<ShapeGeometry>) -> Layer {
-    Layer::new(RenderMode::default(), PathShape::default(), shapes)
+/// Wrap shapes in a layer drawn with the default render mode and path shape,
+/// every segment spanning `span` turns.
+fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
+    Layer::new(RenderMode::default(), PathShape::default(), span, shapes)
 }
 
-fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> ShapeGeometry {
+fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
     ShapeGeometry {
         level: 1.0,
         thickness: 0.1,
@@ -130,7 +131,6 @@ fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> ShapeGeometry {
         extent_x: radius,
         extent_y: radius,
         start,
-        stop,
         rot_angle: 0.0,
         spin_angle: 0.0,
     }
@@ -141,7 +141,7 @@ fn single_arc() {
     let snapshot = Snapshot {
         frame_number: 0,
 
-        layers: vec![Arc::new(default_layer(vec![test_arc(0.0, 0.25, 0.0, 0.4)]))],
+        layers: vec![Arc::new(default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)]))],
     };
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "single_arc.png");
@@ -149,11 +149,14 @@ fn single_arc() {
 
 #[test]
 fn concentric_rings() {
-    let layers = vec![Arc::new(default_layer(vec![
-        test_arc(0.0, 1.0, 0.0, 0.2),
-        test_arc(0.0, 1.0, 0.33, 0.35),
-        test_arc(0.0, 1.0, 0.66, 0.5),
-    ]))];
+    let layers = vec![Arc::new(default_layer(
+        1.0,
+        vec![
+            test_arc(0.0, 0.0, 0.2),
+            test_arc(0.0, 0.33, 0.35),
+            test_arc(0.0, 0.66, 0.5),
+        ],
+    ))];
     let snapshot = Snapshot {
         frame_number: 0,
 
@@ -165,12 +168,13 @@ fn concentric_rings() {
 
 #[test]
 fn rotated_arc() {
-    let mut seg = test_arc(0.0, 0.5, 0.6, 0.3);
+    let mut seg = test_arc(0.0, 0.6, 0.3);
+    let span = 0.5;
     seg.rot_angle = 0.125; // 45 degrees
     let snapshot = Snapshot {
         frame_number: 0,
 
-        layers: vec![Arc::new(default_layer(vec![seg]))],
+        layers: vec![Arc::new(default_layer(span, vec![seg]))],
     };
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "rotated_arc.png");
@@ -180,13 +184,14 @@ fn rotated_arc() {
 fn flipped_horizontal() {
     use client_lib::transform::{Transform, TransformDirection};
 
-    let mut seg = test_arc(0.0, 0.25, 0.0, 0.4);
+    let mut seg = test_arc(0.0, 0.0, 0.4);
+    let span = 0.25;
     seg.x = 0.3; // offset from center so flip is visually distinct
 
     let snapshot = Snapshot {
         frame_number: 0,
 
-        layers: vec![Arc::new(default_layer(vec![seg]))],
+        layers: vec![Arc::new(default_layer(span, vec![seg]))],
     };
 
     // Render without flip and compare to fixture.
@@ -391,7 +396,7 @@ fn arc_line_spin() {
 // --- Line path: direct Shape edge-wrapping tests ---
 
 /// Helper to create a line-path shape with specific start and stop angles.
-fn test_line_shape(start: f64, stop: f64) -> ShapeGeometry {
+fn test_line_shape(start: f64) -> ShapeGeometry {
     ShapeGeometry {
         level: 1.0,
         thickness: 0.1,
@@ -403,16 +408,22 @@ fn test_line_shape(start: f64, stop: f64) -> ShapeGeometry {
         extent_x: 0.4, // line half-length
         extent_y: 0.0, // on the line (no perpendicular offset)
         start,
-        stop,
         rot_angle: 0.0,
         spin_angle: 0.0,
     }
 }
 
-fn snapshot_from_shapes(render_mode: RenderMode, shapes: Vec<ShapeGeometry>) -> Snapshot {
+/// One line-path layer per (span, shapes) group, drawn in the order given.
+fn snapshot_from_groups(
+    render_mode: RenderMode,
+    groups: Vec<(f64, Vec<ShapeGeometry>)>,
+) -> Snapshot {
     Snapshot {
         frame_number: 0,
-        layers: vec![Arc::new(Layer::new(render_mode, PathShape::Line, shapes))],
+        layers: groups
+            .into_iter()
+            .map(|(span, shapes)| Arc::new(Layer::new(render_mode, PathShape::Line, span, shapes)))
+            .collect(),
     }
 }
 
@@ -420,13 +431,15 @@ fn snapshot_from_shapes(render_mode: RenderMode, shapes: Vec<ShapeGeometry>) -> 
 #[test]
 fn line_arc_edge_wrap() {
     let render_mode = RenderMode::Arc;
-    let shapes = vec![
-        // A segment sitting squarely on the line (no wrapping).
-        test_line_shape(0.3, 0.4),
-        // A segment that wraps past the right end (start near 1.0, stop > 1.0).
-        test_line_shape(0.9, 1.05),
-    ];
-    let snapshot = snapshot_from_shapes(render_mode, shapes);
+    let snapshot = snapshot_from_groups(
+        render_mode,
+        vec![
+            // A segment sitting squarely on the line (no wrapping).
+            (0.1, vec![test_line_shape(0.3)]),
+            // A segment that wraps past the right end.
+            (0.15, vec![test_line_shape(0.9)]),
+        ],
+    );
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_arc_edge_wrap.png");
@@ -437,15 +450,20 @@ fn line_arc_edge_wrap() {
 fn line_dot_edge_crossfade() {
     let render_mode = RenderMode::Dot;
     let seg_width = 1.0 / 12.0; // simulate 12 segments
-    let shapes = vec![
-        // A dot in the middle of the line (no fading).
-        test_line_shape(0.25, 0.25 + seg_width),
-        // A dot just entering the fade zone near the right end.
-        test_line_shape(0.95 - seg_width / 2.0, 0.95 + seg_width / 2.0),
-        // A dot midway through wrapping.
-        test_line_shape(1.0 - seg_width / 4.0, 1.0 + 3.0 * seg_width / 4.0),
-    ];
-    let snapshot = snapshot_from_shapes(render_mode, shapes);
+    let snapshot = snapshot_from_groups(
+        render_mode,
+        vec![(
+            seg_width,
+            vec![
+                // A dot in the middle of the line (no fading).
+                test_line_shape(0.25),
+                // A dot just entering the fade zone near the right end.
+                test_line_shape(0.95 - seg_width / 2.0),
+                // A dot midway through wrapping.
+                test_line_shape(1.0 - seg_width / 4.0),
+            ],
+        )],
+    );
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_dot_edge_crossfade.png");
@@ -456,15 +474,20 @@ fn line_dot_edge_crossfade() {
 fn line_saucer_edge_crossfade() {
     let render_mode = RenderMode::Saucer;
     let seg_width = 1.0 / 12.0;
-    let shapes = vec![
-        // A saucer in the middle of the line.
-        test_line_shape(0.25, 0.25 + seg_width),
-        // A saucer just entering the fade zone near the right end.
-        test_line_shape(0.95 - seg_width / 2.0, 0.95 + seg_width / 2.0),
-        // A saucer midway through wrapping.
-        test_line_shape(1.0 - seg_width / 4.0, 1.0 + 3.0 * seg_width / 4.0),
-    ];
-    let snapshot = snapshot_from_shapes(render_mode, shapes);
+    let snapshot = snapshot_from_groups(
+        render_mode,
+        vec![(
+            seg_width,
+            vec![
+                // A saucer in the middle of the line.
+                test_line_shape(0.25),
+                // A saucer just entering the fade zone near the right end.
+                test_line_shape(0.95 - seg_width / 2.0),
+                // A saucer midway through wrapping.
+                test_line_shape(1.0 - seg_width / 4.0),
+            ],
+        )],
+    );
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_saucer_edge_crossfade.png");

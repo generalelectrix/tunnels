@@ -414,12 +414,9 @@ pub struct ShowState {
 
 #[cfg(test)]
 mod test {
-    use std::{
-        collections::HashSet,
-        sync::{Arc, mpsc::channel},
-    };
+    use std::sync::{Arc, mpsc::channel};
 
-    use tunnels_lib::{LayerCollection, ShapeGeometry, number::UnipolarFloat};
+    use tunnels_lib::{Layer, LayerCollection, ShapeGeometry, number::UnipolarFloat};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
@@ -479,8 +476,13 @@ mod test {
             }
         }
 
-        let beam_hashes: HashSet<_> = first_channel.iter().collect();
-        assert_eq!(beam_hashes.len(), unique_beam_count);
+        let mut distinct: Vec<&Arc<Layer>> = Vec::new();
+        for layer in first_channel.iter() {
+            if !distinct.iter().any(|seen| ***seen == **layer) {
+                distinct.push(layer);
+            }
+        }
+        assert_eq!(distinct.len(), unique_beam_count);
         first_channel
     }
 
@@ -495,7 +497,6 @@ mod test {
         seg.extent_x = trunc_f64(seg.extent_x);
         seg.extent_y = trunc_f64(seg.extent_y);
         seg.start = trunc_f64(seg.start);
-        seg.stop = trunc_f64(seg.stop);
         seg.rot_angle = trunc_f64(seg.rot_angle);
     }
 

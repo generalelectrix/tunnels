@@ -9,14 +9,10 @@ pub mod repaint;
 pub mod smooth;
 pub mod transient_indicator;
 
-use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use std::{
-    hash::{Hash, Hasher},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 /// A helper wrapper around an atomically-reference-counted atomic boolean.
@@ -78,48 +74,39 @@ pub struct ShapeGeometry {
     pub extent_x: f64,
     pub extent_y: f64,
     pub start: f64,
-    pub stop: f64,
     pub rot_angle: f64,
     pub spin_angle: f64,
 }
-
-impl Hash for ShapeGeometry {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        OrderedFloat(self.level).hash(state);
-        OrderedFloat(self.thickness).hash(state);
-        OrderedFloat(self.hue).hash(state);
-        OrderedFloat(self.sat).hash(state);
-        OrderedFloat(self.val).hash(state);
-        OrderedFloat(self.x).hash(state);
-        OrderedFloat(self.y).hash(state);
-        OrderedFloat(self.extent_x).hash(state);
-        OrderedFloat(self.extent_y).hash(state);
-        OrderedFloat(self.start).hash(state);
-        OrderedFloat(self.stop).hash(state);
-        OrderedFloat(self.rot_angle).hash(state);
-        OrderedFloat(self.spin_angle).hash(state);
-    }
-}
-
-impl Eq for ShapeGeometry {}
 
 /// A run of shapes drawn the same way.
 ///
 /// The render mode and path shape apply to every shape in the layer, which is
 /// what makes a layer the unit a renderer can dispatch on once instead of per
 /// shape.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Layer {
     pub render_mode: RenderMode,
     pub path_shape: PathShape,
+    /// The angular width every segment in this layer spans, in turns.
+    ///
+    /// A segment's stop angle is its `start` plus this, so a segment that
+    /// closes into a full circle spans exactly one turn — a test the renderer
+    /// can make without subtracting two nearly equal angles.
+    pub span: f64,
     pub shapes: Vec<ShapeGeometry>,
 }
 
 impl Layer {
-    pub fn new(render_mode: RenderMode, path_shape: PathShape, shapes: Vec<ShapeGeometry>) -> Self {
+    pub fn new(
+        render_mode: RenderMode,
+        path_shape: PathShape,
+        span: f64,
+        shapes: Vec<ShapeGeometry>,
+    ) -> Self {
         Self {
             render_mode,
             path_shape,
+            span,
             shapes,
         }
     }
@@ -138,7 +125,7 @@ pub type LayerCollection = Vec<Arc<Layer>>;
 
 /// A complete single-frame video snapshot.
 /// This is the top-level structure sent in each serialized frame.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Snapshot {
     pub frame_number: u64,
     pub layers: LayerCollection,
