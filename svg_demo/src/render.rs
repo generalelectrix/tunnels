@@ -2,7 +2,7 @@
 //! shows up here is what the real client would produce.
 
 use crate::draw::{draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs};
-use crate::mesh::{Level, MeshId, MeshLibrary};
+use crate::mesh::{self, Level, MeshId, MeshLibrary};
 use crate::params::{DemoParams, LayerParams, PhaseField, PORT};
 use crate::ramp::{self, RampKey};
 use image::RgbaImage;
@@ -114,6 +114,8 @@ impl Timings {
 /// Shared by the live window and the profiler so both exercise the same path.
 pub struct Renderer {
     pub shapes: Vec<ShapeMesh>,
+    /// Target on-screen triangle size, in pixels. Lower is finer and costlier.
+    pub target_px: f64,
     strokes: Vec<StrokeCache>,
     meshes: MeshLibrary,
     ramps: Vec<RampSlot>,
@@ -131,6 +133,7 @@ impl Renderer {
             .wrap_v(Wrap::Repeat);
         Self {
             shapes,
+            target_px: mesh::DEFAULT_TARGET_PX,
             strokes: Vec::new(),
             meshes: MeshLibrary::default(),
             ramps: Vec::new(),
@@ -170,11 +173,13 @@ impl Renderer {
     {
         let Self {
             shapes,
+            target_px,
             strokes,
             meshes,
             ramps,
             ..
         } = self;
+        let target_px = *target_px;
         let mut t = Timings::default();
 
         for ((layer, stroke_cache), ramp_slot) in params
@@ -209,7 +214,7 @@ impl Renderer {
             t.ramp_us += mark.elapsed().as_micros();
 
             let scale = layer.scale_x.abs().max(layer.scale_y.abs());
-            let level = Level::for_scale(scale, critical);
+            let level = Level::for_scale(scale, critical, target_px);
             let field = PhaseField::of(layer);
 
             let mut piece = |source: &[[f32; 2]], stroke_width: Option<u32>, t: &mut Timings| {
@@ -227,7 +232,7 @@ impl Renderer {
                 t.uv_us += mark.elapsed().as_micros();
 
                 let mark = Instant::now();
-                draw_textured(mesh, &uvs, ramp_texture, m, gl);
+                draw_textured(mesh, &uvs, field.wrap_period(), ramp_texture, m, gl);
                 t.submit_us += mark.elapsed().as_micros();
                 t.triangles += mesh.triangle_count();
             };

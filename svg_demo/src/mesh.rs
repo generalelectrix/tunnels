@@ -7,13 +7,15 @@
 
 use std::collections::HashMap;
 
-/// Roughly how many pixels a refined triangle's longest edge should span.
+/// Default for how many pixels a refined triangle's longest edge should span.
 ///
-/// Per-vertex color interpolates linearly, so this is the scale over which the
-/// color function is approximated by a straight line. Around seven pixels the
-/// approximation is close enough that a hue sweep reads as smooth and a
-/// discontinuity reads as a clean edge.
-const TARGET_PX: f64 = 7.0;
+/// The mesh carries phase, not color — color is resolved per fragment against
+/// the ramp texture. Phase is smooth, so this only has to be fine enough that a
+/// straight line approximates `atan2` or a square root over one triangle, which
+/// is a far weaker requirement than approximating a hue sweep was. Triangle
+/// count goes as the inverse square of this, so it is the strongest lever there
+/// is on per-frame cost.
+pub const DEFAULT_TARGET_PX: f64 = 14.0;
 
 /// How much finer triangles get as they approach the origin.
 ///
@@ -70,12 +72,12 @@ const FINEST_LEVEL: i8 = -7;
 pub struct Level(pub i8);
 
 impl Level {
-    /// The bucket whose triangles land nearest `TARGET_PX` on screen.
-    pub fn for_scale(scale: f64, critical: f64) -> Self {
+    /// The bucket whose triangles land nearest `target_px` on screen.
+    pub fn for_scale(scale: f64, critical: f64, target_px: f64) -> Self {
         // A shape spans two units, so one unit covers `scale * critical / 2`
         // pixels.
         let px_per_unit = (scale.abs() * critical / 2.0).max(1.0);
-        let raw = TARGET_PX / px_per_unit;
+        let raw = target_px / px_per_unit;
         let exp = raw.log2().round() as i8;
         Level(exp.clamp(FINEST_LEVEL, COARSEST_LEVEL))
     }

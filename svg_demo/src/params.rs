@@ -168,6 +168,19 @@ impl PhaseField {
         }
     }
 
+    /// The period over which this phase wraps, if it wraps at all.
+    ///
+    /// Only angular phase does: `atan2` jumps a full turn on the far side of the
+    /// shape, which is `cycles` in scaled units. The linear and radial
+    /// coordinates are continuous, so there is nothing to unwrap and nothing
+    /// that could be mistaken for a wrap.
+    pub fn wrap_period(self) -> Option<f32> {
+        match self.phase {
+            ColorPhase::Angle if self.cycles > 0.0 => Some(self.cycles),
+            _ => None,
+        }
+    }
+
     /// The phase at a point in shape space, scaled by the cycle count.
     ///
     /// Shape space is the normalised unit box, so this rides with the figure

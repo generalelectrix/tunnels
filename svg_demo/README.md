@@ -15,6 +15,19 @@ The render window is the **same piston/OpenGL/SDL2 stack `tunnelclient` uses**
 would produce. The two halves talk over localhost UDP; each can also be run on
 its own (`-- render`, `-- control`).
 
+## Running it on another machine
+
+The shape library is found via `SVG_DEMO_SHAPES`, then a `shapes` directory
+beside the executable, then the crate's own — so a release binary and the
+`shapes` folder copied together are enough. Nothing is baked into the build.
+
+```
+cargo build --release --target x86_64-apple-darwin -p svg_demo
+scp target/x86_64-apple-darwin/release/svg_demo mini:
+scp -r svg_demo/shapes mini:
+ssh mini './svg_demo profile --shapes 72,83,75'
+```
+
 ## Profiling
 
 `stats` measures the CPU stages with no window. To measure the real thing —
@@ -25,6 +38,14 @@ cargo run --release -p svg_demo -- profile
 cargo run --release -p svg_demo -- profile --layers 4 --size 1920x1080 --seconds 10
 cargo run --release -p svg_demo -- profile --shapes 72,83,75
 ```
+
+Useful knobs when the target hardware is slow:
+
+| flag | why |
+|---|---|
+| `--target-px N` | on-screen triangle size. Triangle count goes as its inverse square, so this is the strongest lever there is. Densities are bucketed to powers of two, so 7 and 10 land on the same mesh. |
+| `--samples N` | multisampling. Free on a modern GPU; on an integrated part sharing system memory it may dominate. `--samples 0` to find out. |
+| `--size WxH` | output resolution, which also selects the mesh level. |
 
 It opens a window with **vsync off** (with it on you measure the display, not
 the work), draws the heaviest shapes in the library near full screen with

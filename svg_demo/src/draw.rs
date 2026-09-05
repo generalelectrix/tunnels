@@ -77,15 +77,19 @@ pub fn phase_uvs(mesh: &RefinedMesh, field: PhaseField) -> Vec<[f32; 2]> {
 
 /// Put two phase coordinates on the same branch.
 ///
-/// Angular phase jumps by a whole cycle across the far side of the shape, where
+/// Angular phase jumps by a whole turn across the far side of the shape, where
 /// `atan2` wraps. Both ends still sample the right texel — the ramp repeats,
 /// and a whole number of cycles is a whole number of periods — but interpolating
 /// straight between them sweeps the long way round, painting a band of spurious
-/// rainbow along the seam. Shifting by whole periods takes the short path
-/// without changing either endpoint's color.
+/// rainbow along the seam.
+///
+/// The shift has to be in units of the wrap period, not of one cycle. A coarse
+/// mesh with a high cycle count has triangles legitimately spanning more than a
+/// cycle, and rounding to the nearest cycle would "correct" those into
+/// nonsense. A whole turn is the only jump that is ever real.
 #[inline]
-fn same_branch(reference: f32, u: f32) -> f32 {
-    u + (reference - u).round()
+fn same_branch(reference: f32, u: f32, period: f32) -> f32 {
+    u + ((reference - u) / period).round() * period
 }
 
 /// Draw a refined mesh, taking its color from a ramp texture indexed by phase.
@@ -95,6 +99,7 @@ fn same_branch(reference: f32, u: f32) -> f32 {
 pub fn draw_textured<G: Graphics>(
     mesh: &RefinedMesh,
     uvs: &[[f32; 2]],
+    period: Option<f32>,
     texture: &G::Texture,
     m: Matrix2d,
     gl: &mut G,
@@ -114,7 +119,11 @@ pub fn draw_textured<G: Graphics>(
                 for &i in tri {
                     let v = uvs[i as usize];
                     pos.push(project(m, mesh.verts[i as usize]));
-                    uv.push([same_branch(reference, v[0]), v[1]]);
+                    let u = match period {
+                        Some(p) => same_branch(reference, v[0], p),
+                        None => v[0],
+                    };
+                    uv.push([u, v[1]]);
                 }
             }
             f(&pos, &uv);

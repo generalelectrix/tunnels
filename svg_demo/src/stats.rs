@@ -5,7 +5,7 @@
 //! geometry that does not belong to it.
 
 use crate::draw::phase_uvs;
-use crate::mesh::{Level, refine};
+use crate::mesh::{self, Level, refine};
 use crate::ramp;
 use crate::params::{ColorPhase, LayerParams, PhaseField};
 use crate::shapes::ShapeMesh;
@@ -73,7 +73,7 @@ pub fn report(shapes: &[ShapeMesh]) {
 
     // Per-frame work at the density a full-screen shape on a 1080-line
     // projector asks for.
-    let level = Level::for_scale(1.0, 1080.0);
+    let level = Level::for_scale(1.0, 1080.0, mesh::DEFAULT_TARGET_PX);
     println!(
         "\n=== per frame at level {:?} (edge {:.4}) ===",
         level,
@@ -100,6 +100,26 @@ pub fn report(shapes: &[ShapeMesh]) {
     // The profiler attributes about a millisecond a frame to rebuilding ramps
     // when hue is sweeping. Split that into the CPU half measurable here and
     // the GL upload, which is not.
+    // Triangle count goes as the inverse square of the target, and submitting
+    // vertices is the largest per-frame cost, so this is the dial to reach for
+    // on slow hardware.
+    println!("\n=== triangles at 1080p full screen, by target triangle size ===");
+    println!("{:>10} {:>8} {:>14} {:>14}", "target px", "edge", "median tris", "max tris");
+    for px in [7.0, 10.0, 14.0, 20.0, 28.0, 40.0] {
+        let lvl = Level::for_scale(1.0, 1080.0, px);
+        let mut tris: Vec<usize> = shapes
+            .iter()
+            .map(|s| refine(&s.fill, lvl.target_edge()).triangle_count())
+            .collect();
+        tris.sort_unstable();
+        println!(
+            "{px:>10.0} {:>8.4} {:>14} {:>14}",
+            lvl.target_edge(),
+            tris[tris.len() / 2],
+            tris[tris.len() - 1]
+        );
+    }
+
     println!("\n=== ramp build (CPU only; excludes the texture upload) ===");
     let mut probe = layer.clone();
     let start = Instant::now();

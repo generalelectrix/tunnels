@@ -24,8 +24,25 @@ mod render;
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 
-/// Where the shape library lives, relative to the crate root.
+/// Where the shape library lives.
+///
+/// Checked in order so a binary can be copied to another machine — which is the
+/// point, since the interesting hardware is not the machine that built it:
+///
+/// 1. `SVG_DEMO_SHAPES`, for an explicit location
+/// 2. a `shapes` directory beside the executable
+/// 3. the crate's own `shapes`, for `cargo run` during development
 fn shape_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("SVG_DEMO_SHAPES") {
+        return PathBuf::from(dir);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(beside) = exe.parent().map(|d| d.join("shapes")) {
+            if beside.is_dir() {
+                return beside;
+            }
+        }
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shapes")
 }
 
@@ -78,7 +95,18 @@ fn main() -> Result<()> {
             // Default to no supersampling: the question a zoom answers is how
             // the mesh looks, and supersampling hides exactly that.
             let ss = args.next().and_then(|a| a.parse().ok()).unwrap_or(1);
-            sheet::zoom(&shapes[idx.min(shapes.len() - 1)], &PathBuf::from(&out), 900, phase, ss)?;
+            let target_px = args
+                .next()
+                .and_then(|a| a.parse().ok())
+                .unwrap_or(mesh::DEFAULT_TARGET_PX);
+            sheet::zoom(
+                &shapes[idx.min(shapes.len() - 1)],
+                &PathBuf::from(&out),
+                900,
+                phase,
+                ss,
+                target_px,
+            )?;
             println!("wrote {out}");
             Ok(())
         }
@@ -103,6 +131,14 @@ fn main() -> Result<()> {
                             opts.width = w.parse().unwrap_or(opts.width);
                             opts.height = h.parse().unwrap_or(opts.height);
                         }
+                        i += 2;
+                    }
+                    "--target-px" => {
+                        opts.target_px = take(i).parse().unwrap_or(opts.target_px);
+                        i += 2;
+                    }
+                    "--samples" => {
+                        opts.samples = take(i).parse().unwrap_or(opts.samples);
                         i += 2;
                     }
                     "--shapes" => {

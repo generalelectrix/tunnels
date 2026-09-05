@@ -1,7 +1,7 @@
 //! Headless PNG output: contact sheets of the shape library and stacking demos.
 
 use crate::draw::{draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs};
-use crate::mesh::{Level, refine};
+use crate::mesh::{self, Level, refine};
 use crate::params::PhaseField;
 use crate::ramp;
 use crate::params::{ColorPhase, DrawMode, LayerParams};
@@ -19,14 +19,20 @@ const SUPERSAMPLE: u32 = 3;
 
 /// Draw one shape into a square image of the given size.
 fn render_cell(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaImage {
-    render_cell_at(shape, layer, size, SUPERSAMPLE)
+    render_cell_at(shape, layer, size, SUPERSAMPLE, mesh::DEFAULT_TARGET_PX)
 }
 
 /// As `render_cell`, but with the supersampling factor named.
 ///
 /// Supersampling hides mesh artifacts, so a factor of one is what to use when
 /// the question is how the mesh itself looks.
-fn render_cell_at(shape: &ShapeMesh, layer: &LayerParams, size: u32, ss: u32) -> RgbaImage {
+fn render_cell_at(
+    shape: &ShapeMesh,
+    layer: &LayerParams,
+    size: u32,
+    ss: u32,
+    target_px: f64,
+) -> RgbaImage {
     let hi = size * ss;
     let mut buf = RenderBuffer::new(hi, hi);
     buf.clear_color([0.0, 0.0, 0.0, 1.0]);
@@ -36,17 +42,19 @@ fn render_cell_at(shape: &ShapeMesh, layer: &LayerParams, size: u32, ss: u32) ->
         .draws_outline()
         .then(|| shape.stroke(layer.stroke_width as f32));
     let m = layer_transform(base, layer, 0.0, f64::from(hi));
-    draw_one(shape, outline.as_deref(), layer, m, f64::from(hi), &mut buf);
+    draw_one(shape, outline.as_deref(), layer, m, f64::from(hi), target_px, &mut buf);
     downsample(&buf.into_image(), ss)
 }
 
 /// Draw a layer, refining it first if its color varies across the shape.
+#[expect(clippy::too_many_arguments)]
 fn draw_one(
     shape: &ShapeMesh,
     outline: Option<&[[f32; 2]]>,
     layer: &LayerParams,
     m: graphics::math::Matrix2d,
     critical: f64,
+    target_px: f64,
     buf: &mut RenderBuffer,
 ) {
     if is_uniform(layer) || layer.mask {
@@ -54,16 +62,16 @@ fn draw_one(
         return;
     }
     let scale = layer.scale_x.abs().max(layer.scale_y.abs());
-    let target = Level::for_scale(scale, critical).target_edge();
+    let target = Level::for_scale(scale, critical, target_px).target_edge();
     let field = PhaseField::of(layer);
     let texture = RenderBuffer::from_image(ramp::build(layer));
     if layer.draw_mode.draws_fill() {
         let mesh = refine(&shape.fill, target);
-        draw_textured(&mesh, &phase_uvs(&mesh, field), &texture, m, buf);
+        draw_textured(&mesh, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
     }
     if let Some(outline) = outline {
         let mesh = refine(outline, target);
-        draw_textured(&mesh, &phase_uvs(&mesh, field), &texture, m, buf);
+        draw_textured(&mesh, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
     }
 }
 
@@ -142,6 +150,7 @@ pub fn zoom(
     size: u32,
     phase: ColorPhase,
     supersample: u32,
+    target_px: f64,
 ) -> Result<()> {
     let layer = LayerParams {
         enabled: true,
@@ -154,7 +163,7 @@ pub fn zoom(
         col_sat: 0.9,
         ..Default::default()
     };
-    render_cell_at(shape, &layer, size, supersample).save(out)?;
+    render_cell_at(shape, &layer, size, supersample, target_px).save(out)?;
     Ok(())
 }
 
@@ -253,7 +262,7 @@ fn render_stack(shapes: &[ShapeMesh], idx: usize, size: u32) -> RgbaImage {
     };
     for layer in [&lit, &mask_a, &mask_b] {
         let m = layer_transform(base, layer, 0.0, f64::from(hi));
-        draw_one(&shapes[idx], None, layer, m, f64::from(hi), &mut buf);
+        draw_one(&shapes[idx], None, layer, m, f64::from(hi), mesh::DEFAULT_TARGET_PX, &mut buf);
     }
     downsample(&buf.into_image(), SUPERSAMPLE)
 }

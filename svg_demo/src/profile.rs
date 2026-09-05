@@ -25,6 +25,11 @@ pub struct Options {
     pub height: u32,
     /// Shapes to draw. Empty means pick the heaviest in the library.
     pub shapes: Vec<usize>,
+    /// Target on-screen triangle size. Triangle count goes as its inverse
+    /// square, so this is the strongest lever on per-frame cost.
+    pub target_px: f64,
+    /// Multisampling. Free on a modern GPU, not necessarily on an old one.
+    pub samples: u8,
 }
 
 impl Default for Options {
@@ -35,6 +40,8 @@ impl Default for Options {
             width: 1920,
             height: 1080,
             shapes: Vec::new(),
+            target_px: crate::mesh::DEFAULT_TARGET_PX,
+            samples: 4,
         }
     }
 }
@@ -170,12 +177,13 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
             .exit_on_esc(true)
             // Vsync off: with it on this measures the display, not the work.
             .vsync(false)
-            .samples(4)
+            .samples(opts.samples)
             .build()
             .map_err(|e| anyhow!("{e}"))?;
     window.set_max_fps(100_000);
     let mut gl = GlGraphics::new(opengl);
     let mut renderer = Renderer::new(shapes);
+    renderer.target_px = opts.target_px;
 
     let mut runs = Vec::new();
     for (name, animate_color) in [("color animating", true), ("color held still", false)] {
@@ -227,8 +235,13 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
     }
 
     println!(
-        "\n{}x{}, {} layers, vsync off, {} warmup frames discarded",
-        opts.width, opts.height, picks.len(), WARMUP_FRAMES
+        "\n{}x{}, {} layers, {}x msaa, {:.0}px triangles, vsync off, {} warmup frames discarded",
+        opts.width,
+        opts.height,
+        picks.len(),
+        opts.samples,
+        opts.target_px,
+        WARMUP_FRAMES
     );
     println!(
         "mesh library after run: {} meshes, {} triangles",
