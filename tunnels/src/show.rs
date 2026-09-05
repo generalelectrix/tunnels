@@ -13,7 +13,8 @@ use crate::{
     mixer::{self, Mixer},
     palette::{self, ColorPalette},
     position_bank::{self, PositionBank},
-    send::{Frame, start_render_service},
+    send::start_frame_service,
+    show_frame::ShowFrame,
     test_mode::TestModeSetup,
     tunnel,
 };
@@ -164,7 +165,7 @@ impl Show {
         self.snapshot_gui_state(GuiDirty::all());
 
         let mut frame_number = 0;
-        let frame_sender = start_render_service()?;
+        let frame_sender = start_frame_service()?;
 
         let mut last_update = Instant::now();
 
@@ -176,17 +177,17 @@ impl Show {
                 last_update = now;
 
                 if frame_sender
-                    .send(Frame {
-                        number: frame_number,
+                    .send(ShowFrame {
+                        frame_number,
                         mixer: self.state.mixer.clone(),
                         clocks: self.state.clocks.as_static(),
-                        color_palette: self.state.color_palette.clone(),
+                        palette: self.state.color_palette.clone(),
                         positions: self.state.positions.clone(),
                         audio_envelope: self.audio_input.envelope(),
                     })
                     .is_err()
                 {
-                    bail!("Render server hung up.  Aborting show.");
+                    bail!("Frame server hung up.  Aborting show.");
                 }
                 frame_number += 1;
                 self.send_clock_data();

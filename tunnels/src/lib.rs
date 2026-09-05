@@ -17,4 +17,4 @@ pub mod test_mode;
 // re-exported here at their original paths so that both this crate and its
 // downstream consumers see no change.
 pub use tunnels_model::{animation, clock, clock_bank, render_context, tunnel};
-pub(crate) use tunnels_model::{animation_target, beam, mixer, palette, position_bank};
+pub(crate) use tunnels_model::{animation_target, beam, mixer, palette, position_bank, show_frame};
