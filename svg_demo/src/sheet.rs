@@ -1,7 +1,9 @@
 //! Headless PNG output: contact sheets of the shape library and stacking demos.
 
-use crate::draw::{color_mesh, draw_layer, draw_mesh, is_uniform, layer_transform};
+use crate::draw::{draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs};
 use crate::mesh::{Level, refine};
+use crate::params::PhaseField;
+use crate::ramp;
 use crate::params::{ColorPhase, DrawMode, LayerParams};
 use crate::shapes::ShapeMesh;
 use crate::software::RenderBuffer;
@@ -17,7 +19,15 @@ const SUPERSAMPLE: u32 = 3;
 
 /// Draw one shape into a square image of the given size.
 fn render_cell(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaImage {
-    let hi = size * SUPERSAMPLE;
+    render_cell_at(shape, layer, size, SUPERSAMPLE)
+}
+
+/// As `render_cell`, but with the supersampling factor named.
+///
+/// Supersampling hides mesh artifacts, so a factor of one is what to use when
+/// the question is how the mesh itself looks.
+fn render_cell_at(shape: &ShapeMesh, layer: &LayerParams, size: u32, ss: u32) -> RgbaImage {
+    let hi = size * ss;
     let mut buf = RenderBuffer::new(hi, hi);
     buf.clear_color([0.0, 0.0, 0.0, 1.0]);
     let base: Matrix2d = identity().trans(f64::from(hi) / 2.0, f64::from(hi) / 2.0);
@@ -27,7 +37,7 @@ fn render_cell(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaImage {
         .then(|| shape.stroke(layer.stroke_width as f32));
     let m = layer_transform(base, layer, 0.0, f64::from(hi));
     draw_one(shape, outline.as_deref(), layer, m, f64::from(hi), &mut buf);
-    downsample(&buf.into_image(), SUPERSAMPLE)
+    downsample(&buf.into_image(), ss)
 }
 
 /// Draw a layer, refining it first if its color varies across the shape.
@@ -45,13 +55,15 @@ fn draw_one(
     }
     let scale = layer.scale_x.abs().max(layer.scale_y.abs());
     let target = Level::for_scale(scale, critical).target_edge();
+    let field = PhaseField::of(layer);
+    let texture = RenderBuffer::from_image(ramp::build(layer));
     if layer.draw_mode.draws_fill() {
         let mesh = refine(&shape.fill, target);
-        draw_mesh(&mesh, &color_mesh(&mesh, layer), m, buf);
+        draw_textured(&mesh, &phase_uvs(&mesh, field), &texture, m, buf);
     }
     if let Some(outline) = outline {
         let mesh = refine(outline, target);
-        draw_mesh(&mesh, &color_mesh(&mesh, layer), m, buf);
+        draw_textured(&mesh, &phase_uvs(&mesh, field), &texture, m, buf);
     }
 }
 
@@ -124,7 +136,13 @@ pub fn contact_sheet(shapes: &[ShapeMesh], out: &Path, cell: u32, cols: u32) -> 
 }
 
 /// One shape, large, for inspecting mesh and gradient quality up close.
-pub fn zoom(shape: &ShapeMesh, out: &Path, size: u32, phase: ColorPhase) -> Result<()> {
+pub fn zoom(
+    shape: &ShapeMesh,
+    out: &Path,
+    size: u32,
+    phase: ColorPhase,
+    supersample: u32,
+) -> Result<()> {
     let layer = LayerParams {
         enabled: true,
         scale_x: 0.92,
@@ -136,7 +154,7 @@ pub fn zoom(shape: &ShapeMesh, out: &Path, size: u32, phase: ColorPhase) -> Resu
         col_sat: 0.9,
         ..Default::default()
     };
-    render_cell(shape, &layer, size).save(out)?;
+    render_cell_at(shape, &layer, size, supersample).save(out)?;
     Ok(())
 }
 

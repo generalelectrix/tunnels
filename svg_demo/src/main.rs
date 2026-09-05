@@ -8,6 +8,7 @@
 mod draw;
 mod mesh;
 mod params;
+mod ramp;
 mod shapes;
 mod sheet;
 mod stats;
@@ -72,7 +73,10 @@ fn main() -> Result<()> {
                 Some("y") => params::ColorPhase::LinearY,
                 _ => params::ColorPhase::Angle,
             };
-            sheet::zoom(&shapes[idx.min(shapes.len() - 1)], &PathBuf::from(&out), 900, phase)?;
+            // Default to no supersampling: the question a zoom answers is how
+            // the mesh looks, and supersampling hides exactly that.
+            let ss = args.next().and_then(|a| a.parse().ok()).unwrap_or(1);
+            sheet::zoom(&shapes[idx.min(shapes.len() - 1)], &PathBuf::from(&out), 900, phase, ss)?;
             println!("wrote {out}");
             Ok(())
         }

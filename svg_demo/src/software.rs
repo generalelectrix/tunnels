@@ -20,6 +20,22 @@ impl RenderBuffer {
         }
     }
 
+    /// Wrap an existing image, so a color ramp can be used as a texture.
+    pub fn from_image(inner: RgbaImage) -> Self {
+        RenderBuffer { inner }
+    }
+
+    /// Sample with repeating wrap and nearest filtering.
+    ///
+    /// Repeat is what lets a phase coordinate run past one cycle and keep
+    /// indexing the ramp, which is how the cycle count stays out of the mesh.
+    fn sample(&self, u: f32, v: f32) -> [f32; 4] {
+        let (w, h) = self.inner.dimensions();
+        let x = (u.rem_euclid(1.0) * w as f32) as u32;
+        let y = (v.rem_euclid(1.0) * h as f32) as u32;
+        color_rgba_f32(*self.inner.get_pixel(x.min(w - 1), y.min(h - 1)))
+    }
+
     pub fn into_image(self) -> RgbaImage {
         self.inner
     }
@@ -110,6 +126,49 @@ impl RenderBuffer {
     }
 }
 
+impl RenderBuffer {
+    /// Rasterise one textured triangle, interpolating texture coordinates and
+    /// sampling per pixel.
+    fn raster_uv(
+        &mut self,
+        tri: &[[f32; 2]; 3],
+        uv: &[[f32; 2]; 3],
+        texture: &RenderBuffer,
+        tint: [f32; 4],
+    ) {
+        let mut tl = [f32::MAX, f32::MAX];
+        let mut br = [f32::MIN, f32::MIN];
+        for v in tri {
+            tl[0] = tl[0].min(v[0]);
+            tl[1] = tl[1].min(v[1]);
+            br[0] = br[0].max(v[0]);
+            br[1] = br[1].max(v[1]);
+        }
+        let x0 = tl[0].floor().max(0.0) as i32;
+        let y0 = tl[1].floor().max(0.0) as i32;
+        let x1 = br[0].ceil().min(self.inner.width() as f32) as i32;
+        let y1 = br[1].ceil().min(self.inner.height() as f32) as i32;
+
+        for x in x0..x1 {
+            for y in y0..y1 {
+                let Some(w) = barycentric(tri, [x as f32, y as f32]) else {
+                    continue;
+                };
+                let u = w[0] * uv[0][0] + w[1] * uv[1][0] + w[2] * uv[2][0];
+                let v = w[0] * uv[0][1] + w[1] * uv[1][1] + w[2] * uv[2][1];
+                let mut over = texture.sample(u, v);
+                for ch in 0..4 {
+                    over[ch] *= tint[ch];
+                }
+                let under = color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
+                let blended = layer_color(&over, &under);
+                self.inner
+                    .put_pixel(x as u32, y as u32, color_f32_rgba(&blended));
+            }
+        }
+    }
+}
+
 impl Graphics for RenderBuffer {
     type Texture = RenderBuffer;
 
@@ -166,13 +225,24 @@ impl Graphics for RenderBuffer {
     fn tri_list_uv<F>(
         &mut self,
         _draw_state: &DrawState,
-        _color: &[f32; 4],
-        _texture: &Self::Texture,
-        _f: F,
+        color: &[f32; 4],
+        texture: &Self::Texture,
+        mut f: F,
     ) where
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]])),
     {
-        unimplemented!("the demo draws no textures")
+        let tint = *color;
+        let mut tris: Vec<([[f32; 2]; 3], [[f32; 2]; 3])> = Vec::new();
+        f(&mut |vertices, coords| {
+            for (v, t) in vertices.chunks(3).zip(coords.chunks(3)) {
+                if let ([a, b, c], [ta, tb, tc]) = (v, t) {
+                    tris.push(([*a, *b, *c], [*ta, *tb, *tc]));
+                }
+            }
+        });
+        for (tri, uv) in tris {
+            self.raster_uv(&tri, &uv, texture, tint);
+        }
     }
 
     fn tri_list_uv_c<F>(&mut self, _: &DrawState, _: &Self::Texture, _: F)

@@ -1,0 +1,90 @@
+//! The color ramp: one cycle of the hue waveform, baked into a texture.
+//!
+//! Sampling a ramp per pixel is what keeps color out of the mesh. The sawtooth
+//! is discontinuous, and resolving that jump with per-vertex color forces the
+//! geometry to be refined against it — which means every color knob, and every
+//! frame of an animated one, invalidates the mesh. A texture lookup resolves it
+//! at the fragment instead, so the mesh only ever has to carry phase, and a
+//! color change is a small buffer rewrite.
+
+use crate::params::LayerParams;
+use image::{Rgba, RgbaImage};
+
+/// Texels across one cycle of the waveform.
+///
+/// The jump sits between two adjacent texels, so this sets how sharp it can be:
+/// with a cycle spanning a few hundred pixels on screen, a thousand texels puts
+/// the transition comfortably inside one pixel.
+pub const RAMP_TEXELS: u32 = 1024;
+
+/// Convert HSV to RGB. Matches `tunnelclient::draw::hsv_to_rgb` so colors read
+/// the same as they do in the real client.
+fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> [f64; 4] {
+    let rgb = |r: f64, g: f64, b: f64| [r, g, b, alpha];
+    if sat == 0.0 {
+        return rgb(val, val, val);
+    }
+    let hue = hue.rem_euclid(1.0);
+    let var_h = if hue == 1.0 { 0.0 } else { hue * 6.0 };
+    let var_i = var_h.floor();
+    let var_1 = val * (1.0 - sat);
+    let var_2 = val * (1.0 - sat * (var_h - var_i));
+    let var_3 = val * (1.0 - sat * (1.0 - (var_h - var_i)));
+    match var_i as i64 {
+        0 => rgb(val, var_3, var_1),
+        1 => rgb(var_2, val, var_1),
+        2 => rgb(var_1, val, var_3),
+        3 => rgb(var_1, var_2, val),
+        4 => rgb(var_3, var_1, val),
+        _ => rgb(val, var_1, var_2),
+    }
+}
+
+/// The rising sawtooth `Tunnel` colors with, on [0, 1) returning [-1, 1).
+///
+/// Ported from `waveforms::sawtooth` with smoothing off, pulse off, and a full
+/// duty cycle — the settings `Tunnel::render` passes when it builds a hue.
+fn sawtooth(phase: f64) -> f64 {
+    let phase = phase.rem_euclid(1.0);
+    if phase < 0.5 { 2.0 * phase } else { 2.0 * (phase - 1.0) }
+}
+
+/// One cycle of a layer's hue waveform as a texture, to be sampled with
+/// repeating wrap so the cycle count falls out of the texture coordinate.
+pub fn build(layer: &LayerParams) -> RgbaImage {
+    let mut img = RgbaImage::new(RAMP_TEXELS, 1);
+    for x in 0..RAMP_TEXELS {
+        let phase = f64::from(x) / f64::from(RAMP_TEXELS);
+        let hue = layer.col_center + 0.5 * layer.col_width * sawtooth(phase);
+        let c = hsv_to_rgb(hue, layer.col_sat, 1.0, layer.level);
+        img.put_pixel(
+            x,
+            0,
+            Rgba([
+                (c[0].clamp(0.0, 1.0) * 255.0) as u8,
+                (c[1].clamp(0.0, 1.0) * 255.0) as u8,
+                (c[2].clamp(0.0, 1.0) * 255.0) as u8,
+                (c[3].clamp(0.0, 1.0) * 255.0) as u8,
+            ]),
+        );
+    }
+    img
+}
+
+/// The knobs a ramp is built from, so it can be rebuilt only when they move.
+#[derive(PartialEq, Clone, Copy)]
+pub struct RampKey([u64; 4]);
+
+impl RampKey {
+    pub fn of(layer: &LayerParams) -> Self {
+        Self(
+            [
+                layer.col_center,
+                layer.col_width,
+                layer.col_sat,
+                layer.level,
+            ]
+            .map(f64::to_bits),
+        )
+    }
+}

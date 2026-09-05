@@ -1,13 +1,14 @@
 //! The render window: the same piston/OpenGL stack `tunnelclient` uses, so what
 //! shows up here is what the real client would produce.
 
-use crate::draw::{color_mesh, draw_layer, draw_mesh, is_uniform, layer_transform};
+use crate::draw::{draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs};
 use crate::mesh::{Level, MeshId, MeshLibrary};
-use crate::params::{DemoParams, PORT};
+use crate::params::{DemoParams, PhaseField, PORT};
+use crate::ramp::{self, RampKey};
 use crate::shapes::{ShapeMesh, load_dir};
 use anyhow::{Result, anyhow};
 use graphics::{Transformed, clear};
-use opengl_graphics::{GlGraphics, OpenGL};
+use opengl_graphics::{Filter, GlGraphics, OpenGL, Texture, TextureSettings, Wrap};
 use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::net::UdpSocket;
@@ -66,6 +67,19 @@ pub fn run(shape_dir: &Path) -> Result<()> {
     let mut buf = vec![0u8; 65536];
     let mut reported_meshes = 0;
 
+    // Repeating wrap is what lets a phase coordinate run past one cycle and
+    // keep indexing the ramp, so the cycle count never reaches the mesh.
+    // Linear filtering puts the sawtooth's jump inside a single texel.
+    let ramp_settings = TextureSettings::new()
+        .filter(Filter::Linear)
+        .wrap_u(Wrap::Repeat)
+        .wrap_v(Wrap::Repeat);
+    let mut ramps: Vec<(Option<RampKey>, Texture)> = params
+        .layers
+        .iter()
+        .map(|l| (None, Texture::from_image(&ramp::build(l), &ramp_settings)))
+        .collect();
+
     while let Some(e) = window.next() {
         // Take the newest parameters waiting on the socket, dropping any
         // backlog — only the latest frame of control state matters.
@@ -73,6 +87,12 @@ pub fn run(shape_dir: &Path) -> Result<()> {
             if let Ok(p) = serde_json::from_slice::<DemoParams>(&buf[..n]) {
                 if p.layers.len() > strokes.len() {
                     strokes.resize_with(p.layers.len(), StrokeCache::new);
+                }
+                while ramps.len() < p.layers.len() {
+                    ramps.push((
+                        None,
+                        Texture::from_image(&ramp::build(&p.layers[0]), &ramp_settings),
+                    ));
                 }
                 params = p;
             }
@@ -86,7 +106,12 @@ pub fn run(shape_dir: &Path) -> Result<()> {
         gl.draw(args.viewport(), |c, gl| {
             clear([0.0, 0.0, 0.0, 1.0], gl);
             let base = c.transform.trans(w / 2.0, h / 2.0);
-            for (layer, stroke_cache) in params.layers.iter().zip(strokes.iter_mut()) {
+            for ((layer, stroke_cache), ramp_slot) in params
+                .layers
+                .iter()
+                .zip(strokes.iter_mut())
+                .zip(ramps.iter_mut())
+            {
                 if !layer.enabled || layer.shape >= shapes.len() {
                     continue;
                 }
@@ -102,8 +127,17 @@ pub fn run(shape_dir: &Path) -> Result<()> {
                     continue;
                 }
 
+                // Rebuilding the ramp is a thousand-texel write, so a colour
+                // knob costs that and nothing else — the mesh never moves.
+                let ramp_key = RampKey::of(layer);
+                if ramp_slot.0 != Some(ramp_key) {
+                    ramp_slot.1.update(&ramp::build(layer));
+                    ramp_slot.0 = Some(ramp_key);
+                }
+
                 let scale = layer.scale_x.abs().max(layer.scale_y.abs());
                 let level = Level::for_scale(scale, critical);
+                let field = PhaseField::of(layer);
                 if layer.draw_mode.draws_fill() {
                     let id = MeshId {
                         shape: layer.shape,
@@ -111,8 +145,8 @@ pub fn run(shape_dir: &Path) -> Result<()> {
                         level,
                     };
                     let mesh = meshes.get(id, &shapes[layer.shape].fill);
-                    let colors = color_mesh(mesh, layer);
-                    draw_mesh(mesh, &colors, m, gl);
+                    let uvs = phase_uvs(mesh, field);
+                    draw_textured(mesh, &uvs, &ramp_slot.1, m, gl);
                 }
                 if let Some(stroke) = &stroke {
                     let id = MeshId {
@@ -121,8 +155,8 @@ pub fn run(shape_dir: &Path) -> Result<()> {
                         level,
                     };
                     let mesh = meshes.get(id, stroke);
-                    let colors = color_mesh(mesh, layer);
-                    draw_mesh(mesh, &colors, m, gl);
+                    let uvs = phase_uvs(mesh, field);
+                    draw_textured(mesh, &uvs, &ramp_slot.1, m, gl);
                 }
             }
         });

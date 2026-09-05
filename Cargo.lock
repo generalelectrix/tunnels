@@ -5469,7 +5469,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "eframe",
- "image 0.24.9",
+ "image 0.25.6",
  "lyon_path",
  "lyon_tessellation",
  "piston2d-graphics 0.45.0",

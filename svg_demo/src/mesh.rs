@@ -15,6 +15,18 @@ use std::collections::HashMap;
 /// discontinuity reads as a clean edge.
 const TARGET_PX: f64 = 7.0;
 
+/// How much finer triangles get as they approach the origin.
+///
+/// The mesh carries phase, and angular phase varies without bound at the
+/// centre: one triangle spanning the origin covers every angle there is, and
+/// interpolating across it is meaningless. Tightening the limit near the centre
+/// keeps that error bounded. This is a property of the coordinate, not of any
+/// color setting, so it costs the mesh no dependence on one.
+const CENTRE_REFINEMENT: f32 = 12.0;
+
+/// Radius, in shape space, inside which the extra refinement applies.
+const CENTRE_RADIUS: f32 = 0.35;
+
 /// Guard against a degenerate transform asking for an unbounded mesh.
 const MAX_DEPTH: u32 = 24;
 
@@ -120,6 +132,11 @@ impl MeshLibrary {
 
 /// Split a triangle list until no edge is longer than `target`, sharing
 /// vertices between the results.
+///
+/// Nothing here consults a color setting. The mesh exists to carry phase, which
+/// is a function of position alone, so it is built once per shape and density
+/// and then holds for every color a layer can take — including one changing
+/// every frame.
 pub fn refine(tris: &[[f32; 2]], target: f32) -> RefinedMesh {
     let mut flat = Vec::new();
     for tri in tris.chunks(3) {
@@ -159,7 +176,20 @@ fn bisect(tri: [[f32; 2]; 3], target: f32, depth: u32, out: &mut Vec<[f32; 2]>) 
     ];
     let cut = (0..3).fold(0, |best, i| if lengths[i] > lengths[best] { i } else { best });
 
-    if depth >= MAX_DEPTH || lengths[cut] <= target {
+    // Triangles near the origin get a tighter limit, since angular phase varies
+    // fastest there.
+    let nearest = tri
+        .iter()
+        .map(|v| (v[0] * v[0] + v[1] * v[1]).sqrt())
+        .fold(f32::MAX, f32::min);
+    let limit = if nearest < CENTRE_RADIUS {
+        let t = (nearest / CENTRE_RADIUS).clamp(0.0, 1.0);
+        target * (1.0 / CENTRE_REFINEMENT).mul_add(1.0 - t, t)
+    } else {
+        target
+    };
+
+    if depth >= MAX_DEPTH || lengths[cut] <= limit {
         out.extend_from_slice(&tri);
         return;
     }

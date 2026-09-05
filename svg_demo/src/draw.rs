@@ -4,7 +4,7 @@
 //! software rasteriser used for headless contact sheets.
 
 use crate::mesh::RefinedMesh;
-use crate::params::{ColorPhase, LayerParams};
+use crate::params::{COLOR_SPREAD_SCALE, LayerParams, PhaseField};
 use crate::shapes::ShapeMesh;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
@@ -38,58 +38,11 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> [f32; 4] {
     }
 }
 
-/// How many hue cycles a full turn of `col_spread` buys. Matches
-/// `COLOR_SPREAD_SCALE` in `tunnels/src/tunnel.rs`.
-const COLOR_SPREAD_SCALE: f64 = 16.0;
-
-/// The rising sawtooth `Tunnel` colors with, on [0, 1) returning [-1, 1).
-///
-/// Ported from `waveforms::sawtooth` with smoothing off, pulse off, and a full
-/// duty cycle — the settings `Tunnel::render` passes when it builds a hue.
-fn sawtooth(phase: f64) -> f64 {
-    let phase = phase.rem_euclid(1.0);
-    if phase < 0.5 { 2.0 * phase } else { 2.0 * (phase - 1.0) }
-}
-
-
-/// Where a point sits along the coordinate driving the color sawtooth,
-/// as a fraction in [0, 1).
-///
-/// This stands in for a tunnel segment's `rel_angle`. Shape space is the
-/// normalised unit box, so the gradient rides with the figure rather than being
-/// pinned to the screen.
-fn color_phase(p: [f32; 2], layer: &LayerParams) -> f64 {
-    let (x, y) = (f64::from(p[0]), f64::from(p[1]));
-    match layer.color_phase {
-        ColorPhase::Angle => y.atan2(x) / TAU,
-        // Shapes are normalised into a unit box, so the far corner is at
-        // sqrt(2). Dividing by that keeps a full sweep inside one cycle.
-        ColorPhase::Radius => (x * x + y * y).sqrt() / std::f64::consts::SQRT_2,
-        ColorPhase::LinearX => (x + 1.0) / 2.0,
-        ColorPhase::LinearY => (y + 1.0) / 2.0,
-    }
-}
-
-/// The hue at a point in shape space.
-///
-/// This is `Tunnel::render`'s hue expression with the shape's own coordinate
-/// standing in for a segment's position around the ring, so a look dialled in
-/// here maps onto the same four knobs on the real control surface.
-fn hue_at(p: [f32; 2], layer: &LayerParams) -> f64 {
-    let cycles = (COLOR_SPREAD_SCALE * layer.col_spread).floor();
-    let phase = color_phase(p, layer) * cycles;
-    layer.col_center + 0.5 * layer.col_width * sawtooth(phase)
-}
 
 /// Whether every vertex of this layer resolves to the same color, letting the
 /// cheaper flat-color path handle it.
 pub fn is_uniform(layer: &LayerParams) -> bool {
     layer.col_width == 0.0 || (COLOR_SPREAD_SCALE * layer.col_spread).floor() == 0.0
-}
-
-/// The color of a point in shape space under this layer.
-fn shade(v: [f32; 2], layer: &LayerParams) -> [f32; 4] {
-    hsv_to_rgb(hue_at(v, layer), layer.col_sat, 1.0, layer.level)
 }
 
 /// The transform placing a layer's unit-box shape on screen.
@@ -110,6 +63,63 @@ pub fn layer_transform(
             layer.scale_x * critical * 0.5,
             layer.scale_y * critical * 0.5,
         )
+}
+
+/// Texture coordinates carrying each vertex's phase.
+///
+/// The whole point of the split: the mesh holds positions, this holds where
+/// each one sits in the color cycle, and the ramp texture turns that into a
+/// color at the fragment. A cycle count larger than one falls out for free —
+/// the coordinate simply runs past one and the texture repeats.
+pub fn phase_uvs(mesh: &RefinedMesh, field: PhaseField) -> Vec<[f32; 2]> {
+    mesh.verts.iter().map(|v| [field.at(*v), 0.5]).collect()
+}
+
+/// Put two phase coordinates on the same branch.
+///
+/// Angular phase jumps by a whole cycle across the far side of the shape, where
+/// `atan2` wraps. Both ends still sample the right texel — the ramp repeats,
+/// and a whole number of cycles is a whole number of periods — but interpolating
+/// straight between them sweeps the long way round, painting a band of spurious
+/// rainbow along the seam. Shifting by whole periods takes the short path
+/// without changing either endpoint's color.
+#[inline]
+fn same_branch(reference: f32, u: f32) -> f32 {
+    u + (reference - u).round()
+}
+
+/// Draw a refined mesh, taking its color from a ramp texture indexed by phase.
+///
+/// The sampler resolves the waveform per fragment, so the sawtooth's jump lands
+/// exactly where it belongs however coarse the mesh is.
+pub fn draw_textured<G: Graphics>(
+    mesh: &RefinedMesh,
+    uvs: &[[f32; 2]],
+    texture: &G::Texture,
+    m: Matrix2d,
+    gl: &mut G,
+) {
+    if mesh.is_empty() {
+        return;
+    }
+    let stride = CHUNK / 3 * 3;
+    let mut pos = Vec::with_capacity(stride);
+    let mut uv = Vec::with_capacity(stride);
+    gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
+        for chunk in mesh.indices.chunks(stride) {
+            pos.clear();
+            uv.clear();
+            for tri in chunk.chunks(3) {
+                let reference = uvs[tri[0] as usize][0];
+                for &i in tri {
+                    let v = uvs[i as usize];
+                    pos.push(project(m, mesh.verts[i as usize]));
+                    uv.push([same_branch(reference, v[0]), v[1]]);
+                }
+            }
+            f(&pos, &uv);
+        }
+    });
 }
 
 /// Draw one layer's shape.
@@ -175,42 +185,6 @@ fn draw_tris<G: Graphics>(
         }
         if !chunk.is_empty() {
             f(&chunk);
-        }
-    });
-}
-
-/// The color of every vertex of a mesh under this layer.
-///
-/// Runs once per unique vertex per frame. Nothing here depends on the
-/// transform, so a spinning shape does not repeat the work — and nothing here
-/// feeds back into the mesh, so an animated color costs one evaluation per
-/// vertex rather than a re-refinement.
-pub fn color_mesh(mesh: &RefinedMesh, layer: &LayerParams) -> Vec<[f32; 4]> {
-    mesh.verts.iter().map(|v| shade(*v, layer)).collect()
-}
-
-/// Draw a refined mesh with per-vertex colors, projecting into screen space.
-pub fn draw_mesh<G: Graphics>(
-    mesh: &RefinedMesh,
-    colors: &[[f32; 4]],
-    m: Matrix2d,
-    gl: &mut G,
-) {
-    if mesh.is_empty() {
-        return;
-    }
-    let stride = CHUNK / 3 * 3;
-    let mut pos = Vec::with_capacity(stride);
-    let mut col = Vec::with_capacity(stride);
-    gl.tri_list_c(&DrawState::default(), |f| {
-        for chunk in mesh.indices.chunks(stride) {
-            pos.clear();
-            col.clear();
-            for &i in chunk {
-                pos.push(project(m, mesh.verts[i as usize]));
-                col.push(colors[i as usize]);
-            }
-            f(&pos, &col);
         }
     });
 }

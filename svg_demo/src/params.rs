@@ -144,3 +144,46 @@ impl Default for DemoParams {
         Self { layers }
     }
 }
+
+/// How many hue cycles a full turn of `col_spread` buys. Matches
+/// `COLOR_SPREAD_SCALE` in `tunnels/src/tunnel.rs`.
+pub const COLOR_SPREAD_SCALE: f64 = 16.0;
+
+/// The scaled spatial phase driving a layer's color sawtooth.
+///
+/// Depends only on which coordinate the color follows and how many cycles it
+/// spans — not on hue, width, saturation or level. That is what lets a mesh
+/// refined against it survive those knobs moving.
+#[derive(Copy, Clone, PartialEq)]
+pub struct PhaseField {
+    phase: ColorPhase,
+    cycles: f32,
+}
+
+impl PhaseField {
+    pub fn of(layer: &LayerParams) -> Self {
+        Self {
+            phase: layer.color_phase,
+            cycles: (COLOR_SPREAD_SCALE * layer.col_spread).floor() as f32,
+        }
+    }
+
+    /// The phase at a point in shape space, scaled by the cycle count.
+    ///
+    /// Shape space is the normalised unit box, so this rides with the figure
+    /// rather than being pinned to the screen.
+    pub fn at(self, p: [f32; 2]) -> f32 {
+        let (x, y) = (p[0], p[1]);
+        let unit = match self.phase {
+            // The direct analogue of a tunnel segment's `rel_angle`.
+            ColorPhase::Angle => y.atan2(x) / std::f32::consts::TAU,
+            // The far corner of a unit box is at sqrt(2); dividing by that
+            // keeps a full sweep inside one cycle.
+            ColorPhase::Radius => (x * x + y * y).sqrt() / std::f32::consts::SQRT_2,
+            ColorPhase::LinearX => (x + 1.0) / 2.0,
+            ColorPhase::LinearY => (y + 1.0) / 2.0,
+        };
+        unit * self.cycles
+    }
+
+}

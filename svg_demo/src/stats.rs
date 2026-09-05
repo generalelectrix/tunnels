@@ -4,9 +4,9 @@
 //! what a frame costs once the meshes exist, and whether any shape carries
 //! geometry that does not belong to it.
 
-use crate::draw::color_mesh;
+use crate::draw::phase_uvs;
 use crate::mesh::{Level, refine};
-use crate::params::{ColorPhase, LayerParams};
+use crate::params::{ColorPhase, LayerParams, PhaseField};
 use crate::shapes::ShapeMesh;
 use std::time::Instant;
 
@@ -83,14 +83,14 @@ pub fn report(shapes: &[ShapeMesh]) {
         let mesh = refine(&shape.fill, level.target_edge());
         let start = Instant::now();
         for _ in 0..8 {
-            std::hint::black_box(color_mesh(&mesh, &layer));
+            std::hint::black_box(phase_uvs(&mesh, PhaseField::of(&layer)));
         }
         color_us.push((start.elapsed().as_micros() / 8, mesh.verts.len(), &shape.name));
     }
     color_us.sort_unstable();
     let median = color_us[color_us.len() / 2].0;
     let (worst, worst_verts, worst_name) = color_us[color_us.len() - 1];
-    println!("color evaluation: median {median}us, worst {worst}us ({worst_verts} verts, {worst_name})");
+    println!("phase evaluation: median {median}us, worst {worst}us ({worst_verts} verts, {worst_name})");
     println!(
         "three worst-case layers: {:.2}ms of a 16.7ms budget at 60Hz",
         (worst * 3) as f64 / 1000.0
