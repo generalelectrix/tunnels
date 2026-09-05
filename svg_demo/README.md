@@ -99,7 +99,27 @@ Both criteria are pure geometry. Densities are bucketed as powers of two
 (`Level`); `MeshLibrary` builds one the first time a shape is drawn at that size
 and keeps it, so a scale slider steps between prebuilt meshes.
 
-Measure with `-- stats`:
+Measured on a 1080p window, three heavy shapes near full screen, 151k
+triangles, vsync off (`-- profile --shapes 72,83,75`):
+
+| stage | p50 | note |
+|---|---|---|
+| submit | 1.44ms | projecting 454k vertices and filling piston's buffers |
+| phase eval | 0.21ms | once per unique vertex |
+| ramp build | 0.05ms | only when a color knob moves |
+| mesh build | 0.00ms | cached; nonzero here means bucket thrashing |
+| gpu + swap | 0.34ms | fill rate is not the constraint |
+| **frame p99** | **5.27ms** | 32% of a 60Hz budget |
+
+Holding hue still instead of sweeping it every frame changes CPU by 0.05ms —
+the ramp rebuild and nothing else, which is the whole point of the split.
+
+`submit` dominates, and it is there because `tri_list_uv` takes *pre-transformed*
+vertices: piston's fixed pipeline makes the CPU do what a vertex shader would do
+for free. It scales linearly with triangle count, so it is what would need to
+change to go much past a handful of full-screen layers.
+
+Mesh building, measured with `-- stats`:
 
 | edge | build all 98 | median tris | max tris | held |
 |---|---|---|---|---|
