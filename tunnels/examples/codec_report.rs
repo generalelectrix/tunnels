@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use rmp_serde::Serializer;
 use serde::Serialize;
 use tunnels::tunnel::fixture;
-use tunnels_lib::frame_codec;
+use tunnels_lib::frame_codec::{self, EncodeStats, NUMERIC_FIELDS};
 use tunnels_lib::{ShapeGeometry, Snapshot};
 
 const FRAME_RATE: f64 = 240.0;
@@ -131,7 +131,7 @@ fn msgpack_lz4_decode(buf: &[u8]) -> Snapshot {
 /// Encode a snapshot exactly as the render service puts it on the wire.
 fn wire_encode(s: &Snapshot) -> Vec<u8> {
     let mut out = Vec::new();
-    frame_codec::encode(s, &mut out).unwrap();
+    frame_codec::encode(s, &mut out);
     out
 }
 
@@ -235,7 +235,7 @@ fn main() {
                 decode_us: time_ns(|| msgpack_lz4_decode(&compressed)) / 1000.0,
             },
             Row {
-                name: "narrowed fields + lz4 (ON THE WIRE)",
+                name: "columnar + lz4 (ON THE WIRE)",
                 bytes: wire.len(),
                 encode_us: time_ns(|| wire_encode(snap)) / 1000.0,
                 decode_us: time_ns(|| wire_decode(&wire)) / 1000.0,
@@ -257,6 +257,29 @@ fn main() {
                 per_client,
                 per_client * CLIENTS,
             );
+        }
+
+        let mut stats = EncodeStats::default();
+        let mut scratch = Vec::new();
+        let mut out = Vec::new();
+        frame_codec::encode_with_stats(snap, &mut scratch, &mut out, &mut stats);
+        let predicted = frame_codec::uncompressed_size(snap.shapes_per_layer());
+        println!(
+            "\nUncompressed {} B (predicted from shape counts: {predicted} B) = {:.1} B/shape, flat.",
+            stats.uncompressed_bytes,
+            stats.uncompressed_bytes as f64 / n_shapes as f64,
+        );
+
+        let clamps: Vec<String> = NUMERIC_FIELDS
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| stats.clamped[*i] > 0)
+            .map(|(i, f)| format!("{}={}", f.name, stats.clamped[i]))
+            .collect();
+        if clamps.is_empty() {
+            println!("Range audit: no value left the unit interval its type guarantees.");
+        } else {
+            println!("Range audit: OUT OF RANGE -- {}", clamps.join(", "));
         }
 
         let (lines, worst_px) = fidelity_report(snap, &wire_decode(&wire));

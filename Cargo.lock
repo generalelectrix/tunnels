@@ -5789,7 +5789,6 @@ dependencies = [
  "lz4_flex",
  "number",
  "ordered-float",
- "rmp-serde",
  "serde",
 ]
 

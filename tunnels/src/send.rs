@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{info, warn};
 use std::net::TcpListener;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread;
@@ -86,21 +86,13 @@ fn get_frame(recv: &mut Receiver<Frame>) -> Option<(u32, Frame)> {
 }
 
 /// Serialize the provided snapshot and send it to the specified video channel.
-/// Error conditions are logged.
 fn send_snapshot(
     send_buf: &mut Vec<u8>,
     publisher: &minusmq::pub_sub::Publisher,
     video_channel: usize,
     snapshot: Snapshot,
 ) {
-    if let Err(e) = frame_codec::encode(&snapshot, send_buf) {
-        error!(
-            "Snapshot serialization error for frame {} channel {}: {}.",
-            snapshot.frame_number, video_channel, e,
-        );
-        return;
-    }
-
+    frame_codec::encode(&snapshot, send_buf);
     publisher.send(video_channel as u8, send_buf);
 }
 
