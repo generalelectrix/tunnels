@@ -423,9 +423,9 @@ mod test {
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
     use crate::mixer::VideoChannel;
-    use crate::render_context::RenderContext;
     use crate::test_mode::stress;
     use insta::assert_yaml_snapshot;
+    use tunnels_model::render_context::RenderContext;
 
     /// Test show rendering against static test expectations.
     /// The purpose of this test is to catch accidental regressions in the

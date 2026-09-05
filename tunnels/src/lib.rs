@@ -16,5 +16,5 @@ pub mod test_mode;
 // can depend on them without pulling in MIDI, OSC, audio or the GUI. They are
 // re-exported here at their original paths so that both this crate and its
 // downstream consumers see no change.
-pub use tunnels_model::{animation, clock, clock_bank, render_context, tunnel};
+pub use tunnels_model::{animation, clock, clock_bank, tunnel};
 pub(crate) use tunnels_model::{animation_target, beam, mixer, palette, position_bank, show_frame};
