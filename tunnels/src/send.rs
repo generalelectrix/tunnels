@@ -105,7 +105,10 @@ fn send_snapshot(
         return;
     }
 
-    publisher.send(video_channel as u8, send_buf);
+    publisher.send(
+        video_channel as u8,
+        &lz4_flex::compress_prepend_size(send_buf),
+    );
 }
 
 pub struct Frame {

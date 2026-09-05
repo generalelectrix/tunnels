@@ -139,7 +139,14 @@ fn receive_snapshots(
                     break;
                 }
                 let buf = subscriber.recv();
-                match rmp_serde::from_slice::<Snapshot>(&buf) {
+                let plain = match lz4_flex::decompress_size_prepended(&buf) {
+                    Ok(plain) => plain,
+                    Err(e) => {
+                        error!("frame decompression error: {e}");
+                        continue;
+                    }
+                };
+                match rmp_serde::from_slice::<Snapshot>(&plain) {
                     Ok(msg) => {
                         *snapshot_manager.lock().unwrap() = Some(Arc::new(msg));
                     }

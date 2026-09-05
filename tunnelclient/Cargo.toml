@@ -17,6 +17,7 @@ rmp-serde.workspace = true
 log.workspace = true
 simplelog.workspace = true
 anyhow.workspace = true
+lz4_flex = "0.11"
 piston_window = "0.132"
 piston2d-graphics = "0.45"
 piston2d-opengl_graphics = "0.89"
