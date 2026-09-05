@@ -30,6 +30,13 @@ pub struct Options {
     pub target_px: f64,
     /// Multisampling. Free on a modern GPU, not necessarily on an old one.
     pub samples: u8,
+    /// Frame rate the budget is measured against.
+    ///
+    /// Defaults to the client's own cap rather than a display refresh:
+    /// `tunnelclient` sets `max_fps(120)` precisely because vsync is unreliable
+    /// on some machines, so on those the loop is paced by that cap and a frame
+    /// is 8.3ms, not 16.7ms.
+    pub budget_hz: f64,
 }
 
 impl Default for Options {
@@ -42,6 +49,7 @@ impl Default for Options {
             shapes: Vec::new(),
             target_px: crate::mesh::DEFAULT_TARGET_PX,
             samples: 4,
+            budget_hz: 120.0,
         }
     }
 }
@@ -117,7 +125,7 @@ impl Run {
             "  gpu + swap (frame - cpu)   p50 {}",
             us(p50.saturating_sub(cpu_p50))
         );
-        let headroom = budget_us / p99 as f64;
+        let headroom = budget_us / p99.max(1) as f64;
         println!(
             "p99 uses {:.0}% of a {:.1}ms frame — {:.1}x headroom",
             p99 as f64 / budget_us * 100.0,
@@ -249,11 +257,14 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
         renderer.mesh_triangles()
     );
     for run in &runs {
-        run.report(1e6 / 60.0);
+        run.report(1e6 / opts.budget_hz);
     }
     println!(
-        "\nA render client vsyncs to the projector, so the budget above is one \n\
-         60Hz frame. Anything under it is headroom, not speed."
+        "\nBudget is one frame at {:.0}Hz. Where vsync works, that is the \n\
+         projector's refresh and the tail is absorbed by waiting for it. Where \n\
+         it does not, the loop is paced by tunnelclient's own max_fps cap and \n\
+         nothing absorbs the tail, so p99 matters more than p50.",
+        opts.budget_hz
     );
     Ok(())
 }

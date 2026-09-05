@@ -46,6 +46,7 @@ Useful knobs when the target hardware is slow:
 | `--target-px N` | on-screen triangle size. Triangle count goes as its inverse square, so this is the strongest lever there is. Densities are bucketed to powers of two, so 7 and 10 land on the same mesh. |
 | `--samples N` | multisampling. Free on a modern GPU; on an integrated part sharing system memory it may dominate. `--samples 0` to find out. |
 | `--size WxH` | output resolution, which also selects the mesh level. |
+| `--budget-hz N` | frame rate the budget is measured against. Defaults to 120, matching `tunnelclient`'s own `max_fps` cap — which exists because vsync is unreliable on some machines, and on those the cap is what paces the loop. Pass 60 where vsync works. |
 
 It opens a window with **vsync off** (with it on you measure the display, not
 the work), draws the heaviest shapes in the library near full screen with

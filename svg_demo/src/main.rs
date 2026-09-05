@@ -137,6 +137,10 @@ fn main() -> Result<()> {
                         opts.target_px = take(i).parse().unwrap_or(opts.target_px);
                         i += 2;
                     }
+                    "--budget-hz" => {
+                        opts.budget_hz = take(i).parse().unwrap_or(opts.budget_hz);
+                        i += 2;
+                    }
                     "--samples" => {
                         opts.samples = take(i).parse().unwrap_or(opts.samples);
                         i += 2;
