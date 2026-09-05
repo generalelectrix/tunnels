@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_lib::Snapshot;
+use tunnels_lib::frame_codec;
 
 pub type SnapshotManagerHandle = Arc<Mutex<Option<SnapshotHandle>>>;
 pub type SnapshotHandle = Arc<Snapshot>;
@@ -139,14 +140,7 @@ fn receive_snapshots(
                     break;
                 }
                 let buf = subscriber.recv();
-                let plain = match lz4_flex::decompress_size_prepended(&buf) {
-                    Ok(plain) => plain,
-                    Err(e) => {
-                        error!("frame decompression error: {e}");
-                        continue;
-                    }
-                };
-                match rmp_serde::from_slice::<Snapshot>(&plain) {
+                match frame_codec::decode(&buf) {
                     Ok(msg) => {
                         *snapshot_manager.lock().unwrap() = Some(Arc::new(msg));
                     }

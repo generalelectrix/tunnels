@@ -2,6 +2,7 @@
 
 pub mod bootstrap;
 pub mod color;
+pub mod frame_codec;
 pub mod notified;
 pub mod number;
 pub mod prompt;

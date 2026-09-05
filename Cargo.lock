@@ -5724,7 +5724,6 @@ dependencies = [
  "client_lib",
  "image 0.24.9",
  "log",
- "lz4_flex",
  "minusmq",
  "piston2d-graphics 0.45.0",
  "piston2d-opengl_graphics",
@@ -5787,8 +5786,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "lz4_flex",
  "number",
  "ordered-float",
+ "rmp-serde",
  "serde",
 ]
 

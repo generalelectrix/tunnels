@@ -17,7 +17,6 @@ lazy_static.workspace = true
 anyhow.workspace = true
 rmp-serde.workspace = true
 
-lz4_flex = "0.11"
 rosc = "0.11"
 noise = "0.9.0"
 arrayvec = { version = "0.7", features = ["serde"] }
@@ -36,5 +35,6 @@ tunnels_audio = { path = "../tunnels_audio" }
 
 [dev-dependencies]
 insta = { version = "1.28.0", features = ["yaml"] }
+lz4_flex = "0.11"
 plotters = "^0.3.0"
 serde_yaml = "0.9"

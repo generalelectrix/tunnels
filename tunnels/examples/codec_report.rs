@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use rmp_serde::Serializer;
 use serde::Serialize;
 use tunnels::tunnel::fixture;
+use tunnels_lib::frame_codec;
 use tunnels_lib::{ShapeGeometry, Snapshot};
 
 const FRAME_RATE: f64 = 240.0;
@@ -119,14 +120,24 @@ fn msgpack_decode(buf: &[u8]) -> Snapshot {
     rmp_serde::from_slice(buf).unwrap()
 }
 
+fn msgpack_lz4(s: &Snapshot) -> Vec<u8> {
+    lz4_flex::compress_prepend_size(&msgpack(s))
+}
+
+fn msgpack_lz4_decode(buf: &[u8]) -> Snapshot {
+    msgpack_decode(&lz4_flex::decompress_size_prepended(buf).unwrap())
+}
+
 /// Encode a snapshot exactly as the render service puts it on the wire.
 fn wire_encode(s: &Snapshot) -> Vec<u8> {
-    lz4_flex::compress_prepend_size(&msgpack(s))
+    let mut out = Vec::new();
+    frame_codec::encode(s, &mut out).unwrap();
+    out
 }
 
 /// Recover a snapshot from the wire exactly as a render client does.
 fn wire_decode(buf: &[u8]) -> Snapshot {
-    msgpack_decode(&lz4_flex::decompress_size_prepended(buf).unwrap())
+    frame_codec::decode(buf).unwrap()
 }
 
 /// Median nanoseconds for one call, over enough repetitions to swamp noise.
@@ -206,6 +217,7 @@ fn main() {
         println!("{} layer(s), {} shapes.\n", snap.n_layers(), n_shapes);
 
         let plain = msgpack(snap);
+        let compressed = msgpack_lz4(snap);
         let wire = wire_encode(snap);
         let baseline = plain.len();
 
@@ -217,7 +229,13 @@ fn main() {
                 decode_us: time_ns(|| msgpack_decode(&plain)) / 1000.0,
             },
             Row {
-                name: "msgpack f64 + lz4 (ON THE WIRE)",
+                name: "msgpack f64 + lz4",
+                bytes: compressed.len(),
+                encode_us: time_ns(|| msgpack_lz4(snap)) / 1000.0,
+                decode_us: time_ns(|| msgpack_lz4_decode(&compressed)) / 1000.0,
+            },
+            Row {
+                name: "narrowed fields + lz4 (ON THE WIRE)",
                 bytes: wire.len(),
                 encode_us: time_ns(|| wire_encode(snap)) / 1000.0,
                 decode_us: time_ns(|| wire_decode(&wire)) / 1000.0,

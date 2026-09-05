@@ -1,11 +1,9 @@
 use anyhow::Result;
 use log::{error, info, warn};
-use rmp_serde::Serializer;
-use serde::Serialize;
 use std::net::TcpListener;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread;
-use tunnels_lib::{Snapshot, number::UnipolarFloat};
+use tunnels_lib::{Snapshot, frame_codec, number::UnipolarFloat};
 
 use crate::render_context::RenderContext;
 use crate::{
@@ -95,9 +93,7 @@ fn send_snapshot(
     video_channel: usize,
     snapshot: Snapshot,
 ) {
-    send_buf.clear();
-
-    if let Err(e) = snapshot.serialize(&mut Serializer::new(&mut *send_buf)) {
+    if let Err(e) = frame_codec::encode(&snapshot, send_buf) {
         error!(
             "Snapshot serialization error for frame {} channel {}: {}.",
             snapshot.frame_number, video_channel, e,
@@ -105,10 +101,7 @@ fn send_snapshot(
         return;
     }
 
-    publisher.send(
-        video_channel as u8,
-        &lz4_flex::compress_prepend_size(send_buf),
-    );
+    publisher.send(video_channel as u8, send_buf);
 }
 
 pub struct Frame {

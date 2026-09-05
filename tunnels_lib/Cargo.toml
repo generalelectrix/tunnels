@@ -8,6 +8,8 @@ edition.workspace = true
 
 [dependencies]
 serde.workspace = true
+rmp-serde.workspace = true
+lz4_flex = "0.11"
 ordered-float = "5"
 number = { git = "https://github.com/generalelectrix/number", branch = "main" }
 anyhow = "1"
