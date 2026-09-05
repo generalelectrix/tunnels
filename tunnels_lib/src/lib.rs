@@ -64,12 +64,10 @@ pub enum PathShape {
     Line,
 }
 
-/// A command to draw a single shape.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Shape {
-    pub render_mode: RenderMode,
-    #[serde(default)]
-    pub path_shape: PathShape,
+/// A command to draw a single shape, less the render mode and path shape that
+/// the layer holding it fixes for all of its shapes at once.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ShapeGeometry {
     pub level: f64,
     pub thickness: f64,
     pub hue: f64,
@@ -85,10 +83,8 @@ pub struct Shape {
     pub spin_angle: f64,
 }
 
-impl Hash for Shape {
+impl Hash for ShapeGeometry {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.render_mode.hash(state);
-        self.path_shape.hash(state);
         OrderedFloat(self.level).hash(state);
         OrderedFloat(self.thickness).hash(state);
         OrderedFloat(self.hue).hash(state);
@@ -105,29 +101,40 @@ impl Hash for Shape {
     }
 }
 
-impl PartialEq for Shape {
-    fn eq(&self, o: &Self) -> bool {
-        self.render_mode == o.render_mode
-            && self.path_shape == o.path_shape
-            && almost_eq(self.level, o.level)
-            && almost_eq(self.thickness, o.thickness)
-            && almost_eq(self.sat, o.sat)
-            && almost_eq(self.val, o.val)
-            && almost_eq(self.x, o.x)
-            && almost_eq(self.y, o.y)
-            && almost_eq(self.extent_x, o.extent_x)
-            && almost_eq(self.extent_y, o.extent_y)
-            && angle_almost_eq(self.hue, o.hue)
-            && angle_almost_eq(self.start, o.start)
-            && angle_almost_eq(self.stop, o.stop)
-            && angle_almost_eq(self.rot_angle, o.rot_angle)
-            && angle_almost_eq(self.spin_angle, o.spin_angle)
+impl Eq for ShapeGeometry {}
+
+/// A run of shapes drawn the same way.
+///
+/// The render mode and path shape apply to every shape in the layer, which is
+/// what makes a layer the unit a renderer can dispatch on once instead of per
+/// shape.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Layer {
+    pub render_mode: RenderMode,
+    pub path_shape: PathShape,
+    pub shapes: Vec<ShapeGeometry>,
+}
+
+impl Layer {
+    pub fn new(render_mode: RenderMode, path_shape: PathShape, shapes: Vec<ShapeGeometry>) -> Self {
+        Self {
+            render_mode,
+            path_shape,
+            shapes,
+        }
+    }
+
+    /// How many shapes this layer draws.
+    pub fn n_shapes(&self) -> usize {
+        self.shapes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shapes.is_empty()
     }
 }
 
-impl Eq for Shape {}
-
-pub type LayerCollection = Vec<Arc<Vec<Shape>>>;
+pub type LayerCollection = Vec<Arc<Layer>>;
 
 /// A complete single-frame video snapshot.
 /// This is the top-level structure sent in each serialized frame.
@@ -137,71 +144,31 @@ pub struct Snapshot {
     pub layers: LayerCollection,
 }
 
+impl Snapshot {
+    pub fn n_layers(&self) -> usize {
+        self.layers.len()
+    }
+
+    /// How many shapes this frame draws, across every layer.
+    pub fn n_shapes(&self) -> usize {
+        self.shapes_per_layer().sum()
+    }
+
+    /// The shape count of each layer, in order.
+    pub fn shapes_per_layer(&self) -> impl Iterator<Item = usize> + '_ {
+        self.layers.iter().map(|l| l.n_shapes())
+    }
+}
+
 const ALMOST_EQ_TOLERANCE: f64 = 0.000_000_1;
 
-/// True modulus operator.
-#[inline(always)]
-pub fn modulo(a: f64, b: f64) -> f64 {
-    ((a % b) + b) % b
-}
-
-/// Minimum included angle between two unit angles.
-/// Might be negative.
-#[inline(always)]
-pub fn min_included_angle(a: f64, b: f64) -> f64 {
-    ((((b - a) % 1.0) + 1.5) % 1.0) - 0.5
-}
-
-/// Return True if two f64 are within 10^-6 of each other.
-/// This is OK because all of our floats are on the unit range, so even though
-/// this comparison is absolute it should be good enough for art.
+/// Whether two values agree to within the tolerance a test cares about.
 #[inline(always)]
 pub fn almost_eq(a: f64, b: f64) -> bool {
     (a - b).abs() < ALMOST_EQ_TOLERANCE
 }
 
-/// Return True if the min included angle betwee two unit angles is less than
-/// 10^-6.
-#[inline(always)]
-pub fn angle_almost_eq(a: f64, b: f64) -> bool {
-    min_included_angle(a, b).abs() < ALMOST_EQ_TOLERANCE
-}
-
-/// Panic if a and b are not almost equal.
+/// Panic unless two values agree to within the tolerance a test cares about.
 pub fn assert_almost_eq(a: f64, b: f64) {
     assert!(almost_eq(a, b), "{a} != {b}");
-}
-
-#[cfg(test)]
-pub mod test {
-    use crate::{PathShape, RenderMode, Shape};
-
-    fn shape_for_test(linear: f64, radial: f64) -> Shape {
-        Shape {
-            render_mode: RenderMode::default(),
-            path_shape: PathShape::default(),
-            level: linear,
-            thickness: linear,
-            sat: linear,
-            val: linear,
-            x: linear,
-            y: linear,
-            extent_x: linear,
-            extent_y: linear,
-            // radial items
-            hue: radial,
-            start: radial,
-            stop: radial,
-            rot_angle: radial,
-            spin_angle: 0.0,
-        }
-    }
-
-    #[test]
-    fn test_arc_eq() {
-        let a = shape_for_test(1.0, 0.5);
-        let b = shape_for_test(0.4, 0.5);
-        assert_eq!(a, a);
-        assert_ne!(a, b);
-    }
 }

@@ -419,10 +419,11 @@ mod test {
         sync::{Arc, mpsc::channel},
     };
 
-    use tunnels_lib::{LayerCollection, Shape, number::UnipolarFloat};
+    use tunnels_lib::{LayerCollection, ShapeGeometry, number::UnipolarFloat};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
+    use crate::render_context::RenderContext;
     use crate::test_mode::stress;
     use insta::assert_yaml_snapshot;
 
@@ -451,12 +452,12 @@ mod test {
 
     /// Render the state of the show with some assertions on structure.
     fn check_render(show: &Show, unique_beam_count: usize) -> LayerCollection {
-        let video_feeds = show.state.mixer.render(
-            &show.state.clocks,
-            &show.state.color_palette,
-            &show.state.positions,
-            UnipolarFloat::ZERO,
-        );
+        let video_feeds = show.state.mixer.render(RenderContext {
+            clocks: &show.state.clocks,
+            palette: &show.state.color_palette,
+            positions: &show.state.positions,
+            audio_envelope: UnipolarFloat::ZERO,
+        });
 
         // Should have the expected number of video channels.
         assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());
@@ -473,7 +474,7 @@ mod test {
         let mut first_channel = video_feeds.into_iter().next().unwrap();
 
         for beam in first_channel.iter_mut() {
-            for seg in Arc::get_mut(beam).unwrap().iter_mut() {
+            for seg in Arc::get_mut(beam).unwrap().shapes.iter_mut() {
                 trunc_arc_segment(seg);
             }
         }
@@ -485,7 +486,7 @@ mod test {
 
     /// Truncate the values in an arc segment to a reasonable precision.
     /// This should avoid very minor platform-dependent floating point differences.
-    fn trunc_arc_segment(seg: &mut Shape) {
+    fn trunc_arc_segment(seg: &mut ShapeGeometry) {
         seg.level = trunc_f64(seg.level);
         seg.thickness = trunc_f64(seg.thickness);
         seg.hue = trunc_f64(seg.hue);

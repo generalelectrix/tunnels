@@ -1,13 +1,12 @@
+use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
-use crate::palette::ColorPalette;
-use crate::position_bank::PositionBank;
+use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
-use crate::{clock_bank::ClockBank, master_ui::EmitStateChange as EmitShowStateChange};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
-use tunnels_lib::{LayerCollection, Shape};
+use tunnels_lib::{Layer, LayerCollection};
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -59,32 +58,25 @@ impl Mixer {
 
     /// Render the current state of the mixer.
     /// Each inner vector represents one virtual video channel.
-    pub fn render(
-        &self,
-        external_clocks: &ClockBank,
-        color_palette: &ColorPalette,
-        positions: &PositionBank,
-        audio_envelope: UnipolarFloat,
-    ) -> Vec<LayerCollection> {
+    pub fn render(&self, ctx: RenderContext) -> Vec<LayerCollection> {
         let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
         for _ in 0..Self::N_VIDEO_CHANNELS {
             video_outs.push(Vec::new());
         }
+        // One buffer, reused across channels: a channel's layers are drained
+        // into Arcs before the next channel renders into it.
+        let mut rendered = Vec::new();
         for channel in &self.channels {
-            let rendered_beam = channel.render(
-                UnipolarFloat::ONE,
-                false,
-                external_clocks,
-                color_palette,
-                positions,
-                audio_envelope,
-            );
-            if rendered_beam.is_empty() {
-                continue;
-            }
-            let rendered_ptr = Arc::new(rendered_beam);
-            for video_chan in &channel.video_outs {
-                video_outs[video_chan.0].push(rendered_ptr.clone());
+            rendered.clear();
+            channel.render(UnipolarFloat::ONE, false, ctx, &mut rendered);
+            for layer in rendered.drain(..) {
+                if layer.is_empty() {
+                    continue;
+                }
+                let layer_ptr = Arc::new(layer);
+                for video_chan in &channel.video_outs {
+                    video_outs[video_chan.0].push(layer_ptr.clone());
+                }
             }
         }
         video_outs
@@ -205,11 +197,9 @@ impl Channel {
         &self,
         level_scale: UnipolarFloat,
         mask: bool,
-        external_clocks: &ClockBank,
-        color_palette: &ColorPalette,
-        positions: &PositionBank,
-        audio_envelope: UnipolarFloat,
-    ) -> Vec<Shape> {
+        ctx: RenderContext,
+        out: &mut Vec<Layer>,
+    ) {
         let mut level: UnipolarFloat = if self.bump {
             UnipolarFloat::ONE
         } else {
@@ -218,16 +208,9 @@ impl Channel {
         level *= level_scale;
         // if this channel is off, don't render at all
         if level == 0. {
-            return Vec::new();
+            return;
         }
-        self.beam.render(
-            level,
-            self.mask || mask,
-            external_clocks,
-            color_palette,
-            positions,
-            audio_envelope,
-        )
+        self.beam.render(level, self.mask || mask, ctx, out);
     }
 }
 

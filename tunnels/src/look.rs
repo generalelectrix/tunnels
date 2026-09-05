@@ -1,9 +1,8 @@
-use crate::palette::ColorPalette;
-use crate::position_bank::PositionBank;
-use crate::{clock_bank::ClockBank, mixer::Channel};
+use crate::mixer::Channel;
+use crate::render_context::RenderContext;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tunnels_lib::Shape;
+use tunnels_lib::Layer;
 use tunnels_lib::number::UnipolarFloat;
 
 /// A look is a beam that is essentially the contents of an entire mixer.
@@ -26,29 +25,17 @@ impl Look {
 
     /// Draw all the Beams in this Look.
     ///
-    /// The individual subchannels are unpacked and returned as a single channel of
-    /// many arc segment commands.
+    /// Each subchannel contributes its own layers, so a look never merges shapes
+    /// that are drawn differently into one layer.
     pub fn render(
         &self,
         level: UnipolarFloat,
         mask: bool,
-        external_clocks: &ClockBank,
-        color_palette: &ColorPalette,
-        positions: &PositionBank,
-        audio_envelope: UnipolarFloat,
-    ) -> Vec<Shape> {
-        let mut arcs = Vec::new();
+        ctx: RenderContext,
+        out: &mut Vec<Layer>,
+    ) {
         for channel in &self.channels {
-            let mut rendered = channel.render(
-                level,
-                mask,
-                external_clocks,
-                color_palette,
-                positions,
-                audio_envelope,
-            );
-            arcs.append(&mut rendered);
+            channel.render(level, mask, ctx, out);
         }
-        arcs
     }
 }
