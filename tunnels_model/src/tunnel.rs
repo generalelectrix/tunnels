@@ -991,13 +991,47 @@ pub mod fixture {
         }
     }
 
+    /// Every target an animation can be pointed at.
+    const TARGETS: [AnimationTarget; 11] = [
+        AnimationTarget::Size,
+        AnimationTarget::Thickness,
+        AnimationTarget::ColorSaturation,
+        AnimationTarget::PositionX,
+        AnimationTarget::Rotation,
+        AnimationTarget::MarqueeRotation,
+        AnimationTarget::AspectRatio,
+        AnimationTarget::Color,
+        AnimationTarget::ColorSpread,
+        AnimationTarget::PositionY,
+        AnimationTarget::Spin,
+    ];
+
+    /// Every waveform an animation can be shaped by.
+    const WAVEFORMS: [Waveform; 6] = [
+        Waveform::Sine,
+        Waveform::Triangle,
+        Waveform::Sawtooth,
+        Waveform::Square,
+        Waveform::Noise,
+        Waveform::Constant,
+    ];
+
+    /// Every mode a shape can be drawn in.
+    const RENDER_MODES: [RenderMode; 3] = [RenderMode::Arc, RenderMode::Dot, RenderMode::Saucer];
+
+    /// Every path that segments can be distributed along.
+    const PATH_SHAPES: [PathShape; 2] = [PathShape::Ellipse, PathShape::Line];
+
     /// Configure a tunnel to vary as much as a tunnel can: full colour spread,
-    /// no blacking, and every animation slot spent on a distinct target that
-    /// varies from segment to segment.
+    /// no blacking, both integrated angles turning, and every animation slot
+    /// spent on its own target, waveform and set of shaping flags.
     ///
-    /// `phase` separates one such tunnel from another, so that no two tunnels
-    /// configured this way draw the same shapes.
-    pub fn configure_max_variation(tunnel: &mut Tunnel, phase: f64, segments: u8) {
+    /// `index` of `of` separates one such tunnel from another, so that no two
+    /// tunnels configured this way draw the same shapes and so that a mixerful
+    /// of them draws every render mode, every path shape, every animation
+    /// target and every waveform at least once.
+    pub fn configure_max_variation(tunnel: &mut Tunnel, index: usize, of: usize, segments: u8) {
+        let phase = index as f64 / of as f64;
         tunnel.handle_state_change(StateChange::Segments(segments), &mut NoopEmitter);
         tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
         tunnel.handle_state_change(
@@ -1008,50 +1042,78 @@ pub mod fixture {
             StateChange::ColorWidth(UnipolarFloat::new(0.5)),
             &mut NoopEmitter,
         );
+        // Halfway up, so that a saturation animation is visible in both
+        // directions rather than clamping against zero.
+        tunnel.handle_state_change(
+            StateChange::ColorSaturation(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
         tunnel.handle_state_change(
             StateChange::MarqueeSpeed(BipolarFloat::new(-1.0 + 2.0 * phase)),
             &mut NoopEmitter,
         );
+        // The rotation and spin angles are integrated from these speeds and sit
+        // at exactly zero until the speeds do not, so both stay away from it.
+        tunnel.handle_state_change(
+            StateChange::RotationSpeed(BipolarFloat::new(0.25 + 0.5 * phase)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::SpinSpeed(BipolarFloat::new(-1.0 + 0.5 * phase)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::RenderMode(RENDER_MODES[index % RENDER_MODES.len()]),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::PathShape(PATH_SHAPES[index % PATH_SHAPES.len()]),
+            &mut NoopEmitter,
+        );
 
-        // Size covers both extents; the rest each claim one more column.
-        let targets = [
-            AnimationTarget::Size,
-            AnimationTarget::Thickness,
-            AnimationTarget::ColorSaturation,
-            AnimationTarget::PositionX,
-        ];
         for (i, anim) in tunnel.anims.iter_mut().enumerate() {
-            anim.target = targets[i % targets.len()];
-            anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::Waveform(match i % 4 {
-                    0 => Waveform::Sine,
-                    1 => Waveform::Triangle,
-                    2 => Waveform::Sawtooth,
-                    _ => Waveform::Square,
-                })),
-                &mut NoopEmitter,
-            );
-            anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::NPeriods(1 + i as u16)),
-                &mut NoopEmitter,
-            );
-            anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
-                &mut NoopEmitter,
-            );
-            anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::Speed(BipolarFloat::new(
-                    (i as f64 / 4.0) + phase * 0.25,
-                ))),
-                &mut NoopEmitter,
-            );
+            configure_varied_animation(anim, index * N_ANIM + i);
         }
+    }
+
+    /// Configure one animation slot, spread by `slot` so that consecutive slots
+    /// differ in target, waveform, period, rate, duty cycle, smoothing and each
+    /// of the three shaping flags.
+    fn configure_varied_animation(anim: &mut TargetedAnimation, slot: usize) {
+        use AnimStateChange::*;
+        anim.target = TARGETS[slot % TARGETS.len()];
+        let mut set = |sc| {
+            anim.animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter)
+        };
+        set(Waveform(WAVEFORMS[slot % WAVEFORMS.len()]));
+        // Never zero: noise reads its smoothing as a cross-correlation term
+        // only where the period count is not.
+        set(NPeriods(1 + (slot % 4) as u16));
+        // Never zero either, or the animation contributes nothing and stops
+        // advancing its own clock.
+        set(Size(UnipolarFloat::new(0.5)));
+        set(Speed(BipolarFloat::new(
+            -1.0 + 2.0 * (slot % 7) as f64 / 7.0,
+        )));
+        set(DutyCycle(UnipolarFloat::new(
+            1.0 - 0.05 * (slot % 3) as f64,
+        )));
+        set(Smoothing(UnipolarFloat::new((slot % 5) as f64 / 5.0)));
+        set(Pulse(slot.is_multiple_of(2)));
+        set(Standing(slot.is_multiple_of(3)));
+        set(Invert(slot.is_multiple_of(5)));
     }
 
     /// Point a tunnel at shared frame state, so that its hue, its centre and
     /// the timing and amplitude of its animations all come from the palette,
     /// the position bank, the clock bank and the audio envelope rather than
     /// from the tunnel's own settings.
+    ///
+    /// One slot is held back on its own internal clock, and of the slots that
+    /// do follow a show clock, half leave their own audio-size flag clear so
+    /// that the clock's flag is the only thing that can scale them by the
+    /// envelope.
     pub fn bind_to_frame_state(
         tunnel: &mut Tunnel,
         palette: ColorPaletteIdx,
@@ -1065,15 +1127,26 @@ pub mod fixture {
         // The position selection has no control message of its own, so a
         // fixture reaches the field directly.
         tunnel.position_selection = Some(position);
-        for anim in tunnel.anims.iter_mut() {
+        let internal_slot = clock.0 % N_ANIM;
+        for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+            let internal = i == internal_slot;
             anim.animation.control(
-                AnimControlMessage::SetClockSource(Some(clock)),
+                AnimControlMessage::SetClockSource(if internal { None } else { Some(clock) }),
                 &mut NoopEmitter,
             );
             anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::UseAudioSize(true)),
+                AnimControlMessage::Set(AnimStateChange::UseAudioSize(
+                    internal || i.is_multiple_of(2),
+                )),
                 &mut NoopEmitter,
             );
+            if internal {
+                // Nothing else reaches the internal clock's own audio flag.
+                anim.animation.control(
+                    AnimControlMessage::Set(AnimStateChange::UseAudioSpeed(true)),
+                    &mut NoopEmitter,
+                );
+            }
         }
     }
 }

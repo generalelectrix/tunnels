@@ -257,7 +257,7 @@ pub mod fixture {
     /// Configure one tunnel of a stressed channel, spread by its position in
     /// the mixer and bound to the frame's banks.
     fn stress_tunnel(tunnel: &mut Tunnel, index: usize, of: usize) {
-        configure_max_variation(tunnel, index as f64 / of as f64, STRESS_SEGMENTS);
+        configure_max_variation(tunnel, index, of, STRESS_SEGMENTS);
         bind_to_frame_state(
             tunnel,
             ColorPaletteIdx(index % PALETTE_SIZE),
@@ -347,6 +347,7 @@ mod tests {
     use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
     use crate::tunnel::Tunnel;
     use std::collections::BTreeSet;
+    use std::fmt;
     use tunnels_lib::{LayerCollection, ShapeGeometry};
 
     fn frame() -> ShowFrame {
@@ -415,19 +416,41 @@ mod tests {
         }
     }
 
-    /// Whatever a frame draws before it goes on the wire, it draws after it
-    /// comes off.
+    /// Panic unless two values print identically, naming the first line on
+    /// which they diverge.
+    ///
+    /// The printed form of a frame is far too large to read whole, and the one
+    /// line that moved is the answer.
+    fn assert_prints_identically<T: fmt::Debug>(label: &str, expected: &T, actual: &T) {
+        let expected = format!("{expected:#?}");
+        let actual = format!("{actual:#?}");
+        if expected == actual {
+            return;
+        }
+        for (line, (e, a)) in expected.lines().zip(actual.lines()).enumerate() {
+            assert_eq!(e, a, "{label}: line {line}");
+        }
+        panic!(
+            "{label}: prints {} lines, expected {}",
+            actual.lines().count(),
+            expected.lines().count()
+        );
+    }
+
+    /// A frame is the same frame after the wire, and draws the same shapes.
+    ///
+    /// The two halves catch different failures. The render says that what the
+    /// audience sees is unchanged; the printed model says that every field
+    /// survived, including those no render reads today, which the render alone
+    /// can never speak for.
     #[test]
-    fn a_round_tripped_frame_renders_identically() {
+    fn a_round_tripped_frame_is_unchanged() {
         for NamedFrame { name, frame } in fixture::all() {
             let wire = frame.encode().unwrap();
             println!("{name}: {} bytes on the wire", wire.len());
 
             let decoded = ShowFrame::decode(&wire).unwrap();
-            assert_eq!(
-                decoded.frame_number, frame.frame_number,
-                "{name}: frame number"
-            );
+            assert_prints_identically(name, &frame, &decoded);
 
             for channel in 0..Mixer::N_VIDEO_CHANNELS {
                 let video_channel = VideoChannel(channel);
