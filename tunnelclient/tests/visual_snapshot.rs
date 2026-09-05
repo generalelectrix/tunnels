@@ -7,7 +7,7 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::draw::Draw;
-use tunnels_lib::{PathShape, RenderMode, Shape, Snapshot};
+use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry, Snapshot};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -113,10 +113,13 @@ fn assert_images_match_with_limit(
     }
 }
 
-fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> Shape {
-    Shape {
-        render_mode: Default::default(),
-        path_shape: Default::default(),
+/// Wrap shapes in a layer drawn with the default render mode and path shape.
+fn default_layer(shapes: Vec<ShapeGeometry>) -> Layer {
+    Layer::new(RenderMode::default(), PathShape::default(), shapes)
+}
+
+fn test_arc(start: f64, stop: f64, hue: f64, radius: f64) -> ShapeGeometry {
+    ShapeGeometry {
         level: 1.0,
         thickness: 0.1,
         hue,
@@ -138,7 +141,7 @@ fn single_arc() {
     let snapshot = Snapshot {
         frame_number: 0,
 
-        layers: vec![Arc::new(vec![test_arc(0.0, 0.25, 0.0, 0.4)])],
+        layers: vec![Arc::new(default_layer(vec![test_arc(0.0, 0.25, 0.0, 0.4)]))],
     };
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "single_arc.png");
@@ -146,11 +149,11 @@ fn single_arc() {
 
 #[test]
 fn concentric_rings() {
-    let layers = vec![Arc::new(vec![
+    let layers = vec![Arc::new(default_layer(vec![
         test_arc(0.0, 1.0, 0.0, 0.2),
         test_arc(0.0, 1.0, 0.33, 0.35),
         test_arc(0.0, 1.0, 0.66, 0.5),
-    ])];
+    ]))];
     let snapshot = Snapshot {
         frame_number: 0,
 
@@ -167,7 +170,7 @@ fn rotated_arc() {
     let snapshot = Snapshot {
         frame_number: 0,
 
-        layers: vec![Arc::new(vec![seg])],
+        layers: vec![Arc::new(default_layer(vec![seg]))],
     };
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "rotated_arc.png");
@@ -183,7 +186,7 @@ fn flipped_horizontal() {
     let snapshot = Snapshot {
         frame_number: 0,
 
-        layers: vec![Arc::new(vec![seg])],
+        layers: vec![Arc::new(default_layer(vec![seg]))],
     };
 
     // Render without flip and compare to fixture.
@@ -387,11 +390,9 @@ fn arc_line_spin() {
 
 // --- Line path: direct Shape edge-wrapping tests ---
 
-/// Helper to create a line-path Shape with specific start/stop and render mode.
-fn test_line_shape(render_mode: RenderMode, start: f64, stop: f64) -> Shape {
-    Shape {
-        render_mode,
-        path_shape: PathShape::Line,
+/// Helper to create a line-path shape with specific start and stop angles.
+fn test_line_shape(start: f64, stop: f64) -> ShapeGeometry {
+    ShapeGeometry {
         level: 1.0,
         thickness: 0.1,
         hue: 0.0,
@@ -408,23 +409,24 @@ fn test_line_shape(render_mode: RenderMode, start: f64, stop: f64) -> Shape {
     }
 }
 
-fn snapshot_from_shapes(shapes: Vec<Shape>) -> Snapshot {
+fn snapshot_from_shapes(render_mode: RenderMode, shapes: Vec<ShapeGeometry>) -> Snapshot {
     Snapshot {
         frame_number: 0,
-        layers: vec![Arc::new(shapes)],
+        layers: vec![Arc::new(Layer::new(render_mode, PathShape::Line, shapes))],
     }
 }
 
 /// Arc segment that wraps past the right end of the line.
 #[test]
 fn line_arc_edge_wrap() {
+    let render_mode = RenderMode::Arc;
     let shapes = vec![
         // A segment sitting squarely on the line (no wrapping).
-        test_line_shape(RenderMode::Arc, 0.3, 0.4),
+        test_line_shape(0.3, 0.4),
         // A segment that wraps past the right end (start near 1.0, stop > 1.0).
-        test_line_shape(RenderMode::Arc, 0.9, 1.05),
+        test_line_shape(0.9, 1.05),
     ];
-    let snapshot = snapshot_from_shapes(shapes);
+    let snapshot = snapshot_from_shapes(render_mode, shapes);
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_arc_edge_wrap.png");
@@ -433,24 +435,17 @@ fn line_arc_edge_wrap() {
 /// Dot near the edge of the line, cross-fading between ends.
 #[test]
 fn line_dot_edge_crossfade() {
+    let render_mode = RenderMode::Dot;
     let seg_width = 1.0 / 12.0; // simulate 12 segments
     let shapes = vec![
         // A dot in the middle of the line (no fading).
-        test_line_shape(RenderMode::Dot, 0.25, 0.25 + seg_width),
+        test_line_shape(0.25, 0.25 + seg_width),
         // A dot just entering the fade zone near the right end.
-        test_line_shape(
-            RenderMode::Dot,
-            0.95 - seg_width / 2.0,
-            0.95 + seg_width / 2.0,
-        ),
+        test_line_shape(0.95 - seg_width / 2.0, 0.95 + seg_width / 2.0),
         // A dot midway through wrapping.
-        test_line_shape(
-            RenderMode::Dot,
-            1.0 - seg_width / 4.0,
-            1.0 + 3.0 * seg_width / 4.0,
-        ),
+        test_line_shape(1.0 - seg_width / 4.0, 1.0 + 3.0 * seg_width / 4.0),
     ];
-    let snapshot = snapshot_from_shapes(shapes);
+    let snapshot = snapshot_from_shapes(render_mode, shapes);
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_dot_edge_crossfade.png");
@@ -459,24 +454,17 @@ fn line_dot_edge_crossfade() {
 /// Saucer near the edge of the line, cross-fading between ends.
 #[test]
 fn line_saucer_edge_crossfade() {
+    let render_mode = RenderMode::Saucer;
     let seg_width = 1.0 / 12.0;
     let shapes = vec![
         // A saucer in the middle of the line.
-        test_line_shape(RenderMode::Saucer, 0.25, 0.25 + seg_width),
+        test_line_shape(0.25, 0.25 + seg_width),
         // A saucer just entering the fade zone near the right end.
-        test_line_shape(
-            RenderMode::Saucer,
-            0.95 - seg_width / 2.0,
-            0.95 + seg_width / 2.0,
-        ),
+        test_line_shape(0.95 - seg_width / 2.0, 0.95 + seg_width / 2.0),
         // A saucer midway through wrapping.
-        test_line_shape(
-            RenderMode::Saucer,
-            1.0 - seg_width / 4.0,
-            1.0 + 3.0 * seg_width / 4.0,
-        ),
+        test_line_shape(1.0 - seg_width / 4.0, 1.0 + 3.0 * seg_width / 4.0),
     ];
-    let snapshot = snapshot_from_shapes(shapes);
+    let snapshot = snapshot_from_shapes(render_mode, shapes);
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_saucer_edge_crossfade.png");

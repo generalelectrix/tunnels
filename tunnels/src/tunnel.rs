@@ -1,11 +1,8 @@
+use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{
-    animation::Animation,
-    animation_target::AnimationTarget,
-    clock_bank::ClockBank,
-    palette::{ColorPalette, ColorPaletteIdx},
-    position_bank::{PositionBank, PositionIdx},
-    waveforms::WaveformArgs,
+    animation::Animation, animation_target::AnimationTarget, palette::ColorPaletteIdx,
+    position_bank::PositionIdx, waveforms::WaveformArgs,
 };
 use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
@@ -13,7 +10,7 @@ use std::cmp::max;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
-use tunnels_lib::{PathShape, RenderMode, Shape};
+use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -56,7 +53,6 @@ pub struct Tunnel {
     y_offset: Smoother<f64>,
     anims: [TargetedAnimation; N_ANIM],
     render_mode: RenderMode,
-    #[serde(default)]
     path_shape: PathShape,
 }
 
@@ -166,15 +162,7 @@ impl Tunnel {
     }
 
     /// Render the current state of the tunnel.
-    pub fn render(
-        &self,
-        level_scale: UnipolarFloat,
-        as_mask: bool,
-        external_clocks: &ClockBank,
-        color_palette: &ColorPalette,
-        positions: &PositionBank,
-        audio_envelope: UnipolarFloat,
-    ) -> Vec<Shape> {
+    pub fn render(&self, level_scale: UnipolarFloat, as_mask: bool, ctx: RenderContext) -> Layer {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
         let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
             self.segs + 1
@@ -190,7 +178,7 @@ impl Tunnel {
         let (x_offset, y_offset) = if let Some(position_idx) = self.position_selection {
             // TODO: if the position index is out of range, should we fall back
             // to something besides zero?
-            let position = positions.get(position_idx).unwrap_or_default();
+            let position = ctx.positions.get(position_idx).unwrap_or_default();
             (position.x, position.y)
         } else {
             (self.x_offset.val(), self.y_offset.val())
@@ -199,7 +187,7 @@ impl Tunnel {
         let base_hue = if let Some(palette_idx) = self.palette_selection {
             // TODO: if the palette index is out of range, should we fall
             // back to something besides zero?
-            color_palette
+            ctx.palette
                 .get(palette_idx)
                 .map(|color| color.hue)
                 .unwrap_or(Phase::ZERO)
@@ -237,8 +225,8 @@ impl Tunnel {
                 let anim_value = anim.animation.get_value(
                     rel_angle,
                     seg_num as usize,
-                    external_clocks,
-                    audio_envelope,
+                    ctx.clocks,
+                    ctx.audio_envelope,
                 );
 
                 use AnimationTarget::*;
@@ -303,9 +291,7 @@ impl Tunnel {
             let spin_angle = self.curr_spin_angle + spin_angle_adjust;
 
             let arc = if as_mask {
-                Shape {
-                    render_mode: self.render_mode,
-                    path_shape: self.path_shape,
+                ShapeGeometry {
                     level: 1.0,
                     thickness: stroke_weight,
                     hue: 0.0,
@@ -338,9 +324,7 @@ impl Tunnel {
 
                 let sat = UnipolarFloat::new(self.col_sat.val() + col_sat_adjust);
 
-                Shape {
-                    render_mode: self.render_mode,
-                    path_shape: self.path_shape,
+                ShapeGeometry {
                     level: level_scale.val(),
                     thickness: stroke_weight,
                     hue: hue.val(),
@@ -358,7 +342,7 @@ impl Tunnel {
             };
             arcs.push(arc);
         }
-        arcs
+        Layer::new(self.render_mode, self.path_shape, arcs)
     }
 
     /// Emit the current value of all controllable tunnel state.
@@ -545,7 +529,7 @@ pub mod fixture {
     use std::time::Duration;
 
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-    use tunnels_lib::{PathShape, RenderMode, Snapshot};
+    use tunnels_lib::{Layer, PathShape, RenderMode, Snapshot};
 
     use crate::animation::{
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
@@ -567,21 +551,26 @@ pub mod fixture {
         fn emit_animation_state_change(&mut self, _: crate::animation::StateChange) {}
     }
 
-    fn render_default(tunnel: &Tunnel) -> Vec<super::Shape> {
+    fn render_default(tunnel: &Tunnel) -> Layer {
         tunnel.render(
             UnipolarFloat::ONE,
             false,
-            &ClockBank::default(),
-            &ColorPalette::default(),
-            &PositionBank::default(),
-            UnipolarFloat::ZERO,
+            RenderContext {
+                clocks: &ClockBank::default(),
+
+                palette: &ColorPalette::default(),
+
+                positions: &PositionBank::default(),
+
+                audio_envelope: UnipolarFloat::ZERO,
+            },
         )
     }
 
-    fn snapshot(shapes: Vec<super::Shape>) -> Snapshot {
+    fn snapshot(layer: Layer) -> Snapshot {
         Snapshot {
             frame_number: 0,
-            layers: vec![Arc::new(shapes)],
+            layers: vec![Arc::new(layer)],
         }
     }
 
@@ -965,10 +954,15 @@ pub mod fixture {
             let arcs = tunnel.render(
                 UnipolarFloat::ONE,
                 false,
-                &ClockBank::default(),
-                &ColorPalette::default(),
-                &PositionBank::default(),
-                UnipolarFloat::ZERO,
+                RenderContext {
+                    clocks: &ClockBank::default(),
+
+                    palette: &ColorPalette::default(),
+
+                    positions: &PositionBank::default(),
+
+                    audio_envelope: UnipolarFloat::ZERO,
+                },
             );
             snapshots.push(Snapshot {
                 frame_number: snap,
@@ -994,10 +988,15 @@ pub mod fixture {
         let arcs = tunnel.render(
             UnipolarFloat::ONE,
             false,
-            &ClockBank::default(),
-            &ColorPalette::default(),
-            &PositionBank::default(),
-            UnipolarFloat::ZERO,
+            RenderContext {
+                clocks: &ClockBank::default(),
+
+                palette: &ColorPalette::default(),
+
+                positions: &PositionBank::default(),
+
+                audio_envelope: UnipolarFloat::ZERO,
+            },
         );
         Snapshot {
             frame_number: n_frames,

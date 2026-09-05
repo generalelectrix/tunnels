@@ -1,0 +1,2 @@
+# Insta snapshots are generated; collapse them in review by default.
+*.snap linguist-generated=true
