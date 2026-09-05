@@ -175,6 +175,7 @@ fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
     thread::Builder::new()
         .name("frame_receiver".to_string())
         .spawn(move || {
+            let mut decode_errors = ErrorThrottle::new();
             loop {
                 if !run_flag.should_run() {
                     info!("Frame receiver shutting down.");
@@ -185,9 +186,119 @@ fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
                     Ok(frame) => {
                         *frames.lock().unwrap() = Some(Arc::new(frame));
                     }
-                    Err(e) => error!("receive error: {e}"),
+                    Err(e) => match decode_errors.record(Instant::now()) {
+                        Some(ErrorReport::First) => error!("Frame decode error: {e}"),
+                        Some(ErrorReport::Repeated(count)) => error!(
+                            "{count} frame decode errors in the last {}s, most recently: {e}",
+                            ERROR_REPORT_PERIOD.as_secs_f64(),
+                        ),
+                        None => (),
+                    },
                 }
             }
         })
         .expect("Failed to spawn frame receiver thread");
+}
+
+/// How long a run of failures goes unreported before its count is reported.
+const ERROR_REPORT_PERIOD: Duration = Duration::from_secs(1);
+
+/// A running count of a failure that repeats, reported at a bounded rate.
+///
+/// Frames arrive at 240 Hz, so a failure with a persistent cause — a peer
+/// running a stale binary, a stream of garbage — recurs as fast as they do.
+/// Reporting every occurrence buries the log under a flood that says nothing
+/// the first line did not, so occurrences are counted between reports instead.
+struct ErrorThrottle {
+    /// Failures counted since the last report.
+    unreported: u64,
+    /// When the last report was made, if any has been.
+    reported_at: Option<Instant>,
+}
+
+/// What a failure has to say for itself.
+#[derive(Debug)]
+enum ErrorReport {
+    /// A failure that opens a run of them, worth reporting in full.
+    First,
+    /// How many failures a reporting period accumulated, this one included.
+    Repeated(u64),
+}
+
+impl ErrorThrottle {
+    fn new() -> Self {
+        Self {
+            unreported: 0,
+            reported_at: None,
+        }
+    }
+
+    /// Record a failure occurring at `now`, yielding what to report about it.
+    ///
+    /// The failure that opens a run is reported in full and those that follow
+    /// it within a reporting period are only counted; the first failure past
+    /// the period reports how many there have been. A failure arriving after a
+    /// quiet stretch opens a fresh run rather than closing the last one.
+    fn record(&mut self, now: Instant) -> Option<ErrorReport> {
+        match self.reported_at {
+            Some(reported_at) if now.duration_since(reported_at) < ERROR_REPORT_PERIOD => {
+                self.unreported += 1;
+                None
+            }
+            _ => {
+                let counted = std::mem::take(&mut self.unreported);
+                self.reported_at = Some(now);
+                Some(if counted == 0 {
+                    ErrorReport::First
+                } else {
+                    ErrorReport::Repeated(counted + 1)
+                })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The interval show frames arrive at, and so the interval a failure with
+    /// a persistent cause recurs at.
+    const FRAME_INTERVAL: Duration = Duration::from_micros(4167);
+
+    /// A failure that repeats every frame costs one log line per period.
+    #[test]
+    fn a_repeating_failure_is_counted_rather_than_reported() {
+        let mut throttle = ErrorThrottle::new();
+        let start = Instant::now();
+
+        assert!(
+            matches!(throttle.record(start), Some(ErrorReport::First)),
+            "the failure that opens a run reports in full"
+        );
+
+        let mut elapsed = FRAME_INTERVAL;
+        let mut counted = 0;
+        while elapsed < ERROR_REPORT_PERIOD {
+            assert!(
+                throttle.record(start + elapsed).is_none(),
+                "a failure {elapsed:?} into a run reported instead of counting"
+            );
+            counted += 1;
+            elapsed += FRAME_INTERVAL;
+        }
+
+        match throttle.record(start + elapsed) {
+            Some(ErrorReport::Repeated(count)) => assert_eq!(count, counted + 1),
+            other => panic!("a period of failures reported {other:?}"),
+        }
+
+        assert!(
+            matches!(
+                throttle.record(start + elapsed + 3 * ERROR_REPORT_PERIOD),
+                Some(ErrorReport::First)
+            ),
+            "a failure after a quiet stretch opens a fresh run"
+        );
+    }
 }
