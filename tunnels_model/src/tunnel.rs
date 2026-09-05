@@ -543,7 +543,7 @@ pub mod fixture {
             UnipolarFloat::ONE,
             false,
             RenderContext {
-                clocks: &ClockBank::default(),
+                clocks: &ClockBank::default().as_static(),
 
                 palette: &ColorPalette::default(),
 
@@ -942,7 +942,7 @@ pub mod fixture {
                 UnipolarFloat::ONE,
                 false,
                 RenderContext {
-                    clocks: &ClockBank::default(),
+                    clocks: &ClockBank::default().as_static(),
 
                     palette: &ColorPalette::default(),
 
@@ -976,7 +976,7 @@ pub mod fixture {
             UnipolarFloat::ONE,
             false,
             RenderContext {
-                clocks: &ClockBank::default(),
+                clocks: &ClockBank::default().as_static(),
 
                 palette: &ColorPalette::default(),
 

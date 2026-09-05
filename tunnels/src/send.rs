@@ -39,7 +39,7 @@ pub fn start_render_service() -> Result<Sender<Frame>> {
                         }
 
                         let video_outs = frame.mixer.render(RenderContext {
-                            clocks: &frame.clocks,
+                            clocks: &frame.clocks.as_static(),
                             palette: &frame.color_palette,
                             positions: &frame.positions,
                             audio_envelope: frame.audio_envelope,

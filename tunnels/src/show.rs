@@ -450,7 +450,7 @@ mod test {
     /// Render the state of the show with some assertions on structure.
     fn check_render(show: &Show, unique_beam_count: usize) -> LayerCollection {
         let video_feeds = show.state.mixer.render(RenderContext {
-            clocks: &show.state.clocks,
+            clocks: &show.state.clocks.as_static(),
             palette: &show.state.color_palette,
             positions: &show.state.positions,
             audio_envelope: UnipolarFloat::ZERO,
