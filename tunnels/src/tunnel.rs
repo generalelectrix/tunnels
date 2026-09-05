@@ -997,4 +997,137 @@ pub mod fixture {
             layers: vec![Arc::new(arcs)],
         }
     }
+
+    /// Configure a tunnel to maximise the number of shape fields that differ
+    /// from segment to segment: full segment count, no blacking, a wide colour
+    /// spread, and all four animation slots on distinct spatially-varying
+    /// targets.
+    ///
+    /// `phase` shifts the animation speeds and marquee so that sibling tunnels
+    /// in a multi-layer frame do not render identically.
+    pub fn configure_max_variation(tunnel: &mut Tunnel, phase: f64) {
+        tunnel.handle_state_change(StateChange::Segments(128), &mut NoopEmitter);
+        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::ColorSpread(UnipolarFloat::ONE),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorWidth(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::MarqueeSpeed(BipolarFloat::new(-1.0 + 2.0 * phase)),
+            &mut NoopEmitter,
+        );
+
+        // Size covers both extents; the rest each claim one more column.
+        let targets = [
+            AnimationTarget::Size,
+            AnimationTarget::Thickness,
+            AnimationTarget::ColorSaturation,
+            AnimationTarget::PositionX,
+        ];
+        for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+            anim.target = targets[i % targets.len()];
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::Waveform(match i % 4 {
+                    0 => Waveform::Sine,
+                    1 => Waveform::Triangle,
+                    2 => Waveform::Sawtooth,
+                    _ => Waveform::Square,
+                })),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::NPeriods(1 + i as u16)),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::Speed(BipolarFloat::new(
+                    (i as f64 / 4.0) + phase * 0.25,
+                ))),
+                &mut NoopEmitter,
+            );
+        }
+    }
+
+    /// A frame at the worst case a mixer can produce: eight layers, each a
+    /// tunnel at full segment count with every animation slot spent on a
+    /// distinct spatially-varying target.
+    pub fn max_variation_frame_snapshot() -> Snapshot {
+        let n_layers = 8;
+        let mut layers = Vec::with_capacity(n_layers);
+        for i in 0..n_layers {
+            let mut tunnel = Tunnel::default();
+            configure_max_variation(&mut tunnel, i as f64 / n_layers as f64);
+            tunnel.update_state(Duration::from_micros(25_300), UnipolarFloat::ZERO);
+            layers.push(Arc::new(render_default(&tunnel)));
+        }
+        Snapshot {
+            frame_number: 1,
+            layers,
+        }
+    }
+
+    /// A frame drawn from tunnels that differ in render mode and path shape, as
+    /// a look built from differently configured tunnels produces.
+    ///
+    /// Each tunnel contributes its own layer, so no layer mixes shapes that are
+    /// drawn differently.
+    pub fn mixed_mode_look_snapshot() -> Snapshot {
+        let configs = [
+            (RenderMode::Arc, PathShape::Ellipse),
+            (RenderMode::Dot, PathShape::Ellipse),
+            (RenderMode::Saucer, PathShape::Line),
+            (RenderMode::Arc, PathShape::Line),
+        ];
+        let mut layers = Vec::with_capacity(configs.len());
+        for (i, (render_mode, path_shape)) in configs.iter().enumerate() {
+            let mut tunnel = Tunnel {
+                render_mode: *render_mode,
+                path_shape: *path_shape,
+                ..Default::default()
+            };
+            configure_max_variation(&mut tunnel, i as f64 / configs.len() as f64);
+            tunnel.update_state(Duration::from_micros(25_300), UnipolarFloat::ZERO);
+            layers.push(Arc::new(render_default(&tunnel)));
+        }
+        Snapshot {
+            frame_number: 2,
+            layers,
+        }
+    }
+
+    /// A frame whose tunnels animate marquee rotation, at a caller-chosen
+    /// spatial period count.
+    pub fn marquee_animated_snapshot(n_periods: u16) -> Snapshot {
+        let n_layers = 8;
+        let mut layers = Vec::with_capacity(n_layers);
+        for i in 0..n_layers {
+            let mut tunnel = Tunnel::default();
+            configure_max_variation(&mut tunnel, i as f64 / n_layers as f64);
+            for anim in tunnel.anims.iter_mut() {
+                anim.target = AnimationTarget::MarqueeRotation;
+                anim.animation.control(
+                    AnimControlMessage::Set(AnimStateChange::NPeriods(n_periods)),
+                    &mut NoopEmitter,
+                );
+                anim.animation.control(
+                    AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::ONE)),
+                    &mut NoopEmitter,
+                );
+            }
+            tunnel.update_state(Duration::from_micros(25_300), UnipolarFloat::ZERO);
+            layers.push(Arc::new(render_default(&tunnel)));
+        }
+        Snapshot {
+            frame_number: 3,
+            layers,
+        }
+    }
 }
