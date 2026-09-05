@@ -522,7 +522,7 @@ pub mod fixture {
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
     };
     use crate::animation_target::AnimationTarget;
-    use crate::clock_bank::ClockBank;
+    use crate::clock_bank::{ClockBank, ClockIdx};
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
 
@@ -988,6 +988,92 @@ pub mod fixture {
         Snapshot {
             frame_number: n_frames,
             layers: vec![Arc::new(arcs)],
+        }
+    }
+
+    /// Configure a tunnel to vary as much as a tunnel can: full colour spread,
+    /// no blacking, and every animation slot spent on a distinct target that
+    /// varies from segment to segment.
+    ///
+    /// `phase` separates one such tunnel from another, so that no two tunnels
+    /// configured this way draw the same shapes.
+    pub fn configure_max_variation(tunnel: &mut Tunnel, phase: f64, segments: u8) {
+        tunnel.handle_state_change(StateChange::Segments(segments), &mut NoopEmitter);
+        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::ColorSpread(UnipolarFloat::ONE),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorWidth(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::MarqueeSpeed(BipolarFloat::new(-1.0 + 2.0 * phase)),
+            &mut NoopEmitter,
+        );
+
+        // Size covers both extents; the rest each claim one more column.
+        let targets = [
+            AnimationTarget::Size,
+            AnimationTarget::Thickness,
+            AnimationTarget::ColorSaturation,
+            AnimationTarget::PositionX,
+        ];
+        for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+            anim.target = targets[i % targets.len()];
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::Waveform(match i % 4 {
+                    0 => Waveform::Sine,
+                    1 => Waveform::Triangle,
+                    2 => Waveform::Sawtooth,
+                    _ => Waveform::Square,
+                })),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::NPeriods(1 + i as u16)),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::Speed(BipolarFloat::new(
+                    (i as f64 / 4.0) + phase * 0.25,
+                ))),
+                &mut NoopEmitter,
+            );
+        }
+    }
+
+    /// Point a tunnel at shared frame state, so that its hue, its centre and
+    /// the timing and amplitude of its animations all come from the palette,
+    /// the position bank, the clock bank and the audio envelope rather than
+    /// from the tunnel's own settings.
+    pub fn bind_to_frame_state(
+        tunnel: &mut Tunnel,
+        palette: ColorPaletteIdx,
+        position: PositionIdx,
+        clock: ClockIdx,
+    ) {
+        tunnel.handle_state_change(
+            StateChange::PaletteSelection(Some(palette)),
+            &mut NoopEmitter,
+        );
+        // The position selection has no control message of its own, so a
+        // fixture reaches the field directly.
+        tunnel.position_selection = Some(position);
+        for anim in tunnel.anims.iter_mut() {
+            anim.animation.control(
+                AnimControlMessage::SetClockSource(Some(clock)),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::UseAudioSize(true)),
+                &mut NoopEmitter,
+            );
         }
     }
 }

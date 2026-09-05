@@ -107,10 +107,241 @@ impl Error for FrameCodecError {
     }
 }
 
+/// Show frames sized to exercise the model, for holding a render to its output.
+pub mod fixture {
+    use arrayvec::ArrayVec;
+    use tunnels_lib::color::Hsv;
+    use tunnels_lib::number::Phase;
+
+    use crate::beam::Beam;
+    use crate::clock::StaticClock;
+    use crate::clock_bank::{ClockIdx, MAX_CLOCKS};
+    use crate::look::Look;
+    use crate::mixer::{ChannelIdx, VideoChannel};
+    use crate::palette::{
+        ColorPaletteIdx, ControlMessage as PaletteControlMessage,
+        EmitStateChange as EmitPaletteStateChange, StateChange as PaletteStateChange,
+    };
+    use crate::position_bank::{Position, PositionIdx};
+    use crate::tunnel::Tunnel;
+    use crate::tunnel::fixture::{bind_to_frame_state, configure_max_variation};
+    use std::time::Duration;
+
+    use super::*;
+
+    /// The segment count a tunnel draws at full stress.
+    const STRESS_SEGMENTS: u8 = 126;
+
+    /// How far a fixture is advanced off its initial state, so that no smoother
+    /// and no integrated angle is sampled at the value it only takes at rest.
+    const ADVANCE: Duration = Duration::from_micros(25_300);
+
+    struct NoopEmitter;
+
+    impl EmitPaletteStateChange for NoopEmitter {
+        fn emit_palette_state_change(&mut self, _: PaletteStateChange) {}
+    }
+
+    /// A show frame under a name, so that a failure says which frame broke.
+    pub struct NamedFrame {
+        pub name: &'static str,
+        pub frame: ShowFrame,
+    }
+
+    /// Every show frame a render is held to.
+    pub fn all() -> Vec<NamedFrame> {
+        vec![
+            NamedFrame {
+                name: "default beams",
+                frame: default_frame(),
+            },
+            NamedFrame {
+                name: "max variation",
+                frame: max_variation_frame(),
+            },
+            NamedFrame {
+                name: "nested looks",
+                frame: nested_look_frame(),
+            },
+        ]
+    }
+
+    /// A frame of default beams at full level, on default show state.
+    ///
+    /// Every channel routes to video channel zero, which is where a mixer
+    /// leaves it, so seven of the eight video channels draw nothing.
+    pub fn default_frame() -> ShowFrame {
+        let mut mixer = Mixer::new(1);
+        for channel in mixer.channels() {
+            channel.level = UnipolarFloat::ONE;
+        }
+        mixer.update_state(ADVANCE, UnipolarFloat::ZERO);
+        ShowFrame {
+            frame_number: 1,
+            mixer,
+            clocks: StaticClockBank::default(),
+            palette: ColorPalette::default(),
+            positions: PositionBank::default(),
+            audio_envelope: UnipolarFloat::ZERO,
+        }
+    }
+
+    /// A frame at the worst case a mixer can produce: eight tunnels at full
+    /// segment count, each spending every animation slot on a distinct
+    /// spatially-varying target and reading its hue, its centre and its
+    /// animation timing out of the frame's own banks.
+    ///
+    /// Every video channel draws at least one tunnel, and two channels fan out
+    /// to a second video channel apiece.
+    pub fn max_variation_frame() -> ShowFrame {
+        let mut mixer = Mixer::new(1);
+        let n_channels = mixer.channel_count();
+        for (i, channel) in mixer.channels().enumerate() {
+            channel.level = UnipolarFloat::new(0.25 + 0.75 * (i as f64 / n_channels as f64));
+            channel.bump = i == 3;
+            channel.mask = i == 5;
+            channel.video_outs.clear();
+            channel.video_outs.insert(VideoChannel(i));
+            if i % 4 == 0 {
+                channel.video_outs.insert(VideoChannel((i + 1) % 8));
+            }
+            if let Beam::Tunnel(tunnel) = &mut channel.beam {
+                stress_tunnel(tunnel, i, n_channels);
+            }
+        }
+        mixer.update_state(ADVANCE, audio_envelope());
+
+        ShowFrame {
+            frame_number: 2,
+            mixer,
+            clocks: clocks(),
+            palette: palette(),
+            positions: positions(),
+            audio_envelope: audio_envelope(),
+        }
+    }
+
+    /// A frame whose channels hold looks that themselves hold looks.
+    ///
+    /// Looks nest without bound and carry their subchannels' routing and
+    /// masking with them, which makes them the deepest structure the model can
+    /// put on the wire.
+    pub fn nested_look_frame() -> ShowFrame {
+        let inner = stress_look(0);
+        let mut middle = stress_mixer(1);
+        *middle.beam(ChannelIdx(0)) = Beam::Look(inner);
+        let middle = middle.as_look();
+
+        let mut mixer = stress_mixer(2);
+        *mixer.beam(ChannelIdx(2)) = Beam::Look(middle.clone());
+        *mixer.beam(ChannelIdx(6)) = Beam::Look(middle);
+        mixer.update_state(ADVANCE, audio_envelope());
+
+        ShowFrame {
+            frame_number: 3,
+            mixer,
+            clocks: clocks(),
+            palette: palette(),
+            positions: positions(),
+            audio_envelope: audio_envelope(),
+        }
+    }
+
+    /// The audio level the fixtures that read the envelope are scaled by.
+    fn audio_envelope() -> UnipolarFloat {
+        UnipolarFloat::new(0.7)
+    }
+
+    /// Configure one tunnel of a stressed channel, spread by its position in
+    /// the mixer and bound to the frame's banks.
+    fn stress_tunnel(tunnel: &mut Tunnel, index: usize, of: usize) {
+        configure_max_variation(tunnel, index as f64 / of as f64, STRESS_SEGMENTS);
+        bind_to_frame_state(
+            tunnel,
+            ColorPaletteIdx(index % PALETTE_SIZE),
+            PositionIdx(index % POSITION_COUNT),
+            ClockIdx(index % MAX_CLOCKS),
+        );
+    }
+
+    /// A mixer of stressed tunnels, spread by `generation` so that mixers at
+    /// different depths of a look draw differently.
+    fn stress_mixer(generation: usize) -> Mixer {
+        let mut mixer = Mixer::new(1);
+        let n_channels = mixer.channel_count();
+        for (i, channel) in mixer.channels().enumerate() {
+            channel.level = UnipolarFloat::ONE;
+            channel.mask = i == generation;
+            channel.video_outs.clear();
+            channel.video_outs.insert(VideoChannel(i));
+            if let Beam::Tunnel(tunnel) = &mut channel.beam {
+                stress_tunnel(tunnel, i + generation, n_channels + generation);
+            }
+        }
+        mixer
+    }
+
+    /// A look of stressed tunnels.
+    fn stress_look(generation: usize) -> Look {
+        stress_mixer(generation).as_look()
+    }
+
+    /// The number of colors in the fixture palette.
+    const PALETTE_SIZE: usize = 5;
+
+    /// The number of positions in the fixture position bank.
+    const POSITION_COUNT: usize = 3;
+
+    /// A palette of distinct hues, so that a tunnel selecting one of them
+    /// draws differently from a tunnel selecting another.
+    fn palette() -> ColorPalette {
+        let colors = (0..PALETTE_SIZE)
+            .map(|i| Hsv::from_hue(i as f64 / PALETTE_SIZE as f64))
+            .collect();
+        let mut palette = ColorPalette::default();
+        palette.control(
+            PaletteControlMessage::Set(PaletteStateChange::Contents(colors)),
+            &mut NoopEmitter,
+        );
+        palette
+    }
+
+    /// A position bank of distinct offsets.
+    fn positions() -> PositionBank {
+        let mut bank = PositionBank::default();
+        bank.control(
+            (0..POSITION_COUNT)
+                .map(|i| Position {
+                    x: -0.5 + i as f64 / POSITION_COUNT as f64,
+                    y: 0.25 - i as f64 / POSITION_COUNT as f64,
+                })
+                .collect(),
+        );
+        bank
+    }
+
+    /// A full bank of clocks, each at its own phase, tick count and submaster.
+    fn clocks() -> StaticClockBank {
+        let mut bank = ArrayVec::new();
+        for i in 0..MAX_CLOCKS {
+            let frac = i as f64 / MAX_CLOCKS as f64;
+            let _ = bank.try_push(StaticClock {
+                phase: Phase::new(frac),
+                ticks: i as i64,
+                submaster_level: UnipolarFloat::new(0.25 + 0.75 * frac),
+                use_audio_size: i % 3 == 0,
+            });
+        }
+        StaticClockBank(bank)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::fixture::NamedFrame;
     use super::*;
-    use crate::mixer::Mixer;
+    use crate::mixer::{Mixer, VideoChannel};
+    use tunnels_lib::{LayerCollection, ShapeGeometry};
 
     fn frame() -> ShowFrame {
         ShowFrame {
@@ -120,6 +351,74 @@ mod tests {
             palette: ColorPalette::default(),
             positions: PositionBank::default(),
             audio_envelope: UnipolarFloat::new(0.5),
+        }
+    }
+
+    /// Every field of a shape, under the name a failure should report.
+    fn shape_fields(shape: &ShapeGeometry) -> [(&'static str, f64); 12] {
+        [
+            ("level", shape.level),
+            ("thickness", shape.thickness),
+            ("hue", shape.hue),
+            ("sat", shape.sat),
+            ("val", shape.val),
+            ("x", shape.x),
+            ("y", shape.y),
+            ("extent_x", shape.extent_x),
+            ("extent_y", shape.extent_y),
+            ("start", shape.start),
+            ("rot_angle", shape.rot_angle),
+            ("spin_angle", shape.spin_angle),
+        ]
+    }
+
+    /// Panic unless two renders of a video channel agree bit for bit.
+    ///
+    /// The render is deterministic and the payload lossless, so every float is
+    /// compared as its raw bits: a tolerance here would hide real drift.
+    fn assert_identical(label: &str, expected: &LayerCollection, actual: &LayerCollection) {
+        assert_eq!(expected.len(), actual.len(), "{label}: layer count");
+        for (i, (e, a)) in expected.iter().zip(actual).enumerate() {
+            assert_eq!(
+                e.render_mode, a.render_mode,
+                "{label}: layer {i} render mode"
+            );
+            assert_eq!(e.path_shape, a.path_shape, "{label}: layer {i} path shape");
+            assert_eq!(
+                e.span.to_bits(),
+                a.span.to_bits(),
+                "{label}: layer {i} span"
+            );
+            assert_eq!(
+                e.shapes.len(),
+                a.shapes.len(),
+                "{label}: layer {i} shape count"
+            );
+            for (j, (expected_shape, actual_shape)) in e.shapes.iter().zip(&a.shapes).enumerate() {
+                for ((name, ev), (_, av)) in shape_fields(expected_shape)
+                    .iter()
+                    .zip(shape_fields(actual_shape))
+                {
+                    assert_eq!(
+                        ev.to_bits(),
+                        av.to_bits(),
+                        "{label}: layer {i} shape {j} {name}: {ev} != {av}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn one_video_channel_renders_what_all_of_them_would() {
+        for NamedFrame { name, frame } in fixture::all() {
+            let ctx = frame.render_context();
+            let all = frame.mixer.render(ctx);
+            assert_eq!(all.len(), Mixer::N_VIDEO_CHANNELS);
+            for (channel, expected) in all.iter().enumerate() {
+                let one = frame.mixer.render_video_channel(VideoChannel(channel), ctx);
+                assert_identical(&format!("{name}, video channel {channel}"), expected, &one);
+            }
         }
     }
 

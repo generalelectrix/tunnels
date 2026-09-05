@@ -83,6 +83,35 @@ impl Mixer {
         video_outs
     }
 
+    /// Render the current state of the mixer for a single virtual video channel.
+    ///
+    /// Channels that are not routed to `video_channel` are not expanded at all,
+    /// so the work is proportional to what that one video channel draws.
+    pub fn render_video_channel(
+        &self,
+        video_channel: VideoChannel,
+        ctx: RenderContext,
+    ) -> LayerCollection {
+        let mut video_out = Vec::new();
+        // One buffer, reused across channels: a channel's layers are drained
+        // into Arcs before the next channel renders into it.
+        let mut rendered = Vec::new();
+        for channel in &self.channels {
+            if !channel.video_outs.contains(&video_channel) {
+                continue;
+            }
+            rendered.clear();
+            channel.render(UnipolarFloat::ONE, false, ctx, &mut rendered);
+            for layer in rendered.drain(..) {
+                if layer.is_empty() {
+                    continue;
+                }
+                video_out.push(Arc::new(layer));
+            }
+        }
+        video_out
+    }
+
     /// Emit the current value of all controllable mixer state.
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
         for (index, channel) in self.channels.iter().enumerate() {
