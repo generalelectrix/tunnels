@@ -9,27 +9,129 @@
 use anyhow::{Context, Result};
 use log::{error, warn};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crate::wire;
 
 // --- Publisher ---
 
+/// How often the accept loop looks up from the listener, to notice that the
+/// publisher is gone and to reap subscribers whose connections have failed.
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// How long a connection has to name its channel before it is abandoned.
+///
+/// A subscriber sends its channel byte immediately after connecting, so this
+/// only ever expires on a connection that is not one. Bounding it keeps a
+/// connection that says nothing from wedging the accept loop, and with it the
+/// publisher's shutdown.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long a run of skipped messages goes unreported before its count is logged.
+const SKIP_REPORT_PERIOD: Duration = Duration::from_secs(1);
+
+/// How long a dropped publisher waits for its subscribers to be sent what they
+/// have already been given.
+const FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// The one message a subscriber has been given and not yet been sent.
+///
+/// The publisher stores a message and moves on; the subscriber's sender thread
+/// takes it and writes it. A message the subscriber has not taken is replaced
+/// rather than queued behind, so a subscriber that cannot keep up misses
+/// messages instead of costing the publisher, and the subscribers waiting
+/// behind it, the time it takes to catch up.
+#[derive(Default)]
+struct Mailbox {
+    slot: Mutex<Slot>,
+    posted: Condvar,
+}
+
+#[derive(Default)]
+struct Slot {
+    /// The message waiting to be sent, if there is one.
+    pending: Option<Arc<[u8]>>,
+    /// Messages replaced before the subscriber took them, since the last report.
+    skipped: u64,
+    /// When the last report of skipped messages was made, if any has been.
+    reported_at: Option<Instant>,
+    /// Whether the publisher has gone away. No further messages will arrive.
+    closed: bool,
+}
+
+impl Mailbox {
+    /// Store `msg` as the message to send next, replacing any the subscriber
+    /// has not taken, and report how many it has missed if a report is due.
+    ///
+    /// A subscriber that has stopped reading misses messages as fast as they
+    /// are published, so they are counted and reported at most once per
+    /// `SKIP_REPORT_PERIOD` rather than logged one apiece.
+    fn post(&self, msg: Arc<[u8]>, now: Instant) -> Option<u64> {
+        let mut slot = self.slot.lock().unwrap();
+        let replaced = slot.pending.replace(msg).is_some();
+        self.posted.notify_one();
+        if !replaced {
+            return None;
+        }
+        slot.skipped += 1;
+        match slot.reported_at {
+            Some(reported_at) if now.duration_since(reported_at) < SKIP_REPORT_PERIOD => None,
+            _ => {
+                slot.reported_at = Some(now);
+                Some(std::mem::take(&mut slot.skipped))
+            }
+        }
+    }
+
+    /// Block until there is a message to send, and take it.
+    /// Yields `None` once the publisher is gone and the last message is taken.
+    fn take(&self) -> Option<Arc<[u8]>> {
+        let mut slot = self.slot.lock().unwrap();
+        loop {
+            if let Some(msg) = slot.pending.take() {
+                return Some(msg);
+            }
+            if slot.closed {
+                return None;
+            }
+            slot = self.posted.wait(slot).unwrap();
+        }
+    }
+
+    /// Declare that no further messages will be posted, so that the sender
+    /// thread finishes what it has and stops.
+    fn close(&self) {
+        self.slot.lock().unwrap().closed = true;
+        self.posted.notify_all();
+    }
+}
+
+/// A connected subscriber: the thread that writes to it, and the mailbox that
+/// thread takes its work from.
 struct Client {
-    stream: TcpStream,
     channel: u8,
+    mailbox: Arc<Mailbox>,
+    /// A second handle on the subscriber's socket. Shutting it down is what
+    /// releases a sender thread parked in a write to a subscriber that has
+    /// stopped reading.
+    socket: TcpStream,
+    sender: JoinHandle<()>,
 }
 
 /// A TCP-based publisher that pushes messages to connected subscribers.
 ///
 /// Spawns a background accept thread. Subscribers connect, send their channel
-/// byte, and receive length-prefixed messages. Slow or disconnected clients
-/// are dropped automatically.
+/// byte, and receive length-prefixed messages, each on its own sender thread.
+/// A subscriber is dropped when its connection fails, and never for being
+/// slow — a slow subscriber misses messages instead.
 pub struct Publisher {
     clients: Arc<Mutex<Vec<Client>>>,
+    shutdown: Arc<AtomicBool>,
+    accept: Option<JoinHandle<()>>,
 }
 
 impl Publisher {
@@ -37,73 +139,185 @@ impl Publisher {
     /// Spawns a background thread to accept subscriber connections.
     pub fn new(listener: TcpListener) -> Result<Self> {
         let local_addr = listener.local_addr()?;
+        // Accepting without blocking is what lets the accept thread notice
+        // that the publisher has been dropped.
+        listener
+            .set_nonblocking(true)
+            .context("failed to set the listener non-blocking")?;
         log::debug!("pub_sub publisher listening on {local_addr}");
 
         let clients: Arc<Mutex<Vec<Client>>> = Arc::new(Mutex::new(Vec::new()));
-        let clients_accept = clients.clone();
+        let shutdown = Arc::new(AtomicBool::new(false));
 
-        thread::Builder::new()
+        let accept = thread::Builder::new()
             .name(format!("pub_sub-accept-{}", local_addr.port()))
-            .spawn(move || accept_loop(listener, clients_accept))
+            .spawn({
+                let clients = clients.clone();
+                let shutdown = shutdown.clone();
+                move || accept_loop(listener, clients, shutdown)
+            })
             .context("failed to spawn accept thread")?;
 
-        Ok(Publisher { clients })
+        Ok(Publisher {
+            clients,
+            shutdown,
+            accept: Some(accept),
+        })
     }
 
     /// Send data to all subscribers on the given channel.
-    /// If a client's write fails (slow, disconnected), it is removed.
+    ///
+    /// Returns once every subscriber on the channel has been given the data;
+    /// the writing happens on their own threads, so this never blocks on a
+    /// socket. A subscriber that has not yet been sent the previous message
+    /// misses it.
     pub fn send(&self, channel: u8, data: &[u8]) {
-        let mut clients = self.clients.lock().unwrap();
-        clients.retain_mut(|client| {
-            if client.channel != channel {
-                return true; // keep, just not this channel
-            }
-            match wire::write_msg(&mut client.stream, data) {
-                Ok(()) => {
-                    // Flush to ensure data is sent promptly.
-                    match client.stream.flush() {
-                        Ok(()) => true,
-                        Err(e) => {
-                            warn!("Dropping subscriber (channel {channel}): flush error: {e}");
-                            false
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Dropping subscriber (channel {channel}): {e}");
-                    false
+        // Reports are logged after the lock is released. The caller may be on
+        // a deadline, and logging is not something to hold a lock across.
+        let mut skip_reports = Vec::new();
+        {
+            let clients = self.clients.lock().unwrap();
+            let now = Instant::now();
+            // The data is copied once, however many subscribers share it, and
+            // not at all if none do.
+            let mut msg: Option<Arc<[u8]>> = None;
+            for client in clients.iter().filter(|c| c.channel == channel) {
+                let msg = msg.get_or_insert_with(|| Arc::from(data));
+                if let Some(skipped) = client.mailbox.post(Arc::clone(msg), now) {
+                    skip_reports.push(skipped);
                 }
             }
-        });
+        }
+        for skipped in skip_reports {
+            warn!("Subscriber (channel {channel}) is behind: skipped {skipped} messages.");
+        }
     }
 }
 
-fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Vec<Client>>>) {
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                // Read the channel byte.
-                let mut channel_buf = [0u8; 1];
-                match stream.read_exact(&mut channel_buf) {
-                    Ok(()) => {
-                        let channel = channel_buf[0];
-                        if let Err(e) = stream.set_nodelay(true) {
-                            warn!("Failed to set TCP_NODELAY: {e}");
-                        }
-                        if let Err(e) = stream.set_write_timeout(Some(Duration::from_millis(100))) {
-                            warn!("Failed to set write timeout: {e}");
-                        }
-                        log::debug!("Subscriber connected (channel {channel})");
-                        clients.lock().unwrap().push(Client { stream, channel });
-                    }
-                    Err(e) => {
-                        warn!("Failed to read channel from subscriber: {e}");
-                    }
-                }
-            }
+impl Drop for Publisher {
+    /// Stop and join every thread the publisher started.
+    ///
+    /// The accept thread goes first, so that no subscriber can be added after
+    /// the ones present have been dealt with. Sender threads are then told
+    /// that no more messages are coming and given a moment to write what they
+    /// already have; whatever remains after that is parked in a write to a
+    /// subscriber that is not reading, and only closing the socket will
+    /// release it.
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        if let Some(accept) = self.accept.take() {
+            let _ = accept.join();
+        }
+
+        let mut clients = self.clients.lock().unwrap();
+        for client in clients.iter() {
+            client.mailbox.close();
+        }
+        let deadline = Instant::now() + FLUSH_TIMEOUT;
+        while Instant::now() < deadline && clients.iter().any(|c| !c.sender.is_finished()) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        for client in clients.drain(..) {
+            let _ = client.socket.shutdown(Shutdown::Both);
+            let _ = client.sender.join();
+        }
+    }
+}
+
+fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Vec<Client>>>, shutdown: Arc<AtomicBool>) {
+    while !shutdown.load(Ordering::Acquire) {
+        match listener.accept() {
+            Ok((stream, _)) => match subscribe(stream) {
+                Ok(client) => clients.lock().unwrap().push(client),
+                Err(e) => warn!("Failed to subscribe a client: {e:#}"),
+            },
             Err(e) => {
-                error!("pub_sub accept error: {e}");
+                if e.kind() != std::io::ErrorKind::WouldBlock {
+                    error!("pub_sub accept error: {e}");
+                }
+                // Reaping belongs on this thread rather than on the publisher's:
+                // it happens between messages and nothing waits on it.
+                reap_disconnected(&clients);
+                thread::sleep(ACCEPT_POLL_INTERVAL);
             }
+        }
+    }
+}
+
+/// Complete a subscriber's handshake and start the thread that writes to it.
+fn subscribe(mut stream: TcpStream) -> Result<Client> {
+    // The listener is non-blocking so that it can be shut down; the
+    // connections it yields are used blocking, on their own threads.
+    stream
+        .set_nonblocking(false)
+        .context("failed to set the connection blocking")?;
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .context("failed to set the handshake read timeout")?;
+
+    let mut channel_buf = [0u8; 1];
+    stream
+        .read_exact(&mut channel_buf)
+        .context("failed to read channel from subscriber")?;
+    let channel = channel_buf[0];
+
+    if let Err(e) = stream.set_nodelay(true) {
+        warn!("Failed to set TCP_NODELAY: {e}");
+    }
+    // Deliberately no write timeout. A sender thread is free to block for as
+    // long as its subscriber takes, and a timeout firing mid-message would
+    // leave a partial message on the wire, desynchronizing the framing for
+    // every message after it.
+
+    let socket = stream
+        .try_clone()
+        .context("failed to duplicate the subscriber socket")?;
+    let mailbox = Arc::new(Mailbox::default());
+    let sender = thread::Builder::new()
+        .name(format!("pub_sub-send-ch{channel}"))
+        .spawn({
+            let mailbox = mailbox.clone();
+            move || send_loop(stream, channel, &mailbox)
+        })
+        .context("failed to spawn sender thread")?;
+
+    log::debug!("Subscriber connected (channel {channel})");
+    Ok(Client {
+        channel,
+        mailbox,
+        socket,
+        sender,
+    })
+}
+
+/// Write messages to one subscriber until its connection fails or the
+/// publisher goes away.
+fn send_loop(mut stream: TcpStream, channel: u8, mailbox: &Mailbox) {
+    while let Some(msg) = mailbox.take() {
+        if let Err(e) = write_msg(&mut stream, &msg) {
+            warn!("Dropping subscriber (channel {channel}): {e:#}");
+            return;
+        }
+    }
+}
+
+fn write_msg(stream: &mut TcpStream, msg: &[u8]) -> Result<()> {
+    wire::write_msg(stream, msg)?;
+    // Flush to ensure data is sent promptly.
+    stream.flush().context("flush error")?;
+    Ok(())
+}
+
+/// Forget the subscribers whose sender threads have stopped, which they do
+/// only when the connection has failed.
+fn reap_disconnected(clients: &Mutex<Vec<Client>>) {
+    let mut clients = clients.lock().unwrap();
+    let mut i = 0;
+    while i < clients.len() {
+        if clients[i].sender.is_finished() {
+            let _ = clients.swap_remove(i).sender.join();
+        } else {
+            i += 1;
         }
     }
 }
@@ -334,11 +548,10 @@ mod tests {
 
     /// A subscriber that stops reading misses messages and stays subscribed.
     ///
-    /// Every subscriber here is a projector rendering a show. Blocking the
-    /// publisher on one projector's socket stalls the others with it, and
-    /// dropping that projector for being slow blacks it out until it
-    /// reconnects — both cost more than the missed messages do, because each
-    /// message is a whole state that the next one supersedes.
+    /// Blocking the publisher on one subscriber's socket stalls every other
+    /// subscriber with it, and dropping that subscriber for being slow costs
+    /// it everything until it reconnects. Both cost more than the messages it
+    /// misses, which the messages that follow supersede.
     #[test]
     fn a_subscriber_that_stops_reading_costs_only_itself() {
         let (publisher, port) = test_publisher();
@@ -405,6 +618,36 @@ mod tests {
         assert!(
             slowest_send < SEND_LIMIT,
             "publishing blocked for {slowest_send:?} on a subscriber that stopped reading"
+        );
+    }
+
+    /// A dropped publisher takes its threads with it.
+    ///
+    /// Dropping joins every thread the publisher started, so a drop that
+    /// returns is proof that none of them are left running — including the
+    /// sender thread of a subscriber that stopped reading, which is parked in
+    /// a write that only closing its socket releases.
+    #[test]
+    fn dropping_the_publisher_stops_its_threads() {
+        let (publisher, port) = test_publisher();
+        // Held open for the duration, so that the sender thread writing to it
+        // is blocked rather than merely finished.
+        let _stalled = stalled_subscriber(port, 0);
+        thread::sleep(Duration::from_millis(300));
+
+        let bulk = vec![0xABu8; LARGE_MESSAGE];
+        for _ in 0..MESSAGES_TO_STALL {
+            publisher.send(0, &bulk);
+        }
+
+        let (dropped, completion) = channel();
+        thread::spawn(move || {
+            drop(publisher);
+            let _ = dropped.send(());
+        });
+        assert!(
+            completion.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "dropping the publisher never finished: a thread it started is still running"
         );
     }
 }
