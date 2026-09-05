@@ -1,5 +1,3 @@
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
-use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
@@ -7,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::{Layer, LayerCollection};
+
+/// The number of mixer channels on a single mixer page.
+pub const MIXER_CHANNELS_PER_PAGE: usize = 8;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -251,11 +252,4 @@ pub enum ChannelStateChange {
 
 pub trait EmitStateChange {
     fn emit_mixer_state_change(&mut self, sc: StateChange);
-}
-
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_mixer_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Mixer(sc))
-    }
 }

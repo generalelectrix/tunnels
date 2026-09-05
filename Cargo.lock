@@ -5733,7 +5733,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
- "arrayvec",
  "bitflags 2.11.0",
  "derive_more 2.0.1",
  "eframe",
@@ -5743,7 +5742,6 @@ dependencies = [
  "log",
  "midi_harness",
  "minusmq",
- "noise",
  "plotters",
  "rmp-serde",
  "rosc",
@@ -5752,6 +5750,7 @@ dependencies = [
  "simplelog",
  "tunnels_audio",
  "tunnels_lib",
+ "tunnels_model",
  "zero_configure",
 ]
 
@@ -5779,6 +5778,19 @@ dependencies = [
  "number",
  "ordered-float",
  "serde",
+]
+
+[[package]]
+name = "tunnels_model"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "log",
+ "noise",
+ "plotters",
+ "serde",
+ "tunnels_lib",
 ]
 
 [[package]]

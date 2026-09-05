@@ -2,7 +2,6 @@ use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock::Ticks;
 use crate::clock_bank::ClockStore;
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
 use crate::waveforms::WaveformArgs;
 use crate::{clock_bank::ClockIdx, waveforms};
 use noise::NoiseFn;
@@ -370,11 +369,4 @@ pub enum ControlMessage {
 
 pub trait EmitStateChange {
     fn emit_animation_state_change(&mut self, sc: StateChange);
-}
-
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_animation_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Animation(sc))
-    }
 }

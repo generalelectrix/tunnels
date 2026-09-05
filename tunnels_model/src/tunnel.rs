@@ -1,10 +1,10 @@
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
+use crate::waveforms::sawtooth;
 use crate::{
     animation::Animation, animation_target::AnimationTarget, palette::ColorPaletteIdx,
     position_bank::PositionIdx, waveforms::WaveformArgs,
 };
-use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::time::Duration;
@@ -509,13 +509,6 @@ pub enum ControlMessage {
 
 pub trait EmitStateChange {
     fn emit_tunnel_state_change(&mut self, sc: StateChange);
-}
-
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_tunnel_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Tunnel(sc))
-    }
 }
 
 pub mod fixture {

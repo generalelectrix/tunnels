@@ -305,9 +305,78 @@ impl MasterUI {
     }
 }
 
-pub trait EmitStateChange {
+/// Emit a state change for any part of the show.
+///
+/// The model crate defines a narrow emitter trait per subsystem. An emitter that
+/// can emit whole-show state changes can serve all of them, so it is required to
+/// implement each one; `emit_show_state_changes!` writes those impls.
+pub trait EmitStateChange:
+    crate::animation::EmitStateChange
+    + crate::clock_bank::EmitStateChange
+    + crate::mixer::EmitStateChange
+    + crate::palette::EmitStateChange
+    + crate::tunnel::EmitStateChange
+{
     fn emit(&mut self, sc: ShowStateChange);
 }
+
+/// Implement the model's per-subsystem emitter traits for a show emitter,
+/// forwarding each one into the matching [`ShowStateChange`] variant.
+///
+/// The subsystem traits live in `tunnels_model` and [`EmitStateChange`] lives
+/// here, so coherence forbids a blanket impl covering every show emitter. Each
+/// emitter names itself here instead.
+macro_rules! emit_show_state_changes {
+    ($emitter:ty) => {
+        impl $crate::animation::EmitStateChange for $emitter {
+            fn emit_animation_state_change(&mut self, sc: $crate::animation::StateChange) {
+                <$emitter as $crate::master_ui::EmitStateChange>::emit(
+                    self,
+                    $crate::show::StateChange::Animation(sc),
+                )
+            }
+        }
+
+        impl $crate::clock_bank::EmitStateChange for $emitter {
+            fn emit_clock_bank_state_change(&mut self, sc: $crate::clock_bank::StateChange) {
+                <$emitter as $crate::master_ui::EmitStateChange>::emit(
+                    self,
+                    $crate::show::StateChange::Clock(sc),
+                )
+            }
+        }
+
+        impl $crate::mixer::EmitStateChange for $emitter {
+            fn emit_mixer_state_change(&mut self, sc: $crate::mixer::StateChange) {
+                <$emitter as $crate::master_ui::EmitStateChange>::emit(
+                    self,
+                    $crate::show::StateChange::Mixer(sc),
+                )
+            }
+        }
+
+        impl $crate::palette::EmitStateChange for $emitter {
+            fn emit_palette_state_change(&mut self, sc: $crate::palette::StateChange) {
+                <$emitter as $crate::master_ui::EmitStateChange>::emit(
+                    self,
+                    $crate::show::StateChange::ColorPalette(sc),
+                )
+            }
+        }
+
+        impl $crate::tunnel::EmitStateChange for $emitter {
+            fn emit_tunnel_state_change(&mut self, sc: $crate::tunnel::StateChange) {
+                <$emitter as $crate::master_ui::EmitStateChange>::emit(
+                    self,
+                    $crate::show::StateChange::Tunnel(sc),
+                )
+            }
+        }
+    };
+}
+
+pub(crate) use emit_show_state_changes;
+
 pub trait EmitMasterUIStateChange {
     fn emit_master_ui_state_change(&mut self, sc: StateChange);
 }

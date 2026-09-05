@@ -2,8 +2,6 @@ use crate::typed_index::typed_index;
 use serde::{Deserialize, Serialize};
 use tunnels_lib::color::Hsv;
 
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
-
 const MIN_PALETTE_SIZE: usize = 1;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -69,11 +67,4 @@ pub enum StateChange {
 
 pub trait EmitStateChange {
     fn emit_palette_state_change(&mut self, sc: StateChange);
-}
-
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_palette_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::ColorPalette(sc))
-    }
 }

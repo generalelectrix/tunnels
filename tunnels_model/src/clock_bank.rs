@@ -1,15 +1,13 @@
+use std::fmt;
 use std::time::Duration;
 
-use crate::{
-    clock::{
-        ControlMessage as ClockControlMessage, ControllableClock,
-        EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange, StaticClock,
-        Ticks,
-    },
-    master_ui::EmitStateChange as EmitShowStateChange,
+use crate::clock::{
+    ControlMessage as ClockControlMessage, ControllableClock,
+    EmitStateChange as EmitClockStateChange, StateChange as ClockStateChange, StaticClock, Ticks,
 };
 use arrayvec::ArrayVec;
 use log::error;
+use serde::de::{Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 
@@ -148,6 +146,73 @@ impl ClockBank {
     }
 }
 
+/// A collection of static clock state data, rendered from a ClockBank.
+#[derive(Serialize, Default, Debug, Clone)]
+pub struct StaticClockBank(pub ArrayVec<StaticClock, MAX_CLOCKS>);
+
+impl<'de> Deserialize<'de> for StaticClockBank {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct BankVisitor;
+
+        impl<'de> Visitor<'de> for BankVisitor {
+            type Value = StaticClockBank;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "a sequence of clock states")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<StaticClockBank, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut clocks = ArrayVec::new();
+                // Keep the first MAX_CLOCKS clocks and discard any beyond the
+                // capacity ceiling, so a peer with a higher ceiling degrades to a
+                // usable bank instead of dropping the frame. The loop still drains
+                // the whole sequence to keep the rest of the message aligned.
+                while let Some(clock) = seq.next_element::<StaticClock>()? {
+                    let _ = clocks.try_push(clock);
+                }
+                Ok(StaticClockBank(clocks))
+            }
+        }
+
+        deserializer.deserialize_seq(BankVisitor)
+    }
+}
+
+impl ClockStore for StaticClockBank {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn phase(&self, index: ClockIdx) -> Option<Phase> {
+        self.get(index).map(|c| c.phase)
+    }
+
+    fn ticks(&self, index: ClockIdx) -> Option<crate::clock::Ticks> {
+        self.get(index).map(|c| c.ticks)
+    }
+
+    fn submaster_level(&self, index: ClockIdx) -> Option<UnipolarFloat> {
+        self.get(index).map(|c| c.submaster_level)
+    }
+
+    fn use_audio_size(&self, index: ClockIdx) -> Option<bool> {
+        self.get(index).map(|c| c.use_audio_size)
+    }
+}
+
+impl StaticClockBank {
+    /// Return the clock at `index`, or `None` if the index is out of range.
+    fn get(&self, index: ClockIdx) -> Option<&StaticClock> {
+        self.0.get(index.0)
+    }
+}
+
 /// Adds the clock channel into outgoing clock messages.
 struct ChannelEmitter<'e, E: EmitStateChange> {
     channel: ClockIdx,
@@ -177,13 +242,6 @@ pub struct StateChange {
 
 pub trait EmitStateChange {
     fn emit_clock_bank_state_change(&mut self, sc: StateChange);
-}
-
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_clock_bank_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Clock(sc))
-    }
 }
 
 #[cfg(test)]

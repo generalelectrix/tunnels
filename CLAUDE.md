@@ -43,7 +43,8 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 
 | Crate | Purpose |
 |-------|---------|
-| `tunnels` | Main library: show loop, audio, animation, clocks, MIDI, rendering |
+| `tunnels` | Main library: show loop, audio, clocks, MIDI, OSC, control dispatch |
+| `tunnels_model` | The show model and its render: mixer, beams, tunnels, animations, clocks, palette |
 | `tunnels_audio` | Audio input, envelope extraction, wavelet decomposition, ring buffers |
 | `tunnels_lib` | Cross-crate primitives: number types, color, smoothing, GUI repaint (`RepaintSignal`, `Notified`), transient indicator, bootstrap push protocol |
 | `console` | GUI binary (eframe/egui): show configuration, MIDI, audio, animation viz |

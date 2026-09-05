@@ -18,8 +18,6 @@ anyhow.workspace = true
 rmp-serde.workspace = true
 
 rosc = "0.11"
-noise = "0.9.0"
-arrayvec = { version = "0.7", features = ["serde"] }
 
 egui_plot = "0.34"
 eframe = "0.33"
@@ -27,6 +25,7 @@ arc-swap = "1"
 
 midi_harness = { path = "../midi_harness" }
 tunnels_lib = { path = "../tunnels_lib" }
+tunnels_model = { path = "../tunnels_model" }
 zero_configure = { path = "../zero_configure" }
 minusmq = { path = "../minusmq" }
 

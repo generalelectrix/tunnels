@@ -119,6 +119,8 @@ impl EmitStateChange for Dispatcher {
     }
 }
 
+crate::master_ui::emit_show_state_changes!(Dispatcher);
+
 pub fn bipolar_from_midi(val: u8) -> BipolarFloat {
     let denom = if val > 64 { 63. } else { 64. };
     BipolarFloat::new((val as f64 - 64.) / denom)

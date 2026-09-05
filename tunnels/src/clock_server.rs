@@ -1,20 +1,13 @@
 //! Advertise a clock bank stream over DNSSD.
 //! Provide a strongly-typed receiver.
 
-use std::fmt;
-
 use anyhow::Result;
 
-use arrayvec::ArrayVec;
-use serde::de::{Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
-use tunnels_lib::number::{Phase, UnipolarFloat};
+use tunnels_lib::number::UnipolarFloat;
 use zero_configure::pub_sub::{PublisherService, SubscriberService};
 
-use crate::{
-    clock::StaticClock,
-    clock_bank::{ClockIdx, ClockStore, MAX_CLOCKS},
-};
+pub use crate::clock_bank::StaticClockBank;
 
 const SERVICE_NAME: &str = "showclocks";
 const PORT: u16 = 9090;
@@ -39,75 +32,13 @@ pub struct SharedClockData {
 pub type ClockPublisher = PublisherService<SharedClockData>;
 pub type ClockSubscriber = SubscriberService<SharedClockData>;
 
-/// A collection of static clock state data, rendered from a ClockBank.
-#[derive(Serialize, Default, Debug, Clone)]
-pub struct StaticClockBank(pub ArrayVec<StaticClock, MAX_CLOCKS>);
-
-impl<'de> Deserialize<'de> for StaticClockBank {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct BankVisitor;
-
-        impl<'de> Visitor<'de> for BankVisitor {
-            type Value = StaticClockBank;
-
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, "a sequence of clock states")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<StaticClockBank, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let mut clocks = ArrayVec::new();
-                // Keep the first MAX_CLOCKS clocks and discard any beyond the
-                // capacity ceiling, so a peer with a higher ceiling degrades to a
-                // usable bank instead of dropping the frame. The loop still drains
-                // the whole sequence to keep the rest of the message aligned.
-                while let Some(clock) = seq.next_element::<StaticClock>()? {
-                    let _ = clocks.try_push(clock);
-                }
-                Ok(StaticClockBank(clocks))
-            }
-        }
-
-        deserializer.deserialize_seq(BankVisitor)
-    }
-}
-
-impl ClockStore for StaticClockBank {
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn phase(&self, index: ClockIdx) -> Option<Phase> {
-        self.get(index).map(|c| c.phase)
-    }
-
-    fn ticks(&self, index: ClockIdx) -> Option<crate::clock::Ticks> {
-        self.get(index).map(|c| c.ticks)
-    }
-
-    fn submaster_level(&self, index: ClockIdx) -> Option<UnipolarFloat> {
-        self.get(index).map(|c| c.submaster_level)
-    }
-
-    fn use_audio_size(&self, index: ClockIdx) -> Option<bool> {
-        self.get(index).map(|c| c.use_audio_size)
-    }
-}
-
-impl StaticClockBank {
-    /// Return the clock at `index`, or `None` if the index is out of range.
-    fn get(&self, index: ClockIdx) -> Option<&StaticClock> {
-        self.0.get(index.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use tunnels_lib::number::Phase;
+
+    use crate::clock::StaticClock;
+    use crate::clock_bank::{ClockIdx, ClockStore, MAX_CLOCKS};
+
     use super::*;
 
     #[test]
