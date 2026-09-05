@@ -23,7 +23,22 @@ const FRAME_CHANNEL: u8 = 0;
 ///
 /// A single slot, overwritten by every arrival: frames are published faster
 /// than they can be drawn, and a superseded frame is never worth drawing.
-pub type FrameMailbox = Arc<Mutex<Option<Arc<ShowFrame>>>>;
+pub type FrameMailbox = Arc<Mutex<Option<ReceivedFrame>>>;
+
+/// A show frame, and the moment it arrived.
+pub struct ReceivedFrame {
+    frame: Arc<ShowFrame>,
+    received_at: Instant,
+}
+
+/// How old the newest frame may be before a client stops drawing it.
+///
+/// Frames arrive at 240 Hz, so a second of silence is 240 missed frames: the
+/// stream is gone, not late. It is also longer than a reconnection takes when
+/// there is anything to reconnect to — a subscriber retries immediately and
+/// then backs off 100, 200 and 400 milliseconds — so a dropped connection to a
+/// live console is restored well inside it and never reaches the screen.
+const MAX_FRAME_AGE: Duration = Duration::from_secs(1);
 
 /// Top-level structure that owns all of the show data.
 pub struct Show {
@@ -102,12 +117,17 @@ impl Show {
     /// per published frame, of which there are more.
     ///
     /// Always clears to black, then either draws this client's video channel
-    /// out of the latest frame or — if no frame has arrived yet — a small
-    /// spinner indicating the client is up and waiting. The unconditional clear
-    /// is what keeps an unfed client from showing uninitialized GPU memory as
-    /// static gray noise.
+    /// out of the latest frame or — if no frame has arrived recently enough to
+    /// still describe the show — a small spinner indicating the client is up
+    /// and waiting. The unconditional clear is what keeps an unfed client from
+    /// showing uninitialized GPU memory as static gray noise.
+    ///
+    /// Drawing a stale frame forever is what a dead stream would otherwise look
+    /// like: a screen indistinguishable from a working one, on a console that
+    /// stopped publishing. The spinner is the difference between a failure the
+    /// operator can see and one only the audience can.
     fn render(&mut self, args: &RenderArgs) {
-        let frame = self.frames.lock().unwrap().clone();
+        let frame = current_frame(&self.frames.lock().unwrap(), Instant::now());
         let layers = frame.as_ref().map(|frame| {
             frame
                 .mixer
@@ -121,6 +141,16 @@ impl Show {
             }
         });
     }
+}
+
+/// The frame to draw, if the stream is still current enough to have one.
+///
+/// A frame older than the stream that produced it describes a show that has
+/// moved on without this client, so it is not drawn at all.
+fn current_frame(mailbox: &Option<ReceivedFrame>, now: Instant) -> Option<Arc<ShowFrame>> {
+    mailbox.as_ref().and_then(|received| {
+        (now.duration_since(received.received_at) < MAX_FRAME_AGE).then(|| received.frame.clone())
+    })
 }
 
 /// The video channel a configuration selects.
@@ -184,7 +214,10 @@ fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
                 let buf = subscriber.recv();
                 match ShowFrame::decode(&buf) {
                     Ok(frame) => {
-                        *frames.lock().unwrap() = Some(Arc::new(frame));
+                        *frames.lock().unwrap() = Some(ReceivedFrame {
+                            frame: Arc::new(frame),
+                            received_at: Instant::now(),
+                        });
                     }
                     Err(e) => match decode_errors.record(Instant::now()) {
                         Some(ErrorReport::First) => error!("Frame decode error: {e}"),
@@ -261,6 +294,34 @@ impl ErrorThrottle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tunnels_model::show_frame::fixture;
+
+    /// A frame is drawn while the stream is alive, and dropped once it is not.
+    #[test]
+    fn a_frame_outlives_its_stream_by_a_bounded_time() {
+        let arrival = Instant::now();
+        let mailbox = Some(ReceivedFrame {
+            frame: Arc::new(fixture::default_frame()),
+            received_at: arrival,
+        });
+
+        assert!(
+            current_frame(&mailbox, arrival).is_some(),
+            "a frame that just arrived is the frame to draw"
+        );
+        assert!(
+            current_frame(&mailbox, arrival + MAX_FRAME_AGE - Duration::from_millis(1)).is_some(),
+            "a frame is drawn for as long as it may be drawn"
+        );
+        assert!(
+            current_frame(&mailbox, arrival + MAX_FRAME_AGE).is_none(),
+            "a frame older than the limit is not drawn"
+        );
+        assert!(
+            current_frame(&None, arrival).is_none(),
+            "a client that has received nothing has nothing to draw"
+        );
+    }
 
     /// The interval show frames arrive at, and so the interval a failure with
     /// a persistent cause recurs at.
