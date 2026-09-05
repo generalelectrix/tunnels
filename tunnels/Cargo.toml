@@ -34,5 +34,4 @@ tunnels_audio = { path = "../tunnels_audio" }
 
 [dev-dependencies]
 insta = { version = "1.28.0", features = ["yaml"] }
-plotters = "^0.3.0"
 serde_yaml = "0.9"

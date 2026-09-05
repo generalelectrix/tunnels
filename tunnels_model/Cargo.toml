@@ -12,7 +12,3 @@ noise = "0.9.0"
 arrayvec = { version = "0.7", features = ["serde"] }
 
 tunnels_lib = { path = "../tunnels_lib" }
-
-[dev-dependencies]
-anyhow.workspace = true
-plotters = "^0.3.0"
