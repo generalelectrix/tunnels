@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg"
+xmlns:xlink="http://www.w3.org/1999/xlink"
+width="539" height="600">
+<title>61 complete circles arranged in "Flower of Life" pattern.</title>
+<defs>
+<g id="vertcolm">
+<circle cx="0" cy="1" r="1" />
+<circle cx="0" cy="2" r="1" />
+<circle cx="0" cy="3" r="1" />
+<circle cx="0" cy="4" r="1" />
+<circle cx="0" cy="5" r="1" />
+<circle cx="0" cy="6" r="1" />
+<circle cx="0" cy="7" r="1" />
+<circle cx="0" cy="8" r="1" />
+<circle cx="0" cy="9" r="1" />
+</g>
+<g id="r">
+<circle cx="0.866025404" cy="1.5" r="1" />
+<circle cx="0.866025404" cy="2.5" r="1" />
+<circle cx="0.866025404" cy="3.5" r="1" />
+<circle cx="0.866025404" cy="4.5" r="1" />
+<circle cx="0.866025404" cy="5.5" r="1" />
+<circle cx="0.866025404" cy="6.5" r="1" />
+<circle cx="0.866025404" cy="7.5" r="1" />
+<circle cx="0.866025404" cy="8.5" r="1" />
+<circle cx="1.732050808" cy="2" r="1" />
+<circle cx="1.732050808" cy="3" r="1" />
+<circle cx="1.732050808" cy="4" r="1" />
+<circle cx="1.732050808" cy="5" r="1" />
+<circle cx="1.732050808" cy="6" r="1" />
+<circle cx="1.732050808" cy="7" r="1" />
+<circle cx="1.732050808" cy="8" r="1" />
+<circle cx="2.598076212" cy="2.5" r="1" />
+<circle cx="2.598076212" cy="3.5" r="1" />
+<circle cx="2.598076212" cy="4.5" r="1" />
+<circle cx="2.598076212" cy="5.5" r="1" />
+<circle cx="2.598076212" cy="6.5" r="1" />
+<circle cx="2.598076212" cy="7.5" r="1" />
+<circle cx="3.464101616" cy="3" r="1" />
+<circle cx="3.464101616" cy="4" r="1" />
+<circle cx="3.464101616" cy="5" r="1" />
+<circle cx="3.464101616" cy="6" r="1" />
+<circle cx="3.464101616" cy="7" r="1" />
+</g>
+</defs>
+<g transform="translate(268.5,7) scale(58.5)">
+<g style="fill:#fff;">
+<use xlink:href="#vertcolm"/>
+<use xlink:href="#r"/>
+<use xlink:href="#r" transform="scale(-1 1)" />
+</g>
+<g style="fill:none;stroke:#000;stroke-width:0.03px;">
+<use xlink:href="#vertcolm"/>
+<use xlink:href="#r"/>
+<use xlink:href="#r" transform="scale(-1 1)" />
+</g>
+</g>
+</svg>

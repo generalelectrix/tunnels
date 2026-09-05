@@ -1,0 +1,383 @@
+[
+  {
+    "file": "wm_flower_of_life_61circles.svg",
+    "source": "https://commons.wikimedia.org/wiki/File:Flower-of-Life-61circles.svg",
+    "license": "Public domain"
+  },
+  {
+    "file": "wm_flower_of_life_rosette_petals_filled.svg",
+    "source": "https://commons.wikimedia.org/wiki/File:Flower_of_Life_rosette_(petals_filled).svg",
+    "license": "CC BY-SA 3.0"
+  },
+  {
+    "file": "wm_sunburst_pattern.svg",
+    "source": "https://commons.wikimedia.org/wiki/File:Sunburst_pattern.svg",
+    "license": "CC0"
+  },
+  {
+    "source": "Noto Sans Symbols 2, Google Fonts",
+    "license": "SIL Open Font License 1.1",
+    "glyphs": [
+      {
+        "file": "db_light_greek_cross.svg",
+        "codepoint": "U+1F7A2",
+        "name": "light greek cross",
+        "solidity": 0.163
+      },
+      {
+        "file": "db_white_square_with_rounded_corners.svg",
+        "codepoint": "U+25A2",
+        "name": "white square with rounded corners",
+        "solidity": 0.181
+      },
+      {
+        "file": "db_white_square.svg",
+        "codepoint": "U+25A1",
+        "name": "white square",
+        "solidity": 0.192
+      },
+      {
+        "file": "db_medium_white_circle.svg",
+        "codepoint": "U+26AA",
+        "name": "medium white circle",
+        "solidity": 0.2
+      },
+      {
+        "file": "db_hollow_quilt_square_ornament.svg",
+        "codepoint": "U+1F668",
+        "name": "hollow quilt square ornament",
+        "solidity": 0.205
+      },
+      {
+        "file": "db_light_five_pointed_black_star.svg",
+        "codepoint": "U+1F7C9",
+        "name": "light five pointed black star",
+        "solidity": 0.213
+      },
+      {
+        "file": "db_lower_left_triangle.svg",
+        "codepoint": "U+25FA",
+        "name": "lower left triangle",
+        "solidity": 0.214
+      },
+      {
+        "file": "db_nine_pointed_white_star.svg",
+        "codepoint": "U+1F7D9",
+        "name": "nine pointed white star",
+        "solidity": 0.217
+      },
+      {
+        "file": "db_white_circle_with_upper_right_quadrant.svg",
+        "codepoint": "U+25F7",
+        "name": "white circle with upper right quadrant",
+        "solidity": 0.223
+      },
+      {
+        "file": "db_white_circle_with_lower_left_quadrant.svg",
+        "codepoint": "U+25F5",
+        "name": "white circle with lower left quadrant",
+        "solidity": 0.224
+      },
+      {
+        "file": "db_medium_greek_cross.svg",
+        "codepoint": "U+1F7A3",
+        "name": "medium greek cross",
+        "solidity": 0.228
+      },
+      {
+        "file": "db_white_sun_with_rays.svg",
+        "codepoint": "U+263C",
+        "name": "white sun with rays",
+        "solidity": 0.231
+      },
+      {
+        "file": "db_light_white_square.svg",
+        "codepoint": "U+1F78E",
+        "name": "light white square",
+        "solidity": 0.24
+      },
+      {
+        "file": "db_white_lozenge_containing_black_small_lozenge.svg",
+        "codepoint": "U+1F7A0",
+        "name": "white lozenge containing black small lozenge",
+        "solidity": 0.245
+      },
+      {
+        "file": "db_eight_pointed_pinwheel_star.svg",
+        "codepoint": "U+2735",
+        "name": "eight pointed pinwheel star",
+        "solidity": 0.257
+      },
+      {
+        "file": "db_medium_four_pointed_black_star.svg",
+        "codepoint": "U+1F7C5",
+        "name": "medium four pointed black star",
+        "solidity": 0.261
+      },
+      {
+        "file": "db_shadowed_white_circle.svg",
+        "codepoint": "U+274D",
+        "name": "shadowed white circle",
+        "solidity": 0.262
+      },
+      {
+        "file": "db_medium_eight_pointed_black_star.svg",
+        "codepoint": "U+1F7CE",
+        "name": "medium eight pointed black star",
+        "solidity": 0.273
+      },
+      {
+        "file": "db_six_pointed_black_star.svg",
+        "codepoint": "U+2736",
+        "name": "six pointed black star",
+        "solidity": 0.279
+      },
+      {
+        "file": "db_bold_greek_cross.svg",
+        "codepoint": "U+1F7A4",
+        "name": "bold greek cross",
+        "solidity": 0.281
+      },
+      {
+        "file": "db_white_square_with_upper_left_quadrant.svg",
+        "codepoint": "U+25F0",
+        "name": "white square with upper left quadrant",
+        "solidity": 0.293
+      },
+      {
+        "file": "db_white_square_with_upper_right_quadrant.svg",
+        "codepoint": "U+25F3",
+        "name": "white square with upper right quadrant",
+        "solidity": 0.293
+      },
+      {
+        "file": "db_medium_five_spoked_asterisk.svg",
+        "codepoint": "U+1F7B0",
+        "name": "medium five spoked asterisk",
+        "solidity": 0.299
+      },
+      {
+        "file": "db_four_teardrop_spoked_asterisk.svg",
+        "codepoint": "U+2722",
+        "name": "four teardrop-spoked asterisk",
+        "solidity": 0.304
+      },
+      {
+        "file": "db_circle_with_upper_right_quadrant_black.svg",
+        "codepoint": "U+25D4",
+        "name": "circle with upper right quadrant black",
+        "solidity": 0.316
+      },
+      {
+        "file": "db_tight_trifoliate_snowflake.svg",
+        "codepoint": "U+2745",
+        "name": "tight trifoliate snowflake",
+        "solidity": 0.327
+      },
+      {
+        "file": "db_heavy_twelve_pointed_pinwheel_star.svg",
+        "codepoint": "U+1F7D4",
+        "name": "heavy twelve pointed pinwheel star",
+        "solidity": 0.332
+      },
+      {
+        "file": "db_outlined_greek_cross.svg",
+        "codepoint": "U+2719",
+        "name": "outlined greek cross",
+        "solidity": 0.34
+      },
+      {
+        "file": "db_crossing_lanes.svg",
+        "codepoint": "U+26CC",
+        "name": "crossing lanes",
+        "solidity": 0.344
+      },
+      {
+        "file": "db_four_pointed_black_star.svg",
+        "codepoint": "U+1F7C6",
+        "name": "four pointed black star",
+        "solidity": 0.346
+      },
+      {
+        "file": "db_bold_five_spoked_asterisk.svg",
+        "codepoint": "U+1F7B1",
+        "name": "bold five spoked asterisk",
+        "solidity": 0.36
+      },
+      {
+        "file": "db_medium_saltire.svg",
+        "codepoint": "U+1F7AA",
+        "name": "medium saltire",
+        "solidity": 0.362
+      },
+      {
+        "file": "db_open_centre_teardrop_spoked_asterisk.svg",
+        "codepoint": "U+273C",
+        "name": "open centre teardrop-spoked asterisk",
+        "solidity": 0.369
+      },
+      {
+        "file": "db_lower_right_shadowed_white_square.svg",
+        "codepoint": "U+2751",
+        "name": "lower right shadowed white square",
+        "solidity": 0.378
+      },
+      {
+        "file": "db_heavy_white_down_pointing_triangle.svg",
+        "codepoint": "U+26DB",
+        "name": "heavy white down-pointing triangle",
+        "solidity": 0.383
+      },
+      {
+        "file": "db_snowflake.svg",
+        "codepoint": "U+2744",
+        "name": "snowflake",
+        "solidity": 0.386
+      },
+      {
+        "file": "db_lower_right_drop_shadowed_white_square.svg",
+        "codepoint": "U+274F",
+        "name": "lower right drop-shadowed white square",
+        "solidity": 0.39
+      },
+      {
+        "file": "db_square_with_horizontal_fill.svg",
+        "codepoint": "U+25A4",
+        "name": "square with horizontal fill",
+        "solidity": 0.394
+      },
+      {
+        "file": "db_twelve_pointed_black_star.svg",
+        "codepoint": "U+2739",
+        "name": "twelve pointed black star",
+        "solidity": 0.395
+      },
+      {
+        "file": "db_eight_pointed_rectilinear_black_star.svg",
+        "codepoint": "U+2737",
+        "name": "eight pointed rectilinear black star",
+        "solidity": 0.402
+      },
+      {
+        "file": "db_extremely_heavy_greek_cross.svg",
+        "codepoint": "U+1F7A7",
+        "name": "extremely heavy greek cross",
+        "solidity": 0.412
+      },
+      {
+        "file": "db_heavy_five_pointed_black_star.svg",
+        "codepoint": "U+1F7CA",
+        "name": "heavy five pointed black star",
+        "solidity": 0.415
+      },
+      {
+        "file": "db_bullseye.svg",
+        "codepoint": "U+25CE",
+        "name": "bullseye",
+        "solidity": 0.42
+      },
+      {
+        "file": "db_sixteen_pointed_asterisk.svg",
+        "codepoint": "U+273A",
+        "name": "sixteen pointed asterisk",
+        "solidity": 0.427
+      },
+      {
+        "file": "db_heavy_eight_pointed_black_star.svg",
+        "codepoint": "U+1F7CF",
+        "name": "heavy eight pointed black star",
+        "solidity": 0.439
+      },
+      {
+        "file": "db_very_heavy_five_spoked_asterisk.svg",
+        "codepoint": "U+1F7B3",
+        "name": "very heavy five spoked asterisk",
+        "solidity": 0.455
+      },
+      {
+        "file": "db_circled_open_centre_eight_pointed_star.svg",
+        "codepoint": "U+2742",
+        "name": "circled open centre eight pointed star",
+        "solidity": 0.473
+      },
+      {
+        "file": "db_circle_with_right_half_black.svg",
+        "codepoint": "U+25D1",
+        "name": "circle with right half black",
+        "solidity": 0.473
+      },
+      {
+        "file": "db_bold_white_circle.svg",
+        "codepoint": "U+1F786",
+        "name": "bold white circle",
+        "solidity": 0.488
+      },
+      {
+        "file": "db_bold_eight_spoked_asterisk.svg",
+        "codepoint": "U+1F7BD",
+        "name": "bold eight spoked asterisk",
+        "solidity": 0.495
+      },
+      {
+        "file": "db_black_down_pointing_triangle.svg",
+        "codepoint": "U+25BC",
+        "name": "black down-pointing triangle",
+        "solidity": 0.5
+      },
+      {
+        "file": "db_black_lower_right_triangle.svg",
+        "codepoint": "U+25E2",
+        "name": "black lower right triangle",
+        "solidity": 0.5
+      },
+      {
+        "file": "db_black_upper_right_triangle.svg",
+        "codepoint": "U+25E5",
+        "name": "black upper right triangle",
+        "solidity": 0.5
+      },
+      {
+        "file": "db_reverse_checker_board.svg",
+        "codepoint": "U+1F67F",
+        "name": "reverse checker board",
+        "solidity": 0.5
+      },
+      {
+        "file": "db_trigram_for_water.svg",
+        "codepoint": "U+2635",
+        "name": "trigram for water",
+        "solidity": 0.507
+      },
+      {
+        "file": "db_very_heavy_saltire.svg",
+        "codepoint": "U+1F7AD",
+        "name": "very heavy saltire",
+        "solidity": 0.51
+      },
+      {
+        "file": "db_square_with_orthogonal_crosshatch_fill.svg",
+        "codepoint": "U+25A6",
+        "name": "square with orthogonal crosshatch fill",
+        "solidity": 0.523
+      },
+      {
+        "file": "db_heavy_white_circle.svg",
+        "codepoint": "U+1F787",
+        "name": "heavy white circle",
+        "solidity": 0.535
+      },
+      {
+        "file": "db_extremely_heavy_saltire.svg",
+        "codepoint": "U+1F7AE",
+        "name": "extremely heavy saltire",
+        "solidity": 0.541
+      },
+      {
+        "file": "db_trigram_for_fire.svg",
+        "codepoint": "U+2632",
+        "name": "trigram for fire",
+        "solidity": 0.547
+      }
+    ]
+  }
+]
