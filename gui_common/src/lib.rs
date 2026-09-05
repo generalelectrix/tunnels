@@ -97,7 +97,7 @@ pub fn dnd_reorder(
         ui.painter().hline(
             indicator_x_range,
             y,
-            egui::Stroke::new(2.0, selection_color),
+            egui::Stroke::new(2.0_f32, selection_color),
         );
     }
 

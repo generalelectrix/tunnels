@@ -155,7 +155,7 @@ impl ScrollingPlot {
                     plot_ui.line(
                         Line::new(&trace.label, PlotPoints::Owned(points))
                             .color(trace.color)
-                            .width(1.5),
+                            .width(1.5_f32),
                     );
                 }
             }

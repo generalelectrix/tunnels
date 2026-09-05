@@ -1,9 +1,8 @@
-use crate::palette::ColorPalette;
-use crate::position_bank::PositionBank;
-use crate::{clock_bank::ClockBank, look::Look, tunnel::Tunnel};
+use crate::render_context::RenderContext;
+use crate::{look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tunnels_lib::Shape;
+use tunnels_lib::Layer;
 use tunnels_lib::number::UnipolarFloat;
 
 /// Union type for all of the kinds of beams we can have.
@@ -25,32 +24,20 @@ impl Beam {
         }
     }
 
+    /// Append this beam's layers to `out`.
+    ///
+    /// A tunnel contributes one layer; a look contributes one per subchannel,
+    /// and its subchannels may themselves hold looks.
     pub fn render(
         &self,
         level: UnipolarFloat,
         mask: bool,
-        external_clocks: &ClockBank,
-        color_palette: &ColorPalette,
-        positions: &PositionBank,
-        audio_envelope: UnipolarFloat,
-    ) -> Vec<Shape> {
+        ctx: RenderContext,
+        out: &mut Vec<Layer>,
+    ) {
         match self {
-            Self::Tunnel(t) => t.render(
-                level,
-                mask,
-                external_clocks,
-                color_palette,
-                positions,
-                audio_envelope,
-            ),
-            Self::Look(l) => l.render(
-                level,
-                mask,
-                external_clocks,
-                color_palette,
-                positions,
-                audio_envelope,
-            ),
+            Self::Tunnel(t) => out.push(t.render(level, mask, ctx)),
+            Self::Look(l) => l.render(level, mask, ctx, out),
         }
     }
 }

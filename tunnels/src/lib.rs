@@ -17,6 +17,7 @@ mod mixer;
 pub mod osc;
 mod palette;
 mod position_bank;
+pub mod render_context;
 mod send;
 pub mod show;
 pub mod test_mode;

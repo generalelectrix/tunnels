@@ -7,6 +7,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread;
 use tunnels_lib::{Snapshot, number::UnipolarFloat};
 
+use crate::render_context::RenderContext;
 use crate::{
     clock_bank::ClockBank, mixer::Mixer, palette::ColorPalette, position_bank::PositionBank,
 };
@@ -37,12 +38,12 @@ pub fn start_render_service() -> Result<Sender<Frame>> {
                             warn!("Render server dropped {dropped_frames} frames.");
                         }
 
-                        let video_outs = frame.mixer.render(
-                            &frame.clocks,
-                            &frame.color_palette,
-                            &frame.positions,
-                            frame.audio_envelope,
-                        );
+                        let video_outs = frame.mixer.render(RenderContext {
+                            clocks: &frame.clocks,
+                            palette: &frame.color_palette,
+                            positions: &frame.positions,
+                            audio_envelope: frame.audio_envelope,
+                        });
                         for (video_chan, draw_commands) in video_outs.into_iter().enumerate() {
                             let snapshot = Snapshot {
                                 frame_number: frame.number,

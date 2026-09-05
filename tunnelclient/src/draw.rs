@@ -6,7 +6,7 @@ use graphics::Context;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::PI;
-use tunnels_lib::{PathShape, RenderMode, Shape, Snapshot};
+use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry, Snapshot};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -66,54 +66,81 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     }
 }
 
-impl<G: Graphics> Draw<G> for Shape {
+impl<G: Graphics> Draw<G> for Layer {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        let color = hsv_to_rgb(self.hue, self.sat, self.val, self.level);
-        let thickness = self.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
-        let spin_rad = self.spin_angle * TWOPI;
-
-        let (x, y) = {
-            let (x0, y0) = match cfg.transformation {
-                None => (self.x, self.y),
-                Some(Transform::Flip(TransformDirection::Horizontal)) => (-self.x, self.y),
-                Some(Transform::Flip(TransformDirection::Vertical)) => (self.x, -self.y),
-            };
-            let x = x0 * f64::from(cfg.x_resolution) + cfg.x_center;
-            let y = y0 * f64::from(cfg.y_resolution) + cfg.y_center;
-            (x, y)
-        };
-
-        let transform = {
-            let t = c.transform.trans(x, y);
-            match cfg.transformation {
-                None => t,
-                Some(Transform::Flip(TransformDirection::Horizontal)) => t.flip_h(),
-                Some(Transform::Flip(TransformDirection::Vertical)) => t.flip_v(),
-            }
-        }
-        .rot_rad(self.rot_angle * TWOPI);
-
-        match self.path_shape {
-            PathShape::Ellipse => {
-                draw_ellipse(self, color, thickness, spin_rad, transform, gl, cfg);
-            }
-            PathShape::Line => {
-                draw_line(self, color, thickness, spin_rad, transform, gl, cfg);
-            }
+        for shape in &self.shapes {
+            draw_shape(shape, self.render_mode, self.path_shape, c, gl, cfg);
         }
     }
 }
 
-fn draw_ellipse<G: Graphics>(
-    shape: &Shape,
+/// Everything a path renderer needs about a shape beyond its own geometry.
+struct ShapeStyle {
     color: Color,
     thickness: f64,
     spin_rad: f64,
     transform: graphics::math::Matrix2d,
+}
+
+fn draw_shape<G: Graphics>(
+    shape: &ShapeGeometry,
+    render_mode: RenderMode,
+    path_shape: PathShape,
+    c: &Context,
     gl: &mut G,
     cfg: &ClientConfig,
 ) {
-    match shape.render_mode {
+    let color = hsv_to_rgb(shape.hue, shape.sat, shape.val, shape.level);
+    let thickness = shape.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
+    let spin_rad = shape.spin_angle * TWOPI;
+
+    let (x, y) = {
+        let (x0, y0) = match cfg.transformation {
+            None => (shape.x, shape.y),
+            Some(Transform::Flip(TransformDirection::Horizontal)) => (-shape.x, shape.y),
+            Some(Transform::Flip(TransformDirection::Vertical)) => (shape.x, -shape.y),
+        };
+        let x = x0 * f64::from(cfg.x_resolution) + cfg.x_center;
+        let y = y0 * f64::from(cfg.y_resolution) + cfg.y_center;
+        (x, y)
+    };
+
+    let transform = {
+        let t = c.transform.trans(x, y);
+        match cfg.transformation {
+            None => t,
+            Some(Transform::Flip(TransformDirection::Horizontal)) => t.flip_h(),
+            Some(Transform::Flip(TransformDirection::Vertical)) => t.flip_v(),
+        }
+    }
+    .rot_rad(shape.rot_angle * TWOPI);
+
+    let style = ShapeStyle {
+        color,
+        thickness,
+        spin_rad,
+        transform,
+    };
+    match path_shape {
+        PathShape::Ellipse => draw_ellipse(shape, render_mode, &style, gl, cfg),
+        PathShape::Line => draw_line(shape, render_mode, &style, gl, cfg),
+    }
+}
+
+fn draw_ellipse<G: Graphics>(
+    shape: &ShapeGeometry,
+    render_mode: RenderMode,
+    style: &ShapeStyle,
+    gl: &mut G,
+    cfg: &ClientConfig,
+) {
+    let ShapeStyle {
+        color,
+        thickness,
+        spin_rad,
+        transform,
+    } = *style;
+    match render_mode {
         RenderMode::Arc => {
             let x_size = shape.extent_x * cfg.critical_size;
             let y_size = shape.extent_y * cfg.critical_size;
@@ -216,14 +243,18 @@ fn compute_line_crossfade(
 }
 
 fn draw_line<G: Graphics>(
-    shape: &Shape,
-    color: Color,
-    thickness: f64,
-    spin_rad: f64,
-    transform: graphics::math::Matrix2d,
+    shape: &ShapeGeometry,
+    render_mode: RenderMode,
+    style: &ShapeStyle,
     gl: &mut G,
     cfg: &ClientConfig,
 ) {
+    let ShapeStyle {
+        color,
+        thickness,
+        spin_rad,
+        transform,
+    } = *style;
     let half_length = shape.extent_x * cfg.critical_size;
     let y_offset = shape.extent_y * cfg.critical_size;
 
@@ -238,7 +269,7 @@ fn draw_line<G: Graphics>(
     let left_end = -half_length;
     let right_end = half_length;
 
-    match shape.render_mode {
+    match render_mode {
         RenderMode::Arc => {
             // Draw a line segment centered at its midpoint, rotated by spin_angle.
             let draw_seg = |mid_x: f64, seg_half_len: f64, gl: &mut G| {
