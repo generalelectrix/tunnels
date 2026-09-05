@@ -421,6 +421,7 @@ mod test {
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
+    use crate::mixer::VideoChannel;
     use crate::render_context::RenderContext;
     use crate::test_mode::stress;
     use insta::assert_yaml_snapshot;
@@ -450,26 +451,21 @@ mod test {
 
     /// Render the state of the show with some assertions on structure.
     fn check_render(show: &Show, unique_beam_count: usize) -> LayerCollection {
-        let video_feeds = show.state.mixer.render(RenderContext {
-            clocks: &show.state.clocks.as_static(),
+        let clocks = show.state.clocks.as_static();
+        let ctx = RenderContext {
+            clocks: &clocks,
             palette: &show.state.color_palette,
             positions: &show.state.positions,
             audio_envelope: UnipolarFloat::ZERO,
-        });
-
-        // Should have the expected number of video channels.
-        assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());
+        };
 
         // Channel 0 should contain data, but none of the others.
-        for (i, chan) in video_feeds.iter().enumerate() {
-            if i == 0 {
-                assert!(!chan.is_empty());
-            } else {
-                assert_eq!(0, chan.len());
-            }
+        let mut first_channel = show.state.mixer.render_video_channel(VideoChannel(0), ctx);
+        assert!(!first_channel.is_empty());
+        for i in 1..Mixer::N_VIDEO_CHANNELS {
+            let chan = show.state.mixer.render_video_channel(VideoChannel(i), ctx);
+            assert_eq!(0, chan.len());
         }
-
-        let mut first_channel = video_feeds.into_iter().next().unwrap();
 
         for beam in first_channel.iter_mut() {
             for seg in Arc::get_mut(beam).unwrap().shapes.iter_mut() {

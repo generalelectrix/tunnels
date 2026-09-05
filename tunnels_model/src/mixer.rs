@@ -57,32 +57,6 @@ impl Mixer {
         self.channels.len()
     }
 
-    /// Render the current state of the mixer.
-    /// Each inner vector represents one virtual video channel.
-    pub fn render(&self, ctx: RenderContext) -> Vec<LayerCollection> {
-        let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
-        for _ in 0..Self::N_VIDEO_CHANNELS {
-            video_outs.push(Vec::new());
-        }
-        // One buffer, reused across channels: a channel's layers are drained
-        // into Arcs before the next channel renders into it.
-        let mut rendered = Vec::new();
-        for channel in &self.channels {
-            rendered.clear();
-            channel.render(UnipolarFloat::ONE, false, ctx, &mut rendered);
-            for layer in rendered.drain(..) {
-                if layer.is_empty() {
-                    continue;
-                }
-                let layer_ptr = Arc::new(layer);
-                for video_chan in &channel.video_outs {
-                    video_outs[video_chan.0].push(layer_ptr.clone());
-                }
-            }
-        }
-        video_outs
-    }
-
     /// Render the current state of the mixer for a single virtual video channel.
     ///
     /// Channels that are not routed to `video_channel` are not expanded at all,

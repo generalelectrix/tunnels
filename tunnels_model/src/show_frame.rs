@@ -531,19 +531,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn one_video_channel_renders_what_all_of_them_would() {
-        for NamedFrame { name, frame } in fixture::all() {
-            let ctx = frame.render_context();
-            let all = frame.mixer.render(ctx);
-            assert_eq!(all.len(), Mixer::N_VIDEO_CHANNELS);
-            for (channel, expected) in all.iter().enumerate() {
-                let one = frame.mixer.render_video_channel(VideoChannel(channel), ctx);
-                assert_identical(&format!("{name}, video channel {channel}"), expected, &one);
-            }
-        }
-    }
-
     /// The same model always encodes to the same bytes.
     ///
     /// Nothing in a frame may iterate in an order the process picked at
