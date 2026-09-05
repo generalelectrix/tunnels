@@ -42,6 +42,35 @@ closed figure has no segments, so **color along** picks what stands in for it.
 Brightness is `level` (the alpha channel), matching `Channel.level`; value is
 fixed at 1.0 as it is in the real system.
 
+## Gradient cost
+
+Per-vertex color interpolates linearly, so a gradient is only faithful where
+triangles are small relative to how fast the color moves. `draw.rs` subdivides
+by longest-edge bisection while the color difference across a triangle exceeds
+a threshold, with a floor on triangle size that bounds the total by area.
+
+Subdivision happens in shape space and depends only on the shape and the color
+knobs, so it is cached: position, rotation, scale and shear are a transform
+applied to the finished mesh. Measure with `-- stats`:
+
+| | median | worst |
+|---|---|---|
+| re-subdivide (on a color knob move) | 3.2ms | 28.6ms |
+| per frame, cached (transform only) | 158us | 1.2ms |
+
+Three worst-case layers cost 3.5ms of a 16.7ms frame at 60Hz. Moving a color
+knob on the heaviest shape drops a frame or two.
+
+Two things worth knowing if this goes into production:
+
+- The cost is **not** the sawtooth's discontinuity. Measured against a
+  continuous triangle wave it came out within 10% — the expense is resolving
+  several hue cycles across a shape at all, which is area-bound.
+- The size floor is in shape space, so how it looks depends on how large the
+  shape is on screen. A shader computing hue per fragment would sidestep the
+  whole problem; `opengl_graphics` has a fixed pipeline, but it is only GL
+  underneath.
+
 ## Masks
 
 The `mask` toggle paints opaque black instead of color, which is exactly what

@@ -9,6 +9,7 @@ mod draw;
 mod params;
 mod shapes;
 mod sheet;
+mod stats;
 mod software;
 
 #[cfg(feature = "windows")]
@@ -53,6 +54,11 @@ fn main() -> Result<()> {
             };
             sheet::feature_sheet(&shapes, &picks, &PathBuf::from(&out), 240)?;
             println!("wrote {out}");
+            Ok(())
+        }
+        "stats" => {
+            let shapes = shapes::load_dir(&shape_dir())?;
+            stats::report(&shapes);
             Ok(())
         }
         "zoom" => {
