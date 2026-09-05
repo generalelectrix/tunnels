@@ -69,7 +69,15 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
 impl<G: Graphics> Draw<G> for Layer {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         for shape in &self.shapes {
-            draw_shape(shape, self.render_mode, self.path_shape, c, gl, cfg);
+            draw_shape(
+                shape,
+                self.render_mode,
+                self.path_shape,
+                self.span,
+                c,
+                gl,
+                cfg,
+            );
         }
     }
 }
@@ -86,6 +94,7 @@ fn draw_shape<G: Graphics>(
     shape: &ShapeGeometry,
     render_mode: RenderMode,
     path_shape: PathShape,
+    span: f64,
     c: &Context,
     gl: &mut G,
     cfg: &ClientConfig,
@@ -122,14 +131,15 @@ fn draw_shape<G: Graphics>(
         transform,
     };
     match path_shape {
-        PathShape::Ellipse => draw_ellipse(shape, render_mode, &style, gl, cfg),
-        PathShape::Line => draw_line(shape, render_mode, &style, gl, cfg),
+        PathShape::Ellipse => draw_ellipse(shape, render_mode, span, &style, gl, cfg),
+        PathShape::Line => draw_line(shape, render_mode, span, &style, gl, cfg),
     }
 }
 
 fn draw_ellipse<G: Graphics>(
     shape: &ShapeGeometry,
     render_mode: RenderMode,
+    span: f64,
     style: &ShapeStyle,
     gl: &mut G,
     cfg: &ClientConfig,
@@ -145,10 +155,10 @@ fn draw_ellipse<G: Graphics>(
             let x_size = shape.extent_x * cfg.critical_size;
             let y_size = shape.extent_y * cfg.critical_size;
             let start = shape.start * TWOPI;
-            let stop = shape.stop * TWOPI;
+            let stop = start + span * TWOPI;
             let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
 
-            if stop - start >= TWOPI {
+            if span >= 1.0 {
                 // Full circle: no meaningful centroid to spin around.
                 CircleArc::new(color, thickness, start, stop).draw(
                     bound,
@@ -176,21 +186,21 @@ fn draw_ellipse<G: Graphics>(
             }
         }
         RenderMode::Dot => {
-            let mid_angle = (shape.start + shape.stop) / 2.0 * TWOPI;
+            let mid_angle = (shape.start + span / 2.0) * TWOPI;
             let cx = shape.extent_x * cfg.critical_size * mid_angle.cos();
             let cy = shape.extent_y * cfg.critical_size * mid_angle.sin();
             let bound = rectangle::centered([cx, cy, thickness, thickness]);
             ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
         }
         RenderMode::Saucer => {
-            let mid_angle = (shape.start + shape.stop) / 2.0 * TWOPI;
+            let mid_angle = (shape.start + span / 2.0) * TWOPI;
             let rx = shape.extent_x * cfg.critical_size;
             let ry = shape.extent_y * cfg.critical_size;
             let cx = rx * mid_angle.cos();
             let cy = ry * mid_angle.sin();
 
             let start_rad = shape.start * TWOPI;
-            let stop_rad = shape.stop * TWOPI;
+            let stop_rad = start_rad + span * TWOPI;
             let p1x = rx * start_rad.cos();
             let p1y = ry * start_rad.sin();
             let p2x = rx * stop_rad.cos();
@@ -245,6 +255,7 @@ fn compute_line_crossfade(
 fn draw_line<G: Graphics>(
     shape: &ShapeGeometry,
     render_mode: RenderMode,
+    span: f64,
     style: &ShapeStyle,
     gl: &mut G,
     cfg: &ClientConfig,
@@ -260,7 +271,7 @@ fn draw_line<G: Graphics>(
 
     // Normalize start/stop to [0, 1) and compute segment span.
     let start_norm = ((shape.start % 1.0) + 1.0) % 1.0;
-    let seg_width = shape.stop - shape.start;
+    let seg_width = span;
 
     // Map phase [0, 1] to line position [-half_length, +half_length].
     let start_pos = (start_norm * 2.0 - 1.0) * half_length;
