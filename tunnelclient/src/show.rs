@@ -10,29 +10,42 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
-use tunnels_lib::Snapshot;
+use tunnels_model::mixer::{Mixer, VideoChannel};
+use tunnels_model::show_frame::ShowFrame;
 
-pub type SnapshotManagerHandle = Arc<Mutex<Option<SnapshotHandle>>>;
-pub type SnapshotHandle = Arc<Snapshot>;
+/// The publish-subscribe channel show frames arrive on.
+///
+/// A frame describes the whole show, so every client subscribes to the same
+/// channel and selects its own video channel out of the frame when it renders.
+const FRAME_CHANNEL: u8 = 0;
+
+/// The most recent show frame to have arrived, if any.
+///
+/// A single slot, overwritten by every arrival: frames are published faster
+/// than they can be drawn, and a superseded frame is never worth drawing.
+pub type FrameMailbox = Arc<Mutex<Option<Arc<ShowFrame>>>>;
 
 /// Top-level structure that owns all of the show data.
 pub struct Show {
     gl: GlGraphics, // OpenGL drawing backend.
-    snapshot_manager: SnapshotManagerHandle,
+    frames: FrameMailbox,
+    /// The video channel drawn out of every frame.
+    video_channel: VideoChannel,
     cfg: ClientConfig,
     run_flag: RunFlag,
     window: PistonWindow<Sdl2Window>,
-    /// Reference instant for animating the waiting-for-snapshot spinner.
+    /// Reference instant for animating the waiting-for-frame spinner.
     start_time: Instant,
 }
 
 impl Show {
     pub fn new(cfg: ClientConfig, run_flag: RunFlag) -> Result<Self> {
+        let video_channel = video_channel(&cfg)?;
         info!("Running on video channel {}.", cfg.video_channel);
 
-        // Set up snapshot reception and management.
-        let snapshot_manager = Arc::new(Mutex::new(None));
-        receive_snapshots(&cfg, snapshot_manager.clone(), run_flag.clone());
+        // Set up frame reception and management.
+        let frames = Arc::new(Mutex::new(None));
+        receive_frames(&cfg, frames.clone(), run_flag.clone());
 
         let opengl = OpenGL::V3_2;
 
@@ -56,7 +69,8 @@ impl Show {
 
         Ok(Show {
             gl: GlGraphics::new(opengl),
-            snapshot_manager,
+            frames,
+            video_channel,
             cfg,
             run_flag,
             window,
@@ -83,25 +97,53 @@ impl Show {
 
     /// Render a frame to the window.
     ///
-    /// Always clears to black, then either draws the latest snapshot's
-    /// layers or — if no snapshot has arrived yet — a small spinner
-    /// indicating the client is up and waiting. The unconditional clear
-    /// is what keeps an unfed client from showing uninitialized GPU
-    /// memory as static gray noise.
+    /// The latest show frame is expanded into geometry here rather than as it
+    /// arrives, so the expansion happens once per drawn frame instead of once
+    /// per published frame, of which there are more.
+    ///
+    /// Always clears to black, then either draws this client's video channel
+    /// out of the latest frame or — if no frame has arrived yet — a small
+    /// spinner indicating the client is up and waiting. The unconditional clear
+    /// is what keeps an unfed client from showing uninitialized GPU memory as
+    /// static gray noise.
     fn render(&mut self, args: &RenderArgs) {
-        let snapshot = self.snapshot_manager.lock().unwrap().clone();
+        let frame = self.frames.lock().unwrap().clone();
+        let layers = frame.as_ref().map(|frame| {
+            frame
+                .mixer
+                .render_video_channel(self.video_channel, frame.render_context())
+        });
         self.gl.draw(args.viewport(), |c, gl| {
             clear([0.0, 0.0, 0.0, 1.0], gl);
-            match snapshot {
-                Some(snapshot) => snapshot.layers.draw(&c, gl, &self.cfg),
+            match &layers {
+                Some(layers) => layers.draw(&c, gl, &self.cfg),
                 None => draw_waiting_spinner(&c, gl, &self.cfg, self.start_time.elapsed()),
             }
         });
     }
 }
 
+/// The video channel a configuration selects.
+///
+/// A configuration names a channel that may not exist, and a channel a mixer
+/// does not have would silently draw nothing at all, so it is rejected here
+/// instead.
+fn video_channel(cfg: &ClientConfig) -> Result<VideoChannel> {
+    usize::try_from(cfg.video_channel)
+        .ok()
+        .filter(|channel| *channel < Mixer::N_VIDEO_CHANNELS)
+        .map(VideoChannel)
+        .ok_or_else(|| {
+            anyhow!(
+                "video channel {} does not exist; a show has {} video channels, numbered from 0",
+                cfg.video_channel,
+                Mixer::N_VIDEO_CHANNELS,
+            )
+        })
+}
+
 /// Draw a small dark-gray rotating arc at screen center as a "this client
-/// is alive but hasn't received a snapshot yet" indicator.
+/// is alive but hasn't received a frame yet" indicator.
 fn draw_waiting_spinner(c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig, elapsed: Duration) {
     use std::f64::consts::{PI, TAU};
     let cx = f64::from(cfg.x_resolution) / 2.0;
@@ -120,32 +162,32 @@ fn draw_waiting_spinner(c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig, el
     );
 }
 
-/// Spawn a thread to receive snapshots.
-/// Inject them into the provided manager.
+/// Spawn a thread to receive show frames.
+/// Inject them into the provided mailbox.
 /// The thread runs until the run flag is tripped.
-fn receive_snapshots(
-    cfg: &ClientConfig,
-    snapshot_manager: SnapshotManagerHandle,
-    run_flag: RunFlag,
-) {
+///
+/// A frame that cannot be decoded is logged and dropped; the stream is a
+/// sequence of independent frames, so losing one costs a frame of animation
+/// and nothing more.
+fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
     let mut subscriber =
-        minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000, cfg.video_channel as u8);
+        minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000, FRAME_CHANNEL);
     thread::Builder::new()
-        .name("snapshot_receiver".to_string())
+        .name("frame_receiver".to_string())
         .spawn(move || {
             loop {
                 if !run_flag.should_run() {
-                    info!("Snapshot receiver shutting down.");
+                    info!("Frame receiver shutting down.");
                     break;
                 }
                 let buf = subscriber.recv();
-                match rmp_serde::from_slice::<Snapshot>(&buf) {
-                    Ok(msg) => {
-                        *snapshot_manager.lock().unwrap() = Some(Arc::new(msg));
+                match ShowFrame::decode(&buf) {
+                    Ok(frame) => {
+                        *frames.lock().unwrap() = Some(Arc::new(frame));
                     }
                     Err(e) => error!("receive error: {e}"),
                 }
             }
         })
-        .expect("Failed to spawn snapshot receiver thread");
+        .expect("Failed to spawn frame receiver thread");
 }

@@ -5579,6 +5579,7 @@ dependencies = [
  "simplelog",
  "tunnels",
  "tunnels_lib",
+ "tunnels_model",
 ]
 
 [[package]]
