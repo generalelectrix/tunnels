@@ -516,7 +516,7 @@ pub mod fixture {
     use std::time::Duration;
 
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-    use tunnels_lib::{Layer, PathShape, RenderMode, Snapshot};
+    use tunnels_lib::{Layer, LayerCollection, PathShape, RenderMode};
 
     use crate::animation::{
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
@@ -554,11 +554,8 @@ pub mod fixture {
         )
     }
 
-    fn snapshot(layer: Layer) -> Snapshot {
-        Snapshot {
-            frame_number: 0,
-            layers: vec![Arc::new(layer)],
-        }
+    fn snapshot(layer: Layer) -> LayerCollection {
+        vec![Arc::new(layer)]
     }
 
     /// Configure a tunnel for stress testing.
@@ -608,12 +605,12 @@ pub mod fixture {
     }
 
     /// Render a default tunnel to a snapshot for use in test fixtures.
-    pub fn default_tunnel_snapshot() -> Snapshot {
+    pub fn default_tunnel_snapshot() -> LayerCollection {
         snapshot(render_default(&Tunnel::default()))
     }
 
     /// Render a tunnel with aspect ratio set halfway towards max for elliptical shape.
-    pub fn elliptical_tunnel_snapshot() -> Snapshot {
+    pub fn elliptical_tunnel_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel::default();
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -624,14 +621,14 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel to a snapshot for use in test fixtures.
-    pub fn stress_tunnel_snapshot() -> Snapshot {
+    pub fn stress_tunnel_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel::default();
         configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
         snapshot(render_default(&tunnel))
     }
 
     /// Render a default tunnel in dot mode for snapshot testing.
-    pub fn default_tunnel_dot_snapshot() -> Snapshot {
+    pub fn default_tunnel_dot_snapshot() -> LayerCollection {
         let tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -640,7 +637,7 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel in dot mode for snapshot testing.
-    pub fn stress_tunnel_dot_snapshot() -> Snapshot {
+    pub fn stress_tunnel_dot_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -650,7 +647,7 @@ pub mod fixture {
     }
 
     /// Render an elliptical tunnel in dot mode for snapshot testing.
-    pub fn elliptical_tunnel_dot_snapshot() -> Snapshot {
+    pub fn elliptical_tunnel_dot_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -678,17 +675,17 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments for snapshot testing.
-    pub fn saucer_few_thin_snapshot() -> Snapshot {
+    pub fn saucer_few_thin_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_tunnel(12, 0.1)))
     }
 
     /// Render a saucer tunnel with many thick segments for snapshot testing.
-    pub fn saucer_many_thick_snapshot() -> Snapshot {
+    pub fn saucer_many_thick_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_tunnel(126, 0.5)))
     }
 
     /// Render a saucer tunnel on a wide ellipse for snapshot testing.
-    pub fn saucer_wide_ellipse_snapshot() -> Snapshot {
+    pub fn saucer_wide_ellipse_snapshot() -> LayerCollection {
         let mut tunnel = saucer_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -699,7 +696,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a tall ellipse for snapshot testing.
-    pub fn saucer_tall_ellipse_snapshot() -> Snapshot {
+    pub fn saucer_tall_ellipse_snapshot() -> LayerCollection {
         let mut tunnel = saucer_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
@@ -722,17 +719,17 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments and spin animation.
-    pub fn saucer_few_thin_spin_snapshot() -> Snapshot {
+    pub fn saucer_few_thin_spin_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_spin_tunnel(12, 0.1)))
     }
 
     /// Render a saucer tunnel with many thick segments and spin animation.
-    pub fn saucer_many_thick_spin_snapshot() -> Snapshot {
+    pub fn saucer_many_thick_spin_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_spin_tunnel(126, 0.5)))
     }
 
     /// Render a saucer tunnel on a wide ellipse with spin animation.
-    pub fn saucer_wide_ellipse_spin_snapshot() -> Snapshot {
+    pub fn saucer_wide_ellipse_spin_snapshot() -> LayerCollection {
         let mut tunnel = saucer_spin_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -743,7 +740,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a tall ellipse with spin animation.
-    pub fn saucer_tall_ellipse_spin_snapshot() -> Snapshot {
+    pub fn saucer_tall_ellipse_spin_snapshot() -> LayerCollection {
         let mut tunnel = saucer_spin_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
@@ -771,17 +768,17 @@ pub mod fixture {
     }
 
     /// Many small arc segments with spin — dashes rotate like the line version.
-    pub fn arc_spin_many_snapshot() -> Snapshot {
+    pub fn arc_spin_many_snapshot() -> LayerCollection {
         snapshot(render_default(&arc_spin_tunnel(126)))
     }
 
     /// Few large arc segments with spin — curvature visible when rotated.
-    pub fn arc_spin_few_snapshot() -> Snapshot {
+    pub fn arc_spin_few_snapshot() -> LayerCollection {
         snapshot(render_default(&arc_spin_tunnel(12)))
     }
 
     /// Wide ellipse with few arcs and spin — exaggerated curvature effect.
-    pub fn arc_spin_wide_ellipse_snapshot() -> Snapshot {
+    pub fn arc_spin_wide_ellipse_snapshot() -> LayerCollection {
         let mut tunnel = arc_spin_tunnel(12);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -792,7 +789,7 @@ pub mod fixture {
     }
 
     /// Render a line-path tunnel in arc mode for snapshot testing.
-    pub fn default_tunnel_line_snapshot() -> Snapshot {
+    pub fn default_tunnel_line_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             path_shape: PathShape::Line,
             ..Default::default()
@@ -803,7 +800,7 @@ pub mod fixture {
     }
 
     /// Render a line-path tunnel in dot mode for snapshot testing.
-    pub fn default_tunnel_line_dot_snapshot() -> Snapshot {
+    pub fn default_tunnel_line_dot_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             path_shape: PathShape::Line,
@@ -815,7 +812,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments on a line path for snapshot testing.
-    pub fn saucer_line_few_thin_snapshot() -> Snapshot {
+    pub fn saucer_line_few_thin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             path_shape: PathShape::Line,
@@ -831,7 +828,7 @@ pub mod fixture {
     }
 
     /// Render an arc tunnel on a line path with spin animation.
-    pub fn arc_line_spin_snapshot() -> Snapshot {
+    pub fn arc_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             path_shape: PathShape::Line,
             ..Default::default()
@@ -851,7 +848,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a line path with spin animation.
-    pub fn saucer_line_spin_snapshot() -> Snapshot {
+    pub fn saucer_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             path_shape: PathShape::Line,
@@ -894,21 +891,21 @@ pub mod fixture {
     }
 
     /// Line-path arc tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_arc_snapshot() -> Snapshot {
+    pub fn line_aspect_ratio_anim_arc_snapshot() -> LayerCollection {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Arc,
         )))
     }
 
     /// Line-path dot tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_dot_snapshot() -> Snapshot {
+    pub fn line_aspect_ratio_anim_dot_snapshot() -> LayerCollection {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Dot,
         )))
     }
 
     /// Line-path saucer tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_saucer_snapshot() -> Snapshot {
+    pub fn line_aspect_ratio_anim_saucer_snapshot() -> LayerCollection {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Saucer,
         )))
@@ -916,7 +913,7 @@ pub mod fixture {
 
     /// Render a sequence of frames of a line-saucer tunnel with marquee motion,
     /// for evaluating edge transition behavior.
-    pub fn saucer_line_marquee_sequence() -> Vec<Snapshot> {
+    pub fn saucer_line_marquee_sequence() -> Vec<LayerCollection> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             path_shape: PathShape::Line,
@@ -937,7 +934,7 @@ pub mod fixture {
         let frames_per_snapshot = 16;
         let n_snapshots = 24;
         let mut snapshots = Vec::new();
-        for snap in 0..n_snapshots {
+        for _ in 0..n_snapshots {
             let arcs = tunnel.render(
                 UnipolarFloat::ONE,
                 false,
@@ -951,10 +948,7 @@ pub mod fixture {
                     audio_envelope: UnipolarFloat::ZERO,
                 },
             );
-            snapshots.push(Snapshot {
-                frame_number: snap,
-                layers: vec![Arc::new(arcs)],
-            });
+            snapshots.push(vec![Arc::new(arcs)]);
             for _ in 0..frames_per_snapshot {
                 tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
             }
@@ -963,7 +957,7 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.
-    pub fn stress_tunnel_evolved_snapshot() -> Snapshot {
+    pub fn stress_tunnel_evolved_snapshot() -> LayerCollection {
         let frame_interval = Duration::from_micros(25_300);
         let n_frames: u64 = 20;
 
@@ -985,10 +979,7 @@ pub mod fixture {
                 audio_envelope: UnipolarFloat::ZERO,
             },
         );
-        Snapshot {
-            frame_number: n_frames,
-            layers: vec![Arc::new(arcs)],
-        }
+        vec![Arc::new(arcs)]
     }
 
     /// Every target an animation can be pointed at.

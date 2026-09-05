@@ -7,7 +7,7 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::draw::Draw;
-use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry, Snapshot};
+use tunnels_lib::{Layer, LayerCollection, PathShape, RenderMode, ShapeGeometry};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -30,7 +30,7 @@ fn test_config() -> ClientConfig {
 }
 
 fn render_snapshot_sized(
-    snapshot: &Snapshot,
+    snapshot: &LayerCollection,
     cfg: &ClientConfig,
     width: u32,
     height: u32,
@@ -50,7 +50,7 @@ fn render_snapshot_sized(
     buffer.into_image()
 }
 
-fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage {
+fn render_snapshot(snapshot: &LayerCollection, cfg: &ClientConfig) -> image::RgbaImage {
     render_snapshot_sized(snapshot, cfg, WIDTH, HEIGHT)
 }
 
@@ -138,18 +138,14 @@ fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
 
 #[test]
 fn single_arc() {
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers: vec![Arc::new(default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)]))],
-    };
+    let snapshot = vec![Arc::new(default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)]))];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "single_arc.png");
 }
 
 #[test]
 fn concentric_rings() {
-    let layers = vec![Arc::new(default_layer(
+    let snapshot = vec![Arc::new(default_layer(
         1.0,
         vec![
             test_arc(0.0, 0.0, 0.2),
@@ -157,11 +153,6 @@ fn concentric_rings() {
             test_arc(0.0, 0.66, 0.5),
         ],
     ))];
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers,
-    };
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "concentric_rings.png");
 }
@@ -171,11 +162,7 @@ fn rotated_arc() {
     let mut seg = test_arc(0.0, 0.6, 0.3);
     let span = 0.5;
     seg.rot_angle = 0.125; // 45 degrees
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers: vec![Arc::new(default_layer(span, vec![seg]))],
-    };
+    let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "rotated_arc.png");
 }
@@ -188,11 +175,7 @@ fn flipped_horizontal() {
     let span = 0.25;
     seg.x = 0.3; // offset from center so flip is visually distinct
 
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers: vec![Arc::new(default_layer(span, vec![seg]))],
-    };
+    let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
 
     // Render without flip and compare to fixture.
     let unflipped = render_snapshot(&snapshot, &test_config());
@@ -417,14 +400,11 @@ fn test_line_shape(start: f64) -> ShapeGeometry {
 fn snapshot_from_groups(
     render_mode: RenderMode,
     groups: Vec<(f64, Vec<ShapeGeometry>)>,
-) -> Snapshot {
-    Snapshot {
-        frame_number: 0,
-        layers: groups
-            .into_iter()
-            .map(|(span, shapes)| Arc::new(Layer::new(render_mode, PathShape::Line, span, shapes)))
-            .collect(),
-    }
+) -> LayerCollection {
+    groups
+        .into_iter()
+        .map(|(span, shapes)| Arc::new(Layer::new(render_mode, PathShape::Line, span, shapes)))
+        .collect()
 }
 
 /// Arc segment that wraps past the right end of the line.

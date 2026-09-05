@@ -111,41 +111,12 @@ impl Layer {
         }
     }
 
-    /// How many shapes this layer draws.
-    pub fn n_shapes(&self) -> usize {
-        self.shapes.len()
-    }
-
     pub fn is_empty(&self) -> bool {
         self.shapes.is_empty()
     }
 }
 
 pub type LayerCollection = Vec<Arc<Layer>>;
-
-/// A complete single-frame video snapshot.
-/// This is the top-level structure sent in each serialized frame.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct Snapshot {
-    pub frame_number: u64,
-    pub layers: LayerCollection,
-}
-
-impl Snapshot {
-    pub fn n_layers(&self) -> usize {
-        self.layers.len()
-    }
-
-    /// How many shapes this frame draws, across every layer.
-    pub fn n_shapes(&self) -> usize {
-        self.shapes_per_layer().sum()
-    }
-
-    /// The shape count of each layer, in order.
-    pub fn shapes_per_layer(&self) -> impl Iterator<Item = usize> + '_ {
-        self.layers.iter().map(|l| l.n_shapes())
-    }
-}
 
 const ALMOST_EQ_TOLERANCE: f64 = 0.000_000_1;
 

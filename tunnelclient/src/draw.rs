@@ -6,7 +6,7 @@ use graphics::Context;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::PI;
-use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry, Snapshot};
+use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -360,11 +360,5 @@ fn draw_line<G: Graphics>(
                 }
             }
         }
-    }
-}
-
-impl<G: Graphics> Draw<G> for Snapshot {
-    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        self.layers.draw(c, gl, cfg);
     }
 }
