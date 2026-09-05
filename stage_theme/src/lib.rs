@@ -56,7 +56,7 @@ pub fn apply(ctx: &egui::Context) {
     visuals.hyperlink_color = ACCENT;
     visuals.selection = Selection {
         bg_fill: ACCENT_DIM,
-        stroke: Stroke::new(1.0, ACCENT_HOVER),
+        stroke: Stroke::new(1.0_f32, ACCENT_HOVER),
     };
 
     // Status colors
@@ -67,45 +67,45 @@ pub fn apply(ctx: &egui::Context) {
     visuals.widgets.noninteractive = WidgetVisuals {
         bg_fill: BG_PANEL,
         weak_bg_fill: BG_PANEL,
-        bg_stroke: Stroke::new(1.0, BORDER_SUBTLE),
+        bg_stroke: Stroke::new(1.0_f32, BORDER_SUBTLE),
         corner_radius: 4.0.into(),
-        fg_stroke: Stroke::new(1.0, TEXT_PRIMARY),
+        fg_stroke: Stroke::new(1.0_f32, TEXT_PRIMARY),
         expansion: 0.0,
     };
 
     visuals.widgets.inactive = WidgetVisuals {
         bg_fill: BG_WIDGET,
         weak_bg_fill: BG_WIDGET,
-        bg_stroke: Stroke::new(1.0, BORDER_SUBTLE),
+        bg_stroke: Stroke::new(1.0_f32, BORDER_SUBTLE),
         corner_radius: 4.0.into(),
-        fg_stroke: Stroke::new(1.0, Color32::from_rgb(180, 180, 200)),
+        fg_stroke: Stroke::new(1.0_f32, Color32::from_rgb(180, 180, 200)),
         expansion: 0.0,
     };
 
     visuals.widgets.hovered = WidgetVisuals {
         bg_fill: BG_ELEVATED,
         weak_bg_fill: BG_ELEVATED,
-        bg_stroke: Stroke::new(1.0, ACCENT),
+        bg_stroke: Stroke::new(1.0_f32, ACCENT),
         corner_radius: 4.0.into(),
-        fg_stroke: Stroke::new(1.0, Color32::from_rgb(220, 220, 230)),
+        fg_stroke: Stroke::new(1.0_f32, Color32::from_rgb(220, 220, 230)),
         expansion: 1.0,
     };
 
     visuals.widgets.active = WidgetVisuals {
         bg_fill: ACCENT_DIM,
         weak_bg_fill: ACCENT_DIM,
-        bg_stroke: Stroke::new(2.0, ACCENT_HOVER),
+        bg_stroke: Stroke::new(2.0_f32, ACCENT_HOVER),
         corner_radius: 4.0.into(),
-        fg_stroke: Stroke::new(1.0, Color32::WHITE),
+        fg_stroke: Stroke::new(1.0_f32, Color32::WHITE),
         expansion: 1.0,
     };
 
     visuals.widgets.open = WidgetVisuals {
         bg_fill: BG_ELEVATED,
         weak_bg_fill: BG_ELEVATED,
-        bg_stroke: Stroke::new(1.0, BORDER_VISIBLE),
+        bg_stroke: Stroke::new(1.0_f32, BORDER_VISIBLE),
         corner_radius: 4.0.into(),
-        fg_stroke: Stroke::new(1.0, TEXT_PRIMARY),
+        fg_stroke: Stroke::new(1.0_f32, TEXT_PRIMARY),
         expansion: 0.0,
     };
 
@@ -121,7 +121,7 @@ pub fn apply(ctx: &egui::Context) {
     // Window styling
     visuals.window_corner_radius = 8.0.into();
     visuals.menu_corner_radius = 6.0.into();
-    visuals.window_stroke = Stroke::new(1.0, BORDER_SUBTLE);
+    visuals.window_stroke = Stroke::new(1.0_f32, BORDER_SUBTLE);
 
     // Slider trailing fill for clear value indication
     visuals.slider_trailing_fill = true;
