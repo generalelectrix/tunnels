@@ -190,6 +190,8 @@ impl Subscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::channel;
+    use std::time::Instant;
 
     fn test_publisher() -> (Publisher, u16) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -304,5 +306,105 @@ mod tests {
 
         let msg = sub.recv();
         assert_eq!(msg, big);
+    }
+
+    /// A message large enough that a handful of them fill a socket's buffers.
+    const LARGE_MESSAGE: usize = 1 << 20;
+
+    /// Enough large messages to overrun the buffers of a subscriber that is
+    /// not reading, in both directions.
+    const MESSAGES_TO_STALL: usize = 32;
+
+    /// The last message of the stall test, told apart from the bulk before it.
+    const LAST_MESSAGE: &[u8] = b"still-subscribed";
+
+    /// Publishing costs a copy and a wakeup, and nothing like this long.
+    const SEND_LIMIT: Duration = Duration::from_millis(50);
+
+    /// Connect a subscriber that never reads a byte of what it is sent.
+    fn stalled_subscriber(port: u16, channel: u8) -> TcpStream {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.write_all(&[channel]).unwrap();
+        stream.flush().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        stream
+    }
+
+    /// A subscriber that stops reading misses messages and stays subscribed.
+    ///
+    /// Every subscriber here is a projector rendering a show. Blocking the
+    /// publisher on one projector's socket stalls the others with it, and
+    /// dropping that projector for being slow blacks it out until it
+    /// reconnects — both cost more than the missed messages do, because each
+    /// message is a whole state that the next one supersedes.
+    #[test]
+    fn a_subscriber_that_stops_reading_costs_only_itself() {
+        let (publisher, port) = test_publisher();
+
+        // Connect the subscriber that stalls first, so that a publisher
+        // writing to its subscribers in turn reaches it before the other.
+        let mut stalled = stalled_subscriber(port, 0);
+
+        let (received, receipts) = channel();
+        thread::spawn(move || {
+            let mut sub = Subscriber::new("127.0.0.1", port, 0);
+            loop {
+                let msg = sub.recv();
+                let is_last = msg == LAST_MESSAGE;
+                if received.send(msg).is_err() || is_last {
+                    return;
+                }
+            }
+        });
+        // Give both subscribers time to connect.
+        thread::sleep(Duration::from_millis(300));
+
+        let bulk = vec![0xABu8; LARGE_MESSAGE];
+        let mut slowest_send = Duration::ZERO;
+        for _ in 0..MESSAGES_TO_STALL {
+            let sent_at = Instant::now();
+            publisher.send(0, &bulk);
+            slowest_send = slowest_send.max(sent_at.elapsed());
+        }
+        publisher.send(0, LAST_MESSAGE);
+
+        // The subscriber that kept reading was not held up by the one that
+        // stopped: it still gets everything sent after the stall.
+        let mut reader_reached_last = false;
+        while let Ok(msg) = receipts.recv_timeout(Duration::from_secs(10)) {
+            if msg == LAST_MESSAGE {
+                reader_reached_last = true;
+                break;
+            }
+        }
+        assert!(
+            reader_reached_last,
+            "a subscriber that kept reading never received the last message"
+        );
+
+        // The stalled subscriber missed messages while it was not reading, but
+        // it is still subscribed, so reading again reaches the last one sent.
+        let mut stalled_reached_last = false;
+        for _ in 0..=MESSAGES_TO_STALL {
+            match wire::read_msg(&mut stalled) {
+                Ok(msg) if msg == LAST_MESSAGE => {
+                    stalled_reached_last = true;
+                    break;
+                }
+                Ok(_) => (),
+                Err(e) => panic!("the stalled subscriber was dropped: {e}"),
+            }
+        }
+        assert!(
+            stalled_reached_last,
+            "the stalled subscriber never caught up to the last message"
+        );
+
+        assert!(
+            slowest_send < SEND_LIMIT,
+            "publishing blocked for {slowest_send:?} on a subscriber that stopped reading"
+        );
     }
 }
