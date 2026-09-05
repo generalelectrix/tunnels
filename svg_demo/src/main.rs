@@ -6,6 +6,7 @@
 //! see is what the client would produce. `sheet` writes PNGs headlessly.
 
 mod draw;
+mod mesh;
 mod params;
 mod shapes;
 mod sheet;

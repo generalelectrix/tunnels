@@ -1,6 +1,7 @@
 //! Headless PNG output: contact sheets of the shape library and stacking demos.
 
-use crate::draw::{draw_layer, layer_transform};
+use crate::draw::{color_mesh, draw_layer, draw_mesh, is_uniform, layer_transform};
+use crate::mesh::{Level, refine};
 use crate::params::{ColorPhase, DrawMode, LayerParams};
 use crate::shapes::ShapeMesh;
 use crate::software::RenderBuffer;
@@ -24,14 +25,34 @@ fn render_cell(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaImage {
         .draw_mode
         .draws_outline()
         .then(|| shape.stroke(layer.stroke_width as f32));
-    draw_layer(
-        shape,
-        outline.as_deref(),
-        layer,
-        layer_transform(base, layer, 0.0, f64::from(hi)),
-        &mut buf,
-    );
+    let m = layer_transform(base, layer, 0.0, f64::from(hi));
+    draw_one(shape, outline.as_deref(), layer, m, f64::from(hi), &mut buf);
     downsample(&buf.into_image(), SUPERSAMPLE)
+}
+
+/// Draw a layer, refining it first if its color varies across the shape.
+fn draw_one(
+    shape: &ShapeMesh,
+    outline: Option<&[[f32; 2]]>,
+    layer: &LayerParams,
+    m: graphics::math::Matrix2d,
+    critical: f64,
+    buf: &mut RenderBuffer,
+) {
+    if is_uniform(layer) || layer.mask {
+        draw_layer(shape, outline, layer, m, buf);
+        return;
+    }
+    let scale = layer.scale_x.abs().max(layer.scale_y.abs());
+    let target = Level::for_scale(scale, critical).target_edge();
+    if layer.draw_mode.draws_fill() {
+        let mesh = refine(&shape.fill, target);
+        draw_mesh(&mesh, &color_mesh(&mesh, layer), m, buf);
+    }
+    if let Some(outline) = outline {
+        let mesh = refine(outline, target);
+        draw_mesh(&mesh, &color_mesh(&mesh, layer), m, buf);
+    }
 }
 
 fn downsample(src: &RgbaImage, factor: u32) -> RgbaImage {
@@ -213,13 +234,8 @@ fn render_stack(shapes: &[ShapeMesh], idx: usize, size: u32) -> RgbaImage {
         ..Default::default()
     };
     for layer in [&lit, &mask_a, &mask_b] {
-        draw_layer(
-            &shapes[idx],
-            None,
-            layer,
-            layer_transform(base, layer, 0.0, f64::from(hi)),
-            &mut buf,
-        );
+        let m = layer_transform(base, layer, 0.0, f64::from(hi));
+        draw_one(&shapes[idx], None, layer, m, f64::from(hi), &mut buf);
     }
     downsample(&buf.into_image(), SUPERSAMPLE)
 }

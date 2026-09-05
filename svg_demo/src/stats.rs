@@ -1,36 +1,23 @@
 //! Cost and sanity reporting for the shape library.
 //!
-//! Answers two questions: what the gradient subdivision costs, and whether any
-//! shape carries geometry that does not belong to it.
+//! Answers three questions: what each mesh density costs to build and to hold,
+//! what a frame costs once the meshes exist, and whether any shape carries
+//! geometry that does not belong to it.
 
-use crate::draw::{project_cost, shade_mesh};
+use crate::draw::color_mesh;
+use crate::mesh::{Level, refine};
 use crate::params::{ColorPhase, LayerParams};
 use crate::shapes::ShapeMesh;
-use graphics::math::{Matrix2d, identity};
 use std::time::Instant;
 
 /// Shapes are normalised into [-1, 1]. Anything past this is a stray vertex,
 /// not a wide shape.
 const OUTSIDE: f32 = 1.02;
 
-/// A triangle whose shortest altitude is below this, relative to its longest
-/// edge, is a sliver — long, thin, and usually a tessellation artifact.
+/// A triangle whose area is negligible against its longest edge is a sliver —
+/// long, thin, and usually a tessellation artifact.
 const SLIVER_RATIO: f32 = 0.002;
 
-struct Report {
-    name: String,
-    base: usize,
-    shaded: usize,
-    micros: u128,
-    strays: usize,
-    max_extent: f32,
-    slivers: usize,
-    stroke_strays: usize,
-    stroke_extent: f32,
-    soft_micros: u128,
-}
-
-/// Twice the area of a triangle.
 fn double_area(t: &[[f32; 2]]) -> f32 {
     ((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])).abs()
 }
@@ -41,8 +28,8 @@ fn longest_edge(t: &[[f32; 2]]) -> f32 {
 }
 
 pub fn report(shapes: &[ShapeMesh]) {
-    // A gradient busy enough to be representative: several cycles, so several
-    // discontinuities, which is what drives the subdivision.
+    // A gradient busy enough to be representative: several cycles, so the
+    // color moves fast across the whole shape.
     let layer = LayerParams {
         enabled: true,
         color_phase: ColorPhase::Angle,
@@ -52,135 +39,96 @@ pub fn report(shapes: &[ShapeMesh]) {
         col_sat: 0.9,
         ..Default::default()
     };
-    let m: Matrix2d = identity();
 
-    let mut reports = Vec::new();
-    for shape in shapes {
+    println!("\n=== mesh levels ===");
+    println!(
+        "{:>7} {:>9} {:>12} {:>12} {:>10} {:>10}",
+        "edge", "build ms", "tris (med)", "tris (max)", "verts (max)", "MB all"
+    );
+    for level in Level::all() {
+        let target = level.target_edge();
         let start = Instant::now();
-        let (pos, _) = shade_mesh(&shape.fill, &layer);
-        let micros = start.elapsed().as_micros();
+        let meshes: Vec<_> = shapes.iter().map(|s| refine(&s.fill, target)).collect();
+        let build_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-        // Per-frame cost once the subdivision is cached: just the transform.
-        let start = Instant::now();
-        let mut sink = 0f32;
-        for _ in 0..8 {
-            sink += pos.iter().map(|v| project_cost(m, *v)).sum::<f32>();
-        }
-        std::hint::black_box(sink);
-        let soft_micros = start.elapsed().as_micros() / 8;
-
-        let mut strays = 0;
-        let mut max_extent = 0f32;
-        for v in &shape.fill {
-            let e = v[0].abs().max(v[1].abs());
-            max_extent = max_extent.max(e);
-            if e > OUTSIDE || !v[0].is_finite() || !v[1].is_finite() {
-                strays += 1;
-            }
-        }
-        // Outline mode runs the stroke tessellator, which is the likelier
-        // source of stray geometry: a closed path whose final point coincides
-        // with its first leaves a zero-length segment, and round joins on that
-        // can produce garbage.
-        let stroke = shape.stroke(0.03);
-        let mut stroke_strays = 0;
-        let mut stroke_extent = 0f32;
-        for v in &stroke {
-            let e = v[0].abs().max(v[1].abs());
-            stroke_extent = stroke_extent.max(e);
-            if e > OUTSIDE + 0.05 || !v[0].is_finite() || !v[1].is_finite() {
-                stroke_strays += 1;
-            }
-        }
-
-        let slivers = shape
-            .fill
-            .chunks(3)
-            .filter(|t| t.len() == 3)
-            .filter(|t| {
-                let longest = longest_edge(t);
-                longest > 0.0 && double_area(t) / longest < SLIVER_RATIO * longest
-            })
-            .count();
-
-        reports.push(Report {
-            name: shape.name.clone(),
-            base: shape.fill.len() / 3,
-            shaded: pos.len() / 3,
-            micros,
-            strays,
-            max_extent,
-            slivers,
-            stroke_strays,
-            stroke_extent,
-            soft_micros,
-        });
-    }
-
-    println!("\n=== gradient subdivision cost ===");
-    println!("{:<46} {:>7} {:>9} {:>7} {:>6}", "shape", "tris", "subdiv", "ratio", "us");
-    reports.sort_by_key(|r| std::cmp::Reverse(r.micros));
-    for r in reports.iter().take(12) {
+        let mut tris: Vec<usize> = meshes.iter().map(|m| m.triangle_count()).collect();
+        tris.sort_unstable();
+        let max_verts = meshes.iter().map(|m| m.verts.len()).max().unwrap_or(0);
+        // Position pairs plus indices, which is what a mesh actually holds.
+        let bytes: usize = meshes
+            .iter()
+            .map(|m| m.verts.len() * 8 + m.indices.len() * 4)
+            .sum();
         println!(
-            "{:<46} {:>7} {:>9} {:>6.1}x {:>6}",
-            r.name,
-            r.base,
-            r.shaded,
-            r.shaded as f64 / r.base.max(1) as f64,
-            r.micros
+            "{:>7.4} {:>9.1} {:>12} {:>12} {:>10} {:>10.1}",
+            target,
+            build_ms,
+            tris[tris.len() / 2],
+            tris[tris.len() - 1],
+            max_verts,
+            bytes as f64 / 1e6
         );
     }
-    let total_us: u128 = reports.iter().map(|r| r.micros).sum();
-    let worst = reports.iter().map(|r| r.micros).max().unwrap_or(0);
-    let median = {
-        let mut v: Vec<u128> = reports.iter().map(|r| r.micros).collect();
-        v.sort_unstable();
-        v[v.len() / 2]
-    };
-    println!(
-        "\n{} shapes: median {median}us, worst {worst}us, whole library {}us",
-        reports.len(),
-        total_us
-    );
-    println!(
-        "three worst-case layers per frame: {:.2}ms of a 16.7ms budget at 60Hz",
-        (worst * 3) as f64 / 1000.0
-    );
 
-    println!("\n=== per-frame cost once subdivision is cached ===");
-    let soft_total: u128 = reports.iter().map(|r| r.soft_micros).sum();
-    let soft_worst = reports.iter().map(|r| r.soft_micros).max().unwrap_or(0);
-    let soft_median = {
-        let mut v: Vec<u128> = reports.iter().map(|r| r.soft_micros).collect();
-        v.sort_unstable();
-        v[v.len() / 2]
-    };
-    println!("transform only: median {soft_median}us, worst {soft_worst}us, library {soft_total}us");
+    // Per-frame work at the density a full-screen shape on a 1080-line
+    // projector asks for.
+    let level = Level::for_scale(1.0, 1080.0);
     println!(
-        "three worst-case layers per frame: {:.2}ms of a 16.7ms budget at 60Hz",
-        (soft_worst * 3) as f64 / 1000.0
+        "\n=== per frame at level {:?} (edge {:.4}) ===",
+        level,
+        level.target_edge()
+    );
+    let mut color_us = Vec::new();
+    for shape in shapes {
+        let mesh = refine(&shape.fill, level.target_edge());
+        let start = Instant::now();
+        for _ in 0..8 {
+            std::hint::black_box(color_mesh(&mesh, &layer));
+        }
+        color_us.push((start.elapsed().as_micros() / 8, mesh.verts.len(), &shape.name));
+    }
+    color_us.sort_unstable();
+    let median = color_us[color_us.len() / 2].0;
+    let (worst, worst_verts, worst_name) = color_us[color_us.len() - 1];
+    println!("color evaluation: median {median}us, worst {worst}us ({worst_verts} verts, {worst_name})");
+    println!(
+        "three worst-case layers: {:.2}ms of a 16.7ms budget at 60Hz",
+        (worst * 3) as f64 / 1000.0
     );
 
     println!("\n=== stray geometry ===");
     let mut flagged = 0;
-    for r in reports.iter() {
-        if r.strays > 0 || r.stroke_strays > 0 {
+    for shape in shapes {
+        let stroke = shape.stroke(0.03);
+        let bad = |vs: &[[f32; 2]], limit: f32| {
+            vs.iter()
+                .filter(|v| {
+                    v[0].abs().max(v[1].abs()) > limit || !v[0].is_finite() || !v[1].is_finite()
+                })
+                .count()
+        };
+        let (f, s) = (bad(&shape.fill, OUTSIDE), bad(&stroke, OUTSIDE + 0.05));
+        if f > 0 || s > 0 {
             flagged += 1;
-            println!(
-                "{:<46} fill {:>4} (max |v| {:>8.3})  stroke {:>5} (max |v| {:>8.3})",
-                r.name, r.strays, r.max_extent, r.stroke_strays, r.stroke_extent
-            );
+            println!("{:<46} fill {f:>4}  stroke {s:>5}", shape.name);
         }
     }
     if flagged == 0 {
         println!("none: every fill and stroke vertex is finite and inside the unit box");
     }
 
-    let sliver_total: usize = reports.iter().map(|r| r.slivers).sum();
-    let worst_slivers = reports.iter().max_by_key(|r| r.slivers);
-    println!("\n=== slivers (long thin fill triangles from the tessellator) ===");
-    println!("{sliver_total} across the library");
-    if let Some(r) = worst_slivers {
-        println!("worst: {} with {} of {} triangles", r.name, r.slivers, r.base);
-    }
+    let slivers: usize = shapes
+        .iter()
+        .map(|s| {
+            s.fill
+                .chunks(3)
+                .filter(|t| t.len() == 3)
+                .filter(|t| {
+                    let l = longest_edge(t);
+                    l > 0.0 && double_area(t) / l < SLIVER_RATIO * l
+                })
+                .count()
+        })
+        .sum();
+    println!("\nslivers in source tessellation: {slivers} across the library");
 }
