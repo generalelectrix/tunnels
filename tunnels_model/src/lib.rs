@@ -15,6 +15,7 @@ pub mod mixer;
 pub mod palette;
 pub mod position_bank;
 pub mod render_context;
+pub mod show_frame;
 pub mod tunnel;
 mod typed_index;
 mod waveforms;

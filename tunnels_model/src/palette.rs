@@ -9,7 +9,7 @@ pub struct ColorPaletteIdx(pub usize);
 typed_index!(ColorPaletteIdx, Hsv);
 
 /// Store an array of colors that can be used by beams.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ColorPalette(Vec<Hsv>);
 
 impl ColorPalette {
