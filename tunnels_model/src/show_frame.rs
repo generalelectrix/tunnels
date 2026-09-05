@@ -346,7 +346,7 @@ mod tests {
     use crate::look::{Look, MAX_NESTING_DEPTH};
     use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
     use crate::tunnel::Tunnel;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
     use tunnels_lib::{LayerCollection, ShapeGeometry};
 
     fn frame() -> ShowFrame {
@@ -459,6 +459,27 @@ mod tests {
         }
     }
 
+    /// The same model always encodes to the same bytes.
+    ///
+    /// Nothing in a frame may iterate in an order the process picked at
+    /// random, or two runs put different bytes on the wire for the same show.
+    #[test]
+    fn an_encoding_depends_only_on_the_model() {
+        for (first, second) in fixture::all().iter().zip(fixture::all()) {
+            let (first_wire, second_wire) = (
+                first.frame.encode().unwrap(),
+                second.frame.encode().unwrap(),
+            );
+            assert!(
+                first_wire == second_wire,
+                "{}: two builds of one frame encoded differently, {} bytes against {}",
+                first.name,
+                first_wire.len(),
+                second_wire.len()
+            );
+        }
+    }
+
     #[test]
     fn round_trip_preserves_the_frame() {
         let decoded = ShowFrame::decode(&frame().encode().unwrap()).unwrap();
@@ -479,7 +500,7 @@ mod tests {
                 level: UnipolarFloat::ONE,
                 bump: false,
                 mask: false,
-                video_outs: HashSet::from([VideoChannel(0)]),
+                video_outs: BTreeSet::from([VideoChannel(0)]),
             }]));
         }
         beam

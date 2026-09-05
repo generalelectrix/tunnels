@@ -2,7 +2,7 @@ use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::{Layer, LayerCollection};
 
@@ -201,12 +201,12 @@ pub struct Channel {
     pub level: UnipolarFloat,
     pub bump: bool,
     pub mask: bool,
-    pub video_outs: HashSet<VideoChannel>,
+    pub video_outs: BTreeSet<VideoChannel>,
 }
 
 impl Channel {
     fn new(beam: Beam) -> Self {
-        let mut video_outs = HashSet::new();
+        let mut video_outs = BTreeSet::new();
         video_outs.insert(VideoChannel(0));
         Self {
             beam,
