@@ -4,6 +4,11 @@ version = "0.1.0"
 authors = ["general electrix <general.electrix@gmail.com>"]
 edition.workspace = true
 
+[features]
+# The show frame fixtures. Off by default so a shipped console or client does
+# not carry the models that only a test renders.
+fixtures = []
+
 [dependencies]
 serde.workspace = true
 log.workspace = true

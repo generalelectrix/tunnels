@@ -172,6 +172,7 @@ impl Error for FrameCodecError {
 }
 
 /// Show frames sized to exercise the model, for holding a render to its output.
+#[cfg(any(test, feature = "fixtures"))]
 pub mod fixture {
     use arrayvec::ArrayVec;
     use tunnels_lib::color::Hsv;
