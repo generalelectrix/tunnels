@@ -15,6 +15,30 @@ The render window is the **same piston/OpenGL/SDL2 stack `tunnelclient` uses**
 would produce. The two halves talk over localhost UDP; each can also be run on
 its own (`-- render`, `-- control`).
 
+## Profiling
+
+`stats` measures the CPU stages with no window. To measure the real thing —
+actual GL, actual GPU, on your hardware — use `profile`:
+
+```
+cargo run --release -p svg_demo -- profile
+cargo run --release -p svg_demo -- profile --layers 4 --size 1920x1080 --seconds 10
+cargo run --release -p svg_demo -- profile --shapes 72,83,75
+```
+
+It opens a window with **vsync off** (with it on you measure the display, not
+the work), draws the heaviest shapes in the library near full screen with
+gradients on and spinning, discards 120 warmup frames, and reports frame time
+percentiles with the CPU broken down by stage.
+
+It runs the scenario twice — once sweeping hue every frame, once holding it
+still. The difference is what animated color actually costs, which is the claim
+most worth checking: hue is meant to be a ramp rebuild and nothing more.
+
+The profiler drives the same `Renderer` the live window does, not a copy, so a
+number it reports is a number the show would see. Frame time minus our own CPU
+time is attributed to the driver, the GPU, and the buffer swap.
+
 ## Headless output
 
 ```

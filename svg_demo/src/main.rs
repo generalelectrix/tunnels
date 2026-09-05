@@ -17,6 +17,8 @@ mod software;
 #[cfg(feature = "windows")]
 mod control;
 #[cfg(feature = "windows")]
+mod profile;
+#[cfg(feature = "windows")]
 mod render;
 
 use anyhow::{Result, anyhow};
@@ -81,11 +83,49 @@ fn main() -> Result<()> {
             Ok(())
         }
         #[cfg(feature = "windows")]
+        "profile" => {
+            let mut opts = profile::Options::default();
+            let rest: Vec<String> = args.collect();
+            let mut i = 0;
+            while i < rest.len() {
+                let take = |i: usize| rest.get(i + 1).cloned().unwrap_or_default();
+                match rest[i].as_str() {
+                    "--layers" => {
+                        opts.layers = take(i).parse().unwrap_or(opts.layers);
+                        i += 2;
+                    }
+                    "--seconds" => {
+                        opts.seconds = take(i).parse().unwrap_or(opts.seconds);
+                        i += 2;
+                    }
+                    "--size" => {
+                        if let Some((w, h)) = take(i).split_once('x') {
+                            opts.width = w.parse().unwrap_or(opts.width);
+                            opts.height = h.parse().unwrap_or(opts.height);
+                        }
+                        i += 2;
+                    }
+                    "--shapes" => {
+                        opts.shapes = take(i)
+                            .split(',')
+                            .filter_map(|s| s.trim().parse().ok())
+                            .collect();
+                        i += 2;
+                    }
+                    _ => i += 1,
+                }
+            }
+            if !opts.shapes.is_empty() {
+                opts.layers = opts.shapes.len();
+            }
+            profile::run(&shape_dir(), opts)
+        }
+        #[cfg(feature = "windows")]
         "render" => render::run(&shape_dir()),
         #[cfg(feature = "windows")]
         "control" => control::run(&shape_dir()),
         other => Err(anyhow!(
-            "unknown command {other:?}; expected control, render, sheet or features"
+            "unknown command {other:?}; expected control, render, profile, stats, sheet, features or zoom"
         )),
     }
 }
