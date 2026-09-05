@@ -29,4 +29,3 @@ minusmq = { path = "../minusmq" }
 
 [dev-dependencies]
 image = "0.24"
-tunnels = { path = "../tunnels" }

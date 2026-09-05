@@ -5577,7 +5577,6 @@ dependencies = [
  "rmp-serde",
  "sdl2",
  "simplelog",
- "tunnels",
  "tunnels_lib",
  "tunnels_model",
 ]
