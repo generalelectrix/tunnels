@@ -9,7 +9,7 @@ use tunnels_lib::{Snapshot, number::UnipolarFloat};
 
 use crate::render_context::RenderContext;
 use crate::{
-    clock_bank::ClockBank, mixer::Mixer, palette::ColorPalette, position_bank::PositionBank,
+    clock_bank::StaticClockBank, mixer::Mixer, palette::ColorPalette, position_bank::PositionBank,
 };
 
 const PORT: u16 = 6000;
@@ -39,7 +39,7 @@ pub fn start_render_service() -> Result<Sender<Frame>> {
                         }
 
                         let video_outs = frame.mixer.render(RenderContext {
-                            clocks: &frame.clocks.as_static(),
+                            clocks: &frame.clocks,
                             palette: &frame.color_palette,
                             positions: &frame.positions,
                             audio_envelope: frame.audio_envelope,
@@ -111,7 +111,7 @@ fn send_snapshot(
 pub struct Frame {
     pub number: u64,
     pub mixer: Mixer,
-    pub clocks: ClockBank,
+    pub clocks: StaticClockBank,
     pub color_palette: ColorPalette,
     pub positions: PositionBank,
     pub audio_envelope: UnipolarFloat,

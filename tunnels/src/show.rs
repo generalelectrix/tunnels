@@ -179,7 +179,7 @@ impl Show {
                     .send(Frame {
                         number: frame_number,
                         mixer: self.state.mixer.clone(),
-                        clocks: self.state.clocks.clone(),
+                        clocks: self.state.clocks.as_static(),
                         color_palette: self.state.color_palette.clone(),
                         positions: self.state.positions.clone(),
                         audio_envelope: self.audio_input.envelope(),
