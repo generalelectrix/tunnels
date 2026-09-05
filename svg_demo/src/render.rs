@@ -5,6 +5,7 @@ use crate::draw::{draw_layer, draw_textured, is_uniform, layer_transform, phase_
 use crate::mesh::{Level, MeshId, MeshLibrary};
 use crate::params::{DemoParams, LayerParams, PhaseField, PORT};
 use crate::ramp::{self, RampKey};
+use image::RgbaImage;
 use crate::shapes::{ShapeMesh, load_dir};
 use anyhow::{Result, anyhow};
 use graphics::math::Matrix2d;
@@ -43,6 +44,48 @@ impl StrokeCache {
     }
 }
 
+/// How many textures a layer rotates through when its ramp changes.
+///
+/// Overwriting a texture the GPU is still sampling makes the driver stall until
+/// the queued draws that read it retire. Measured, that stall was two orders of
+/// magnitude larger than building the ramp in the first place. Rotating means a
+/// texture is only rewritten once the frames that used it are long done.
+const RAMP_BUFFERS: usize = 3;
+
+/// A layer's ramp textures and the parameters they were built from.
+struct RampSlot {
+    key: Option<RampKey>,
+    textures: Vec<Texture>,
+    current: usize,
+    scratch: RgbaImage,
+}
+
+impl RampSlot {
+    fn new(template: &LayerParams, settings: &TextureSettings) -> Self {
+        let img = ramp::build(template);
+        Self {
+            key: None,
+            textures: (0..RAMP_BUFFERS)
+                .map(|_| Texture::from_image(&img, settings))
+                .collect(),
+            current: 0,
+            scratch: img,
+        }
+    }
+
+    /// Rebuild if the color knobs moved, and return the texture to sample.
+    fn refresh(&mut self, layer: &LayerParams) -> &Texture {
+        let key = RampKey::of(layer);
+        if self.key != Some(key) {
+            ramp::build_into(&mut self.scratch, layer);
+            self.current = (self.current + 1) % self.textures.len();
+            self.textures[self.current].update(&self.scratch);
+            self.key = Some(key);
+        }
+        &self.textures[self.current]
+    }
+}
+
 /// Where a frame's CPU time went.
 ///
 /// Reported by the profiler so a regression can be attributed to a stage
@@ -73,7 +116,7 @@ pub struct Renderer {
     pub shapes: Vec<ShapeMesh>,
     strokes: Vec<StrokeCache>,
     meshes: MeshLibrary,
-    ramps: Vec<(Option<RampKey>, Texture)>,
+    ramps: Vec<RampSlot>,
     ramp_settings: TextureSettings,
 }
 
@@ -101,8 +144,7 @@ impl Renderer {
             self.strokes.push(StrokeCache::new());
         }
         while self.ramps.len() < n {
-            let texture = Texture::from_image(&ramp::build(template), &self.ramp_settings);
-            self.ramps.push((None, texture));
+            self.ramps.push(RampSlot::new(template, &self.ramp_settings));
         }
     }
 
@@ -162,13 +204,9 @@ impl Renderer {
 
             // Rebuilding the ramp is a thousand-texel write, so a color knob
             // costs that and nothing else — the mesh never moves.
-            let ramp_key = RampKey::of(layer);
-            if ramp_slot.0 != Some(ramp_key) {
-                let mark = Instant::now();
-                ramp_slot.1.update(&ramp::build(layer));
-                ramp_slot.0 = Some(ramp_key);
-                t.ramp_us += mark.elapsed().as_micros();
-            }
+            let mark = Instant::now();
+            let ramp_texture = ramp_slot.refresh(layer);
+            t.ramp_us += mark.elapsed().as_micros();
 
             let scale = layer.scale_x.abs().max(layer.scale_y.abs());
             let level = Level::for_scale(scale, critical);
@@ -189,7 +227,7 @@ impl Renderer {
                 t.uv_us += mark.elapsed().as_micros();
 
                 let mark = Instant::now();
-                draw_textured(mesh, &uvs, &ramp_slot.1, m, gl);
+                draw_textured(mesh, &uvs, ramp_texture, m, gl);
                 t.submit_us += mark.elapsed().as_micros();
                 t.triangles += mesh.triangle_count();
             };

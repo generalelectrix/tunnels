@@ -53,6 +53,12 @@ fn sawtooth(phase: f64) -> f64 {
 /// repeating wrap so the cycle count falls out of the texture coordinate.
 pub fn build(layer: &LayerParams) -> RgbaImage {
     let mut img = RgbaImage::new(RAMP_TEXELS, 1);
+    build_into(&mut img, layer);
+    img
+}
+
+/// As `build`, reusing an existing buffer.
+pub fn build_into(img: &mut RgbaImage, layer: &LayerParams) {
     for x in 0..RAMP_TEXELS {
         let phase = f64::from(x) / f64::from(RAMP_TEXELS);
         let hue = layer.col_center + 0.5 * layer.col_width * sawtooth(phase);
@@ -68,15 +74,17 @@ pub fn build(layer: &LayerParams) -> RgbaImage {
             ]),
         );
     }
-    img
 }
 
 /// The knobs a ramp is built from, so it can be rebuilt only when they move.
 #[derive(PartialEq, Clone, Copy)]
-pub struct RampKey([u64; 4]);
+pub struct RampKey([i64; 4]);
 
 impl RampKey {
+    /// Quantised to half a texel, since a change finer than that cannot alter a
+    /// single entry in the table and so cannot alter a pixel on screen.
     pub fn of(layer: &LayerParams) -> Self {
+        let step = f64::from(RAMP_TEXELS) * 2.0;
         Self(
             [
                 layer.col_center,
@@ -84,7 +92,7 @@ impl RampKey {
                 layer.col_sat,
                 layer.level,
             ]
-            .map(f64::to_bits),
+            .map(|v| (v * step).round() as i64),
         )
     }
 }

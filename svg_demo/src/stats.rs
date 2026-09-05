@@ -6,6 +6,7 @@
 
 use crate::draw::phase_uvs;
 use crate::mesh::{Level, refine};
+use crate::ramp;
 use crate::params::{ColorPhase, LayerParams, PhaseField};
 use crate::shapes::ShapeMesh;
 use std::time::Instant;
@@ -94,6 +95,24 @@ pub fn report(shapes: &[ShapeMesh]) {
     println!(
         "three worst-case layers: {:.2}ms of a 16.7ms budget at 60Hz",
         (worst * 3) as f64 / 1000.0
+    );
+
+    // The profiler attributes about a millisecond a frame to rebuilding ramps
+    // when hue is sweeping. Split that into the CPU half measurable here and
+    // the GL upload, which is not.
+    println!("\n=== ramp build (CPU only; excludes the texture upload) ===");
+    let mut probe = layer.clone();
+    let start = Instant::now();
+    for i in 0..200 {
+        probe.col_center = f64::from(i) / 200.0;
+        std::hint::black_box(ramp::build(&probe));
+    }
+    let per = start.elapsed().as_nanos() / 200;
+    println!(
+        "{} texels: {:.0}us per rebuild ({:.1}ns per texel)",
+        ramp::RAMP_TEXELS,
+        per as f64 / 1000.0,
+        per as f64 / f64::from(ramp::RAMP_TEXELS)
     );
 
     println!("\n=== stray geometry ===");
