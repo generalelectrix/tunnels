@@ -18,48 +18,14 @@ use std::path::Path as FsPath;
 /// what a projector can resolve.
 const TOLERANCE: f32 = 0.002;
 
-/// Longest triangle edge, in normalised shape units, tolerated when a layer is
-/// colored by a gradient.
-///
-/// A fill tessellator emits the fewest triangles it can, which means long thin
-/// ones spanning the whole figure. Per-vertex color interpolates linearly
-/// across a triangle, so a hue that varies with angle or radius smears into
-/// streaks on triangles that big. Subdividing until every edge is short enough
-/// makes the linear approximation hold.
-const GRADIENT_EDGE: f32 = 0.04;
-
-/// Ceiling on subdivision recursion, so a pathological triangle cannot explode
-/// the vertex count.
-const MAX_SUBDIVISION: u32 = 6;
-
 /// A closed figure ready to draw, normalised into a unit box at the origin.
 pub struct ShapeMesh {
     pub name: String,
     /// Flat triangle list of the shape's interior.
     pub fill: Vec<[f32; 2]>,
-    /// The same interior, subdivided finely enough for per-vertex gradients.
-    pub fill_fine: Vec<[f32; 2]>,
     /// The normalised outline, kept so strokes can be re-tessellated when the
     /// width knob moves.
     contours: Vec<(LyonPath, LyonFillRule)>,
-}
-
-/// Split a triangle recursively until no edge is longer than `GRADIENT_EDGE`.
-fn subdivide(tri: [[f32; 2]; 3], depth: u32, out: &mut Vec<[f32; 2]>) {
-    let edge = |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
-    let longest = edge(tri[0], tri[1])
-        .max(edge(tri[1], tri[2]))
-        .max(edge(tri[2], tri[0]));
-    if depth >= MAX_SUBDIVISION || longest <= GRADIENT_EDGE {
-        out.extend_from_slice(&tri);
-        return;
-    }
-    let mid = |a: [f32; 2], b: [f32; 2]| [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
-    let (a, b, c) = (tri[0], tri[1], tri[2]);
-    let (ab, bc, ca) = (mid(a, b), mid(b, c), mid(c, a));
-    for t in [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]] {
-        subdivide(t, depth + 1, out);
-    }
 }
 
 impl ShapeMesh {
@@ -201,12 +167,6 @@ fn load_file(file: &FsPath) -> Result<ShapeMesh> {
     if fill.is_empty() {
         return Err(anyhow!("tessellated to nothing"));
     }
-    let mut fill_fine = Vec::new();
-    for tri in fill.chunks(3) {
-        if let [a, b, c] = tri {
-            subdivide([*a, *b, *c], 0, &mut fill_fine);
-        }
-    }
     Ok(ShapeMesh {
         name: file
             .file_stem()
@@ -214,7 +174,6 @@ fn load_file(file: &FsPath) -> Result<ShapeMesh> {
             .unwrap_or("?")
             .to_string(),
         fill,
-        fill_fine,
         contours,
     })
 }

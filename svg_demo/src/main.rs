@@ -55,6 +55,20 @@ fn main() -> Result<()> {
             println!("wrote {out}");
             Ok(())
         }
+        "zoom" => {
+            let shapes = shapes::load_dir(&shape_dir())?;
+            let idx: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(0);
+            let out = args.next().unwrap_or_else(|| "/tmp/zoom.png".into());
+            let phase = match args.next().as_deref() {
+                Some("radius") => params::ColorPhase::Radius,
+                Some("x") => params::ColorPhase::LinearX,
+                Some("y") => params::ColorPhase::LinearY,
+                _ => params::ColorPhase::Angle,
+            };
+            sheet::zoom(&shapes[idx.min(shapes.len() - 1)], &PathBuf::from(&out), 900, phase)?;
+            println!("wrote {out}");
+            Ok(())
+        }
         #[cfg(feature = "windows")]
         "render" => render::run(&shape_dir()),
         #[cfg(feature = "windows")]

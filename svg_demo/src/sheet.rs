@@ -102,6 +102,23 @@ pub fn contact_sheet(shapes: &[ShapeMesh], out: &Path, cell: u32, cols: u32) -> 
     Ok(())
 }
 
+/// One shape, large, for inspecting mesh and gradient quality up close.
+pub fn zoom(shape: &ShapeMesh, out: &Path, size: u32, phase: ColorPhase) -> Result<()> {
+    let layer = LayerParams {
+        enabled: true,
+        scale_x: 0.92,
+        scale_y: 0.92,
+        color_phase: phase,
+        col_center: 0.45,
+        col_width: 0.8,
+        col_spread: 0.2,
+        col_sat: 0.9,
+        ..Default::default()
+    };
+    render_cell(shape, &layer, size).save(out)?;
+    Ok(())
+}
+
 /// A single shape at a larger size, exercising each color mode and a stack of
 /// three layers with a mask — the gobo question in one image.
 pub fn feature_sheet(shapes: &[ShapeMesh], picks: &[usize], out: &Path, cell: u32) -> Result<()> {

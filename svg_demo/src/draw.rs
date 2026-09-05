@@ -14,6 +14,30 @@ use std::f64::consts::TAU;
 /// 1023, which divides evenly into triangles.
 const CHUNK: usize = 1023;
 
+/// Largest color difference, per channel, tolerated across a triangle before it
+/// is split.
+///
+/// Per-vertex color interpolates linearly, so a triangle only looks right where
+/// the color varies close to linearly across it. The sawtooth `Tunnel` colors
+/// with is discontinuous once per cycle, and a triangle straddling that jump
+/// renders it as a ramp across the whole triangle — which reads as a ragged
+/// edge zigzagging along the mesh rather than a clean boundary.
+const COLOR_STEP: f32 = 0.1;
+
+/// Coarse cap on triangle size, in normalised shape units.
+///
+/// The color test alone can be fooled by a triangle whose corners happen to
+/// land on the same color while its interior sweeps a whole cycle.
+const SAFETY_EDGE: f32 = 0.25;
+
+/// Ceiling on subdivision recursion.
+///
+/// Triangles straddling the sawtooth discontinuity never satisfy the color test
+/// however small they get, so they always recurse to this depth. Only the ones
+/// touching the discontinuity do, and their count grows with the length of that
+/// boundary rather than with area, so this stays cheap.
+const MAX_DEPTH: u32 = 8;
+
 /// Convert HSV to RGB. Matches `tunnelclient::draw::hsv_to_rgb` so colors read
 /// the same as they do in the real client.
 fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> [f32; 4] {
@@ -85,6 +109,63 @@ fn is_flat(layer: &LayerParams) -> bool {
     layer.col_width == 0.0 || (COLOR_SPREAD_SCALE * layer.col_spread).floor() == 0.0
 }
 
+/// The color of a point in shape space under this layer.
+fn shade(v: [f32; 2], layer: &LayerParams) -> [f32; 4] {
+    hsv_to_rgb(hue_at(v, layer), layer.col_sat, 1.0, layer.level)
+}
+
+/// Split a triangle until linear color interpolation across it is faithful,
+/// appending screen-space positions and their colors.
+#[expect(clippy::too_many_arguments)]
+fn shade_triangle(
+    tri: [[f32; 2]; 3],
+    colors: [[f32; 4]; 3],
+    depth: u32,
+    layer: &LayerParams,
+    m: Matrix2d,
+    pos: &mut Vec<[f32; 2]>,
+    col: &mut Vec<[f32; 4]>,
+) {
+    let dist = |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+    let longest = dist(tri[0], tri[1])
+        .max(dist(tri[1], tri[2]))
+        .max(dist(tri[2], tri[0]));
+    // Compare colors rather than hues: hue wraps, so two nearby hues can be far
+    // apart numerically, and it is the interpolated color that has to be right.
+    let spread = (0..3)
+        .flat_map(|i| (0..4).map(move |ch| (i, ch)))
+        .map(|(i, ch)| {
+            let v = colors[i][ch];
+            (v - colors[(i + 1) % 3][ch]).abs()
+        })
+        .fold(0.0f32, f32::max);
+
+    if depth >= MAX_DEPTH || (spread <= COLOR_STEP && longest <= SAFETY_EDGE) {
+        for i in 0..3 {
+            pos.push(project(m, tri[i]));
+            col.push(colors[i]);
+        }
+        return;
+    }
+
+    // Midpoint split. The new vertices sit exactly on the parent edges, so a
+    // neighbour that stops subdividing sooner leaves no crack — only a colour
+    // difference smaller than the threshold that stopped it.
+    let mid = |a: [f32; 2], b: [f32; 2]| [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+    let (a, b, c) = (tri[0], tri[1], tri[2]);
+    let (ab, bc, ca) = (mid(a, b), mid(b, c), mid(c, a));
+    let (cab, cbc, cca) = (shade(ab, layer), shade(bc, layer), shade(ca, layer));
+    let children = [
+        ([a, ab, ca], [colors[0], cab, cca]),
+        ([ab, b, bc], [cab, colors[1], cbc]),
+        ([ca, bc, c], [cca, cbc, colors[2]]),
+        ([ab, bc, ca], [cab, cbc, cca]),
+    ];
+    for (t, cs) in children {
+        shade_triangle(t, cs, depth + 1, layer, m, pos, col);
+    }
+}
+
 /// The transform placing a layer's unit-box shape on screen.
 ///
 /// `critical` is the smaller screen dimension, matching how the real client
@@ -117,14 +198,7 @@ pub fn draw_layer<G: Graphics>(
         return;
     }
     if layer.draw_mode.draws_fill() {
-        // A gradient needs the finely subdivided mesh; a uniform color reads the
-        // same off the cheap one.
-        let fill = if is_flat(layer) {
-            &mesh.fill
-        } else {
-            &mesh.fill_fine
-        };
-        draw_tris(fill, layer, transform, gl);
+        draw_tris(&mesh.fill, layer, transform, gl);
     }
     if layer.draw_mode.draws_outline() {
         if let Some(outline) = outline {
@@ -182,22 +256,19 @@ fn draw_tris<G: Graphics>(
         return;
     }
 
-    let mut pos = Vec::with_capacity(CHUNK);
-    let mut col = Vec::with_capacity(CHUNK);
+    // Subdivide first, then hand the result over in chunks — a triangle can
+    // expand into many, so the split cannot happen inside the chunking loop.
+    let mut pos = Vec::new();
+    let mut col = Vec::new();
+    for tri in tris.chunks(3) {
+        let [a, b, c] = tri else { continue };
+        let corners = [*a, *b, *c];
+        let colors = [shade(*a, layer), shade(*b, layer), shade(*c, layer)];
+        shade_triangle(corners, colors, 0, layer, m, &mut pos, &mut col);
+    }
     gl.tri_list_c(&DrawState::default(), |f| {
-        for tri in tris.chunks(3) {
-            if pos.len() + 3 > CHUNK {
-                f(&pos, &col);
-                pos.clear();
-                col.clear();
-            }
-            for v in tri {
-                pos.push(project(m, *v));
-                col.push(hsv_to_rgb(hue_at(*v, layer), layer.col_sat, 1.0, layer.level));
-            }
-        }
-        if !pos.is_empty() {
-            f(&pos, &col);
+        for (p, c) in pos.chunks(CHUNK / 3 * 3).zip(col.chunks(CHUNK / 3 * 3)) {
+            f(p, c);
         }
     });
 }
