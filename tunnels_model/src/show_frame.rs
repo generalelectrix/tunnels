@@ -409,6 +409,37 @@ mod tests {
         }
     }
 
+    /// Whatever a frame draws before it goes on the wire, it draws after it
+    /// comes off.
+    #[test]
+    fn a_round_tripped_frame_renders_identically() {
+        for NamedFrame { name, frame } in fixture::all() {
+            let wire = frame.encode().unwrap();
+            println!("{name}: {} bytes on the wire", wire.len());
+
+            let decoded = ShowFrame::decode(&wire).unwrap();
+            assert_eq!(
+                decoded.frame_number, frame.frame_number,
+                "{name}: frame number"
+            );
+
+            for channel in 0..Mixer::N_VIDEO_CHANNELS {
+                let video_channel = VideoChannel(channel);
+                let expected = frame
+                    .mixer
+                    .render_video_channel(video_channel, frame.render_context());
+                let actual = decoded
+                    .mixer
+                    .render_video_channel(video_channel, decoded.render_context());
+                assert_identical(
+                    &format!("{name}, video channel {channel}"),
+                    &expected,
+                    &actual,
+                );
+            }
+        }
+    }
+
     #[test]
     fn one_video_channel_renders_what_all_of_them_would() {
         for NamedFrame { name, frame } in fixture::all() {
