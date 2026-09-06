@@ -19,7 +19,6 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use log::{self, error, info, warn};
-use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -98,8 +97,7 @@ impl Show {
     /// Return an error if the dimensions of the loaded data don't match the
     /// current show.
     pub fn load(&mut self, path: &Path) -> Result<()> {
-        let file = File::open(path)?;
-        let loaded_state = ShowState::deserialize(&mut Deserializer::new(file))?;
+        let loaded_state: ShowState = postcard::from_bytes(&std::fs::read(path)?)?;
         if loaded_state.mixer.channel_count() != self.state.mixer.channel_count() {
             bail!(
                 "Mixer size mismatch. Loaded: {}, show: {}.",
@@ -120,9 +118,7 @@ impl Show {
 
     /// Save the show into the provided file.
     fn save(&self, path: &Path) -> Result<()> {
-        let mut file = File::create(path)?;
-        self.state
-            .serialize(&mut Serializer::new(BufWriter::new(&mut file)))?;
+        postcard::to_io(&self.state, BufWriter::new(File::create(path)?))?;
         Ok(())
     }
 

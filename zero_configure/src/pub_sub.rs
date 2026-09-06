@@ -1,20 +1,19 @@
 //! DNS-SD-integrated publish-subscribe using minusmq TCP pub/sub.
+//!
+//! The stream is postcard: tagless, so the schema is the Rust type and does
+//! not travel with the message.
 
 use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
 
 use anyhow::{Result, bail};
-use rmp_serde::Serializer;
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{
-    bare::{Browser, StopFn, register_service},
-    msgpack::{Receive, ReceiveResult},
-};
+use crate::bare::{Browser, StopFn, register_service};
 
 pub use minusmq::pub_sub::{Compression, Config, Keepalive};
 
-/// Advertise a DNS-SD pub/sub service, sending a stream of T using msgpack.
+/// Advertise a DNS-SD pub/sub service, sending a stream of T.
 /// The service will be advertised until dropped.
 pub struct PublisherService<T: Serialize> {
     stop: Option<StopFn>,
@@ -38,9 +37,14 @@ impl<T: Serialize> PublisherService<T> {
         })
     }
 
+    /// Serialize a message and give it to every subscriber.
+    ///
+    /// The message is written into the buffer the one before it was written
+    /// into, so a steady stream of messages of a settled size costs no
+    /// allocation to send.
     pub fn send(&mut self, val: &T) -> Result<()> {
         self.send_buf.clear();
-        val.serialize(&mut Serializer::new(&mut self.send_buf))?;
+        postcard::to_io(val, &mut self.send_buf)?;
         self.publisher.send(&self.send_buf);
         Ok(())
     }
@@ -107,7 +111,8 @@ impl<T: DeserializeOwned> SubscriberService<T> {
     }
 }
 
-/// A strongly-typed TCP subscriber that expects messages to be encoded using msgpack.
+/// A strongly-typed TCP subscriber that expects messages to be encoded using
+/// postcard.
 pub struct Receiver<T: DeserializeOwned> {
     subscriber: minusmq::pub_sub::Subscriber,
     _msg_type: PhantomData<T>,
@@ -123,16 +128,15 @@ impl<T: DeserializeOwned> Receiver<T> {
         }
     }
 
-    pub fn receive_msg(&mut self, block: bool) -> ReceiveResult<Option<T>> {
-        self.receive(block)
-    }
-}
-
-impl<T: DeserializeOwned> Receive for Receiver<T> {
-    fn receive_buffer(&mut self, _block: bool) -> ReceiveResult<Option<Vec<u8>>> {
-        // minusmq subscriber always blocks. The `block` parameter is preserved
-        // for API compatibility but is effectively always true. Nothing is
-        // received once the subscription has been stopped.
-        Ok(self.subscriber.recv().map(<[u8]>::to_vec))
+    /// Block until the next message arrives, and recover it. Yields nothing
+    /// once the subscription has been stopped.
+    ///
+    /// The message is read out of the buffer it arrived in rather than out of
+    /// a copy of it, so receiving costs the value and nothing else.
+    pub fn receive_msg(&mut self) -> Result<Option<T>> {
+        self.subscriber
+            .recv()
+            .map(|bytes| postcard::from_bytes(bytes).map_err(anyhow::Error::from))
+            .transpose()
     }
 }

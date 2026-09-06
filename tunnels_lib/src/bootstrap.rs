@@ -27,6 +27,18 @@ pub const MAX_REQUEST_LEN: usize = 256 * 1024 * 1024;
 /// the only thing worth having.
 pub const MAX_RESPONSE_LEN: usize = 128 * 1024 * 1024;
 
+// TODO: carry this protocol in postcard, so that the codebase speaks one
+// serialization format.
+//
+// The peer on the other end of this exchange is a bootstrapper, which is
+// installed on its own rather than pushed and so is not replaced when a show's
+// binaries are rebuilt. Changing the format leaves a console unable to push to
+// a machine still running the bootstrapper it has — and this is the mechanism
+// reached for when something else has already gone wrong.
+//
+// `bootstrap-deploy` installs a fresh bootstrapper over SSH, finding machines
+// by `_ssh._tcp`. Once every render machine has been refreshed, this can move
+// with the rest.
 /// Payload for a binary push.
 #[derive(Serialize, Deserialize)]
 pub struct PushBinaryRequest {

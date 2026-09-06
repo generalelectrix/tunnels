@@ -34,7 +34,7 @@ impl AdminService for BootstrapController {
         binary_path: &Path,
         config: ClientConfig,
     ) -> anyhow::Result<String> {
-        let stdin_payload = rmp_serde::to_vec(&config)?;
+        let stdin_payload = postcard::to_allocvec(&config)?;
         self.push_binary(name, binary_path, &["monitor"], &stdin_payload)
     }
 }
@@ -255,7 +255,7 @@ impl AdminPanelState {
         let repaint = self.repaint.clone();
         thread::spawn(move || {
             let result = (|| -> Result<String, String> {
-                let serialized = rmp_serde::to_vec(&config)
+                let serialized = postcard::to_allocvec(&config)
                     .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
                 let exe = tunnelclient_path()?;

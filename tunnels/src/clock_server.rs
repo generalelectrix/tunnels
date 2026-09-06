@@ -87,8 +87,8 @@ mod tests {
     fn wire_round_trips_at_various_lengths() {
         for n in [0usize, 4, 8, MAX_CLOCKS] {
             let original = bank(n);
-            let bytes = rmp_serde::to_vec(&original).unwrap();
-            let decoded: StaticClockBank = rmp_serde::from_slice(&bytes).unwrap();
+            let bytes = postcard::to_allocvec(&original).unwrap();
+            let decoded: StaticClockBank = postcard::from_bytes(&bytes).unwrap();
             assert_eq!(decoded.0.len(), n, "length preserved for {n} clocks");
             let ticks: Vec<i64> = decoded.0.iter().map(|c| c.ticks).collect();
             assert_eq!(
@@ -102,8 +102,8 @@ mod tests {
     #[test]
     fn wire_decode_truncates_over_capacity() {
         // At capacity decodes fully.
-        let bytes = rmp_serde::to_vec(&bank(MAX_CLOCKS)).unwrap();
-        let decoded: StaticClockBank = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = postcard::to_allocvec(&bank(MAX_CLOCKS)).unwrap();
+        let decoded: StaticClockBank = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.0.len(), MAX_CLOCKS);
 
         // Beyond capacity: the excess clocks are dropped, keeping the first
@@ -116,8 +116,8 @@ mod tests {
                 use_audio_size: false,
             })
             .collect();
-        let bytes = rmp_serde::to_vec(&over).unwrap();
-        let decoded: StaticClockBank = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = postcard::to_allocvec(&over).unwrap();
+        let decoded: StaticClockBank = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.0.len(), MAX_CLOCKS, "truncated to capacity");
         let ticks: Vec<i64> = decoded.0.iter().map(|c| c.ticks).collect();
         assert_eq!(
@@ -135,12 +135,12 @@ mod tests {
             audio_envelope: UnipolarFloat,
         }
         let envelope = UnipolarFloat::new(0.75);
-        let bytes = rmp_serde::to_vec(&WireShaped {
+        let bytes = postcard::to_allocvec(&WireShaped {
             clock_bank: over,
             audio_envelope: envelope,
         })
         .unwrap();
-        let decoded: SharedClockData = rmp_serde::from_slice(&bytes).unwrap();
+        let decoded: SharedClockData = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.clock_bank.0.len(), MAX_CLOCKS);
         assert_eq!(
             decoded.audio_envelope, envelope,

@@ -13,7 +13,7 @@ path = "src/lib.rs"
 name = "tunnelclient"
 
 [dependencies]
-rmp-serde.workspace = true
+postcard.workspace = true
 log.workspace = true
 simplelog.workspace = true
 anyhow.workspace = true

@@ -4,6 +4,7 @@ use crate::show::Show;
 use client_lib::config::ClientConfig;
 use simplelog::{Config as LogConfig, LevelFilter, WriteLogger};
 use std::env;
+use std::io::Read;
 use std::process::ExitCode;
 use tunnels_lib::RunFlag;
 
@@ -14,7 +15,7 @@ fn main() -> ExitCode {
     );
 
     if first_arg == "monitor" {
-        let cfg: ClientConfig = match rmp_serde::from_read(std::io::stdin()) {
+        let cfg: ClientConfig = match read_config(std::io::stdin()) {
             Ok(cfg) => cfg,
             Err(e) => {
                 println!("ERROR: failed to deserialize config: {e}");
@@ -48,6 +49,16 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Read a client configuration from a stream that carries one and then ends.
+///
+/// The encoding is tagless, so a message has no end of its own: what bounds it
+/// is the stream closing.
+fn read_config(mut source: impl Read) -> anyhow::Result<ClientConfig> {
+    let mut payload = Vec::new();
+    source.read_to_end(&mut payload)?;
+    Ok(postcard::from_bytes(&payload)?)
 }
 
 /// Send log records to stderr, at the level the configuration asks for.

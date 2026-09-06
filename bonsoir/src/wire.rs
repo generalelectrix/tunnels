@@ -24,6 +24,21 @@ pub enum MessageType {
     Goodbye,
 }
 
+// TODO: carry these packets in postcard, so that the codebase speaks one
+// serialization format.
+//
+// Discovery is how a console finds a render machine's bootstrapper, and a
+// bootstrapper is installed on its own and outlives the binaries a show
+// rebuilds. Change the packet format while a machine still advertises in the
+// old one and the console cannot see it, so it cannot push to it either. The
+// format has to change on every machine before it changes anywhere: postcard
+// is tagless, so a packet in the wrong format decodes as something else rather
+// than failing, and the `version` field is no protection during a changeover
+// because reading it means having read the packet.
+//
+// `bootstrap-deploy` refreshes a machine's bootstrapper over SSH, finding
+// machines by `_ssh._tcp`. Once every render machine has been refreshed, this
+// can move with the rest.
 /// A bonsoir wire packet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Packet {
