@@ -239,13 +239,24 @@ impl Publisher {
         let mut skip_reports = Vec::new();
         {
             let clients = self.clients.lock().unwrap();
+            let mut subscribed = clients.iter().filter(|c| c.channel == channel).peekable();
+            // The message is framed once, however many subscribers share it,
+            // and not at all if none do. Framing it here rather than on each
+            // sender thread is what lets a thread write it in one call, so
+            // that its length prefix shares a packet with its payload.
+            if subscribed.peek().is_none() {
+                return;
+            }
+            let msg: Arc<[u8]> = match wire::frame_msg(data) {
+                Ok(framed) => Arc::from(framed),
+                Err(e) => {
+                    error!("Dropping a message on channel {channel}: {e:#}");
+                    return;
+                }
+            };
             let now = Instant::now();
-            // The data is copied once, however many subscribers share it, and
-            // not at all if none do.
-            let mut msg: Option<Arc<[u8]>> = None;
-            for client in clients.iter().filter(|c| c.channel == channel) {
-                let msg = msg.get_or_insert_with(|| Arc::from(data));
-                if let Some(skipped) = client.mailbox.post(Arc::clone(msg), now) {
+            for client in subscribed {
+                if let Some(skipped) = client.mailbox.post(Arc::clone(&msg), now) {
                     skip_reports.push(skipped);
                 }
             }
@@ -351,15 +362,19 @@ fn subscribe(mut stream: TcpStream) -> Result<Client> {
 /// publisher goes away.
 fn send_loop(mut stream: TcpStream, channel: u8, mailbox: &Mailbox) {
     while let Some(msg) = mailbox.take() {
-        if let Err(e) = write_msg(&mut stream, &msg) {
+        if let Err(e) = write_framed(&mut stream, &msg) {
             warn!("Dropping subscriber (channel {channel}): {e:#}");
             return;
         }
     }
 }
 
-fn write_msg(stream: &mut TcpStream, msg: &[u8]) -> Result<()> {
-    wire::write_msg(stream, msg)?;
+/// Write an already-framed message to a subscriber.
+///
+/// The message goes out in one write, so that its length prefix cannot reach
+/// the subscriber as a packet of its own.
+fn write_framed(stream: &mut TcpStream, framed: &[u8]) -> Result<()> {
+    stream.write_all(framed).context("write error")?;
     // Flush to ensure data is sent promptly.
     stream.flush().context("flush error")?;
     Ok(())
