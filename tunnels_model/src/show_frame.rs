@@ -100,22 +100,13 @@ pub struct FrameEncoder {
 impl FrameEncoder {
     /// Serialize a frame into the bytes `ShowFrame::decode` reads, which stand
     /// until the next frame is encoded.
-    pub fn encode(&mut self, frame: &ShowFrameRef) -> Result<&[u8], FrameCodecError> {
-        self.encode_serializable(frame)
-    }
-
-    /// Serialize anything shaped like a frame into the bytes
-    /// `ShowFrame::decode` reads.
     ///
     /// The bytes carry a four byte header — magic, then the wire version —
     /// ahead of the compressed frame, so that bytes from a build holding a
     /// different model are recognized as such rather than decoded. The
     /// compressed frame opens with its uncompressed length, little-endian, as
     /// an LZ4 block does.
-    fn encode_serializable<T: Serialize + ?Sized>(
-        &mut self,
-        frame: &T,
-    ) -> Result<&[u8], FrameCodecError> {
+    pub fn encode(&mut self, frame: &ShowFrameRef) -> Result<&[u8], FrameCodecError> {
         self.plain.clear();
         postcard::to_io(frame, &mut self.plain).map_err(FrameCodecError::Serialize)?;
         let plain_len = u32::try_from(self.plain.len())
@@ -180,20 +171,6 @@ impl FrameDecoder {
     }
 }
 
-/// Serialize a frame into the bytes `ShowFrame::decode` reads.
-fn encode_frame<T: Serialize>(frame: &T) -> Result<Vec<u8>, FrameCodecError> {
-    let mut encoder = FrameEncoder::default();
-    encoder.encode_serializable(frame)?;
-    Ok(encoder.wire)
-}
-
-impl ShowFrameRef<'_> {
-    /// Serialize this frame into wire bytes.
-    pub fn encode(&self) -> Result<Vec<u8>, FrameCodecError> {
-        encode_frame(self)
-    }
-}
-
 impl ShowFrame {
     /// Borrow the sidecar state as the context a beam resolves against.
     pub fn render_context(&self) -> RenderContext<'_> {
@@ -205,12 +182,7 @@ impl ShowFrame {
         }
     }
 
-    /// Serialize this frame into wire bytes.
-    pub fn encode(&self) -> Result<Vec<u8>, FrameCodecError> {
-        encode_frame(self)
-    }
-
-    /// Recover a frame from the wire bytes `encode` produces.
+    /// Recover a frame from the wire bytes `FrameEncoder::encode` produces.
     pub fn decode(bytes: &[u8]) -> Result<Self, FrameCodecError> {
         FrameDecoder::default().decode(bytes)
     }
@@ -535,6 +507,11 @@ mod tests {
     use std::collections::BTreeSet;
     use std::fmt;
 
+    /// The wire bytes of a frame, written by an encoder the caller holds.
+    fn encoded(encoder: &mut FrameEncoder, frame: &ShowFrame) -> Vec<u8> {
+        encoder.encode(&borrow(frame)).unwrap().to_vec()
+    }
+
     fn frame() -> ShowFrame {
         ShowFrame {
             frame_number: 7,
@@ -628,10 +605,14 @@ mod tests {
     /// audience sees is unchanged; the printed model says that every field
     /// survived, including those no render reads today, which the render alone
     /// can never speak for.
+    ///
+    /// A frame is written by reference and read back owned, so the round trip
+    /// also holds the two forms of a frame to a single shape.
     #[test]
     fn a_round_tripped_frame_is_unchanged() {
+        let mut encoder = FrameEncoder::default();
         for NamedFrame { name, frame } in fixture::all() {
-            let wire = frame.encode().unwrap();
+            let wire = encoded(&mut encoder, &frame);
             println!("{name}: {} bytes on the wire", wire.len());
 
             let decoded = ShowFrame::decode(&wire).unwrap();
@@ -666,36 +647,16 @@ mod tests {
         }
     }
 
-    /// A borrowed frame and the owned frame it names encode identically.
-    ///
-    /// The two forms are one wire format, so bytes written from either must be
-    /// interchangeable: equal to each other, and readable as a frame.
-    #[test]
-    fn the_two_forms_of_a_frame_share_one_encoding() {
-        for NamedFrame { name, frame } in fixture::all() {
-            let borrowed = borrow(&frame).encode().unwrap();
-            let owned = frame.encode().unwrap();
-            assert!(
-                borrowed == owned,
-                "{name}: encoded to {} bytes by reference against {} by value",
-                borrowed.len(),
-                owned.len()
-            );
-            assert_prints_identically(name, &frame, &ShowFrame::decode(&borrowed).unwrap());
-        }
-    }
-
     /// The same model always encodes to the same bytes.
     ///
     /// Nothing in a frame may iterate in an order the process picked at
     /// random, or two runs put different bytes on the wire for the same show.
     #[test]
     fn an_encoding_depends_only_on_the_model() {
+        let mut encoder = FrameEncoder::default();
         for (first, second) in fixture::all().iter().zip(fixture::all()) {
-            let (first_wire, second_wire) = (
-                first.frame.encode().unwrap(),
-                second.frame.encode().unwrap(),
-            );
+            let first_wire = encoded(&mut encoder, &first.frame);
+            let second_wire = encoded(&mut encoder, &second.frame);
             assert!(
                 first_wire == second_wire,
                 "{}: two builds of one frame encoded differently, {} bytes against {}",
@@ -708,7 +669,8 @@ mod tests {
 
     #[test]
     fn round_trip_preserves_the_frame() {
-        let decoded = ShowFrame::decode(&frame().encode().unwrap()).unwrap();
+        let mut encoder = FrameEncoder::default();
+        let decoded = ShowFrame::decode(&encoded(&mut encoder, &frame())).unwrap();
         assert_eq!(decoded.frame_number, 7);
         assert_eq!(decoded.audio_envelope, UnipolarFloat::new(0.5));
         assert_eq!(decoded.mixer.channel_count(), 8);
@@ -736,10 +698,11 @@ mod tests {
     /// be refused rather than followed.
     #[test]
     fn nesting_past_the_limit_is_rejected_without_overflowing() {
+        let mut encoder = FrameEncoder::default();
         let mut deepest_allowed = frame();
         *deepest_allowed.mixer.beam(ChannelIdx(0)) = nested_beam(MAX_NESTING_DEPTH);
         assert!(
-            ShowFrame::decode(&deepest_allowed.encode().unwrap()).is_ok(),
+            ShowFrame::decode(&encoded(&mut encoder, &deepest_allowed)).is_ok(),
             "a look nested to the limit is still a look"
         );
 
@@ -747,7 +710,7 @@ mod tests {
         // dropped here too, and dropping it is as recursive as decoding it.
         let mut too_deep = frame();
         *too_deep.mixer.beam(ChannelIdx(0)) = nested_beam(MAX_NESTING_DEPTH + 1);
-        let err = ShowFrame::decode(&too_deep.encode().unwrap())
+        let err = ShowFrame::decode(&encoded(&mut encoder, &too_deep))
             .expect_err("nesting past the limit must not decode");
         assert!(
             matches!(err, FrameCodecError::Deserialize(_)),
@@ -765,7 +728,8 @@ mod tests {
 
     #[test]
     fn malformed_bytes_are_rejected_without_panicking() {
-        let wire = frame().encode().unwrap();
+        let mut encoder = FrameEncoder::default();
+        let wire = encoded(&mut encoder, &frame());
 
         // Too short to hold even the header.
         assert!(matches!(
@@ -808,7 +772,8 @@ mod tests {
     /// one being played.
     #[test]
     fn a_frame_from_another_build_does_not_decode() {
-        let wire = frame().encode().unwrap();
+        let mut encoder = FrameEncoder::default();
+        let wire = encoded(&mut encoder, &frame());
 
         let stale_version = WIRE_VERSION.wrapping_add(1);
         let mut stale = wire.clone();
@@ -838,9 +803,10 @@ mod tests {
     #[test]
     fn a_reused_decoder_recovers_the_same_frame() {
         let frames = fixture::all();
+        let mut encoder = FrameEncoder::default();
         let wire: Vec<Vec<u8>> = frames
             .iter()
-            .map(|named| named.frame.encode().unwrap())
+            .map(|named| encoded(&mut encoder, &named.frame))
             .collect();
         let mut decoder = FrameDecoder::default();
         let in_order = frames.iter().zip(&wire);
