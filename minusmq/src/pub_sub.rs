@@ -57,10 +57,6 @@ const ACCEPT_TIMEOUT: Duration = Duration::from_secs(1);
 /// How long a run of skipped messages goes unreported before its count is logged.
 const SKIP_REPORT_PERIOD: Duration = Duration::from_secs(1);
 
-/// How long a dropped publisher waits for its subscribers to be sent what they
-/// have already been given.
-const FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
-
 /// The one message a subscriber has been given and not yet been sent.
 ///
 /// The publisher stores a message and moves on; the subscriber's sender thread
@@ -325,12 +321,9 @@ impl Drop for Publisher {
     /// Stop and join every thread the publisher started.
     ///
     /// The accept thread goes first, so that no subscriber can be added after
-    /// the ones present have been dealt with. Every sender thread is then told
-    /// that no more messages are coming, and all of them share a single moment
-    /// to write what they already have, rather than each being waited for in
-    /// turn. Dropping the clients afterwards shuts down whatever is left,
-    /// which is a thread parked in a write to a subscriber that is not
-    /// reading.
+    /// the ones present have been dealt with. Dropping the clients then stops
+    /// every sender thread, including one parked in a write to a subscriber
+    /// that is not reading.
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         // A thread waiting for a subscriber is released by a subscriber, so
@@ -342,15 +335,11 @@ impl Drop for Publisher {
             let _ = accept.join();
         }
 
-        let mut clients = self.clients.lock().unwrap_or_else(PoisonError::into_inner);
-        for client in clients.connected.iter() {
-            client.mailbox.close();
-        }
-        let deadline = Instant::now() + FLUSH_TIMEOUT;
-        while Instant::now() < deadline && clients.connected.iter().any(|c| !c.is_finished()) {
-            thread::sleep(Duration::from_millis(1));
-        }
-        clients.connected.clear();
+        self.clients
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .connected
+            .clear();
     }
 }
 
@@ -582,21 +571,6 @@ mod tests {
     }
 
     #[test]
-    fn single_subscriber_receives_messages() {
-        let (publisher, port) = test_publisher();
-        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
-
-        thread::spawn(move || {
-            // Give subscriber time to connect.
-            thread::sleep(Duration::from_millis(200));
-            publisher.send(b"hello");
-        });
-
-        let msg = sub.recv();
-        assert_eq!(msg, b"hello");
-    }
-
-    #[test]
     fn every_subscriber_receives_every_message() {
         let (publisher, port) = test_publisher();
 
@@ -630,6 +604,8 @@ mod tests {
 
     /// A settled stream of messages is received into one allocation, and the
     /// capacity an outsized message takes is given back once it has been read.
+    /// Every message arrives whole, however large it is and whatever buffer it
+    /// lands in.
     ///
     /// Each message is published only after the one before it has been
     /// received, so a subscriber that is slow misses nothing here.
@@ -639,12 +615,14 @@ mod tests {
         const SETTLED_LEN: usize = 2_700;
         /// A message far larger than that.
         const OUTSIZED_LEN: usize = 1_000_000;
+        /// The byte every message is made of, to recognize it by.
+        const FILL: u8 = 0xAB;
 
         let (publisher, port) = test_publisher();
         let (requests, to_publish) = channel::<usize>();
         thread::spawn(move || {
             while let Ok(len) = to_publish.recv() {
-                let msg = vec![0xAB; len];
+                let msg = vec![FILL; len];
                 publisher.send(&msg);
             }
         });
@@ -656,7 +634,12 @@ mod tests {
 
         let mut receive = |len: usize| -> usize {
             requests.send(len).unwrap();
-            assert_eq!(sub.recv().len(), len);
+            let received = sub.recv();
+            assert_eq!(received.len(), len);
+            assert!(
+                received.iter().all(|&b| b == FILL),
+                "a {len}-byte message arrived holding something other than what was published"
+            );
             sub.buf.capacity()
         };
 
@@ -678,23 +661,6 @@ mod tests {
             released <= RETAINED_BUF_CAPACITY,
             "an outsized message left {released} bytes of capacity behind it"
         );
-    }
-
-    #[test]
-    fn large_frame() {
-        let (publisher, port) = test_publisher();
-        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
-
-        let big = vec![0xAB; 1_000_000]; // 1 MB, typical large frame
-        let big_clone = big.clone();
-
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(200));
-            publisher.send(&big_clone);
-        });
-
-        let msg = sub.recv();
-        assert_eq!(msg, big);
     }
 
     /// A message large enough that a handful of them fill a socket's buffers.
