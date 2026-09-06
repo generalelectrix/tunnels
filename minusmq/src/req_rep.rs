@@ -62,9 +62,12 @@ impl Default for Config {
 /// confused or hostile costs one connection rather than the memory it asked
 /// for.
 ///
-/// Requests are served one at a time, so a connection that stops sending or
-/// stops reading is abandoned rather than waited on: a client that goes quiet
-/// costs itself and not the requests behind it.
+/// Requests are served one at a time, on the calling thread, so a client that
+/// goes quiet holds up every request behind it. The configured connection
+/// timeout bounds each read and each write rather than the whole exchange, so
+/// a connection that carries nothing at all costs that long and no more, while
+/// a peer that moves a byte just inside it holds the loop for as long as it
+/// cares to.
 ///
 /// Runs forever (until the process exits or an unrecoverable error occurs).
 pub fn serve<F>(listener: TcpListener, config: Config, mut handler: F) -> Result<()>

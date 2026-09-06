@@ -1,7 +1,8 @@
 //! TCP publish-subscribe.
 //!
-//! Publisher binds a port and accepts subscriber connections, and sends every
-//! message to every subscriber connected at the time.
+//! A publisher is handed a bound listener, accepts subscriber connections on a
+//! thread of its own, and gives every message to every subscriber connected at
+//! the time.
 //!
 //! Subscribers automatically reconnect on connection loss.
 
@@ -57,9 +58,10 @@ pub enum Compression {
     #[default]
     Plain,
     /// Payloads are compressed, and no message expands into more than
-    /// `max_decompressed_len` bytes.
+    /// `max_decompressed_len` bytes, which a subscriber enforces as it expands
+    /// each message. A publisher compresses without consulting it.
     ///
-    /// The bound is a second one, beyond the length a message may arrive at:
+    /// That bound is a second one, beyond the length a message may arrive at:
     /// a small compressed payload can declare an enormous expansion, and a
     /// declared length is not a reason to ask the allocator for one.
     Lz4 { max_decompressed_len: usize },
@@ -69,19 +71,24 @@ pub enum Compression {
 ///
 /// The two ends of a stream are configured apart from one another and have to
 /// be told the same thing about what it carries. Everything else here is one
-/// end's own business, and the end it does not concern ignores it.
+/// end's own business, so each field states where it takes effect: a value set
+/// on the end it does not concern is ignored rather than obeyed.
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
-    /// The longest message this stream carries. A length prefix claiming more
-    /// than this fails the read, rather than reserving memory to match a
-    /// publisher that is confused or hostile.
+    /// The longest message this stream carries, enforced on receive. A length
+    /// prefix claiming more than this fails the read, rather than reserving
+    /// memory to match a publisher that is confused or hostile. A publisher
+    /// does not measure what it sends against it.
     pub max_message_len: usize,
-    /// Whether the payloads on this stream are compressed.
+    /// Whether the payloads on this stream are compressed. The one thing both
+    /// ends have to be told the same: a publisher writes what this says and a
+    /// subscriber reads what it says.
     pub compression: Compression,
-    /// When a connection whose peer has gone silent is failed.
+    /// When a connection whose peer has gone silent is failed. Applied
+    /// wherever a socket is opened, so it takes effect at both ends.
     pub keepalive: Keepalive,
     /// How long a publisher's accept loop waits for a subscriber before
-    /// looking up.
+    /// looking up. A subscriber has no listener and ignores it.
     ///
     /// A publisher on its way out releases the wait directly, so this is the
     /// backstop for a release that never arrives — and the period at which
@@ -555,8 +562,12 @@ fn send_loop(mut stream: TcpStream, peer: SocketAddr, mailbox: &Mailbox) {
     }
 }
 
-/// Forget the subscribers whose sender threads have stopped, which they do
-/// only when the connection has failed.
+/// Forget the subscribers whose sender threads have stopped.
+///
+/// A sender thread stops when a write to its subscriber fails, and it writes
+/// only when there is a message to write, so a subscriber that has departed is
+/// discovered by the next message published and not before. Until then its
+/// client and its thread stand, however long the gap between messages is.
 fn reap_disconnected(clients: &Mutex<Clients>) {
     clients
         .lock()
@@ -676,9 +687,17 @@ pub struct Subscriber {
     /// The connection, shared with the handles that can stop it.
     subscription: Arc<SharedSubscription>,
     /// The message received last, refilled by the next one to arrive.
+    ///
+    /// Nothing shrinks it, so one unusually large message leaves its capacity
+    /// held for the life of the subscriber. The ceiling on a message length is
+    /// what bounds that, and is the reason the buffer needs no bound of its
+    /// own.
     buf: Vec<u8>,
     /// The message received last, expanded. Untouched on a subscription that
     /// carries its payloads as they are.
+    ///
+    /// It keeps its high-water mark as `buf` does, bounded by the ceiling on
+    /// an expansion rather than on a message.
     plain: Vec<u8>,
 }
 

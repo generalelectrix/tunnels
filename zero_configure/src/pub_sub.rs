@@ -2,6 +2,11 @@
 //!
 //! The stream is postcard: tagless, so the schema is the Rust type and does
 //! not travel with the message.
+//!
+//! Both halves are published interface. A stream advertised here is consumed
+//! by separately deployed applications as well as by this workspace, so the
+//! subscribing half stands on the service being advertised rather than on
+//! anything in this workspace receiving it.
 
 use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
@@ -63,6 +68,11 @@ struct SubConfig {
     port: u16,
 }
 
+/// Browse for DNS-SD pub/sub services of one name, and connect subscribers to
+/// them on request.
+///
+/// This is the half of the interface an application outside this workspace
+/// reaches an advertised stream through.
 pub struct SubscriberService<T: DeserializeOwned> {
     browser: Browser<SubConfig>,
     /// How this service's stream is carried, applied to every subscriber

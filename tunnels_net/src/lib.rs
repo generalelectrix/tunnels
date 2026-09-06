@@ -5,9 +5,9 @@
 //! the same show.
 //!
 //! The service owns its protocol at both ends: the port it runs on, the
-//! payload it carries, the ceiling on a message of it, and the halves that
-//! publish and consume it. Nothing about the protocol is written at a call
-//! site, so the two ends of it cannot drift apart.
+//! payload it carries, the ceiling on what a message of it may expand into,
+//! and the halves that publish and consume it. Nothing about the protocol is
+//! written at a call site, so the two ends of it cannot drift apart.
 
 use anyhow::Result;
 use log::{error, info};

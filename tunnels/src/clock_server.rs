@@ -30,6 +30,10 @@ pub fn clock_publisher() -> Result<ClockPublisher> {
 }
 
 /// Launch clock subscriber service.
+///
+/// The clock stream is advertised for whoever browses for it, including
+/// applications deployed apart from this one, so this half of the service
+/// stands whether or not the console itself subscribes.
 pub fn clock_subscriber() -> ClockSubscriber {
     SubscriberService::new(SERVICE_NAME.to_string(), config())
 }
