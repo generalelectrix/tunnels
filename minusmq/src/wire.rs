@@ -1,6 +1,6 @@
 //! Length-prefixed wire format: [u32 big-endian length][payload bytes].
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use std::io::{Read, Write};
 
 /// The size of the length prefix a framed message opens with.
@@ -39,22 +39,32 @@ pub fn write_msg(writer: &mut impl Write, data: &[u8]) -> Result<()> {
 /// Read a length-prefixed message from the reader into a buffer, replacing
 /// what it holds.
 ///
+/// A message longer than `max_len` fails, and fails before the buffer is sized
+/// to hold it: the prefix describes lengths up to four gigabytes, and a length
+/// alone is not a reason to ask the allocator for one.
+///
 /// A buffer holding a message at least as long as the one that arrives is
 /// refilled rather than regrown. What it holds after a failure is whatever the
 /// failure left there, and is not a message.
-pub fn read_msg_into(reader: &mut impl Read, out: &mut Vec<u8>) -> Result<()> {
+pub fn read_msg_into(reader: &mut impl Read, out: &mut Vec<u8>, max_len: usize) -> Result<()> {
     let mut len_buf = [0u8; PREFIX_LEN];
     reader.read_exact(&mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
+    ensure!(
+        len <= max_len,
+        "message length {len} exceeds the limit of {max_len} bytes"
+    );
     out.resize(len, 0);
     reader.read_exact(out)?;
     Ok(())
 }
 
 /// Read a length-prefixed message from the reader.
-pub fn read_msg(reader: &mut impl Read) -> Result<Vec<u8>> {
+///
+/// A message longer than `max_len` fails without being allocated for.
+pub fn read_msg(reader: &mut impl Read, max_len: usize) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
-    read_msg_into(reader, &mut buf)?;
+    read_msg_into(reader, &mut buf, max_len)?;
     Ok(buf)
 }
 
@@ -62,6 +72,10 @@ pub fn read_msg(reader: &mut impl Read) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// A length limit no message in a test reaches, for the tests that are
+    /// about something other than the limit.
+    const UNBOUNDED: usize = usize::MAX;
 
     /// A writer that keeps every write it is handed, whole and in order.
     #[derive(Default)]
@@ -152,12 +166,58 @@ mod tests {
 
         let mut cursor = Cursor::new(wire);
         let mut buf = Vec::new();
-        read_msg_into(&mut cursor, &mut buf).unwrap();
+        read_msg_into(&mut cursor, &mut buf, UNBOUNDED).unwrap();
         assert_eq!(buf, [7u8; 5000]);
-        read_msg_into(&mut cursor, &mut buf).unwrap();
+        read_msg_into(&mut cursor, &mut buf, UNBOUNDED).unwrap();
         assert_eq!(buf, b"short");
-        read_msg_into(&mut cursor, &mut buf).unwrap();
+        read_msg_into(&mut cursor, &mut buf, UNBOUNDED).unwrap();
         assert!(buf.is_empty());
+    }
+
+    /// The limit admits a message exactly as long as itself, refuses one byte
+    /// more, and refuses a four-gigabyte length without allocating for it.
+    ///
+    /// A length prefix arrives before any of the payload it describes, from
+    /// whoever is on the other end of the socket; sizing a buffer to it is
+    /// what the limit exists to prevent.
+    #[test]
+    fn the_length_limit_bounds_the_read() {
+        const LIMIT: usize = 1024;
+
+        let mut at_limit = Vec::new();
+        write_msg(&mut at_limit, &[3u8; LIMIT]).unwrap();
+        let mut cursor = Cursor::new(at_limit);
+        assert_eq!(read_msg(&mut cursor, LIMIT).unwrap(), [3u8; LIMIT]);
+
+        let mut over_limit = Vec::new();
+        write_msg(&mut over_limit, &[3u8; LIMIT + 1]).unwrap();
+        let mut cursor = Cursor::new(over_limit);
+        let err = read_msg(&mut cursor, LIMIT).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "message length {} exceeds the limit of {LIMIT} bytes",
+                LIMIT + 1
+            )
+        );
+
+        // A prefix claiming the largest length the format can describe, with
+        // no payload behind it at all.
+        let mut buf = Vec::new();
+        let mut cursor = Cursor::new(u32::MAX.to_be_bytes().to_vec());
+        let err = read_msg_into(&mut cursor, &mut buf, LIMIT).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "message length {} exceeds the limit of {LIMIT} bytes",
+                u32::MAX as usize
+            )
+        );
+        assert!(
+            buf.capacity() <= LIMIT,
+            "a refused message still grew the buffer to {} bytes",
+            buf.capacity()
+        );
     }
 
     #[test]
@@ -167,7 +227,7 @@ mod tests {
         write_msg(&mut buf, data).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        let result = read_msg(&mut cursor).unwrap();
+        let result = read_msg(&mut cursor, UNBOUNDED).unwrap();
         assert_eq!(result, data);
     }
 
@@ -177,7 +237,7 @@ mod tests {
         write_msg(&mut buf, b"").unwrap();
 
         let mut cursor = Cursor::new(buf);
-        let result = read_msg(&mut cursor).unwrap();
+        let result = read_msg(&mut cursor, UNBOUNDED).unwrap();
         assert!(result.is_empty());
     }
 
@@ -188,7 +248,7 @@ mod tests {
         write_msg(&mut buf, &data).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        let result = read_msg(&mut cursor).unwrap();
+        let result = read_msg(&mut cursor, UNBOUNDED).unwrap();
         assert_eq!(result, data);
     }
 }

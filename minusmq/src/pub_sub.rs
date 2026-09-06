@@ -420,6 +420,25 @@ fn reap_disconnected(clients: &Mutex<Clients>) {
 
 // --- Subscriber ---
 
+/// The largest message a subscriber accepts.
+///
+/// A message on this transport is one frame of show state, a couple of
+/// kilobytes of it, so the ceiling sits a thousandfold above anything
+/// legitimate and will not be met by a model that grows. It is here for the
+/// other end of the range: a length prefix from a publisher that is confused
+/// or hostile fails the read rather than reserving up to four gigabytes to
+/// match its claim.
+const MAX_MESSAGE_LEN: usize = 4 * 1024 * 1024;
+
+/// The buffer capacity a subscriber keeps between messages.
+///
+/// A message far larger than the usual one would otherwise pin a buffer its
+/// size for the life of the connection. Capacity above this ceiling is
+/// released once the message in it has been read, while a stream of ordinary
+/// messages stays well beneath it and is received into the same allocation
+/// every time.
+const RETAINED_BUF_CAPACITY: usize = 64 * 1024;
+
 /// A TCP-based subscriber that connects to a publisher, subscribes to a
 /// channel, and receives messages. Automatically reconnects on connection loss.
 pub struct Subscriber {
@@ -451,6 +470,12 @@ impl Subscriber {
     /// buffer the one before it did, so a stream of messages of a settled size
     /// costs no allocation to receive.
     pub fn recv(&mut self) -> &[u8] {
+        // Give back what an outsized message took, now that nothing holds it.
+        if self.buf.capacity() > RETAINED_BUF_CAPACITY {
+            self.buf.clear();
+            self.buf.shrink_to(RETAINED_BUF_CAPACITY);
+        }
+
         loop {
             // Ensure we have a connection.
             if self.stream.is_none() {
@@ -458,7 +483,11 @@ impl Subscriber {
             }
 
             // Try to read a message.
-            match wire::read_msg_into(self.stream.as_mut().unwrap(), &mut self.buf) {
+            match wire::read_msg_into(
+                self.stream.as_mut().unwrap(),
+                &mut self.buf,
+                MAX_MESSAGE_LEN,
+            ) {
                 Ok(()) => break,
                 Err(e) => {
                     // Connection lost — drop it and reconnect on next iteration.
@@ -609,6 +638,58 @@ mod tests {
         assert_eq!(msg1, b"for-ch1");
     }
 
+    /// A settled stream of messages is received into one allocation, and the
+    /// capacity an outsized message takes is given back once it has been read.
+    ///
+    /// Each message is published only after the one before it has been
+    /// received, so a subscriber that is slow misses nothing here.
+    #[test]
+    fn subscriber_buffer_is_reused_and_released() {
+        /// A message of the size the transport carries all day.
+        const SETTLED_LEN: usize = 2_700;
+        /// A message far larger than that.
+        const OUTSIZED_LEN: usize = 1_000_000;
+
+        let (publisher, port) = test_publisher();
+        let (requests, to_publish) = channel::<usize>();
+        thread::spawn(move || {
+            while let Ok(len) = to_publish.recv() {
+                let msg = vec![0xAB; len];
+                publisher.send(0, &msg);
+            }
+        });
+
+        let mut sub = Subscriber::new("127.0.0.1", port, 0);
+        sub.connect();
+        // Let the publisher's accept thread take up the subscription.
+        thread::sleep(Duration::from_millis(200));
+
+        let mut receive = |len: usize| -> usize {
+            requests.send(len).unwrap();
+            assert_eq!(sub.recv().len(), len);
+            sub.buf.capacity()
+        };
+
+        let settled = receive(SETTLED_LEN);
+        for _ in 0..5 {
+            assert_eq!(
+                receive(SETTLED_LEN),
+                settled,
+                "a settled stream of messages reallocated"
+            );
+        }
+
+        assert!(
+            receive(OUTSIZED_LEN) >= OUTSIZED_LEN,
+            "an outsized message was received into a buffer too small to hold it"
+        );
+        let released = receive(SETTLED_LEN);
+        assert!(
+            released <= RETAINED_BUF_CAPACITY,
+            "an outsized message left {released} bytes of capacity behind it"
+        );
+    }
+
     #[test]
     fn large_frame() {
         let (publisher, port) = test_publisher();
@@ -705,7 +786,7 @@ mod tests {
         // it is still subscribed, so reading again reaches the last one sent.
         let mut stalled_reached_last = false;
         for _ in 0..=MESSAGES_TO_STALL {
-            match wire::read_msg(&mut stalled) {
+            match wire::read_msg(&mut stalled, MAX_MESSAGE_LEN) {
                 Ok(msg) if msg == LAST_MESSAGE => {
                     stalled_reached_last = true;
                     break;

@@ -10,6 +10,16 @@ use std::time::Duration;
 
 use crate::wire;
 
+/// The largest message a request-response exchange accepts, in either
+/// direction.
+///
+/// The largest legitimate message on this transport is a pushed executable,
+/// which measures a few megabytes; the ceiling leaves an order of magnitude
+/// above that for one carrying debug information. Past it, a length prefix
+/// from a peer that is confused or hostile fails the exchange rather than
+/// reserving memory to match its claim.
+const MAX_MESSAGE_LEN: usize = 64 * 1024 * 1024;
+
 /// Run a request-response server on an already-bound listener.
 /// Reads one request per connection, calls `handler`, sends the response,
 /// and closes the connection.
@@ -44,7 +54,7 @@ fn handle_one<F>(stream: &mut TcpStream, handler: &mut F) -> Result<()>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
-    let request = wire::read_msg(stream).context("reading request")?;
+    let request = wire::read_msg(stream, MAX_MESSAGE_LEN).context("reading request")?;
     let response = handler(&request);
     wire::write_msg(stream, &response).context("writing response")?;
     Ok(())
@@ -55,7 +65,7 @@ where
 pub fn send(addr: impl ToSocketAddrs, msg: &[u8]) -> Result<Vec<u8>> {
     let mut stream = TcpStream::connect(addr).context("failed to connect")?;
     wire::write_msg(&mut stream, msg).context("writing request")?;
-    wire::read_msg(&mut stream).context("reading response")
+    wire::read_msg(&mut stream, MAX_MESSAGE_LEN).context("reading response")
 }
 
 /// Like `send`, but with a timeout on the connection and the read/write.
@@ -79,7 +89,7 @@ pub fn send_with_timeout(
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
     wire::write_msg(&mut stream, msg).context("writing request")?;
-    wire::read_msg(&mut stream).context("reading response")
+    wire::read_msg(&mut stream, MAX_MESSAGE_LEN).context("reading response")
 }
 
 #[cfg(test)]
