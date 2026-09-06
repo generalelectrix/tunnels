@@ -4,16 +4,28 @@
 //! which is what a move from TCP to UDP multicast would turn from a cosmetic
 //! property into a hard one.
 //!
+//! Payload size is driven by how much model there is, not by what the model
+//! computes, so the fixtures vary structure: channel count, look nesting, and
+//! the size of the two banks that OSC replaces wholesale and unbounded.
+//!
 //! Dictionaries are trained on frames that are not then measured. A dictionary
 //! that has seen the frame it is scoring reports the size of its own memory
 //! rather than the size of the traffic.
 
 use std::time::{Duration, Instant};
 
-use tunnels_lib::number::UnipolarFloat;
+use tunnels_lib::color::Hsv;
+use tunnels_lib::number::{Phase, UnipolarFloat};
 use tunnels_model::beam::Beam;
+use tunnels_model::clock_bank::{ClockIdx, MAX_CLOCKS};
+use tunnels_model::mixer::Mixer;
+use tunnels_model::palette::{
+    ColorPalette, ColorPaletteIdx, ControlMessage as PaletteControlMessage,
+    EmitStateChange as EmitPaletteStateChange, StateChange as PaletteStateChange,
+};
+use tunnels_model::position_bank::{Position, PositionBank, PositionIdx};
 use tunnels_model::show_frame::{ShowFrame, fixture};
-use tunnels_model::tunnel::fixture::configure_all_noise;
+use tunnels_model::tunnel::fixture::{bind_to_frame_state, configure_max_variation};
 
 /// One show tick, the interval the console publishes at.
 const TICK: Duration = Duration::from_micros(25_300);
@@ -21,6 +33,10 @@ const TICK: Duration = Duration::from_micros(25_300);
 /// What a single 1500-byte-MTU datagram leaves for a compressed frame:
 /// 1500 less the IP and UDP headers, our length prefix and our magic+version.
 const MTU_BUDGET: usize = 1500 - 20 - 8 - 4 - 4;
+
+/// The segment count the fixtures draw at, matching the model's own stress
+/// fixtures.
+const STRESS_SEGMENTS: u8 = 126;
 
 /// How many frames of each lineage the dictionary is trained on.
 const TRAIN_STEPS: usize = 400;
@@ -41,6 +57,97 @@ const REPS: usize = 30;
 /// The dictionary sizes trained, in bytes. A dictionary ships in both binaries,
 /// so its size is part of what it costs.
 const DICT_SIZES: [usize; 2] = [4 * 1024, 16 * 1024];
+
+/// Entries in the palette and the position bank of the large-bank fixture.
+const BIG_BANK_ENTRIES: usize = 64;
+
+struct NoopEmitter;
+
+impl EmitPaletteStateChange for NoopEmitter {
+    fn emit_palette_state_change(&mut self, _: PaletteStateChange) {}
+}
+
+/// A deterministic source of arbitrary-looking values, so that a bank entry
+/// costs what an operator-chosen one costs rather than what a ramp does.
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn unit(&mut self) -> f64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+/// A palette of `n` arbitrary colors.
+fn big_palette(n: usize) -> ColorPalette {
+    let mut rng = Xorshift(0x5eed_1234_9abc_def1);
+    let colors = (0..n)
+        .map(|_| Hsv {
+            hue: Phase::new(rng.unit()),
+            sat: UnipolarFloat::new(rng.unit()),
+            val: UnipolarFloat::new(rng.unit()),
+        })
+        .collect();
+    let mut palette = ColorPalette::default();
+    palette.control(
+        PaletteControlMessage::Set(PaletteStateChange::Contents(colors)),
+        &mut NoopEmitter,
+    );
+    palette
+}
+
+/// A position bank of `n` arbitrary positions.
+fn big_positions(n: usize) -> PositionBank {
+    let mut rng = Xorshift(0x1234_5eed_def1_9abc);
+    let mut bank = PositionBank::default();
+    bank.control(
+        (0..n)
+            .map(|_| Position {
+                x: -1.0 + 2.0 * rng.unit(),
+                y: -1.0 + 2.0 * rng.unit(),
+            })
+            .collect(),
+    );
+    bank
+}
+
+/// A max-variation frame across `pages` mixer pages.
+///
+/// One page is the eight channels a console shows by default; two is the
+/// sixteen an APC20 wing puts on the surface, which is the ceiling on channel
+/// count and therefore on how much beam a flat frame can carry.
+fn wide_frame(pages: usize) -> ShowFrame {
+    let mut frame = fixture::max_variation_frame();
+    let mut mixer = Mixer::new(pages);
+    let n_channels = mixer.channel_count();
+    for (i, channel) in mixer.channels().enumerate() {
+        channel.level = UnipolarFloat::new(0.25 + 0.75 * (i as f64 / n_channels as f64));
+        channel.bump = i == 3;
+        channel.mask = i == 5;
+        if let Beam::Tunnel(tunnel) = &mut channel.beam {
+            configure_max_variation(tunnel, i, n_channels, STRESS_SEGMENTS);
+            bind_to_frame_state(
+                tunnel,
+                ColorPaletteIdx(i % 5),
+                PositionIdx(i % 3),
+                ClockIdx(i % MAX_CLOCKS),
+            );
+        }
+    }
+    mixer.update_state(TICK, frame.audio_envelope);
+    frame.mixer = mixer;
+    frame
+}
+
+/// A flat frame carrying banks far larger than a fixture's.
+fn big_bank_frame(entries: usize) -> ShowFrame {
+    let mut frame = fixture::max_variation_frame();
+    frame.palette = big_palette(entries);
+    frame.positions = big_positions(entries);
+    frame
+}
 
 /// A show advancing under its own state updates, sampled a frame at a time.
 struct Lineage {
@@ -75,17 +182,12 @@ impl Lineage {
 }
 
 fn lineages() -> Vec<Lineage> {
-    let mut noise = fixture::max_variation_frame();
-    for channel in noise.mixer.channels() {
-        if let Beam::Tunnel(tunnel) = &mut channel.beam {
-            configure_all_noise(tunnel);
-        }
-    }
     vec![
         Lineage::new("default", fixture::default_frame()),
-        Lineage::new("max variation", fixture::max_variation_frame()),
-        Lineage::new("noise", noise),
+        Lineage::new("max variation 8ch", fixture::max_variation_frame()),
+        Lineage::new("max variation 16ch", wide_frame(2)),
         Lineage::new("nested looks", fixture::nested_look_frame()),
+        Lineage::new("big banks 64+64", big_bank_frame(BIG_BANK_ENTRIES)),
     ]
 }
 
@@ -122,7 +224,7 @@ fn split() -> Split {
 }
 
 /// What one codec did to one bucket of frames.
-struct Result {
+struct Measurement {
     raw: f64,
     compressed: f64,
     worst: usize,
@@ -132,7 +234,7 @@ struct Result {
     decompress_us: f64,
 }
 
-impl Result {
+impl Measurement {
     fn row(&self, label: &str) {
         println!(
             "  {:<26} {:>7.0} {:>8.0} {:>7.2} {:>8} {:>9.1} {:>10.1}  {}",
@@ -217,7 +319,7 @@ impl Codec for Zstd {
     }
 }
 
-fn measure(codec: &mut dyn Codec, frames: &[Vec<u8>]) -> Result {
+fn measure(codec: &mut dyn Codec, frames: &[Vec<u8>]) -> Measurement {
     let mut out = Vec::new();
     let mut back = Vec::new();
 
@@ -262,7 +364,7 @@ fn measure(codec: &mut dyn Codec, frames: &[Vec<u8>]) -> Result {
     }
     let decompress_us = start.elapsed().as_secs_f64() * 1e6 / (REPS * frames.len()) as f64;
 
-    Result {
+    Measurement {
         raw: raw as f64 / frames.len() as f64,
         compressed: compressed as f64 / frames.len() as f64,
         worst,
@@ -285,22 +387,69 @@ fn header(title: &str) {
     );
 }
 
+/// How much one more palette color and one more position cost on the wire,
+/// which is the only bound anything has on a bank that OSC replaces wholesale.
+///
+/// `dictionary` never saw a large-bank frame, so what it recalls here is the
+/// beam vocabulary the entries sit next to and not the entries themselves.
+fn bank_sweep(dictionary: &[u8]) {
+    println!("\nbank size sweep: one palette color and one position per entry");
+    println!("  (flat 8ch frame, arbitrary entry values, budget {MTU_BUDGET} B)");
+    println!(
+        "  {:>8} {:>8} {:>8} {:>8} {:>10}",
+        "entries", "raw B", "lz4 B", "zstd3 B", "zstd3+16K"
+    );
+    let mut out = Vec::new();
+    let mut zstd3 = Zstd::new(3, None);
+    let mut dicted = Zstd::new(3, Some(dictionary));
+    for entries in [3, 8, 16, 24, 32, 64, 256, 1024] {
+        let frame = big_bank_frame(entries);
+        let plain = postcard::to_allocvec(&frame).unwrap();
+        Lz4.compress(&plain, &mut out);
+        let lz4 = out.len();
+        zstd3.compress(&plain, &mut out);
+        let plain_zstd = out.len();
+        dicted.compress(&plain, &mut out);
+        println!(
+            "  {entries:>8} {:>8} {lz4:>8} {plain_zstd:>8} {:>10}",
+            plain.len(),
+            out.len()
+        );
+    }
+}
+
 fn main() {
     println!("MTU budget for a compressed frame: {MTU_BUDGET} bytes");
 
-    let Split { names, train: corpus, test } = split();
-
     println!("\nfixtures, pristine (no dictionary involved)");
-    for named in fixture::all() {
-        let plain = postcard::to_allocvec(&named.frame).unwrap();
-        let wire = named.frame.encode().unwrap();
+    let pristine: Vec<(&str, ShowFrame)> = vec![
+        ("default", fixture::default_frame()),
+        ("max variation 8ch", fixture::max_variation_frame()),
+        ("max variation 16ch", wide_frame(2)),
+        ("nested looks", fixture::nested_look_frame()),
+        ("big banks 64+64", big_bank_frame(BIG_BANK_ENTRIES)),
+    ];
+    for (name, frame) in &pristine {
+        let plain = postcard::to_allocvec(frame).unwrap();
+        let wire = frame.encode().unwrap();
         println!(
-            "  {:<16} postcard {:>6} B, lz4 wire {:>6} B",
-            named.name,
+            "  {:<20} postcard {:>6} B, lz4 on the wire {:>6} B  {}",
+            name,
             plain.len(),
-            wire.len()
+            wire.len(),
+            if wire.len() - 4 <= MTU_BUDGET {
+                "fits"
+            } else {
+                "OVER"
+            }
         );
     }
+
+    let Split {
+        names,
+        train: corpus,
+        test,
+    } = split();
 
     // The dictionary the whole corpus trains, held out only in time: every
     // lineage contributed frames, none of them the ones being scored.
@@ -323,7 +472,10 @@ fn main() {
         .iter()
         .map(|&size| {
             let dict = train(&all, size);
-            println!("  time-held-out dictionary: asked {size} B, got {} B", dict.len());
+            println!(
+                "  time-held-out dictionary: asked {size} B, got {} B",
+                dict.len()
+            );
             (size, dict)
         })
         .collect();
@@ -340,14 +492,14 @@ fn main() {
                 .flat_map(|(_, frames)| frames.iter().map(|v| v.as_slice()))
                 .collect();
             let dict = train(&samples, DICT_SIZES[1]);
-            println!(
-                "  leave-out-{:<14} dictionary: {} B",
-                names[skip],
-                dict.len()
-            );
+            println!("  leave-out-{:<18} dictionary: {} B", names[skip], dict.len());
             dict
         })
         .collect();
+
+    // The large-bank lineage is last, so its leave-one-out dictionary is the
+    // one that never saw a large bank.
+    bank_sweep(loo_dicts.last().expect("a dictionary per lineage"));
 
     for (i, name) in names.iter().enumerate() {
         header(&format!("{name} — {} held-out frames", test[i].len()));

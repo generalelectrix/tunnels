@@ -287,7 +287,7 @@ pub mod fixture {
     };
     use crate::position_bank::{Position, PositionIdx};
     use crate::tunnel::Tunnel;
-    use crate::tunnel::fixture::{bind_to_frame_state, configure_all_noise, configure_max_variation};
+    use crate::tunnel::fixture::{bind_to_frame_state, configure_max_variation};
     use std::time::Duration;
 
     use super::*;
@@ -321,10 +321,6 @@ pub mod fixture {
             NamedFrame {
                 name: "max variation",
                 frame: max_variation_frame(),
-            },
-            NamedFrame {
-                name: "noise",
-                frame: noise_frame(),
             },
             NamedFrame {
                 name: "nested looks",
@@ -412,22 +408,6 @@ pub mod fixture {
             positions: positions(),
             audio_envelope: audio_envelope(),
         }
-    }
-
-    /// A max-variation frame whose every animation slot runs on noise.
-    ///
-    /// The waveform choice is state, not output: what it changes on the wire is
-    /// one enum discriminant per animation slot.
-    pub fn noise_frame() -> ShowFrame {
-        let mut frame = max_variation_frame();
-        for channel in frame.mixer.channels() {
-            if let Beam::Tunnel(tunnel) = &mut channel.beam {
-                configure_all_noise(tunnel);
-            }
-        }
-        frame.mixer.update_state(ADVANCE, audio_envelope());
-        frame.frame_number = 4;
-        frame
     }
 
     /// The audio level the fixtures that read the envelope are scaled by.
