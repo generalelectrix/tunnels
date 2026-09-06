@@ -88,6 +88,46 @@ closed figure has no segments, so **color along** picks what stands in for it.
 Brightness is `level` (the alpha channel), matching `Channel.level`; value is
 fixed at 1.0 as it is in the real system.
 
+## Animation
+
+The demo drives the show's real animation system rather than a copy of it:
+`anim.rs` builds a `tunnels_model::animation::Animation`, sends it the same
+`ControlMessage`s the console sends, and ticks it with the same `update_state`.
+`waveforms` is crate-private in `tunnels_model`, but `Animation` is not, so
+nothing here reimplements a waveform.
+
+Each layer carries three animation slots, mirroring `TargetedAnimation` on a
+`Tunnel`. What a slot drives decides where it is resolved, and that decides what
+it costs:
+
+| target | resolved | cost |
+|---|---|---|
+| hue, brightness, saturation | in the ramp texture | 1024 evaluations and one texture write, however fast it moves |
+| radial, twist, squash | per vertex, at draw time | one pass over the mesh, which is never re-refined |
+
+Geometry targets are the interesting half. **Radial** scales each point's
+distance from the centre — run along the angle, that deforms a disc into petals,
+which is the superformula's whole trick arriving free on top of any shape in the
+library. Run along the radius it pinches into rings. **Twist** rotates by an
+amount that varies across the shape; along the radius that is a vortex.
+**Squash** stretches one axis while squeezing the other.
+
+Phase for the colour comes from the *undeformed* position, so a colour pattern
+stays glued to the shape while a warp moves it rather than sliding across it.
+
+See them all with `-- anim <shape index>`: rows are targets, columns are
+waveforms.
+
+Two limits worth knowing:
+
+- A colour target has to run along the ramp's own axis, since the ramp is a
+  one-dimensional table shared by every colour animation on the layer. Only
+  geometry targets get their own phase source.
+- The mesh is not resubdivided under a warp, so a deformation finer than the
+  triangles carrying it facets rather than curves. That is visible in the noise
+  column of the animation sheet, and it is the same ceiling that bounds noise
+  frequency.
+
 ## Meshing and color
 
 Color never touches the mesh. The split is:

@@ -5,6 +5,7 @@
 //! shapes through the same piston/OpenGL stack the real client uses so what you
 //! see is what the client would produce. `sheet` writes PNGs headlessly.
 
+mod anim;
 mod draw;
 mod mesh;
 mod params;
@@ -80,6 +81,14 @@ fn main() -> Result<()> {
         "stats" => {
             let shapes = shapes::load_dir(&shape_dir())?;
             stats::report(&shapes);
+            Ok(())
+        }
+        "anim" => {
+            let shapes = shapes::load_dir(&shape_dir())?;
+            let idx: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(0);
+            let out = args.next().unwrap_or_else(|| "/tmp/anim.png".into());
+            sheet::anim_sheet(&shapes, idx.min(shapes.len() - 1), &PathBuf::from(&out), 260)?;
+            println!("wrote {out}");
             Ok(())
         }
         "zoom" => {

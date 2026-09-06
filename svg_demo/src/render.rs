@@ -1,9 +1,14 @@
 //! The render window: the same piston/OpenGL stack `tunnelclient` uses, so what
 //! shows up here is what the real client would produce.
 
-use crate::draw::{draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs};
+use crate::anim::LiveWave;
+use crate::draw::{
+    GeometryWave, draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs_into,
+    warp_verts_into,
+};
 use crate::mesh::{self, Level, MeshId, MeshLibrary};
-use crate::params::{DemoParams, LayerParams, PhaseField, PORT};
+use crate::params::{DemoParams, LayerParams, PhaseField, PORT, TargetedWave};
+use tunnels_lib::number::UnipolarFloat;
 use crate::ramp::{self, RampKey};
 use image::RgbaImage;
 use crate::shapes::{ShapeMesh, load_dir};
@@ -15,7 +20,7 @@ use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::net::UdpSocket;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Stroke geometry for a layer, rebuilt only when its shape or width changes.
 ///
@@ -52,15 +57,37 @@ impl StrokeCache {
 /// texture is only rewritten once the frames that used it are long done.
 const RAMP_BUFFERS: usize = 3;
 
-/// A layer's ramp textures and the parameters they were built from.
-struct RampSlot {
+/// A layer's running animations, ramp textures, and per-frame scratch space.
+struct LayerRuntime {
     key: Option<RampKey>,
     textures: Vec<Texture>,
     current: usize,
     scratch: RgbaImage,
+    waves: Vec<LiveWave>,
+    /// Reused so a frame allocates nothing: at this triangle count, a fresh
+    /// vertex buffer every frame is megabytes of churn.
+    positions: Vec<[f32; 2]>,
+    uvs: Vec<[f32; 2]>,
 }
 
-impl RampSlot {
+/// The slots driving geometry, paired with their running animations.
+///
+/// Free rather than a method so the borrow of the animations stays disjoint
+/// from the scratch buffers the draw writes into.
+fn geometry_waves<'a>(layer: &LayerParams, waves: &'a [LiveWave]) -> Vec<GeometryWave<'a>> {
+    LayerRuntime::active(layer)
+        .filter(|(_, w)| !w.target.is_color())
+        .filter_map(|(i, w)| {
+            waves.get(i).map(|wave| GeometryWave {
+                target: w.target,
+                phase: w.phase,
+                wave,
+            })
+        })
+        .collect()
+}
+
+impl LayerRuntime {
     fn new(template: &LayerParams, settings: &TextureSettings) -> Self {
         let img = ramp::build(template);
         Self {
@@ -70,14 +97,45 @@ impl RampSlot {
                 .collect(),
             current: 0,
             scratch: img,
+            waves: template.waves.iter().map(|w| LiveWave::new(&w.wave)).collect(),
+            positions: Vec::new(),
+            uvs: Vec::new(),
         }
     }
 
-    /// Rebuild if the color knobs moved, and return the texture to sample.
-    fn refresh(&mut self, layer: &LayerParams) -> &Texture {
+    /// Advance every animation slot, rebuilding any whose knobs moved.
+    fn tick(&mut self, layer: &LayerParams, delta: Duration, audio: UnipolarFloat) {
+        while self.waves.len() < layer.waves.len() {
+            self.waves
+                .push(LiveWave::new(&layer.waves[self.waves.len()].wave));
+        }
+        for (live, slot) in self.waves.iter_mut().zip(layer.waves.iter()) {
+            live.update(&slot.wave, delta, audio);
+        }
+    }
+
+    pub fn active(layer: &LayerParams) -> impl Iterator<Item = (usize, &TargetedWave)> {
+        layer
+            .waves
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.enabled && w.wave.size > 0.0)
+    }
+
+    /// Rebuild the ramp if it moved, and return the texture to sample.
+    ///
+    /// A live colour animation moves it every frame, which is affordable
+    /// precisely because a rebuild is a thousand evaluations and a write to a
+    /// texture nothing is still reading.
+    fn refresh_ramp(&mut self, layer: &LayerParams, audio: UnipolarFloat) -> &Texture {
+        let animated = Self::active(layer).any(|(_, w)| w.target.is_color());
         let key = RampKey::of(layer);
-        if self.key != Some(key) {
-            ramp::build_into(&mut self.scratch, layer);
+        if animated || self.key != Some(key) {
+            let waves: Vec<_> = Self::active(layer)
+                .filter(|(_, w)| w.target.is_color())
+                .map(|(i, w)| (w.target, &self.waves[i]))
+                .collect();
+            ramp::build_into(&mut self.scratch, layer, &waves, audio);
             self.current = (self.current + 1) % self.textures.len();
             self.textures[self.current].update(&self.scratch);
             self.key = Some(key);
@@ -118,7 +176,7 @@ pub struct Renderer {
     pub target_px: f64,
     strokes: Vec<StrokeCache>,
     meshes: MeshLibrary,
-    ramps: Vec<RampSlot>,
+    layers: Vec<LayerRuntime>,
     ramp_settings: TextureSettings,
 }
 
@@ -136,7 +194,7 @@ impl Renderer {
             target_px: mesh::DEFAULT_TARGET_PX,
             strokes: Vec::new(),
             meshes: MeshLibrary::default(),
-            ramps: Vec::new(),
+            layers: Vec::new(),
             ramp_settings,
         }
     }
@@ -146,8 +204,9 @@ impl Renderer {
         while self.strokes.len() < n {
             self.strokes.push(StrokeCache::new());
         }
-        while self.ramps.len() < n {
-            self.ramps.push(RampSlot::new(template, &self.ramp_settings));
+        while self.layers.len() < n {
+            self.layers
+                .push(LayerRuntime::new(template, &self.ramp_settings));
         }
     }
 
@@ -167,6 +226,8 @@ impl Renderer {
         critical: f64,
         params: &DemoParams,
         time: f64,
+        delta: Duration,
+        audio: UnipolarFloat,
     ) -> Timings
     where
         G: Graphics<Texture = Texture>,
@@ -176,17 +237,17 @@ impl Renderer {
             target_px,
             strokes,
             meshes,
-            ramps,
+            layers,
             ..
         } = self;
         let target_px = *target_px;
         let mut t = Timings::default();
 
-        for ((layer, stroke_cache), ramp_slot) in params
+        for ((layer, stroke_cache), rt) in params
             .layers
             .iter()
             .zip(strokes.iter_mut())
-            .zip(ramps.iter_mut())
+            .zip(layers.iter_mut())
         {
             if !layer.enabled || layer.shape >= shapes.len() {
                 continue;
@@ -207,11 +268,26 @@ impl Renderer {
                 continue;
             }
 
-            // Rebuilding the ramp is a thousand-texel write, so a color knob
-            // costs that and nothing else — the mesh never moves.
+            // Rebuilding the ramp is a thousand-texel write, so a color knob —
+            // or a colour animation running at full speed — costs that and
+            // nothing else. The mesh never moves.
             let mark = Instant::now();
-            let ramp_texture = ramp_slot.refresh(layer);
+            rt.tick(layer, delta, audio);
+            rt.refresh_ramp(layer, audio);
             t.ramp_us += mark.elapsed().as_micros();
+
+            // Split the runtime into disjoint pieces: the animations are read
+            // while the scratch buffers are written.
+            let LayerRuntime {
+                textures,
+                current,
+                waves,
+                positions,
+                uvs,
+                ..
+            } = rt;
+            let warps = geometry_waves(layer, waves);
+            let ramp_texture = &textures[*current];
 
             let scale = layer.scale_x.abs().max(layer.scale_y.abs());
             let level = Level::for_scale(scale, critical, target_px);
@@ -227,12 +303,21 @@ impl Renderer {
                 let mesh = meshes.get(id, source);
                 t.mesh_us += mark.elapsed().as_micros();
 
+                // Phase comes from the undeformed position, so a colour pattern
+                // stays glued to the shape while a warp moves it, rather than
+                // sliding across it.
                 let mark = Instant::now();
-                let uvs = phase_uvs(mesh, field);
+                phase_uvs_into(uvs, mesh, field);
+                if warps.is_empty() {
+                    positions.clear();
+                    positions.extend_from_slice(&mesh.verts);
+                } else {
+                    warp_verts_into(positions, mesh, &warps, audio);
+                }
                 t.uv_us += mark.elapsed().as_micros();
 
                 let mark = Instant::now();
-                draw_textured(mesh, &uvs, field.wrap_period(), ramp_texture, m, gl);
+                draw_textured(mesh, positions, uvs, field.wrap_period(), ramp_texture, m, gl);
                 t.submit_us += mark.elapsed().as_micros();
                 t.triangles += mesh.triangle_count();
             };
@@ -270,6 +355,7 @@ pub fn run(shape_dir: &Path) -> Result<()> {
     let mut renderer = Renderer::new(shapes);
     renderer.ensure_layers(params.layers.len(), &params.layers[0]);
     let start = Instant::now();
+    let mut last_frame = Instant::now();
     let mut buf = vec![0u8; 65536];
     let mut reported_meshes = 0;
 
@@ -285,13 +371,17 @@ pub fn run(shape_dir: &Path) -> Result<()> {
 
         let Some(args) = e.render_args() else { continue };
         let time = start.elapsed().as_secs_f64();
+        let delta = last_frame.elapsed();
+        last_frame = Instant::now();
         let (w, h) = (args.window_size[0], args.window_size[1]);
         let critical = w.min(h);
 
         gl.draw(args.viewport(), |c, gl| {
             clear([0.0, 0.0, 0.0, 1.0], gl);
             let base = c.transform.trans(w / 2.0, h / 2.0);
-            renderer.draw(gl, base, critical, &params, time);
+            // No audio input in the demo, so animations that scale with the
+            // envelope simply do not.
+            renderer.draw(gl, base, critical, &params, time, delta, UnipolarFloat::ZERO);
         });
 
         // Meshes are built the first time a shape is drawn at a given size, so

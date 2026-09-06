@@ -7,7 +7,9 @@
 //! at the fragment instead, so the mesh only ever has to carry phase, and a
 //! color change is a small buffer rewrite.
 
-use crate::params::LayerParams;
+use crate::anim::LiveWave;
+use crate::params::{AnimTarget, LayerParams};
+use tunnels_lib::number::UnipolarFloat;
 use image::{Rgba, RgbaImage};
 
 /// Texels across one cycle of the waveform.
@@ -49,20 +51,49 @@ fn sawtooth(phase: f64) -> f64 {
     if phase < 0.5 { 2.0 * phase } else { 2.0 * (phase - 1.0) }
 }
 
-/// One cycle of a layer's hue waveform as a texture, to be sampled with
+/// One cycle of a layer's color waveform as a texture, to be sampled with
 /// repeating wrap so the cycle count falls out of the texture coordinate.
 pub fn build(layer: &LayerParams) -> RgbaImage {
     let mut img = RgbaImage::new(RAMP_TEXELS, 1);
-    build_into(&mut img, layer);
+    build_into(&mut img, layer, &[], UnipolarFloat::ZERO);
     img
 }
 
-/// As `build`, reusing an existing buffer.
-pub fn build_into(img: &mut RgbaImage, layer: &LayerParams) {
+/// As `build`, reusing an existing buffer and folding in the layer's
+/// color-targeted animations.
+///
+/// Every color animation is resolved here, once per texel, rather than per
+/// vertex or per pixel. That is why an animated color costs the same as a still
+/// one: however fast a waveform moves, the frame's work is a thousand
+/// evaluations and one texture write.
+pub fn build_into(
+    img: &mut RgbaImage,
+    layer: &LayerParams,
+    waves: &[(AnimTarget, &LiveWave)],
+    audio: UnipolarFloat,
+) {
     for x in 0..RAMP_TEXELS {
         let phase = f64::from(x) / f64::from(RAMP_TEXELS);
-        let hue = layer.col_center + 0.5 * layer.col_width * sawtooth(phase);
-        let c = hsv_to_rgb(hue, layer.col_sat, 1.0, layer.level);
+
+        // The base model: `Tunnel`'s own colour spread.
+        let mut hue = layer.col_center + 0.5 * layer.col_width * sawtooth(phase);
+        let mut sat = layer.col_sat;
+        let mut level = layer.level;
+
+        // Animations add to it, the way `col_center_adjust` does in the real
+        // per-segment render.
+        for (target, wave) in waves {
+            let v = wave.value(phase, x as usize, audio);
+            match target {
+                AnimTarget::Hue => hue += 0.5 * v,
+                AnimTarget::Saturation => sat = (sat + v).clamp(0.0, 1.0),
+                // Only ever darkens: a light cannot exceed full.
+                AnimTarget::Brightness => level *= (1.0 + v).clamp(0.0, 1.0),
+                _ => {}
+            }
+        }
+
+        let c = hsv_to_rgb(hue, sat, 1.0, level);
         img.put_pixel(
             x,
             0,

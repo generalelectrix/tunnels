@@ -13,6 +13,7 @@ use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::path::Path;
 use std::time::{Duration, Instant};
+use tunnels_lib::number::UnipolarFloat;
 
 /// Frames discarded before measuring, to let the driver settle and the mesh
 /// cache fill.
@@ -217,11 +218,12 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
 
             let (w, h) = (args.window_size[0], args.window_size[1]);
             let critical = w.min(h);
+            let elapsed_hint = last.elapsed();
             let mut t = Timings::default();
             gl.draw(args.viewport(), |c, gl| {
                 clear([0.0, 0.0, 0.0, 1.0], gl);
                 let base = c.transform.trans(w / 2.0, h / 2.0);
-                t = renderer.draw(gl, base, critical, &params, time);
+                t = renderer.draw(gl, base, critical, &params, time, elapsed_hint, UnipolarFloat::ZERO);
             });
 
             let elapsed = last.elapsed();

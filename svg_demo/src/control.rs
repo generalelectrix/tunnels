@@ -1,6 +1,9 @@
 //! The control window: egui knobs, published to the render process over UDP.
 
-use crate::params::{ColorPhase, DemoParams, DrawMode, LayerParams, PORT};
+use crate::anim::WaveformKind;
+use crate::params::{
+    AnimTarget, ColorPhase, DemoParams, DrawMode, LayerParams, PORT, TargetedWave,
+};
 use crate::shapes::load_dir;
 use anyhow::{Result, anyhow};
 use eframe::egui;
@@ -132,6 +135,26 @@ impl eframe::App for ControlApp {
                 slider(ui, "level", &mut layer.level, 0.0..=1.0);
             });
             ui.separator();
+
+            ui.label("animators");
+            for (i, slot) in layer.waves.iter_mut().enumerate() {
+                let title = format!(
+                    "{} {} — {}{}",
+                    if slot.enabled { "*" } else { " " },
+                    i + 1,
+                    slot.target.label(),
+                    if slot.target.is_color() {
+                        String::new()
+                    } else {
+                        format!(" along {}", slot.phase.label())
+                    }
+                );
+                egui::CollapsingHeader::new(title)
+                    .id_salt(i)
+                    .show(ui, |ui| wave_controls(ui, i, slot));
+            }
+
+            ui.separator();
             if ui.button("reset this layer").clicked() {
                 let enabled = layer.enabled;
                 *layer = LayerParams {
@@ -152,6 +175,56 @@ impl eframe::App for ControlApp {
             let _ = child.kill();
         }
     }
+}
+
+/// One animation slot: what it drives, what it runs along, and its waveform.
+fn wave_controls(ui: &mut egui::Ui, index: usize, slot: &mut TargetedWave) {
+    ui.checkbox(&mut slot.enabled, "enabled");
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("drives");
+        for target in AnimTarget::ALL {
+            ui.selectable_value(&mut slot.target, target, target.label());
+        }
+    });
+
+    // A colour target has to run along the ramp's own axis, since the ramp is a
+    // one-dimensional table shared by every colour animation on the layer.
+    if slot.target.is_color() {
+        ui.label("runs along the layer's colour axis");
+    } else {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("along");
+            for phase in ColorPhase::ALL {
+                ui.selectable_value(&mut slot.phase, phase, phase.label());
+            }
+        });
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("wave");
+        for kind in WaveformKind::ALL {
+            ui.selectable_value(&mut slot.wave.waveform, kind, kind.label());
+        }
+    });
+
+    let w = &mut slot.wave;
+    egui::Grid::new(("wave", index)).num_columns(2).show(ui, |ui| {
+        slider(ui, "size", &mut w.size, 0.0..=1.0);
+        slider(ui, "speed", &mut w.speed, -1.0..=1.0);
+        ui.label("periods");
+        ui.add(egui::Slider::new(&mut w.n_periods, 0..=16));
+        ui.end_row();
+        slider(ui, "duty cycle", &mut w.duty_cycle, 0.0..=1.0);
+        // Doubles as the noise cross-correlation between neighbouring samples.
+        slider(ui, "smoothing", &mut w.smoothing, 0.0..=1.0);
+    });
+
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut w.pulse, "pulse");
+        ui.checkbox(&mut w.standing, "standing");
+        ui.checkbox(&mut w.invert, "invert");
+    });
 }
 
 fn grid(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {

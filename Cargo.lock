@@ -5479,6 +5479,8 @@ dependencies = [
  "sdl2",
  "serde",
  "serde_json",
+ "tunnels_lib",
+ "tunnels_model",
  "usvg",
 ]
 

@@ -1,5 +1,6 @@
 //! Parameters the control window publishes and the render window consumes.
 
+use crate::anim::WaveformKind;
 use serde::{Deserialize, Serialize};
 
 /// How many shape layers the demo stacks.
@@ -68,6 +69,125 @@ impl DrawMode {
     }
 }
 
+/// What an animation slot drives.
+///
+/// The split matters to cost, not just to looks. Color targets are baked into
+/// the ramp texture, so they are a thousand-texel rewrite however fast they
+/// move. Geometry targets displace vertices, which is one pass over the mesh
+/// per frame — still no re-refinement, since the mesh is only ever refined
+/// against on-screen size.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AnimTarget {
+    /// Shifts hue. The analogue of `AnimationTarget::Color`.
+    #[default]
+    Hue,
+    /// Darkens. A waveform here is a vignette, a ring of shadow, or a strobe
+    /// that lives in space rather than in time.
+    Brightness,
+    /// Washes toward white.
+    Saturation,
+    /// Scales each point's distance from the centre.
+    ///
+    /// Around the angle this deforms a circle into petals — which is the
+    /// superformula's whole trick, arriving free on top of any shape in the
+    /// library. Along the radius it pinches into rings.
+    Radial,
+    /// Rotates each point about the centre by an amount that varies across the
+    /// shape. Along the radius that is a vortex.
+    Twist,
+    /// Stretches one axis while squeezing the other.
+    Squash,
+}
+
+impl AnimTarget {
+    pub const ALL: [Self; 6] = [
+        Self::Hue,
+        Self::Brightness,
+        Self::Saturation,
+        Self::Radial,
+        Self::Twist,
+        Self::Squash,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hue => "hue",
+            Self::Brightness => "bright",
+            Self::Saturation => "sat",
+            Self::Radial => "radial",
+            Self::Twist => "twist",
+            Self::Squash => "squash",
+        }
+    }
+
+    /// Whether this target is resolved in the ramp texture rather than on the
+    /// mesh.
+    pub fn is_color(self) -> bool {
+        matches!(self, Self::Hue | Self::Brightness | Self::Saturation)
+    }
+}
+
+/// The knobs of a `tunnels_model` `Animation`, in a form the demo can edit and
+/// send over the wire.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WaveParams {
+    pub waveform: WaveformKind,
+    pub n_periods: u16,
+    pub size: f64,
+    pub duty_cycle: f64,
+    pub smoothing: f64,
+    pub speed: f64,
+    pub pulse: bool,
+    pub standing: bool,
+    pub invert: bool,
+}
+
+impl Default for WaveParams {
+    fn default() -> Self {
+        Self {
+            waveform: WaveformKind::Sine,
+            n_periods: 1,
+            size: 0.0,
+            duty_cycle: 1.0,
+            smoothing: 0.25,
+            speed: 0.0,
+            pulse: false,
+            standing: false,
+            invert: false,
+        }
+    }
+}
+
+/// One animation slot: a waveform, what it drives, and what it varies over.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TargetedWave {
+    pub enabled: bool,
+    pub target: AnimTarget,
+    /// Which coordinate the waveform runs along.
+    ///
+    /// Only read for geometry targets. A color target has to run along the
+    /// ramp's own axis — the layer's `color_phase` — because the ramp is a
+    /// one-dimensional table and every color target shares it.
+    pub phase: ColorPhase,
+    pub wave: WaveParams,
+}
+
+impl Default for TargetedWave {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            target: AnimTarget::Hue,
+            phase: ColorPhase::Angle,
+            wave: WaveParams::default(),
+        }
+    }
+}
+
+/// How many animation slots a layer carries. `Tunnel` has four; three keeps the
+/// demo's control surface legible while still allowing a color and two geometry
+/// animations at once.
+pub const N_WAVES: usize = 3;
+
 /// One shape, its placement, and how it is colored.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct LayerParams {
@@ -100,6 +220,8 @@ pub struct LayerParams {
     pub col_sat: f64,
     /// Alpha, and the only brightness control — matches `Channel.level`.
     pub level: f64,
+    /// Animation slots, driving color or geometry.
+    pub waves: Vec<TargetedWave>,
     /// Paint opaque black instead of color, punching a hole in everything below.
     /// This is the `Channel.mask` behavior from the real mixer.
     pub mask: bool,
@@ -126,6 +248,7 @@ impl Default for LayerParams {
             col_spread: 0.0,
             col_sat: 0.8,
             level: 1.0,
+            waves: vec![TargetedWave::default(); N_WAVES],
             mask: false,
         }
     }
@@ -156,8 +279,8 @@ pub const COLOR_SPREAD_SCALE: f64 = 16.0;
 /// refined against it survive those knobs moving.
 #[derive(Copy, Clone, PartialEq)]
 pub struct PhaseField {
-    phase: ColorPhase,
-    cycles: f32,
+    pub phase: ColorPhase,
+    pub cycles: f32,
 }
 
 impl PhaseField {
@@ -178,6 +301,21 @@ impl PhaseField {
         match self.phase {
             ColorPhase::Angle if self.cycles > 0.0 => Some(self.cycles),
             _ => None,
+        }
+    }
+
+    /// The phase at a point in shape space, before the cycle count is applied.
+    ///
+    /// This is what a geometry animation runs along: the animation supplies its
+    /// own periodicity through `n_periods`, so multiplying by the color spread
+    /// as well would conflate two unrelated knobs.
+    pub fn unit_at(self, p: [f32; 2]) -> f32 {
+        let (x, y) = (p[0], p[1]);
+        match self.phase {
+            ColorPhase::Angle => y.atan2(x) / std::f32::consts::TAU + 0.5,
+            ColorPhase::Radius => (x * x + y * y).sqrt() / std::f32::consts::SQRT_2,
+            ColorPhase::LinearX => (x + 1.0) / 2.0,
+            ColorPhase::LinearY => (y + 1.0) / 2.0,
         }
     }
 

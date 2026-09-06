@@ -18,6 +18,11 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json = "1"
 
+# The real show model, so the demo drives the actual animation system rather
+# than a parallel copy of it.
+tunnels_model = { path = "../tunnels_model" }
+tunnels_lib = { path = "../tunnels_lib" }
+
 lyon_tessellation = "1"
 lyon_path = "1"
 usvg = "0.48"

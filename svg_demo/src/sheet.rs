@@ -1,6 +1,12 @@
 //! Headless PNG output: contact sheets of the shape library and stacking demos.
 
-use crate::draw::{draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs};
+use crate::anim::{LiveWave, WaveformKind};
+use crate::draw::{
+    GeometryWave, draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs,
+    warp_verts_into,
+};
+use crate::params::{AnimTarget, TargetedWave, WaveParams};
+use tunnels_lib::number::UnipolarFloat;
 use crate::mesh::{self, Level, refine};
 use crate::params::PhaseField;
 use crate::ramp;
@@ -46,6 +52,128 @@ fn render_cell_at(
     downsample(&buf.into_image(), ss)
 }
 
+/// A grid showing what each animation target does to a shape.
+///
+/// Rows are targets, columns are waveforms. Everything is still — speed is
+/// zero — because a contact sheet cannot show motion, and the shape a waveform
+/// imposes is the thing worth judging.
+pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Result<()> {
+    let rows: [(AnimTarget, ColorPhase, &str); 5] = [
+        (AnimTarget::Radial, ColorPhase::Angle, "radial along angle"),
+        (AnimTarget::Radial, ColorPhase::Radius, "radial along radius"),
+        (AnimTarget::Twist, ColorPhase::Radius, "twist along radius"),
+        (AnimTarget::Squash, ColorPhase::Angle, "squash along angle"),
+        (AnimTarget::Hue, ColorPhase::Angle, "hue"),
+    ];
+    let cols: [(WaveformKind, u16, f64); 5] = [
+        (WaveformKind::Sine, 3, 0.35),
+        (WaveformKind::Sine, 8, 0.2),
+        (WaveformKind::Square, 5, 0.3),
+        (WaveformKind::Sawtooth, 4, 0.3),
+        (WaveformKind::Noise, 6, 0.4),
+    ];
+
+    let gap = 6;
+    let pitch = cell + gap;
+    let mut sheet = RgbaImage::from_pixel(
+        cols.len() as u32 * pitch + gap,
+        rows.len() as u32 * pitch + gap,
+        image::Rgba([24, 24, 28, 255]),
+    );
+
+    for (r, (target, phase, name)) in rows.iter().enumerate() {
+        for (c, (waveform, n_periods, size)) in cols.iter().enumerate() {
+            let mut layer = LayerParams {
+                enabled: true,
+                shape: idx,
+                scale_x: 0.72,
+                scale_y: 0.72,
+                color_phase: ColorPhase::Angle,
+                col_center: 0.5,
+                col_width: 0.5,
+                col_spread: 0.15,
+                col_sat: 0.85,
+                ..Default::default()
+            };
+            layer.waves[0] = TargetedWave {
+                enabled: true,
+                target: *target,
+                phase: *phase,
+                wave: WaveParams {
+                    waveform: *waveform,
+                    n_periods: *n_periods,
+                    size: *size,
+                    ..Default::default()
+                },
+            };
+            let img = render_animated(&shapes[idx], &layer, cell);
+            paste(&mut sheet, &img, gap + c as u32 * pitch, gap + r as u32 * pitch);
+        }
+        println!("row {r}: {name}");
+    }
+    sheet.save(out)?;
+    Ok(())
+}
+
+/// Render one shape with its animation slots applied.
+fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaImage {
+    let ss = SUPERSAMPLE;
+    let hi = size * ss;
+    let mut buf = RenderBuffer::new(hi, hi);
+    buf.clear_color([0.0, 0.0, 0.0, 1.0]);
+    let base: Matrix2d = identity().trans(f64::from(hi) / 2.0, f64::from(hi) / 2.0);
+    let m = layer_transform(base, layer, 0.0, f64::from(hi));
+    let audio = UnipolarFloat::ZERO;
+
+    let live: Vec<LiveWave> = layer.waves.iter().map(|w| LiveWave::new(&w.wave)).collect();
+    let active = || {
+        layer
+            .waves
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.enabled && w.wave.size > 0.0)
+    };
+
+    let color_waves: Vec<_> = active()
+        .filter(|(_, w)| w.target.is_color())
+        .map(|(i, w)| (w.target, &live[i]))
+        .collect();
+    let mut ramp_img = RgbaImage::new(ramp::RAMP_TEXELS, 1);
+    ramp::build_into(&mut ramp_img, layer, &color_waves, audio);
+    let texture = RenderBuffer::from_image(ramp_img);
+
+    let warps: Vec<GeometryWave> = active()
+        .filter(|(_, w)| !w.target.is_color())
+        .map(|(i, w)| GeometryWave {
+            target: w.target,
+            phase: w.phase,
+            wave: &live[i],
+        })
+        .collect();
+
+    let scale = layer.scale_x.abs().max(layer.scale_y.abs());
+    let target = Level::for_scale(scale, f64::from(hi), mesh::DEFAULT_TARGET_PX).target_edge();
+    let refined = refine(&shape.fill, target);
+    let field = PhaseField::of(layer);
+
+    let mut positions = Vec::new();
+    if warps.is_empty() {
+        positions.extend_from_slice(&refined.verts);
+    } else {
+        warp_verts_into(&mut positions, &refined, &warps, audio);
+    }
+    draw_textured(
+        &refined,
+        &positions,
+        &phase_uvs(&refined, field),
+        field.wrap_period(),
+        &texture,
+        m,
+        &mut buf,
+    );
+    downsample(&buf.into_image(), ss)
+}
+
 /// Draw a layer, refining it first if its color varies across the shape.
 #[expect(clippy::too_many_arguments)]
 fn draw_one(
@@ -67,11 +195,11 @@ fn draw_one(
     let texture = RenderBuffer::from_image(ramp::build(layer));
     if layer.draw_mode.draws_fill() {
         let mesh = refine(&shape.fill, target);
-        draw_textured(&mesh, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
+        draw_textured(&mesh, &mesh.verts, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
     }
     if let Some(outline) = outline {
         let mesh = refine(outline, target);
-        draw_textured(&mesh, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
+        draw_textured(&mesh, &mesh.verts, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
     }
 }
 
