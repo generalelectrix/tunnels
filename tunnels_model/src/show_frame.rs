@@ -84,6 +84,11 @@ const MAX_DECODED_LEN: usize = 8 * 1024 * 1024;
 /// The buffers are held rather than produced, so encoding a frame no larger
 /// than the largest one encoded before it writes into memory that is already
 /// there, rather than asking the allocator for more.
+///
+/// One allocation a frame is the floor regardless of the scratch: the LZ4
+/// compressor builds a 4096-entry hash table on every call and takes none to
+/// reuse, so an encode that allocates nothing at all would need a compressor
+/// vendored to accept one.
 #[derive(Debug, Default)]
 pub struct FrameEncoder {
     /// The serialized frame, ahead of compression.
