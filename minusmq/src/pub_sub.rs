@@ -15,7 +15,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::wire;
+use crate::{compress, wire};
 
 /// How long a connection goes without traffic before keepalive probing starts.
 const KEEPALIVE_IDLE: Duration = Duration::from_secs(5);
@@ -202,7 +202,8 @@ impl Drop for Client {
     }
 }
 
-/// The publisher's subscribers, and the buffer their last message went out in.
+/// The publisher's subscribers, and the buffers their last message went out
+/// in.
 #[derive(Default)]
 struct Clients {
     /// Every subscriber currently connected.
@@ -210,6 +211,9 @@ struct Clients {
     /// The message published last, kept so that the next one can be written
     /// into it once nothing else holds it.
     spare: Option<Arc<Vec<u8>>>,
+    /// The scratch a message is compressed in, ahead of framing. Untouched on
+    /// a publisher whose stream carries its payloads as they are.
+    compressed: Vec<u8>,
 }
 
 /// A message that could not be framed, and the spare buffer that framing it
@@ -265,6 +269,8 @@ pub struct Publisher {
     /// The port the listener is bound to. Connecting to it is what releases
     /// the accept thread from its wait.
     port: u16,
+    /// Whether a message is compressed before it is framed.
+    compress: bool,
     accept: Option<JoinHandle<()>>,
 }
 
@@ -298,8 +304,21 @@ impl Publisher {
             clients,
             shutdown,
             port: local_addr.port(),
+            compress: false,
             accept: Some(accept),
         })
+    }
+
+    /// Carry this publisher's messages compressed.
+    ///
+    /// Compression is a property of a stream rather than of a message: nothing
+    /// on the wire says a payload is compressed, so the subscribers of a
+    /// compressed stream are configured to expand what they receive. A stream
+    /// that does not opt in carries the bytes it is given, unchanged.
+    #[must_use]
+    pub fn compressed(mut self) -> Self {
+        self.compress = true;
+        self
     }
 
     /// Send data to every connected subscriber.
@@ -313,15 +332,31 @@ impl Publisher {
         let mut skip_reports = Vec::new();
         {
             let mut clients = self.clients.lock().unwrap();
-            let Clients { connected, spare } = &mut *clients;
-            // The message is framed once, however many subscribers share it,
-            // and not at all if none do. Framing it here rather than on each
-            // sender thread is what lets a thread write it in one call, so
-            // that its length prefix shares a packet with its payload.
+            let Clients {
+                connected,
+                spare,
+                compressed,
+            } = &mut *clients;
+            // The message is compressed and framed once, however many
+            // subscribers share it, and not at all if none do. Framing it here
+            // rather than on each sender thread is what lets a thread write it
+            // in one call, so that its length prefix shares a packet with its
+            // payload.
             if connected.is_empty() {
                 return;
             }
-            let msg = match frame_into(spare.take(), data) {
+            let payload = if self.compress {
+                match compress::compress_into(compressed, data) {
+                    Ok(()) => compressed.as_slice(),
+                    Err(error) => {
+                        error!("Dropping a message: {error:#}");
+                        return;
+                    }
+                }
+            } else {
+                data
+            };
+            let msg = match frame_into(spare.take(), payload) {
                 Ok(msg) => msg,
                 Err(Unframed {
                     spare: unused,
@@ -490,6 +525,14 @@ fn reap_disconnected(clients: &Mutex<Clients>) {
 /// every time.
 const RETAINED_BUF_CAPACITY: usize = 64 * 1024;
 
+/// Give back the capacity an outsized message took, now that nothing holds it.
+fn release(buf: &mut Vec<u8>) {
+    if buf.capacity() > RETAINED_BUF_CAPACITY {
+        buf.clear();
+        buf.shrink_to(RETAINED_BUF_CAPACITY);
+    }
+}
+
 /// How long a subscriber waits before its first attempt to remake a
 /// connection, doubling up to [`MAX_CONNECT_BACKOFF`] while the attempts fail.
 const CONNECT_BACKOFF: Duration = Duration::from_millis(100);
@@ -600,8 +643,14 @@ pub struct Subscriber {
     stream: Option<TcpStream>,
     /// The connection, shared with the handles that can stop it.
     subscription: Arc<SharedSubscription>,
+    /// The largest payload a message may expand into, on a subscription that
+    /// carries its payloads compressed. Empty on one that does not.
+    max_decompressed_len: Option<usize>,
     /// The message received last, refilled by the next one to arrive.
     buf: Vec<u8>,
+    /// The message received last, expanded. Untouched on a subscription that
+    /// carries its payloads as they are.
+    plain: Vec<u8>,
 }
 
 impl Subscriber {
@@ -615,8 +664,27 @@ impl Subscriber {
             max_msg_len,
             stream: None,
             subscription: Arc::new(SharedSubscription::default()),
+            max_decompressed_len: None,
             buf: Vec::new(),
+            plain: Vec::new(),
         }
+    }
+
+    /// Expand this subscription's messages, each into at most
+    /// `max_decompressed_len` bytes.
+    ///
+    /// Compression is a property of a stream rather than of a message: nothing
+    /// on the wire says a payload is compressed, so a subscriber is configured
+    /// to expand what it receives from a publisher that compresses. A stream
+    /// that does not opt in yields the bytes it carries, unchanged.
+    ///
+    /// The bound is a second one, beyond the length a message may arrive at:
+    /// a small compressed payload can declare an enormous expansion, and a
+    /// declared length is not a reason to ask the allocator for one.
+    #[must_use]
+    pub fn compressed(mut self, max_decompressed_len: usize) -> Self {
+        self.max_decompressed_len = Some(max_decompressed_len);
+        self
     }
 
     /// A handle that stops this subscription from another thread.
@@ -635,10 +703,8 @@ impl Subscriber {
     /// costs no allocation to receive.
     pub fn recv(&mut self) -> Option<&[u8]> {
         // Give back what an outsized message took, now that nothing holds it.
-        if self.buf.capacity() > RETAINED_BUF_CAPACITY {
-            self.buf.clear();
-            self.buf.shrink_to(RETAINED_BUF_CAPACITY);
-        }
+        release(&mut self.buf);
+        release(&mut self.plain);
 
         loop {
             // Ensure we have a connection.
@@ -652,7 +718,19 @@ impl Subscriber {
                 &mut self.buf,
                 self.max_msg_len,
             ) {
-                Ok(()) => break,
+                Ok(()) => match self.expand() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        // Bytes that will not expand did not come from a
+                        // publisher of this stream, whatever else is on the
+                        // other end of the connection.
+                        warn!(
+                            "Subscriber received a message it could not expand ({}:{}): {e:#}",
+                            self.host, self.port
+                        );
+                        self.stream = None;
+                    }
+                },
                 Err(e) => {
                     // A stopped subscription is what failed the read, and is
                     // not a connection to be remade.
@@ -665,7 +743,19 @@ impl Subscriber {
                 }
             }
         }
-        Some(&self.buf)
+        Some(match self.max_decompressed_len {
+            Some(_) => &self.plain,
+            None => &self.buf,
+        })
+    }
+
+    /// Expand the message just received, on a subscription that carries its
+    /// payloads compressed.
+    fn expand(&mut self) -> Result<()> {
+        match self.max_decompressed_len {
+            Some(max_len) => compress::decompress_into(&mut self.plain, &self.buf, max_len),
+            None => Ok(()),
+        }
     }
 
     /// Connect to the publisher, retrying with backoff until successful, and
@@ -1068,6 +1158,47 @@ mod tests {
             1,
             "the sender thread outlived the client that owned it"
         );
+    }
+
+    /// A compressed stream carries every message whole, whatever size it is
+    /// and whatever the buffers held before it.
+    ///
+    /// A message expands into the buffer the one before it expanded into, so a
+    /// message shorter than its predecessor leaves some of that one's bytes
+    /// behind. A subscriber has to be held to what it expanded rather than to
+    /// what its buffer holds.
+    #[test]
+    fn a_compressed_stream_carries_every_message_whole() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let publisher = Publisher::new(listener).unwrap().compressed();
+        // Give the accept thread time to start.
+        thread::sleep(Duration::from_millis(50));
+
+        let (requests, to_publish) = channel::<Vec<u8>>();
+        thread::spawn(move || {
+            while let Ok(msg) = to_publish.recv() {
+                publisher.send(&msg);
+            }
+        });
+
+        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN)
+            .compressed(TEST_MAX_MESSAGE_LEN);
+        sub.connect();
+        // Let the publisher's accept thread take up the subscription.
+        thread::sleep(Duration::from_millis(200));
+
+        // Long, then short, then long again, so that each message expands into
+        // a buffer both larger and smaller than the one it needs.
+        for len in [64_000, 40, 64_000, 0] {
+            let msg: Vec<u8> = (0..len).map(|i| (i % 7) as u8).collect();
+            requests.send(msg.clone()).unwrap();
+            assert_eq!(
+                sub.recv().unwrap(),
+                msg,
+                "a {len}-byte message did not arrive whole"
+            );
+        }
     }
 
     /// How long a released subscriber gets to return before it is taken to be

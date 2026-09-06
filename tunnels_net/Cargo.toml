@@ -10,3 +10,15 @@ log.workspace = true
 
 tunnels_model = { path = "../tunnels_model" }
 minusmq = { path = "../minusmq" }
+
+[dev-dependencies]
+# The show frames a test holds the stream to, and an independent statement of
+# the bytes it carries them as.
+tunnels_model = { path = "../tunnels_model", features = ["fixtures"] }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+lz4_flex = { version = "0.11", default-features = false, features = [
+    "std",
+    "safe-encode",
+    "safe-decode",
+    "checked-decode",
+] }

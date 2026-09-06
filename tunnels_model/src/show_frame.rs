@@ -3,10 +3,6 @@
 use std::error::Error;
 use std::fmt;
 
-use lz4_flex::block::{
-    CompressError, DecompressError, compress_into, decompress_into, get_maximum_output_size,
-    uncompressed_size,
-};
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::UnipolarFloat;
 
@@ -47,27 +43,14 @@ pub struct ShowFrameRef<'a> {
     pub audio_envelope: UnipolarFloat,
 }
 
-/// The largest payload a frame is allowed to expand into.
+/// The scratch a show frame is serialized in.
 ///
-/// A frame is a few kilobytes. The ceiling is here so that a corrupted length
-/// prefix asks for a rejected decode rather than a multi-gigabyte allocation.
-const MAX_DECODED_LEN: usize = 8 * 1024 * 1024;
-
-/// The scratch a show frame is serialized and compressed in.
-///
-/// The buffers are held rather than produced, so encoding a frame no larger
-/// than the largest one encoded before it writes into memory that is already
-/// there, rather than asking the allocator for more.
-///
-/// One allocation a frame is the floor regardless of the scratch: the LZ4
-/// compressor builds a 4096-entry hash table on every call and takes none to
-/// reuse, so an encode that allocates nothing at all would need a compressor
-/// vendored to accept one.
+/// The buffer is held rather than produced, so encoding a frame no larger than
+/// the largest one encoded before it writes into memory that is already there,
+/// rather than asking the allocator for more.
 #[derive(Debug, Default)]
 pub struct FrameEncoder {
-    /// The serialized frame, ahead of compression.
-    plain: Vec<u8>,
-    /// The header, and the compressed frame behind it.
+    /// The serialized frame.
     wire: Vec<u8>,
 }
 
@@ -75,66 +58,12 @@ impl FrameEncoder {
     /// Serialize a frame into the bytes `ShowFrame::decode` reads, which stand
     /// until the next frame is encoded.
     ///
-    /// The bytes are an LZ4 block, opening with the uncompressed length of
-    /// the frame little-endian as that format does, and carrying nothing
-    /// ahead of it.
+    /// The bytes are tagless: the schema is the Rust type, and it does not
+    /// travel with them.
     pub fn encode(&mut self, frame: &ShowFrameRef) -> Result<&[u8], FrameCodecError> {
-        self.plain.clear();
-        postcard::to_io(frame, &mut self.plain).map_err(FrameCodecError::Serialize)?;
-        let plain_len = u32::try_from(self.plain.len())
-            .map_err(|_| FrameCodecError::TooLarge(self.plain.len()))?;
-
         self.wire.clear();
-        self.wire.extend_from_slice(&plain_len.to_le_bytes());
-
-        // Compression writes into the buffer directly, so it needs room for
-        // the worst case the block format can produce before it starts.
-        let block = self.wire.len();
-        self.wire
-            .resize(block + get_maximum_output_size(self.plain.len()), 0);
-        let compressed = compress_into(&self.plain, &mut self.wire[block..])
-            .map_err(FrameCodecError::Compress)?;
-        self.wire.truncate(block + compressed);
+        postcard::to_io(frame, &mut self.wire).map_err(FrameCodecError::Serialize)?;
         Ok(&self.wire)
-    }
-}
-
-/// The scratch a show frame is decompressed in.
-///
-/// The buffer is held rather than produced, so decoding a frame no larger than
-/// the largest one decoded before it expands into memory that is already
-/// there, rather than asking the allocator for more.
-#[derive(Debug, Default)]
-pub struct FrameDecoder {
-    /// The decompressed frame, ahead of deserialization.
-    plain: Vec<u8>,
-}
-
-impl FrameDecoder {
-    /// Recover a frame from the wire bytes `FrameEncoder::encode` produces.
-    ///
-    /// Every way the bytes can be wrong is an error, never a panic: a mangled
-    /// or truncated payload costs the frame it arrived in and nothing more.
-    /// That includes bytes asserting more nesting than a look is allowed,
-    /// which are refused before the nesting is followed rather than after, and
-    /// bytes claiming an expansion past the limit, which are refused before
-    /// anything is sized to them.
-    pub fn decode(&mut self, bytes: &[u8]) -> Result<ShowFrame, FrameCodecError> {
-        let (decoded_len, compressed) =
-            uncompressed_size(bytes).map_err(FrameCodecError::Decompress)?;
-        if decoded_len > MAX_DECODED_LEN {
-            return Err(FrameCodecError::Oversized {
-                declared: decoded_len,
-                limit: MAX_DECODED_LEN,
-            });
-        }
-
-        // Only past the limit does the declared length, which came off the
-        // wire, get to decide how much memory to hold.
-        self.plain.resize(decoded_len, 0);
-        let plain_len =
-            decompress_into(compressed, &mut self.plain).map_err(FrameCodecError::Decompress)?;
-        postcard::from_bytes(&self.plain[..plain_len]).map_err(FrameCodecError::Deserialize)
     }
 }
 
@@ -150,8 +79,13 @@ impl ShowFrame {
     }
 
     /// Recover a frame from the wire bytes `FrameEncoder::encode` produces.
+    ///
+    /// Every way the bytes can be wrong is an error, never a panic: a mangled
+    /// or truncated payload costs the frame it arrived in and nothing more.
+    /// That includes bytes asserting more nesting than a look is allowed,
+    /// which are refused before the nesting is followed rather than after.
     pub fn decode(bytes: &[u8]) -> Result<Self, FrameCodecError> {
-        FrameDecoder::default().decode(bytes)
+        postcard::from_bytes(bytes).map_err(FrameCodecError::Deserialize)
     }
 }
 
@@ -160,15 +94,7 @@ impl ShowFrame {
 pub enum FrameCodecError {
     /// The frame could not be serialized.
     Serialize(postcard::Error),
-    /// The frame is too large to name its own length on the wire.
-    TooLarge(usize),
-    /// The serialized frame could not be compressed.
-    Compress(CompressError),
-    /// The compressed bytes could not be expanded.
-    Decompress(DecompressError),
-    /// The bytes claim to expand to more than a frame is allowed to occupy.
-    Oversized { declared: usize, limit: usize },
-    /// The expanded bytes describe something other than a frame.
+    /// The bytes describe something other than a frame.
     Deserialize(postcard::Error),
 }
 
@@ -176,16 +102,6 @@ impl fmt::Display for FrameCodecError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Serialize(e) => write!(f, "could not serialize a show frame: {e}"),
-            Self::TooLarge(len) => write!(
-                f,
-                "a show frame serializing to {len} bytes is longer than a wire length can describe"
-            ),
-            Self::Compress(e) => write!(f, "could not compress a show frame: {e}"),
-            Self::Decompress(e) => write!(f, "could not decompress a show frame: {e}"),
-            Self::Oversized { declared, limit } => write!(
-                f,
-                "a show frame claiming to decompress to {declared} bytes exceeds the {limit} byte limit"
-            ),
             Self::Deserialize(e) => write!(f, "could not deserialize a show frame: {e}"),
         }
     }
@@ -195,9 +111,6 @@ impl Error for FrameCodecError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Serialize(e) | Self::Deserialize(e) => Some(e),
-            Self::Decompress(e) => Some(e),
-            Self::Compress(e) => Some(e),
-            Self::TooLarge(_) | Self::Oversized { .. } => None,
         }
     }
 }
@@ -654,69 +567,35 @@ mod tests {
         let mut encoder = FrameEncoder::default();
         let wire = encoded(&mut encoder, &frame());
 
-        // Too short to hold even the length prefix.
+        // Too short to describe a frame at all.
         assert!(matches!(
             ShowFrame::decode(&wire[..2]),
-            Err(FrameCodecError::Decompress(_))
+            Err(FrameCodecError::Deserialize(_))
         ));
 
-        // A truncated body carries less than the frame it was written from,
-        // and where the cut lands decides which end notices: the block may
-        // fail to expand at all, or expand short and leave the frame
-        // unfinished.
+        // A truncated frame carries less than the one it was written from, and
+        // leaves the model it describes unfinished.
         assert!(
             matches!(
                 ShowFrame::decode(&wire[..wire.len() / 2]),
-                Err(FrameCodecError::Decompress(_) | FrameCodecError::Deserialize(_))
+                Err(FrameCodecError::Deserialize(_))
             ),
             "half of a frame decoded as a whole one"
         );
 
-        // A corrupted length prefix is refused rather than allocated.
-        let mut oversized = wire.clone();
-        oversized[..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        // Bytes that are well-formed enough to read, and describe something
+        // else.
         assert!(matches!(
-            ShowFrame::decode(&oversized),
-            Err(FrameCodecError::Oversized { .. })
-        ));
-
-        // Bytes that decompress cleanly but describe something else.
-        let junk = lz4_flex::compress_prepend_size(&[0xff; 64]);
-        assert!(matches!(
-            ShowFrame::decode(&junk),
+            ShowFrame::decode(&[0xff; 64]),
             Err(FrameCodecError::Deserialize(_))
         ));
     }
 
-    /// A reused decoder recovers the same frame a fresh one does.
-    ///
-    /// A frame expands into the buffer the frame before it expanded into, so a
-    /// frame shorter than its predecessor leaves some of those bytes behind.
-    /// The decoder has to be held to what it decompressed rather than to what
-    /// its buffer holds.
-    #[test]
-    fn a_reused_decoder_recovers_the_same_frame() {
-        let frames = fixture::all();
-        let mut encoder = FrameEncoder::default();
-        let wire: Vec<Vec<u8>> = frames
-            .iter()
-            .map(|named| encoded(&mut encoder, &named.frame))
-            .collect();
-        let mut decoder = FrameDecoder::default();
-        let in_order = frames.iter().zip(&wire);
-        // Backwards as well as forwards, so that a frame is decompressed into
-        // a buffer both smaller and larger than the one it needs.
-        for (NamedFrame { name, frame }, wire) in in_order.clone().chain(in_order.rev()) {
-            let decoded = decoder.decode(wire).unwrap();
-            assert_prints_identically(name, frame, &decoded);
-        }
-    }
-
     /// The bytes an encoded frame is defined to be, stated without reference
-    /// to the code that produces them: the uncompressed length little-endian,
-    /// then an LZ4 block.
+    /// to the code that produces them: the frame in postcard, and nothing
+    /// else.
     fn wire_format(frame: &ShowFrameRef) -> Vec<u8> {
-        lz4_flex::compress_prepend_size(&postcard::to_allocvec(frame).unwrap())
+        postcard::to_allocvec(frame).unwrap()
     }
 
     /// A reused encoder writes the bytes the wire format defines, frame after
@@ -731,8 +610,8 @@ mod tests {
     fn an_encoded_frame_is_byte_for_byte_the_wire_format() {
         let frames = fixture::all();
         let mut encoder = FrameEncoder::default();
-        // Twice over, so that an encoder writing into buffers it has already
-        // filled is held to the same bytes as one writing into empty ones.
+        // Twice over, so that an encoder writing into a buffer it has already
+        // filled is held to the same bytes as one writing into an empty one.
         for pass in 1..=2 {
             for NamedFrame { name, frame } in &frames {
                 let expected = wire_format(&borrow(frame));

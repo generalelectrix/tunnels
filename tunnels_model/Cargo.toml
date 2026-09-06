@@ -19,12 +19,6 @@ arrayvec = { version = "0.7", features = ["serde"] }
 
 tunnels_lib = { path = "../tunnels_lib" }
 
-# The frame payload is encoded tagless and compressed: the schema is the Rust
-# type, so nothing self-describing needs to travel with it.
+# The frame payload is encoded tagless: the schema is the Rust type, so nothing
+# self-describing needs to travel with it.
 postcard = { version = "1", default-features = false, features = ["use-std"] }
-lz4_flex = { version = "0.11", default-features = false, features = [
-    "std",
-    "safe-encode",
-    "safe-decode",
-    "checked-decode",
-] }

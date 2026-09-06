@@ -3176,6 +3176,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
+ "lz4_flex",
  "socket2 0.5.10",
 ]
 
@@ -5662,7 +5663,6 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "log",
- "lz4_flex",
  "noise",
  "postcard",
  "serde",
@@ -5676,7 +5676,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
+ "lz4_flex",
  "minusmq",
+ "postcard",
  "tunnels_model",
 ]
 
