@@ -11,7 +11,7 @@ use log::{error, warn};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -103,23 +103,85 @@ impl Mailbox {
     }
 
     /// Declare that no further messages will be posted, so that the sender
-    /// thread finishes what it has and stops.
+    /// thread finishes what it has and stops. Declaring it again changes
+    /// nothing.
+    ///
+    /// A poisoned slot is closed as it stands rather than refused, so that
+    /// closing cannot panic: it runs during teardown, where unwinding risks
+    /// aborting the process.
     fn close(&self) {
-        self.slot.lock().unwrap().closed = true;
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .closed = true;
         self.posted.notify_all();
+    }
+}
+
+/// Sole ownership of a mailbox, shared with the sender thread that empties it.
+///
+/// A mailbox posted to after its subscriber is gone is a message written
+/// nowhere, so the right to post is held by exactly one place and cannot be
+/// copied out of it.
+struct MailboxHandle(Arc<Mailbox>);
+
+impl MailboxHandle {
+    /// Create a handle on a new mailbox, alongside the shared reference to it
+    /// that the sender thread takes its work from.
+    fn new() -> (Self, Arc<Mailbox>) {
+        let mailbox = Arc::new(Mailbox::default());
+        (MailboxHandle(mailbox.clone()), mailbox)
+    }
+}
+
+impl std::ops::Deref for MailboxHandle {
+    type Target = Mailbox;
+
+    fn deref(&self) -> &Mailbox {
+        &self.0
     }
 }
 
 /// A connected subscriber: the thread that writes to it, and the mailbox that
 /// thread takes its work from.
+///
+/// A client owns its sender thread. Dropping one stops that thread and waits
+/// for it, so a client that is gone has no thread left behind it.
 struct Client {
     channel: u8,
-    mailbox: Arc<Mailbox>,
+    mailbox: MailboxHandle,
     /// A second handle on the subscriber's socket. Shutting it down is what
     /// releases a sender thread parked in a write to a subscriber that has
     /// stopped reading.
     socket: TcpStream,
-    sender: JoinHandle<()>,
+    /// The thread that writes to the subscriber. Empty once it has been taken
+    /// out to be joined.
+    sender: Option<JoinHandle<()>>,
+}
+
+impl Client {
+    /// Whether the sender thread has stopped, which it does only when the
+    /// connection has failed or the mailbox has been closed and emptied.
+    fn is_finished(&self) -> bool {
+        self.sender.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+}
+
+impl Drop for Client {
+    /// Stop the sender thread and wait for it.
+    ///
+    /// A sender thread parks in two places, and each needs its own release:
+    /// closing the mailbox wakes one waiting for a message, and shutting the
+    /// socket down fails the write of one blocked on a subscriber that has
+    /// stopped reading. Both are done before the join, so the wait is only as
+    /// long as it takes a released thread to return.
+    fn drop(&mut self) {
+        self.mailbox.close();
+        let _ = self.socket.shutdown(Shutdown::Both);
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.join();
+        }
+    }
 }
 
 /// A TCP-based publisher that pushes messages to connected subscribers.
@@ -198,29 +260,27 @@ impl Drop for Publisher {
     /// Stop and join every thread the publisher started.
     ///
     /// The accept thread goes first, so that no subscriber can be added after
-    /// the ones present have been dealt with. Sender threads are then told
-    /// that no more messages are coming and given a moment to write what they
-    /// already have; whatever remains after that is parked in a write to a
-    /// subscriber that is not reading, and only closing the socket will
-    /// release it.
+    /// the ones present have been dealt with. Every sender thread is then told
+    /// that no more messages are coming, and all of them share a single moment
+    /// to write what they already have, rather than each being waited for in
+    /// turn. Dropping the clients afterwards shuts down whatever is left,
+    /// which is a thread parked in a write to a subscriber that is not
+    /// reading.
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         if let Some(accept) = self.accept.take() {
             let _ = accept.join();
         }
 
-        let mut clients = self.clients.lock().unwrap();
+        let mut clients = self.clients.lock().unwrap_or_else(PoisonError::into_inner);
         for client in clients.iter() {
             client.mailbox.close();
         }
         let deadline = Instant::now() + FLUSH_TIMEOUT;
-        while Instant::now() < deadline && clients.iter().any(|c| !c.sender.is_finished()) {
+        while Instant::now() < deadline && clients.iter().any(|c| !c.is_finished()) {
             thread::sleep(Duration::from_millis(1));
         }
-        for client in clients.drain(..) {
-            let _ = client.socket.shutdown(Shutdown::Both);
-            let _ = client.sender.join();
-        }
+        clients.clear();
     }
 }
 
@@ -272,13 +332,10 @@ fn subscribe(mut stream: TcpStream) -> Result<Client> {
     let socket = stream
         .try_clone()
         .context("failed to duplicate the subscriber socket")?;
-    let mailbox = Arc::new(Mailbox::default());
+    let (mailbox, shared) = MailboxHandle::new();
     let sender = thread::Builder::new()
         .name(format!("pub_sub-send-ch{channel}"))
-        .spawn({
-            let mailbox = mailbox.clone();
-            move || send_loop(stream, channel, &mailbox)
-        })
+        .spawn(move || send_loop(stream, channel, &shared))
         .context("failed to spawn sender thread")?;
 
     log::debug!("Subscriber connected (channel {channel})");
@@ -286,7 +343,7 @@ fn subscribe(mut stream: TcpStream) -> Result<Client> {
         channel,
         mailbox,
         socket,
-        sender,
+        sender: Some(sender),
     })
 }
 
@@ -311,15 +368,10 @@ fn write_msg(stream: &mut TcpStream, msg: &[u8]) -> Result<()> {
 /// Forget the subscribers whose sender threads have stopped, which they do
 /// only when the connection has failed.
 fn reap_disconnected(clients: &Mutex<Vec<Client>>) {
-    let mut clients = clients.lock().unwrap();
-    let mut i = 0;
-    while i < clients.len() {
-        if clients[i].sender.is_finished() {
-            let _ = clients.swap_remove(i).sender.join();
-        } else {
-            i += 1;
-        }
-    }
+    clients
+        .lock()
+        .unwrap()
+        .retain(|client| !client.is_finished());
 }
 
 // --- Subscriber ---
@@ -680,10 +732,10 @@ mod tests {
             .pop()
             .expect("the subscriber never connected");
         assert!(
-            !client.sender.is_finished(),
+            !client.is_finished(),
             "the sender thread stopped on its own, before the client was dropped"
         );
-        let mailbox = Arc::clone(&client.mailbox);
+        let mailbox = Arc::clone(&client.mailbox.0);
 
         let (dropped, completion) = channel();
         thread::spawn(move || {
