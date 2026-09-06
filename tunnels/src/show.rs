@@ -167,7 +167,7 @@ impl Show {
         let mut frame_number = 0;
         // Owned by the loop rather than by the show, so that the port is
         // released when the loop ends and a restarted show can bind it again.
-        let frame_service = FrameService::new()?;
+        let mut frame_service = FrameService::new()?;
 
         let mut last_update = Instant::now();
 
