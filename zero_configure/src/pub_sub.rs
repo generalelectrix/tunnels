@@ -1,18 +1,24 @@
 //! DNS-SD-integrated publish-subscribe using minusmq TCP pub/sub.
+//!
+//! The stream is postcard: tagless, so the schema is the Rust type and does
+//! not travel with the message.
+//!
+//! Both halves are published interface. A stream advertised here is consumed
+//! by separately deployed applications as well as by this workspace, so the
+//! subscribing half stands on the service being advertised rather than on
+//! anything in this workspace receiving it.
 
 use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
 
 use anyhow::{Result, bail};
-use rmp_serde::Serializer;
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{
-    bare::{Browser, StopFn, register_service},
-    msgpack::{Receive, ReceiveResult},
-};
+use crate::bare::{Browser, StopFn, register_service};
 
-/// Advertise a DNS-SD pub/sub service, sending a stream of T using msgpack.
+pub use minusmq::pub_sub::{Compression, Config, Keepalive};
+
+/// Advertise a DNS-SD pub/sub service, sending a stream of T.
 /// The service will be advertised until dropped.
 pub struct PublisherService<T: Serialize> {
     stop: Option<StopFn>,
@@ -22,10 +28,12 @@ pub struct PublisherService<T: Serialize> {
 }
 
 impl<T: Serialize> PublisherService<T> {
-    pub fn new(name: &str, port: u16) -> Result<Self> {
+    /// Bind `port`, advertise it under `name`, and carry the stream `config`
+    /// describes.
+    pub fn new(name: &str, port: u16, config: Config) -> Result<Self> {
         let stop = register_service(name, port)?;
         let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
-        let publisher = minusmq::pub_sub::Publisher::new(listener)?;
+        let publisher = minusmq::pub_sub::Publisher::new(listener, config)?;
         Ok(Self {
             stop: Some(stop),
             publisher,
@@ -34,24 +42,16 @@ impl<T: Serialize> PublisherService<T> {
         })
     }
 
+    /// Serialize a message and give it to every subscriber.
+    ///
+    /// The message is written into the buffer the one before it was written
+    /// into, so a steady stream of messages of a settled size costs no
+    /// allocation to send.
     pub fn send(&mut self, val: &T) -> Result<()> {
         self.send_buf.clear();
-        val.serialize(&mut Serializer::new(&mut self.send_buf))?;
-        // Use channel 0 for topic-less broadcast (clock service).
-        self.publisher.send(0, &self.send_buf);
+        postcard::to_io(val, &mut self.send_buf)?;
+        self.publisher.send(&self.send_buf);
         Ok(())
-    }
-
-    pub fn send_on_channel(&mut self, channel: u8, val: &T) -> Result<()> {
-        self.send_buf.clear();
-        val.serialize(&mut Serializer::new(&mut self.send_buf))?;
-        self.publisher.send(channel, &self.send_buf);
-        Ok(())
-    }
-
-    /// Send raw bytes on a channel (for frame broadcast which serializes externally).
-    pub fn send_raw(&self, channel: u8, data: &[u8]) {
-        self.publisher.send(channel, data);
     }
 }
 
@@ -68,15 +68,24 @@ struct SubConfig {
     port: u16,
 }
 
+/// Browse for DNS-SD pub/sub services of one name, and connect subscribers to
+/// them on request.
+///
+/// This is the half of the interface an application outside this workspace
+/// reaches an advertised stream through.
 pub struct SubscriberService<T: DeserializeOwned> {
     browser: Browser<SubConfig>,
+    /// How this service's stream is carried, applied to every subscriber
+    /// connected to it.
+    config: Config,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> SubscriberService<T> {
-    /// Browse for publishers of the named service.
+    /// Browse for publishers of the named service, whose stream `config`
+    /// describes.
     /// Connect subscribers upon request.
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, config: Config) -> Self {
         Self {
             browser: Browser::new(name, |service| {
                 Ok(SubConfig {
@@ -84,6 +93,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     port: service.port,
                 })
             }),
+            config,
             _msg_type: PhantomData,
         }
     }
@@ -93,8 +103,9 @@ impl<T: DeserializeOwned> SubscriberService<T> {
         self.browser.list()
     }
 
-    /// Connect a subscriber to a service on the given channel.
-    pub fn subscribe(&self, name: &str, channel: u8) -> Result<Receiver<T>> {
+    /// Connect a subscriber to the named service.
+    pub fn subscribe(&self, name: &str) -> Result<Receiver<T>> {
+        let config = self.config;
         self.browser
             .use_service(name, move |cfg| {
                 // Resolve hostname to IP at subscribe time.
@@ -104,36 +115,38 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Could not resolve {}:{}", cfg.hostname, cfg.port)
                     })?;
-                Ok(Receiver::new(&addr.ip().to_string(), addr.port(), channel))
+                Ok(Receiver::new(&addr.ip().to_string(), addr.port(), config))
             })
             .unwrap_or_else(|| bail!("no instance of service {} found", self.browser.name()))
     }
 }
 
-/// A strongly-typed TCP subscriber that expects messages to be encoded using msgpack.
+/// A strongly-typed TCP subscriber that expects messages to be encoded using
+/// postcard.
 pub struct Receiver<T: DeserializeOwned> {
     subscriber: minusmq::pub_sub::Subscriber,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> Receiver<T> {
-    /// Create a new subscriber connected to the provided host:port on the given channel.
-    pub fn new(host: &str, port: u16, channel: u8) -> Self {
+    /// Create a new subscriber connected to the provided host:port, on the
+    /// stream `config` describes.
+    pub fn new(host: &str, port: u16, config: Config) -> Self {
         Self {
-            subscriber: minusmq::pub_sub::Subscriber::new(host, port, channel),
+            subscriber: minusmq::pub_sub::Subscriber::new(host, port, config),
             _msg_type: PhantomData,
         }
     }
 
-    pub fn receive_msg(&mut self, block: bool) -> ReceiveResult<Option<T>> {
-        self.receive(block)
-    }
-}
-
-impl<T: DeserializeOwned> Receive for Receiver<T> {
-    fn receive_buffer(&mut self, _block: bool) -> ReceiveResult<Option<Vec<u8>>> {
-        // minusmq subscriber always blocks. The `block` parameter is preserved
-        // for API compatibility but is effectively always true.
-        Ok(Some(self.subscriber.recv()))
+    /// Block until the next message arrives, and recover it. Yields nothing
+    /// once the subscription has been stopped.
+    ///
+    /// The message is read out of the buffer it arrived in rather than out of
+    /// a copy of it, so receiving costs the value and nothing else.
+    pub fn receive_msg(&mut self) -> Result<Option<T>> {
+        self.subscriber
+            .recv()
+            .map(|bytes| postcard::from_bytes(bytes).map_err(anyhow::Error::from))
+            .transpose()
     }
 }

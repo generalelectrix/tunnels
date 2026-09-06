@@ -4,9 +4,10 @@
 //! due to animation targets being scoped to an animation but owned by the tunnel.
 
 use serde::{Deserialize, Serialize};
+use strum::VariantArray;
 
 /// Tunnel parameters that can be targeted by animations.
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, Default, VariantArray)]
 pub enum AnimationTarget {
     Rotation,
     Thickness,

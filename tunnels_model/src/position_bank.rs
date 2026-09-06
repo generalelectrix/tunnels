@@ -16,7 +16,7 @@ pub struct PositionIdx(pub usize);
 typed_index!(PositionIdx, Position);
 
 /// Store an array of positions that can be used by beams.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PositionBank(Vec<Position>);
 
 impl PositionBank {

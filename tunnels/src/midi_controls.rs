@@ -29,7 +29,6 @@ use self::master_ui::update_master_ui_control;
 use self::mixer::update_mixer_control;
 use self::tunnel::update_tunnel_control;
 
-pub use self::mixer::PAGE_SIZE as MIXER_CHANNELS_PER_PAGE;
 pub use crate::midi_controls::device::{Device, MidiDevice, MidiHandler, init_apc_20};
 
 pub struct Dispatcher {
@@ -118,6 +117,8 @@ impl EmitStateChange for Dispatcher {
         }
     }
 }
+
+crate::master_ui::emit_show_state_changes!(Dispatcher);
 
 pub fn bipolar_from_midi(val: u8) -> BipolarFloat {
     let denom = if val > 64 { 63. } else { 64. };

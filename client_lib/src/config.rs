@@ -29,7 +29,7 @@ pub struct ClientConfig {
     pub y_center: f64,
     /// Geometric transformation to optionally apply to the entire image.
     pub transformation: Option<Transform>,
-    /// Log at debug level?  This option is ignored when running in remote mode.
+    /// Log at debug level?
     pub log_level_debug: bool,
 }
 

@@ -1,0 +1,24 @@
+[package]
+name = "tunnels_net"
+version = "0.1.0"
+authors = ["Chris Macklin <chris.macklin@gmail.com>"]
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+
+tunnels_model = { path = "../tunnels_model" }
+minusmq = { path = "../minusmq" }
+
+[dev-dependencies]
+# The show frames a test holds the stream to, and an independent statement of
+# the bytes it carries them as.
+tunnels_model = { path = "../tunnels_model", features = ["fixtures"] }
+postcard.workspace = true
+lz4_flex = { version = "0.11", default-features = false, features = [
+    "std",
+    "safe-encode",
+    "safe-decode",
+    "checked-decode",
+] }

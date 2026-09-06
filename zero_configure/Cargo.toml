@@ -8,7 +8,7 @@ edition.workspace = true
 bonsoir = { path = "../bonsoir" }
 hostname = "0.4"
 serde.workspace = true
-rmp-serde.workspace = true
+postcard.workspace = true
 anyhow.workspace = true
 log.workspace = true
 minusmq = { path = "../minusmq" }

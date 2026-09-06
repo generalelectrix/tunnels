@@ -1,16 +1,16 @@
+use crate::layer::{Layer, PathShape, RenderMode, ShapeGeometry};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
+use crate::waveforms::sawtooth;
 use crate::{
     animation::Animation, animation_target::AnimationTarget, palette::ColorPaletteIdx,
     position_bank::PositionIdx, waveforms::WaveformArgs,
 };
-use crate::{master_ui::EmitStateChange as EmitShowStateChange, waveforms::sawtooth};
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
-use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -511,27 +511,21 @@ pub trait EmitStateChange {
     fn emit_tunnel_state_change(&mut self, sc: StateChange);
 }
 
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_tunnel_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Tunnel(sc))
-    }
-}
-
 pub mod fixture {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::layer::{Layer, LayerCollection, PathShape, RenderMode};
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-    use tunnels_lib::{Layer, PathShape, RenderMode, Snapshot};
 
     use crate::animation::{
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
     };
     use crate::animation_target::AnimationTarget;
-    use crate::clock_bank::ClockBank;
+    use crate::clock_bank::{ClockBank, ClockIdx};
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use strum::VariantArray;
 
     use super::*;
 
@@ -550,7 +544,7 @@ pub mod fixture {
             UnipolarFloat::ONE,
             false,
             RenderContext {
-                clocks: &ClockBank::default(),
+                clocks: &ClockBank::default().as_static(),
 
                 palette: &ColorPalette::default(),
 
@@ -561,11 +555,8 @@ pub mod fixture {
         )
     }
 
-    fn snapshot(layer: Layer) -> Snapshot {
-        Snapshot {
-            frame_number: 0,
-            layers: vec![Arc::new(layer)],
-        }
+    fn snapshot(layer: Layer) -> LayerCollection {
+        vec![Arc::new(layer)]
     }
 
     /// Configure a tunnel for stress testing.
@@ -615,12 +606,12 @@ pub mod fixture {
     }
 
     /// Render a default tunnel to a snapshot for use in test fixtures.
-    pub fn default_tunnel_snapshot() -> Snapshot {
+    pub fn default_tunnel_snapshot() -> LayerCollection {
         snapshot(render_default(&Tunnel::default()))
     }
 
     /// Render a tunnel with aspect ratio set halfway towards max for elliptical shape.
-    pub fn elliptical_tunnel_snapshot() -> Snapshot {
+    pub fn elliptical_tunnel_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel::default();
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -631,14 +622,14 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel to a snapshot for use in test fixtures.
-    pub fn stress_tunnel_snapshot() -> Snapshot {
+    pub fn stress_tunnel_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel::default();
         configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
         snapshot(render_default(&tunnel))
     }
 
     /// Render a default tunnel in dot mode for snapshot testing.
-    pub fn default_tunnel_dot_snapshot() -> Snapshot {
+    pub fn default_tunnel_dot_snapshot() -> LayerCollection {
         let tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -647,7 +638,7 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel in dot mode for snapshot testing.
-    pub fn stress_tunnel_dot_snapshot() -> Snapshot {
+    pub fn stress_tunnel_dot_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -657,7 +648,7 @@ pub mod fixture {
     }
 
     /// Render an elliptical tunnel in dot mode for snapshot testing.
-    pub fn elliptical_tunnel_dot_snapshot() -> Snapshot {
+    pub fn elliptical_tunnel_dot_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -685,17 +676,17 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments for snapshot testing.
-    pub fn saucer_few_thin_snapshot() -> Snapshot {
+    pub fn saucer_few_thin_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_tunnel(12, 0.1)))
     }
 
     /// Render a saucer tunnel with many thick segments for snapshot testing.
-    pub fn saucer_many_thick_snapshot() -> Snapshot {
+    pub fn saucer_many_thick_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_tunnel(126, 0.5)))
     }
 
     /// Render a saucer tunnel on a wide ellipse for snapshot testing.
-    pub fn saucer_wide_ellipse_snapshot() -> Snapshot {
+    pub fn saucer_wide_ellipse_snapshot() -> LayerCollection {
         let mut tunnel = saucer_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -706,7 +697,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a tall ellipse for snapshot testing.
-    pub fn saucer_tall_ellipse_snapshot() -> Snapshot {
+    pub fn saucer_tall_ellipse_snapshot() -> LayerCollection {
         let mut tunnel = saucer_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
@@ -729,17 +720,17 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments and spin animation.
-    pub fn saucer_few_thin_spin_snapshot() -> Snapshot {
+    pub fn saucer_few_thin_spin_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_spin_tunnel(12, 0.1)))
     }
 
     /// Render a saucer tunnel with many thick segments and spin animation.
-    pub fn saucer_many_thick_spin_snapshot() -> Snapshot {
+    pub fn saucer_many_thick_spin_snapshot() -> LayerCollection {
         snapshot(render_default(&saucer_spin_tunnel(126, 0.5)))
     }
 
     /// Render a saucer tunnel on a wide ellipse with spin animation.
-    pub fn saucer_wide_ellipse_spin_snapshot() -> Snapshot {
+    pub fn saucer_wide_ellipse_spin_snapshot() -> LayerCollection {
         let mut tunnel = saucer_spin_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -750,7 +741,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a tall ellipse with spin animation.
-    pub fn saucer_tall_ellipse_spin_snapshot() -> Snapshot {
+    pub fn saucer_tall_ellipse_spin_snapshot() -> LayerCollection {
         let mut tunnel = saucer_spin_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
@@ -778,17 +769,17 @@ pub mod fixture {
     }
 
     /// Many small arc segments with spin — dashes rotate like the line version.
-    pub fn arc_spin_many_snapshot() -> Snapshot {
+    pub fn arc_spin_many_snapshot() -> LayerCollection {
         snapshot(render_default(&arc_spin_tunnel(126)))
     }
 
     /// Few large arc segments with spin — curvature visible when rotated.
-    pub fn arc_spin_few_snapshot() -> Snapshot {
+    pub fn arc_spin_few_snapshot() -> LayerCollection {
         snapshot(render_default(&arc_spin_tunnel(12)))
     }
 
     /// Wide ellipse with few arcs and spin — exaggerated curvature effect.
-    pub fn arc_spin_wide_ellipse_snapshot() -> Snapshot {
+    pub fn arc_spin_wide_ellipse_snapshot() -> LayerCollection {
         let mut tunnel = arc_spin_tunnel(12);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -799,7 +790,7 @@ pub mod fixture {
     }
 
     /// Render a line-path tunnel in arc mode for snapshot testing.
-    pub fn default_tunnel_line_snapshot() -> Snapshot {
+    pub fn default_tunnel_line_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             path_shape: PathShape::Line,
             ..Default::default()
@@ -810,7 +801,7 @@ pub mod fixture {
     }
 
     /// Render a line-path tunnel in dot mode for snapshot testing.
-    pub fn default_tunnel_line_dot_snapshot() -> Snapshot {
+    pub fn default_tunnel_line_dot_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             path_shape: PathShape::Line,
@@ -822,7 +813,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments on a line path for snapshot testing.
-    pub fn saucer_line_few_thin_snapshot() -> Snapshot {
+    pub fn saucer_line_few_thin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             path_shape: PathShape::Line,
@@ -838,7 +829,7 @@ pub mod fixture {
     }
 
     /// Render an arc tunnel on a line path with spin animation.
-    pub fn arc_line_spin_snapshot() -> Snapshot {
+    pub fn arc_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             path_shape: PathShape::Line,
             ..Default::default()
@@ -858,7 +849,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a line path with spin animation.
-    pub fn saucer_line_spin_snapshot() -> Snapshot {
+    pub fn saucer_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             path_shape: PathShape::Line,
@@ -901,21 +892,21 @@ pub mod fixture {
     }
 
     /// Line-path arc tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_arc_snapshot() -> Snapshot {
+    pub fn line_aspect_ratio_anim_arc_snapshot() -> LayerCollection {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Arc,
         )))
     }
 
     /// Line-path dot tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_dot_snapshot() -> Snapshot {
+    pub fn line_aspect_ratio_anim_dot_snapshot() -> LayerCollection {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Dot,
         )))
     }
 
     /// Line-path saucer tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_saucer_snapshot() -> Snapshot {
+    pub fn line_aspect_ratio_anim_saucer_snapshot() -> LayerCollection {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Saucer,
         )))
@@ -923,7 +914,7 @@ pub mod fixture {
 
     /// Render a sequence of frames of a line-saucer tunnel with marquee motion,
     /// for evaluating edge transition behavior.
-    pub fn saucer_line_marquee_sequence() -> Vec<Snapshot> {
+    pub fn saucer_line_marquee_sequence() -> Vec<LayerCollection> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             path_shape: PathShape::Line,
@@ -944,12 +935,12 @@ pub mod fixture {
         let frames_per_snapshot = 16;
         let n_snapshots = 24;
         let mut snapshots = Vec::new();
-        for snap in 0..n_snapshots {
+        for _ in 0..n_snapshots {
             let arcs = tunnel.render(
                 UnipolarFloat::ONE,
                 false,
                 RenderContext {
-                    clocks: &ClockBank::default(),
+                    clocks: &ClockBank::default().as_static(),
 
                     palette: &ColorPalette::default(),
 
@@ -958,10 +949,7 @@ pub mod fixture {
                     audio_envelope: UnipolarFloat::ZERO,
                 },
             );
-            snapshots.push(Snapshot {
-                frame_number: snap,
-                layers: vec![Arc::new(arcs)],
-            });
+            snapshots.push(vec![Arc::new(arcs)]);
             for _ in 0..frames_per_snapshot {
                 tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
             }
@@ -970,7 +958,7 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.
-    pub fn stress_tunnel_evolved_snapshot() -> Snapshot {
+    pub fn stress_tunnel_evolved_snapshot() -> LayerCollection {
         let frame_interval = Duration::from_micros(25_300);
         let n_frames: u64 = 20;
 
@@ -983,7 +971,7 @@ pub mod fixture {
             UnipolarFloat::ONE,
             false,
             RenderContext {
-                clocks: &ClockBank::default(),
+                clocks: &ClockBank::default().as_static(),
 
                 palette: &ColorPalette::default(),
 
@@ -992,9 +980,169 @@ pub mod fixture {
                 audio_envelope: UnipolarFloat::ZERO,
             },
         );
-        Snapshot {
-            frame_number: n_frames,
-            layers: vec![Arc::new(arcs)],
+        vec![Arc::new(arcs)]
+    }
+
+    /// Every target an animation can be pointed at, in the order slots are
+    /// handed them.
+    ///
+    /// Written out rather than taken from `AnimationTarget::VARIANTS` because
+    /// which slot draws which target is what the recorded renders are of. The
+    /// length comes from the enum, so a target added to it fails to build here
+    /// rather than going quietly undrawn.
+    const TARGETS: [AnimationTarget; AnimationTarget::VARIANTS.len()] = [
+        AnimationTarget::Size,
+        AnimationTarget::Thickness,
+        AnimationTarget::ColorSaturation,
+        AnimationTarget::PositionX,
+        AnimationTarget::Rotation,
+        AnimationTarget::MarqueeRotation,
+        AnimationTarget::AspectRatio,
+        AnimationTarget::Color,
+        AnimationTarget::ColorSpread,
+        AnimationTarget::PositionY,
+        AnimationTarget::Spin,
+    ];
+
+    /// Every waveform an animation can be shaped by, in the order slots are
+    /// handed them.
+    ///
+    /// Written out for the same reason as `TARGETS`, and its length taken from
+    /// the enum for the same reason.
+    const WAVEFORMS: [Waveform; Waveform::VARIANTS.len()] = [
+        Waveform::Sine,
+        Waveform::Triangle,
+        Waveform::Sawtooth,
+        Waveform::Square,
+        Waveform::Noise,
+        Waveform::Constant,
+    ];
+
+    /// Configure a tunnel to vary as much as a tunnel can: full colour spread,
+    /// no blacking, both integrated angles turning, and every animation slot
+    /// spent on its own target, waveform and set of shaping flags.
+    ///
+    /// `index` of `of` separates one such tunnel from another, so that no two
+    /// tunnels configured this way draw the same shapes and so that a mixerful
+    /// of them draws every render mode, every path shape, every animation
+    /// target and every waveform at least once.
+    pub fn configure_max_variation(tunnel: &mut Tunnel, index: usize, of: usize, segments: u8) {
+        let phase = index as f64 / of as f64;
+        tunnel.handle_state_change(StateChange::Segments(segments), &mut NoopEmitter);
+        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::ColorSpread(UnipolarFloat::ONE),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorWidth(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        // Halfway up, so that a saturation animation is visible in both
+        // directions rather than clamping against zero.
+        tunnel.handle_state_change(
+            StateChange::ColorSaturation(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::MarqueeSpeed(BipolarFloat::new(-1.0 + 2.0 * phase)),
+            &mut NoopEmitter,
+        );
+        // The rotation and spin angles are integrated from these speeds and sit
+        // at exactly zero until the speeds do not, so both stay away from it.
+        tunnel.handle_state_change(
+            StateChange::RotationSpeed(BipolarFloat::new(0.25 + 0.5 * phase)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::SpinSpeed(BipolarFloat::new(-1.0 + 0.5 * phase)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::RenderMode(RenderMode::VARIANTS[index % RenderMode::VARIANTS.len()]),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::PathShape(PathShape::VARIANTS[index % PathShape::VARIANTS.len()]),
+            &mut NoopEmitter,
+        );
+
+        for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+            configure_varied_animation(anim, index * N_ANIM + i);
+        }
+    }
+
+    /// Configure one animation slot, spread by `slot` so that consecutive slots
+    /// differ in target, waveform, period, rate, duty cycle, smoothing and each
+    /// of the three shaping flags.
+    fn configure_varied_animation(anim: &mut TargetedAnimation, slot: usize) {
+        use AnimStateChange::*;
+        anim.target = TARGETS[slot % TARGETS.len()];
+        let mut set = |sc| {
+            anim.animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter)
+        };
+        set(Waveform(WAVEFORMS[slot % WAVEFORMS.len()]));
+        // Never zero: noise reads its smoothing as a cross-correlation term
+        // only where the period count is not.
+        set(NPeriods(1 + (slot % 4) as u16));
+        // Never zero either, or the animation contributes nothing and stops
+        // advancing its own clock.
+        set(Size(UnipolarFloat::new(0.5)));
+        set(Speed(BipolarFloat::new(
+            -1.0 + 2.0 * (slot % 7) as f64 / 7.0,
+        )));
+        set(DutyCycle(UnipolarFloat::new(
+            1.0 - 0.05 * (slot % 3) as f64,
+        )));
+        set(Smoothing(UnipolarFloat::new((slot % 5) as f64 / 5.0)));
+        set(Pulse(slot.is_multiple_of(2)));
+        set(Standing(slot.is_multiple_of(3)));
+        set(Invert(slot.is_multiple_of(5)));
+    }
+
+    /// Point a tunnel at shared frame state, so that its hue, its centre and
+    /// the timing and amplitude of its animations all come from the palette,
+    /// the position bank, the clock bank and the audio envelope rather than
+    /// from the tunnel's own settings.
+    ///
+    /// One slot is held back on its own internal clock, and of the slots that
+    /// do follow a show clock, half leave their own audio-size flag clear so
+    /// that the clock's flag is the only thing that can scale them by the
+    /// envelope.
+    pub fn bind_to_frame_state(
+        tunnel: &mut Tunnel,
+        palette: ColorPaletteIdx,
+        position: PositionIdx,
+        clock: ClockIdx,
+    ) {
+        tunnel.handle_state_change(
+            StateChange::PaletteSelection(Some(palette)),
+            &mut NoopEmitter,
+        );
+        // The position selection has no control message of its own, so a
+        // fixture reaches the field directly.
+        tunnel.position_selection = Some(position);
+        let internal_slot = clock.0 % N_ANIM;
+        for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+            let internal = i == internal_slot;
+            anim.animation.control(
+                AnimControlMessage::SetClockSource(if internal { None } else { Some(clock) }),
+                &mut NoopEmitter,
+            );
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::UseAudioSize(
+                    internal || i.is_multiple_of(2),
+                )),
+                &mut NoopEmitter,
+            );
+            if internal {
+                // Nothing else reaches the internal clock's own audio flag.
+                anim.animation.control(
+                    AnimControlMessage::Set(AnimStateChange::UseAudioSpeed(true)),
+                    &mut NoopEmitter,
+                );
+            }
         }
     }
 }

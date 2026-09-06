@@ -1,0 +1,24 @@
+[package]
+name = "tunnels_model"
+version = "0.1.0"
+authors = ["general electrix <general.electrix@gmail.com>"]
+edition.workspace = true
+
+[features]
+# The show frame fixtures. Off by default so a shipped console or client does
+# not carry the models that only a test renders.
+fixtures = []
+
+[dependencies]
+serde.workspace = true
+strum.workspace = true
+log.workspace = true
+
+noise = "0.9.0"
+arrayvec = { version = "0.7", features = ["serde"] }
+
+tunnels_lib = { path = "../tunnels_lib" }
+
+# The frame payload is encoded tagless: the schema is the Rust type, so nothing
+# self-describing needs to travel with it.
+postcard.workspace = true

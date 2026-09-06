@@ -80,6 +80,8 @@ impl EmitStateChange for DummyEmitter {
     fn emit(&mut self, _: StateChange) {}
 }
 
+crate::master_ui::emit_show_state_changes!(DummyEmitter);
+
 fn set_tunnel_state(tunnel: &mut Tunnel, state: TunnelStateChange) {
     use crate::tunnel::ControlMessage;
     tunnel.control(ControlMessage::Set(state), &mut DummyEmitter);

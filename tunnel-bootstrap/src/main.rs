@@ -12,8 +12,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Mutex;
-use tunnels_lib::bootstrap::{PushBinaryRequest, PushBinaryResponse};
-use zero_configure::req_rep::run_service_req_rep;
+use tunnels_lib::bootstrap::{MAX_REQUEST_LEN, PushBinaryRequest, PushBinaryResponse};
+use zero_configure::req_rep::{Config, run_service_req_rep};
 
 const SERVICE_NAME: &str = "tunnelbootstrap";
 const PORT: u16 = 15000;
@@ -27,7 +27,11 @@ fn main() {
     let managed_path = Path::new("./managed");
     let child_manager = Mutex::new(ChildManager::new(managed_path));
 
-    run_service_req_rep(SERVICE_NAME, PORT, |request_buffer| {
+    let config = Config {
+        max_message_len: MAX_REQUEST_LEN,
+        ..Default::default()
+    };
+    run_service_req_rep(SERVICE_NAME, PORT, config, |request_buffer| {
         let response = handle_request(request_buffer, &child_manager);
         rmp_serde::to_vec(&response).unwrap_or_else(|e| {
             error!("Failed to serialize response: {e}");

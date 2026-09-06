@@ -14,6 +14,8 @@ eframe = "0.33"
 anyhow = "1"
 log = "0.4"
 rmp-serde = { workspace = true }
+postcard.workspace = true
+strum.workspace = true
 sha2 = "0.10"
 zero_configure = { path = "../zero_configure" }
 hostname = "0.4"

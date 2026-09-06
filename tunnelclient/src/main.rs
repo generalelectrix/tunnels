@@ -2,10 +2,10 @@ mod show;
 
 use crate::show::Show;
 use client_lib::config::ClientConfig;
-use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
+use simplelog::{Config as LogConfig, LevelFilter, WriteLogger};
 use std::env;
+use std::io::Read;
 use std::process::ExitCode;
-use tunnels_lib::RunFlag;
 
 fn main() -> ExitCode {
     let first_arg = env::args().nth(1).expect(
@@ -14,14 +14,15 @@ fn main() -> ExitCode {
     );
 
     if first_arg == "monitor" {
-        let cfg: ClientConfig = match rmp_serde::from_read(std::io::stdin()) {
+        let cfg: ClientConfig = match read_config(std::io::stdin()) {
             Ok(cfg) => cfg,
             Err(e) => {
                 println!("ERROR: failed to deserialize config: {e}");
                 return ExitCode::FAILURE;
             }
         };
-        match Show::new(cfg, RunFlag::default()) {
+        init_logger(&cfg);
+        match Show::new(cfg) {
             Ok(mut show) => {
                 println!("OK");
                 show.run();
@@ -39,13 +40,9 @@ fn main() -> ExitCode {
         let config_path = env::args().nth(2).expect("No config path arg provided.");
 
         let cfg = ClientConfig::load(video_channel, &config_path).expect("Failed to load config");
-        init_logger(if cfg.log_level_debug {
-            LevelFilter::Debug
-        } else {
-            LevelFilter::Info
-        });
+        init_logger(&cfg);
 
-        let mut show = Show::new(cfg, RunFlag::default()).expect("Failed to initialize show");
+        let mut show = Show::new(cfg).expect("Failed to initialize show");
 
         show.run();
     }
@@ -53,6 +50,27 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn init_logger(level: LevelFilter) {
-    SimpleLogger::init(level, LogConfig::default()).expect("Could not configure logger.");
+/// Read a client configuration from a stream that carries one and then ends.
+///
+/// The encoding is tagless, so a message has no end of its own: what bounds it
+/// is the stream closing.
+fn read_config(mut source: impl Read) -> anyhow::Result<ClientConfig> {
+    let mut payload = Vec::new();
+    source.read_to_end(&mut payload)?;
+    Ok(postcard::from_bytes(&payload)?)
+}
+
+/// Send log records to stderr, at the level the configuration asks for.
+///
+/// stderr and not stdout: stdout carries a single startup status line, `OK` or
+/// `ERROR: ...`, and a log record printed alongside it would be read as that
+/// status. Nothing else is ever written to stdout.
+fn init_logger(cfg: &ClientConfig) {
+    let level = if cfg.log_level_debug {
+        LevelFilter::Debug
+    } else {
+        LevelFilter::Info
+    };
+    WriteLogger::init(level, LogConfig::default(), std::io::stderr())
+        .expect("Could not configure logger.");
 }

@@ -4,6 +4,8 @@ members = [
     "tunnels_lib",
     "tunnels_audio",
     "tunnels",
+    "tunnels_model",
+    "tunnels_net",
     "tunnelclient",
     "tunnel-bootstrap",
     "zero_configure",
@@ -27,4 +29,6 @@ derive_more = { version = "2", features = ["full"] }
 simplelog = "0.12"
 lazy_static = "1"
 rmp-serde = "1"
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 anyhow = "1"
+strum = { version = "0.28", features = ["derive"] }

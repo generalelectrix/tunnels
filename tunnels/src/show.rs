@@ -4,7 +4,7 @@ use crate::{
     animation_visualizer::AnimationSnapshot,
     audio::{self, AudioInput, ShowEmitter},
     clock_bank::{self, ClockBank},
-    clock_server::{self, ClockPublisher, SharedClockData, StaticClockBank},
+    clock_server::{self, ClockPublisher, SharedClockData},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
     gui_state::{GuiDirty, SharedGuiState},
     master_ui::{self, MasterUI},
@@ -13,13 +13,12 @@ use crate::{
     mixer::{self, Mixer},
     palette::{self, ColorPalette},
     position_bank::{self, PositionBank},
-    send::{Frame, start_render_service},
+    show_frame::ShowFrameRef,
     test_mode::TestModeSetup,
     tunnel,
 };
 use anyhow::{Result, bail};
 use log::{self, error, info, warn};
-use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -29,6 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tunnels_audio::EnvelopeStreams;
+use tunnels_net::FramePublisher;
 
 use crate::midi::MidiDeviceInit;
 
@@ -97,8 +97,7 @@ impl Show {
     /// Return an error if the dimensions of the loaded data don't match the
     /// current show.
     pub fn load(&mut self, path: &Path) -> Result<()> {
-        let file = File::open(path)?;
-        let loaded_state = ShowState::deserialize(&mut Deserializer::new(file))?;
+        let loaded_state: ShowState = postcard::from_bytes(&std::fs::read(path)?)?;
         if loaded_state.mixer.channel_count() != self.state.mixer.channel_count() {
             bail!(
                 "Mixer size mismatch. Loaded: {}, show: {}.",
@@ -119,9 +118,7 @@ impl Show {
 
     /// Save the show into the provided file.
     fn save(&self, path: &Path) -> Result<()> {
-        let mut file = File::create(path)?;
-        self.state
-            .serialize(&mut Serializer::new(BufWriter::new(&mut file)))?;
+        postcard::to_io(&self.state, BufWriter::new(File::create(path)?))?;
         Ok(())
     }
 
@@ -163,8 +160,9 @@ impl Show {
         self.refresh_ui();
         self.snapshot_gui_state(GuiDirty::all());
 
-        let mut frame_number = 0;
-        let frame_sender = start_render_service()?;
+        // Owned by the loop rather than by the show, so that the port is
+        // released when the loop ends and a restarted show can bind it again.
+        let mut frame_publisher = FramePublisher::new()?;
 
         let mut last_update = Instant::now();
 
@@ -175,20 +173,13 @@ impl Show {
                 self.update_state(time_since_update);
                 last_update = now;
 
-                if frame_sender
-                    .send(Frame {
-                        number: frame_number,
-                        mixer: self.state.mixer.clone(),
-                        clocks: self.state.clocks.clone(),
-                        color_palette: self.state.color_palette.clone(),
-                        positions: self.state.positions.clone(),
-                        audio_envelope: self.audio_input.envelope(),
-                    })
-                    .is_err()
-                {
-                    bail!("Render server hung up.  Aborting show.");
-                }
-                frame_number += 1;
+                frame_publisher.send(&ShowFrameRef {
+                    mixer: &self.state.mixer,
+                    clocks: self.state.clocks.as_static(),
+                    palette: &self.state.color_palette,
+                    positions: &self.state.positions,
+                    audio_envelope: self.audio_input.envelope(),
+                });
                 self.send_clock_data();
                 self.snapshot_animation_state();
             }
@@ -214,7 +205,7 @@ impl Show {
     fn send_clock_data(&mut self) {
         if let Some(ref mut publisher) = self.clock_publisher {
             let data = SharedClockData {
-                clock_bank: StaticClockBank(self.state.clocks.as_static()),
+                clock_bank: self.state.clocks.as_static(),
                 audio_envelope: self.audio_input.envelope(),
             };
             if let Err(e) = publisher.send(&data) {
@@ -265,7 +256,7 @@ impl Show {
             .store(std::sync::Arc::new(AnimationSnapshot {
                 animation,
                 clocks: SharedClockData {
-                    clock_bank: StaticClockBank(self.state.clocks.as_static()),
+                    clock_bank: self.state.clocks.as_static(),
                     audio_envelope: self.audio_input.envelope(),
                 },
                 fixture_count: 0,
@@ -416,13 +407,15 @@ pub struct ShowState {
 mod test {
     use std::sync::{Arc, mpsc::channel};
 
-    use tunnels_lib::{Layer, LayerCollection, ShapeGeometry, number::UnipolarFloat};
+    use tunnels_lib::number::UnipolarFloat;
+    use tunnels_model::layer::{Layer, LayerCollection, ShapeGeometry};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
-    use crate::render_context::RenderContext;
+    use crate::mixer::VideoChannel;
     use crate::test_mode::stress;
     use insta::assert_yaml_snapshot;
+    use tunnels_model::render_context::RenderContext;
 
     /// Test show rendering against static test expectations.
     /// The purpose of this test is to catch accidental regressions in the
@@ -449,26 +442,21 @@ mod test {
 
     /// Render the state of the show with some assertions on structure.
     fn check_render(show: &Show, unique_beam_count: usize) -> LayerCollection {
-        let video_feeds = show.state.mixer.render(RenderContext {
-            clocks: &show.state.clocks,
+        let clocks = show.state.clocks.as_static();
+        let ctx = RenderContext {
+            clocks: &clocks,
             palette: &show.state.color_palette,
             positions: &show.state.positions,
             audio_envelope: UnipolarFloat::ZERO,
-        });
-
-        // Should have the expected number of video channels.
-        assert_eq!(Mixer::N_VIDEO_CHANNELS, video_feeds.len());
+        };
 
         // Channel 0 should contain data, but none of the others.
-        for (i, chan) in video_feeds.iter().enumerate() {
-            if i == 0 {
-                assert!(!chan.is_empty());
-            } else {
-                assert_eq!(0, chan.len());
-            }
+        let mut first_channel = show.state.mixer.render_video_channel(VideoChannel(0), ctx);
+        assert!(!first_channel.is_empty());
+        for i in 1..Mixer::N_VIDEO_CHANNELS {
+            let chan = show.state.mixer.render_video_channel(VideoChannel(i), ctx);
+            assert_eq!(0, chan.len());
         }
-
-        let mut first_channel = video_feeds.into_iter().next().unwrap();
 
         for beam in first_channel.iter_mut() {
             for seg in Arc::get_mut(beam).unwrap().shapes.iter_mut() {
@@ -642,7 +630,7 @@ mod test {
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
         use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-        use tunnels_lib::{PathShape, RenderMode};
+        use tunnels_model::layer::{PathShape, RenderMode};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);

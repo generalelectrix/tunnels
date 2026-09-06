@@ -6,3 +6,12 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 log = "0.4"
+socket2 = { version = "0.5", features = ["all"] }
+
+# The compression a stream may opt into.
+lz4_flex = { version = "0.11", default-features = false, features = [
+    "std",
+    "safe-encode",
+    "safe-decode",
+    "checked-decode",
+] }

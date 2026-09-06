@@ -12,6 +12,12 @@ use crate::{
 
 use super::{unipolar_from_midi, unipolar_to_midi};
 
+/// The number of mixer channels on a single mixer page.
+///
+/// The mixer sizes itself in whole pages, so the page size lives with the
+/// mixer rather than with the control surface that mirrors it.
+pub use crate::mixer::MIXER_CHANNELS_PER_PAGE as PAGE_SIZE;
+
 const FADER: u8 = 0x7;
 const BUMP: u8 = 0x32;
 const MASK: u8 = 0x31;
@@ -19,9 +25,6 @@ const LOOK: u8 = 0x30;
 
 /// The midi note value for the 0th video channel selector.
 const VIDEO_CHAN_0: u8 = 66;
-
-/// The number of mixer channels on a single mixer page.
-pub const PAGE_SIZE: usize = 8;
 
 pub fn interpret(event: &Event, page: usize) -> Option<ShowControlMessage> {
     use ChannelControlMessage::*;

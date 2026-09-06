@@ -10,6 +10,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use strum::VariantArray;
 use tunnels_lib::repaint::RepaintSignal;
 
 /// Abstraction over the network admin operations so we can mock them in tests.
@@ -33,7 +34,7 @@ impl AdminService for BootstrapController {
         binary_path: &Path,
         config: ClientConfig,
     ) -> anyhow::Result<String> {
-        let stdin_payload = rmp_serde::to_vec(&config)?;
+        let stdin_payload = postcard::to_allocvec(&config)?;
         self.push_binary(name, binary_path, &["monitor"], &stdin_payload)
     }
 }
@@ -53,7 +54,7 @@ enum ConfigSendState {
 }
 
 /// Pre-baked resolution presets.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, strum::VariantArray)]
 enum ResolutionPreset {
     Wuxga,
     P1080,
@@ -82,14 +83,6 @@ impl ResolutionPreset {
             Self::Custom => None,
         }
     }
-
-    const ALL: [Self; 5] = [
-        Self::Wuxga,
-        Self::P1080,
-        Self::P720,
-        Self::SxgaPlus,
-        Self::Custom,
-    ];
 }
 
 /// Find the tunnelclient binary as a sibling of the current executable.
@@ -262,7 +255,7 @@ impl AdminPanelState {
         let repaint = self.repaint.clone();
         thread::spawn(move || {
             let result = (|| -> Result<String, String> {
-                let serialized = rmp_serde::to_vec(&config)
+                let serialized = postcard::to_allocvec(&config)
                     .map_err(|e| format!("Failed to serialize config: {e}"))?;
 
                 let exe = tunnelclient_path()?;
@@ -494,7 +487,7 @@ impl AdminPanelState {
             egui::ComboBox::from_label("Resolution")
                 .selected_text(current_label)
                 .show_ui(ui, |ui| {
-                    for preset in &ResolutionPreset::ALL {
+                    for preset in ResolutionPreset::VARIANTS {
                         if ui
                             .selectable_value(&mut self.resolution_preset, *preset, preset.label())
                             .changed()

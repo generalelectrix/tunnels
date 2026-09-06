@@ -7,7 +7,7 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::draw::Draw;
-use tunnels_lib::{Layer, PathShape, RenderMode, ShapeGeometry, Snapshot};
+use tunnels_model::layer::{Layer, LayerCollection, PathShape, RenderMode, ShapeGeometry};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -30,7 +30,7 @@ fn test_config() -> ClientConfig {
 }
 
 fn render_snapshot_sized(
-    snapshot: &Snapshot,
+    snapshot: &LayerCollection,
     cfg: &ClientConfig,
     width: u32,
     height: u32,
@@ -50,7 +50,7 @@ fn render_snapshot_sized(
     buffer.into_image()
 }
 
-fn render_snapshot(snapshot: &Snapshot, cfg: &ClientConfig) -> image::RgbaImage {
+fn render_snapshot(snapshot: &LayerCollection, cfg: &ClientConfig) -> image::RgbaImage {
     render_snapshot_sized(snapshot, cfg, WIDTH, HEIGHT)
 }
 
@@ -138,18 +138,14 @@ fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
 
 #[test]
 fn single_arc() {
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers: vec![Arc::new(default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)]))],
-    };
+    let snapshot = vec![Arc::new(default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)]))];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "single_arc.png");
 }
 
 #[test]
 fn concentric_rings() {
-    let layers = vec![Arc::new(default_layer(
+    let snapshot = vec![Arc::new(default_layer(
         1.0,
         vec![
             test_arc(0.0, 0.0, 0.2),
@@ -157,11 +153,6 @@ fn concentric_rings() {
             test_arc(0.0, 0.66, 0.5),
         ],
     ))];
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers,
-    };
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "concentric_rings.png");
 }
@@ -171,11 +162,7 @@ fn rotated_arc() {
     let mut seg = test_arc(0.0, 0.6, 0.3);
     let span = 0.5;
     seg.rot_angle = 0.125; // 45 degrees
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers: vec![Arc::new(default_layer(span, vec![seg]))],
-    };
+    let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "rotated_arc.png");
 }
@@ -188,11 +175,7 @@ fn flipped_horizontal() {
     let span = 0.25;
     seg.x = 0.3; // offset from center so flip is visually distinct
 
-    let snapshot = Snapshot {
-        frame_number: 0,
-
-        layers: vec![Arc::new(default_layer(span, vec![seg]))],
-    };
+    let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
 
     // Render without flip and compare to fixture.
     let unflipped = render_snapshot(&snapshot, &test_config());
@@ -220,42 +203,42 @@ fn flipped_horizontal() {
 
 #[test]
 fn default_tunnel() {
-    let snapshot = tunnels::tunnel::fixture::default_tunnel_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::default_tunnel_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "default_tunnel.png");
 }
 
 #[test]
 fn stress_tunnel() {
-    let snapshot = tunnels::tunnel::fixture::stress_tunnel_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::stress_tunnel_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "stress_tunnel.png");
 }
 
 #[test]
 fn stress_tunnel_evolved() {
-    let snapshot = tunnels::tunnel::fixture::stress_tunnel_evolved_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::stress_tunnel_evolved_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "stress_tunnel_evolved.png");
 }
 
 #[test]
 fn default_tunnel_dot_mode() {
-    let snapshot = tunnels::tunnel::fixture::default_tunnel_dot_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::default_tunnel_dot_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "default_tunnel_dot.png");
 }
 
 #[test]
 fn stress_tunnel_dot_mode() {
-    let snapshot = tunnels::tunnel::fixture::stress_tunnel_dot_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::stress_tunnel_dot_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "stress_tunnel_dot.png");
 }
 
 #[test]
 fn elliptical_tunnel() {
-    let snapshot = tunnels::tunnel::fixture::elliptical_tunnel_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::elliptical_tunnel_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "elliptical_tunnel.png");
@@ -263,7 +246,7 @@ fn elliptical_tunnel() {
 
 #[test]
 fn elliptical_tunnel_dot_mode() {
-    let snapshot = tunnels::tunnel::fixture::elliptical_tunnel_dot_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::elliptical_tunnel_dot_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "elliptical_tunnel_dot.png");
@@ -271,21 +254,21 @@ fn elliptical_tunnel_dot_mode() {
 
 #[test]
 fn saucer_few_thin() {
-    let snapshot = tunnels::tunnel::fixture::saucer_few_thin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_few_thin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_few_thin.png");
 }
 
 #[test]
 fn saucer_many_thick() {
-    let snapshot = tunnels::tunnel::fixture::saucer_many_thick_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_many_thick_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_many_thick.png");
 }
 
 #[test]
 fn saucer_wide_ellipse() {
-    let snapshot = tunnels::tunnel::fixture::saucer_wide_ellipse_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_wide_ellipse_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "saucer_wide_ellipse.png");
@@ -293,28 +276,28 @@ fn saucer_wide_ellipse() {
 
 #[test]
 fn saucer_tall_ellipse() {
-    let snapshot = tunnels::tunnel::fixture::saucer_tall_ellipse_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_tall_ellipse_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_tall_ellipse.png");
 }
 
 #[test]
 fn saucer_few_thin_spin() {
-    let snapshot = tunnels::tunnel::fixture::saucer_few_thin_spin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_few_thin_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_few_thin_spin.png");
 }
 
 #[test]
 fn saucer_many_thick_spin() {
-    let snapshot = tunnels::tunnel::fixture::saucer_many_thick_spin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_many_thick_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_many_thick_spin.png");
 }
 
 #[test]
 fn saucer_wide_ellipse_spin() {
-    let snapshot = tunnels::tunnel::fixture::saucer_wide_ellipse_spin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_wide_ellipse_spin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "saucer_wide_ellipse_spin.png");
@@ -322,7 +305,7 @@ fn saucer_wide_ellipse_spin() {
 
 #[test]
 fn saucer_tall_ellipse_spin() {
-    let snapshot = tunnels::tunnel::fixture::saucer_tall_ellipse_spin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_tall_ellipse_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "saucer_tall_ellipse_spin.png");
 }
@@ -331,21 +314,21 @@ fn saucer_tall_ellipse_spin() {
 
 #[test]
 fn arc_spin_many() {
-    let snapshot = tunnels::tunnel::fixture::arc_spin_many_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::arc_spin_many_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "arc_spin_many.png");
 }
 
 #[test]
 fn arc_spin_few() {
-    let snapshot = tunnels::tunnel::fixture::arc_spin_few_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::arc_spin_few_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "arc_spin_few.png");
 }
 
 #[test]
 fn arc_spin_wide_ellipse() {
-    let snapshot = tunnels::tunnel::fixture::arc_spin_wide_ellipse_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::arc_spin_wide_ellipse_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "arc_spin_wide_ellipse.png");
@@ -355,7 +338,7 @@ fn arc_spin_wide_ellipse() {
 
 #[test]
 fn default_tunnel_line() {
-    let snapshot = tunnels::tunnel::fixture::default_tunnel_line_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::default_tunnel_line_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "default_tunnel_line.png");
@@ -363,7 +346,7 @@ fn default_tunnel_line() {
 
 #[test]
 fn default_tunnel_line_dot() {
-    let snapshot = tunnels::tunnel::fixture::default_tunnel_line_dot_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::default_tunnel_line_dot_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "default_tunnel_line_dot.png");
@@ -371,7 +354,7 @@ fn default_tunnel_line_dot() {
 
 #[test]
 fn saucer_line_few_thin() {
-    let snapshot = tunnels::tunnel::fixture::saucer_line_few_thin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_line_few_thin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "saucer_line_few_thin.png");
@@ -379,7 +362,7 @@ fn saucer_line_few_thin() {
 
 #[test]
 fn saucer_line_spin() {
-    let snapshot = tunnels::tunnel::fixture::saucer_line_spin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::saucer_line_spin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "saucer_line_spin.png");
@@ -387,7 +370,7 @@ fn saucer_line_spin() {
 
 #[test]
 fn arc_line_spin() {
-    let snapshot = tunnels::tunnel::fixture::arc_line_spin_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::arc_line_spin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "arc_line_spin.png");
@@ -417,14 +400,11 @@ fn test_line_shape(start: f64) -> ShapeGeometry {
 fn snapshot_from_groups(
     render_mode: RenderMode,
     groups: Vec<(f64, Vec<ShapeGeometry>)>,
-) -> Snapshot {
-    Snapshot {
-        frame_number: 0,
-        layers: groups
-            .into_iter()
-            .map(|(span, shapes)| Arc::new(Layer::new(render_mode, PathShape::Line, span, shapes)))
-            .collect(),
-    }
+) -> LayerCollection {
+    groups
+        .into_iter()
+        .map(|(span, shapes)| Arc::new(Layer::new(render_mode, PathShape::Line, span, shapes)))
+        .collect()
 }
 
 /// Arc segment that wraps past the right end of the line.
@@ -497,7 +477,7 @@ fn line_saucer_edge_crossfade() {
 
 #[test]
 fn line_aspect_ratio_anim_arc() {
-    let snapshot = tunnels::tunnel::fixture::line_aspect_ratio_anim_arc_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::line_aspect_ratio_anim_arc_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_aspect_ratio_anim_arc.png");
@@ -505,7 +485,7 @@ fn line_aspect_ratio_anim_arc() {
 
 #[test]
 fn line_aspect_ratio_anim_dot() {
-    let snapshot = tunnels::tunnel::fixture::line_aspect_ratio_anim_dot_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::line_aspect_ratio_anim_dot_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_aspect_ratio_anim_dot.png");
@@ -513,7 +493,7 @@ fn line_aspect_ratio_anim_dot() {
 
 #[test]
 fn line_aspect_ratio_anim_saucer() {
-    let snapshot = tunnels::tunnel::fixture::line_aspect_ratio_anim_saucer_snapshot();
+    let snapshot = tunnels_model::tunnel::fixture::line_aspect_ratio_anim_saucer_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
     compare_to_fixture(&image, "line_aspect_ratio_anim_saucer.png");
@@ -523,7 +503,7 @@ fn line_aspect_ratio_anim_saucer() {
 
 #[test]
 fn saucer_line_marquee_sequence() {
-    let snapshots = tunnels::tunnel::fixture::saucer_line_marquee_sequence();
+    let snapshots = tunnels_model::tunnel::fixture::saucer_line_marquee_sequence();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     for (i, snapshot) in snapshots.iter().enumerate() {
         let image = render_snapshot_sized(snapshot, &cfg, WIDE_WIDTH, HEIGHT);

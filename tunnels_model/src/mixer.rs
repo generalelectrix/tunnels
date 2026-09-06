@@ -1,12 +1,13 @@
-use crate::master_ui::EmitStateChange as EmitShowStateChange;
-use crate::midi_controls::MIXER_CHANNELS_PER_PAGE;
+use crate::layer::{Layer, LayerCollection};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
-use tunnels_lib::{Layer, LayerCollection};
+
+/// The number of mixer channels on a single mixer page.
+pub const MIXER_CHANNELS_PER_PAGE: usize = 8;
 
 /// Holds a collection of beams in channels, and understands how they are mixed.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -56,30 +57,33 @@ impl Mixer {
         self.channels.len()
     }
 
-    /// Render the current state of the mixer.
-    /// Each inner vector represents one virtual video channel.
-    pub fn render(&self, ctx: RenderContext) -> Vec<LayerCollection> {
-        let mut video_outs = Vec::with_capacity(Self::N_VIDEO_CHANNELS);
-        for _ in 0..Self::N_VIDEO_CHANNELS {
-            video_outs.push(Vec::new());
-        }
+    /// Render the current state of the mixer for a single virtual video channel.
+    ///
+    /// Channels that are not routed to `video_channel` are not expanded at all,
+    /// so the work is proportional to what that one video channel draws.
+    pub fn render_video_channel(
+        &self,
+        video_channel: VideoChannel,
+        ctx: RenderContext,
+    ) -> LayerCollection {
+        let mut video_out = Vec::new();
         // One buffer, reused across channels: a channel's layers are drained
         // into Arcs before the next channel renders into it.
         let mut rendered = Vec::new();
         for channel in &self.channels {
+            if !channel.video_outs.contains(&video_channel) {
+                continue;
+            }
             rendered.clear();
             channel.render(UnipolarFloat::ONE, false, ctx, &mut rendered);
             for layer in rendered.drain(..) {
                 if layer.is_empty() {
                     continue;
                 }
-                let layer_ptr = Arc::new(layer);
-                for video_chan in &channel.video_outs {
-                    video_outs[video_chan.0].push(layer_ptr.clone());
-                }
+                video_out.push(Arc::new(layer));
             }
         }
-        video_outs
+        video_out
     }
 
     /// Emit the current value of all controllable mixer state.
@@ -171,12 +175,12 @@ pub struct Channel {
     pub level: UnipolarFloat,
     pub bump: bool,
     pub mask: bool,
-    pub video_outs: HashSet<VideoChannel>,
+    pub video_outs: BTreeSet<VideoChannel>,
 }
 
 impl Channel {
     fn new(beam: Beam) -> Self {
-        let mut video_outs = HashSet::new();
+        let mut video_outs = BTreeSet::new();
         video_outs.insert(VideoChannel(0));
         Self {
             beam,
@@ -251,11 +255,4 @@ pub enum ChannelStateChange {
 
 pub trait EmitStateChange {
     fn emit_mixer_state_change(&mut self, sc: StateChange);
-}
-
-impl<T: EmitShowStateChange> EmitStateChange for T {
-    fn emit_mixer_state_change(&mut self, sc: StateChange) {
-        use crate::show::StateChange as ShowStateChange;
-        self.emit(ShowStateChange::Mixer(sc))
-    }
 }

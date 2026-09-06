@@ -178,3 +178,5 @@ impl EmitStateChange for Dispatcher {
         // self.osc_dispatcher.emit(sc);
     }
 }
+
+crate::master_ui::emit_show_state_changes!(Dispatcher);
