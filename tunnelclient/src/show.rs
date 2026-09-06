@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
-use tunnels_model::mixer::{Mixer, VideoChannel};
+use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
 use tunnels_net::frame_service::FrameSubscriber;
 
@@ -50,7 +50,7 @@ pub struct Show {
 
 impl Show {
     pub fn new(cfg: ClientConfig, run_flag: RunFlag) -> Result<Self> {
-        let video_channel = video_channel(&cfg)?;
+        let video_channel = VideoChannel(cfg.video_channel as usize);
         info!("Running on video channel {}.", cfg.video_channel);
 
         // Set up frame reception and management.
@@ -146,25 +146,6 @@ fn current_frame(mailbox: &Option<ReceivedFrame>, now: Instant) -> Option<Arc<Sh
     mailbox.as_ref().and_then(|received| {
         (now.duration_since(received.received_at) < MAX_FRAME_AGE).then(|| received.frame.clone())
     })
-}
-
-/// The video channel a configuration selects.
-///
-/// A configuration names a channel that may not exist, and a channel a mixer
-/// does not have would silently draw nothing at all, so it is rejected here
-/// instead.
-fn video_channel(cfg: &ClientConfig) -> Result<VideoChannel> {
-    usize::try_from(cfg.video_channel)
-        .ok()
-        .filter(|channel| *channel < Mixer::N_VIDEO_CHANNELS)
-        .map(VideoChannel)
-        .ok_or_else(|| {
-            anyhow!(
-                "video channel {} does not exist; a show has {} video channels, numbered from 0",
-                cfg.video_channel,
-                Mixer::N_VIDEO_CHANNELS,
-            )
-        })
 }
 
 /// Draw a small dark-gray rotating arc at screen center as a "this client
