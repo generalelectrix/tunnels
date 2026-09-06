@@ -33,11 +33,11 @@ impl FrameReceiver {
     /// Subscribe to the frames a console publishes, and begin taking them off
     /// the stream.
     ///
-    /// Receiving runs on a thread of its own until the run flag is tripped or
-    /// the receiver is dropped. A frame that cannot be decoded is logged and
-    /// dropped; the stream is a sequence of independent frames, so losing one
-    /// costs a frame of animation and nothing more.
-    pub fn new(host: &str, run_flag: RunFlag) -> Result<Self> {
+    /// Receiving runs on a thread of its own until the subscription ends, which
+    /// is what dropping the receiver brings about. A frame that cannot be
+    /// decoded is logged and dropped; the stream is a sequence of independent
+    /// frames, so losing one costs a frame of animation and nothing more.
+    pub fn new(host: &str) -> Result<Self> {
         let mut subscriber = FrameSubscriber::new(host);
         let stop = subscriber.stop_handle();
         let latest: Arc<Mutex<Option<Arc<ShowFrame>>>> = Arc::new(Mutex::new(None));
@@ -48,10 +48,6 @@ impl FrameReceiver {
                 move || {
                     let mut decode_errors = ErrorThrottle::new();
                     loop {
-                        if !run_flag.should_run() {
-                            info!("Frame receiver shutting down.");
-                            break;
-                        }
                         match subscriber.recv() {
                             None => {
                                 info!("Frame subscription stopped.");
@@ -117,7 +113,7 @@ impl Show {
         let video_channel = VideoChannel(cfg.video_channel as usize);
         info!("Running on video channel {}.", cfg.video_channel);
 
-        let frames = FrameReceiver::new(&cfg.server_hostname, run_flag.clone())?;
+        let frames = FrameReceiver::new(&cfg.server_hostname)?;
 
         let opengl = OpenGL::V3_2;
 
@@ -298,7 +294,7 @@ mod tests {
     fn dropping_the_receiver_stops_its_thread() {
         let (dropped, completion) = channel();
         thread::spawn(move || {
-            let receiver = FrameReceiver::new("127.0.0.1", RunFlag::default()).unwrap();
+            let receiver = FrameReceiver::new("127.0.0.1").unwrap();
             // Long enough for the thread to be waiting: for a frame if a
             // console happens to be publishing here, and for a console to
             // connect to if none is.
