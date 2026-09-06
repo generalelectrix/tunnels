@@ -98,11 +98,6 @@ pub struct FrameEncoder {
 }
 
 impl FrameEncoder {
-    /// Create an encoder holding no scratch yet.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Serialize a frame into the bytes `ShowFrame::decode` reads, which stand
     /// until the next frame is encoded.
     pub fn encode(&mut self, frame: &ShowFrameRef) -> Result<&[u8], FrameCodecError> {
@@ -155,11 +150,6 @@ pub struct FrameDecoder {
 }
 
 impl FrameDecoder {
-    /// Create a decoder holding no scratch yet.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Recover a frame from the wire bytes `FrameEncoder::encode` produces.
     ///
     /// Every way the bytes can be wrong is an error, never a panic: a mangled
@@ -192,7 +182,7 @@ impl FrameDecoder {
 
 /// Serialize a frame into the bytes `ShowFrame::decode` reads.
 fn encode_frame<T: Serialize>(frame: &T) -> Result<Vec<u8>, FrameCodecError> {
-    let mut encoder = FrameEncoder::new();
+    let mut encoder = FrameEncoder::default();
     encoder.encode_serializable(frame)?;
     Ok(encoder.wire)
 }
@@ -222,7 +212,7 @@ impl ShowFrame {
 
     /// Recover a frame from the wire bytes `encode` produces.
     pub fn decode(bytes: &[u8]) -> Result<Self, FrameCodecError> {
-        FrameDecoder::new().decode(bytes)
+        FrameDecoder::default().decode(bytes)
     }
 }
 
@@ -852,7 +842,7 @@ mod tests {
             .iter()
             .map(|named| named.frame.encode().unwrap())
             .collect();
-        let mut decoder = FrameDecoder::new();
+        let mut decoder = FrameDecoder::default();
         let in_order = frames.iter().zip(&wire);
         // Backwards as well as forwards, so that a frame is decompressed into
         // a buffer both smaller and larger than the one it needs.
@@ -885,7 +875,7 @@ mod tests {
     #[test]
     fn an_encoded_frame_is_byte_for_byte_the_wire_format() {
         let frames = fixture::all();
-        let mut encoder = FrameEncoder::new();
+        let mut encoder = FrameEncoder::default();
         // Twice over, so that an encoder writing into buffers it has already
         // filled is held to the same bytes as one writing into empty ones.
         for pass in 1..=2 {

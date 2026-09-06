@@ -50,7 +50,7 @@ impl FramePublisher {
         info!("Frame server started.");
         Ok(Self {
             publisher,
-            encoder: FrameEncoder::new(),
+            encoder: FrameEncoder::default(),
         })
     }
 
@@ -92,7 +92,7 @@ impl FrameSubscriber {
     pub fn new(host: &str) -> Self {
         Self {
             subscriber: minusmq::pub_sub::Subscriber::new(host, PORT, MAX_MESSAGE_LEN),
-            decoder: FrameDecoder::new(),
+            decoder: FrameDecoder::default(),
         }
     }
 
