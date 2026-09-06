@@ -55,6 +55,13 @@ struct Slot {
 }
 
 impl Mailbox {
+    /// Create a mailbox, returning the handle that owns it and the shared
+    /// reference the sender thread takes its work from.
+    fn new() -> (MailboxHandle, Arc<Mailbox>) {
+        let mailbox = Arc::new(Mailbox::default());
+        (MailboxHandle(mailbox.clone()), mailbox)
+    }
+
     /// Store `msg` as the message to send next, replacing any the subscriber
     /// has not taken, and report how many it has missed if a report is due.
     ///
@@ -115,15 +122,6 @@ impl Mailbox {
 /// nowhere, so the right to post is held by exactly one place and cannot be
 /// copied out of it.
 struct MailboxHandle(Arc<Mailbox>);
-
-impl MailboxHandle {
-    /// Create a handle on a new mailbox, alongside the shared reference to it
-    /// that the sender thread takes its work from.
-    fn new() -> (Self, Arc<Mailbox>) {
-        let mailbox = Arc::new(Mailbox::default());
-        (MailboxHandle(mailbox.clone()), mailbox)
-    }
-}
 
 impl std::ops::Deref for MailboxHandle {
     type Target = Mailbox;
@@ -352,7 +350,7 @@ fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
     let socket = stream
         .try_clone()
         .context("failed to duplicate the subscriber socket")?;
-    let (mailbox, shared) = MailboxHandle::new();
+    let (mailbox, shared) = Mailbox::new();
     let sender = thread::Builder::new()
         .name(format!("pub_sub-send-{peer}"))
         .spawn(move || send_loop(stream, peer, &shared))
