@@ -567,23 +567,6 @@ fn reap_disconnected(clients: &Mutex<Clients>) {
 
 // --- Subscriber ---
 
-/// The buffer capacity a subscriber keeps between messages.
-///
-/// A message far larger than the usual one would otherwise pin a buffer its
-/// size for the life of the connection. Capacity above this ceiling is
-/// released once the message in it has been read, while a stream of ordinary
-/// messages stays well beneath it and is received into the same allocation
-/// every time.
-const RETAINED_BUF_CAPACITY: usize = 64 * 1024;
-
-/// Give back the capacity an outsized message took, now that nothing holds it.
-fn release(buf: &mut Vec<u8>) {
-    if buf.capacity() > RETAINED_BUF_CAPACITY {
-        buf.clear();
-        buf.shrink_to(RETAINED_BUF_CAPACITY);
-    }
-}
-
 /// How long a subscriber waits before its first attempt to remake a
 /// connection, doubling up to [`MAX_CONNECT_BACKOFF`] while the attempts fail.
 const CONNECT_BACKOFF: Duration = Duration::from_millis(100);
@@ -730,10 +713,6 @@ impl Subscriber {
     /// buffer the one before it did, so a stream of messages of a settled size
     /// costs no allocation to receive.
     pub fn recv(&mut self) -> Option<&[u8]> {
-        // Give back what an outsized message took, now that nothing holds it.
-        release(&mut self.buf);
-        release(&mut self.plain);
-
         loop {
             // Ensure we have a connection.
             if self.stream.is_none() && !self.connect() {
@@ -969,19 +948,19 @@ mod tests {
         subscriber.join().unwrap();
     }
 
-    /// A settled stream of messages is received into one allocation, and the
-    /// capacity an outsized message takes is given back once it has been read.
-    /// Every message arrives whole, however large it is and whatever buffer it
-    /// lands in.
+    /// A settled stream of messages is received into one allocation, whatever
+    /// the sizes within it. Every message arrives whole, however large it is.
     ///
     /// Each message is published only after the one before it has been
     /// received, so a subscriber that is slow misses nothing here.
     #[test]
-    fn subscriber_buffer_is_reused_and_released() {
+    fn a_settled_stream_of_messages_is_received_into_one_allocation() {
         /// A message of the size the transport carries all day.
         const SETTLED_LEN: usize = 2_700;
-        /// A message far larger than that.
-        const OUTSIZED_LEN: usize = 1_000_000;
+        /// A message short enough to fit a buffer sized for the settled one
+        /// with room to spare, so that receiving it into a buffer of its own
+        /// would show up as a smaller capacity.
+        const SHORT_LEN: usize = 300;
         /// The byte every message is made of, to recognize it by.
         const FILL: u8 = 0xAB;
 
@@ -1011,23 +990,22 @@ mod tests {
         };
 
         let settled = receive(SETTLED_LEN);
+        assert!(
+            settled >= SETTLED_LEN,
+            "a message was received into a buffer too small to hold it"
+        );
         for _ in 0..5 {
+            assert_eq!(
+                receive(SHORT_LEN),
+                settled,
+                "a message shorter than the one before it was received into a buffer of its own"
+            );
             assert_eq!(
                 receive(SETTLED_LEN),
                 settled,
                 "a settled stream of messages reallocated"
             );
         }
-
-        assert!(
-            receive(OUTSIZED_LEN) >= OUTSIZED_LEN,
-            "an outsized message was received into a buffer too small to hold it"
-        );
-        let released = receive(SETTLED_LEN);
-        assert!(
-            released <= RETAINED_BUF_CAPACITY,
-            "an outsized message left {released} bytes of capacity behind it"
-        );
     }
 
     /// A message large enough that a handful of them fill a socket's buffers.
