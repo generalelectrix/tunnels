@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use client_lib::config::ClientConfig;
 use graphics::{CircleArc, Context, clear};
 use log::{error, info};
@@ -6,7 +6,7 @@ use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
@@ -14,16 +14,75 @@ use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
 use tunnels_net::frame_service::FrameSubscriber;
 
-/// The most recent show frame to have arrived, if any.
+/// A client's end of one console's stream of show frames.
 ///
-/// A single slot, overwritten by every arrival: frames are published faster
-/// than they can be drawn, and a superseded frame is never worth drawing.
-pub type FrameMailbox = Arc<Mutex<Option<Arc<ShowFrame>>>>;
+/// Arriving frames land in a single slot, overwritten by every arrival: they
+/// are published faster than they can be drawn, and a superseded frame is
+/// never worth drawing.
+pub struct FrameReceiver {
+    /// The most recent frame to have arrived, if any has.
+    latest: Arc<Mutex<Option<Arc<ShowFrame>>>>,
+    /// The thread taking frames off the stream, which lasts as long as the
+    /// receiver it feeds.
+    ///
+    /// Held rather than joined. It parks in a receive that only a frame ends,
+    /// and a console that has stopped publishing sends no last frame to
+    /// release it, so waiting for it would hold a client's shutdown open until
+    /// the console came back.
+    #[expect(unused)]
+    service: JoinHandle<()>,
+}
+
+impl FrameReceiver {
+    /// Subscribe to the frames a console publishes, and begin taking them off
+    /// the stream.
+    ///
+    /// Receiving runs on a thread of its own until the run flag is tripped. A
+    /// frame that cannot be decoded is logged and dropped; the stream is a
+    /// sequence of independent frames, so losing one costs a frame of
+    /// animation and nothing more.
+    pub fn new(host: &str, run_flag: RunFlag) -> Result<Self> {
+        let mut subscriber = FrameSubscriber::new(host);
+        let latest: Arc<Mutex<Option<Arc<ShowFrame>>>> = Arc::new(Mutex::new(None));
+        let service = thread::Builder::new()
+            .name("frame_receiver".to_string())
+            .spawn({
+                let latest = latest.clone();
+                move || {
+                    let mut decode_errors = ErrorThrottle::new();
+                    loop {
+                        if !run_flag.should_run() {
+                            info!("Frame receiver shutting down.");
+                            break;
+                        }
+                        match subscriber.recv() {
+                            Ok(frame) => *latest.lock().unwrap() = Some(Arc::new(frame)),
+                            Err(e) => match decode_errors.record(Instant::now()) {
+                                Some(ErrorReport::First) => error!("Frame decode error: {e}"),
+                                Some(ErrorReport::Repeated(count)) => error!(
+                                    "{count} frame decode errors in the last {}s, most recently: {e}",
+                                    ERROR_REPORT_PERIOD.as_secs_f64(),
+                                ),
+                                None => (),
+                            },
+                        }
+                    }
+                }
+            })
+            .context("failed to spawn the frame receiver thread")?;
+        Ok(Self { latest, service })
+    }
+
+    /// The newest frame to have arrived, if any has.
+    pub fn latest(&self) -> Option<Arc<ShowFrame>> {
+        self.latest.lock().unwrap().clone()
+    }
+}
 
 /// Top-level structure that owns all of the show data.
 pub struct Show {
     gl: GlGraphics, // OpenGL drawing backend.
-    frames: FrameMailbox,
+    frames: FrameReceiver,
     /// The video channel drawn out of every frame.
     video_channel: VideoChannel,
     cfg: ClientConfig,
@@ -38,9 +97,7 @@ impl Show {
         let video_channel = VideoChannel(cfg.video_channel as usize);
         info!("Running on video channel {}.", cfg.video_channel);
 
-        // Set up frame reception and management.
-        let frames = Arc::new(Mutex::new(None));
-        receive_frames(&cfg, frames.clone(), run_flag.clone());
+        let frames = FrameReceiver::new(&cfg.server_hostname, run_flag.clone())?;
 
         let opengl = OpenGL::V3_2;
 
@@ -107,7 +164,7 @@ impl Show {
     /// the show standing on stage, which is a better thing to be looking at
     /// than a dark screen.
     fn render(&mut self, args: &RenderArgs) {
-        let frame = self.frames.lock().unwrap().clone();
+        let frame = self.frames.latest();
         let layers = frame.as_ref().map(|frame| {
             frame
                 .mixer
@@ -141,42 +198,6 @@ fn draw_waiting_spinner(c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig, el
         c.transform,
         gl,
     );
-}
-
-/// Spawn a thread to receive show frames.
-/// Inject them into the provided mailbox.
-/// The thread runs until the run flag is tripped.
-///
-/// A frame that cannot be decoded is logged and dropped; the stream is a
-/// sequence of independent frames, so losing one costs a frame of animation
-/// and nothing more.
-fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
-    let mut subscriber = FrameSubscriber::new(&cfg.server_hostname);
-    thread::Builder::new()
-        .name("frame_receiver".to_string())
-        .spawn(move || {
-            let mut decode_errors = ErrorThrottle::new();
-            loop {
-                if !run_flag.should_run() {
-                    info!("Frame receiver shutting down.");
-                    break;
-                }
-                match subscriber.recv() {
-                    Ok(frame) => {
-                        *frames.lock().unwrap() = Some(Arc::new(frame));
-                    }
-                    Err(e) => match decode_errors.record(Instant::now()) {
-                        Some(ErrorReport::First) => error!("Frame decode error: {e}"),
-                        Some(ErrorReport::Repeated(count)) => error!(
-                            "{count} frame decode errors in the last {}s, most recently: {e}",
-                            ERROR_REPORT_PERIOD.as_secs_f64(),
-                        ),
-                        None => (),
-                    },
-                }
-            }
-        })
-        .expect("Failed to spawn frame receiver thread");
 }
 
 /// How long a run of failures goes unreported before its count is reported.
