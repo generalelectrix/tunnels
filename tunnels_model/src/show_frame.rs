@@ -52,11 +52,50 @@ pub struct ShowFrame {
     pub audio_envelope: UnipolarFloat,
 }
 
+/// One frame of show state, held by reference.
+///
+/// Field for field this is `ShowFrame`, and serde writes a reference exactly
+/// as it writes the value behind it, so the two encode to identical bytes.
+/// Only `clocks` differs in kind: a static clock bank is computed from the
+/// live one rather than stored, so a reference to one has nothing to name.
+///
+/// A frame only serializes in this form. Decoding always yields the owned one.
+#[derive(Debug, Serialize)]
+pub struct ShowFrameRef<'a> {
+    pub frame_number: u64,
+    pub mixer: &'a Mixer,
+    pub clocks: StaticClockBank,
+    pub palette: &'a ColorPalette,
+    pub positions: &'a PositionBank,
+    pub audio_envelope: UnipolarFloat,
+}
+
 /// The largest payload a frame is allowed to expand into.
 ///
 /// A frame is a few kilobytes. The ceiling is here so that a corrupted length
 /// prefix asks for a rejected decode rather than a multi-gigabyte allocation.
 const MAX_DECODED_LEN: usize = 8 * 1024 * 1024;
+
+/// Serialize a frame into the bytes `ShowFrame::decode` reads.
+///
+/// The bytes carry a four byte header — magic, then the wire version — ahead
+/// of the compressed frame, so that bytes from a build holding a different
+/// model are recognized as such rather than decoded.
+fn encode_frame<T: Serialize>(frame: &T) -> Result<Vec<u8>, FrameCodecError> {
+    let plain = postcard::to_allocvec(frame).map_err(FrameCodecError::Serialize)?;
+    let mut wire = Vec::with_capacity(FRAME_HEADER_LEN + plain.len());
+    wire.extend_from_slice(&FRAME_MAGIC);
+    wire.push(WIRE_VERSION);
+    wire.append(&mut lz4_flex::compress_prepend_size(&plain));
+    Ok(wire)
+}
+
+impl ShowFrameRef<'_> {
+    /// Serialize this frame into wire bytes.
+    pub fn encode(&self) -> Result<Vec<u8>, FrameCodecError> {
+        encode_frame(self)
+    }
+}
 
 impl ShowFrame {
     /// Borrow the sidecar state as the context a beam resolves against.
@@ -70,17 +109,8 @@ impl ShowFrame {
     }
 
     /// Serialize this frame into wire bytes.
-    ///
-    /// The bytes carry a four byte header — magic, then the wire version —
-    /// ahead of the compressed frame, so that bytes from a build holding a
-    /// different model are recognized as such rather than decoded.
     pub fn encode(&self) -> Result<Vec<u8>, FrameCodecError> {
-        let plain = postcard::to_allocvec(self).map_err(FrameCodecError::Serialize)?;
-        let mut wire = Vec::with_capacity(FRAME_HEADER_LEN + plain.len());
-        wire.extend_from_slice(&FRAME_MAGIC);
-        wire.push(WIRE_VERSION);
-        wire.append(&mut lz4_flex::compress_prepend_size(&plain));
-        Ok(wire)
+        encode_frame(self)
     }
 
     /// Check the header the wire bytes open with, yielding the frame after it.
@@ -529,6 +559,37 @@ mod tests {
                     &actual,
                 );
             }
+        }
+    }
+
+    /// The same frame, named by reference rather than owned.
+    fn borrow(frame: &ShowFrame) -> ShowFrameRef<'_> {
+        ShowFrameRef {
+            frame_number: frame.frame_number,
+            mixer: &frame.mixer,
+            clocks: frame.clocks.clone(),
+            palette: &frame.palette,
+            positions: &frame.positions,
+            audio_envelope: frame.audio_envelope,
+        }
+    }
+
+    /// A borrowed frame and the owned frame it names encode identically.
+    ///
+    /// The two forms are one wire format, so bytes written from either must be
+    /// interchangeable: equal to each other, and readable as a frame.
+    #[test]
+    fn the_two_forms_of_a_frame_share_one_encoding() {
+        for NamedFrame { name, frame } in fixture::all() {
+            let borrowed = borrow(&frame).encode().unwrap();
+            let owned = frame.encode().unwrap();
+            assert!(
+                borrowed == owned,
+                "{name}: encoded to {} bytes by reference against {} by value",
+                borrowed.len(),
+                owned.len()
+            );
+            assert_prints_identically(name, &frame, &ShowFrame::decode(&borrowed).unwrap());
         }
     }
 
