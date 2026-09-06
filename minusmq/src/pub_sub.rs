@@ -418,6 +418,16 @@ fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
     // A subscriber that vanishes without closing would otherwise keep its
     // sender thread and its place in the list for as long as the publisher
     // lives, taking a copy of every message published in the meantime.
+    //
+    // The probes only reach a connection that is idle, though, and a
+    // connection carrying a stream of messages is not: with unacknowledged
+    // data outstanding it is the retransmission timer that governs, and a
+    // subscriber that vanishes mid-stream is held until that gives up.
+    // `TCP_USER_TIMEOUT` would cover it. What it costs meanwhile is a client
+    // that is not reaped and a run of skip warnings, which is the cheap half
+    // of the problem: the half a show depends on is the subscriber's own end,
+    // where a publisher that stops sending is idle by definition and the
+    // probes do fire.
     if let Err(e) = fail_a_silent_peer(&stream) {
         warn!("Failed to set keepalive on subscriber {peer}: {e}");
     }
