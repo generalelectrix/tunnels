@@ -205,8 +205,8 @@ const ERROR_REPORT_PERIOD: Duration = Duration::from_secs(1);
 
 /// A running count of a failure that repeats, reported at a bounded rate.
 ///
-/// Frames arrive at 240 Hz, so a failure with a persistent cause — a peer
-/// running a stale binary, a stream of garbage — recurs as fast as they do.
+/// Frames arrive at 240 Hz, so a failure with a persistent cause — a stream
+/// of garbage, a publisher that is not one — recurs as fast as they do.
 /// Reporting every occurrence buries the log under a flood that says nothing
 /// the first line did not, so occurrences are counted between reports instead.
 struct ErrorThrottle {

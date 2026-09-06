@@ -39,6 +39,20 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 - The `RepaintSignal` is a `tunnels_lib::repaint::RepaintSignal` — `Arc<dyn Fn() + Send + Sync>`. The console wraps `egui::Context::request_repaint` inside the eframe creator closure; tests and headless callers use `noop_repaint()`.
 - Shared GUI components live in `gui_common/`. Panel pattern: state struct + render struct with `GuiContext` for sending commands. Edge-triggered GUI state reported to the show (e.g. visualizer visibility) uses `gui_common::tracked::TrackedBool` to detect changes and avoid re-sending.
 
+## The console/client connection is deliberately unversioned
+
+The show frame stream carries no magic bytes and no version byte, and the
+encoding is tagless: the schema is the Rust type, and it does not travel. A
+client and the console it renders for are always the same build, because the
+bootstrapper pushes the client binary from beside the console rather than
+letting a machine keep one of its own. Skew is not a state the system can
+reach without someone stepping around the deploy path.
+
+So do not add version negotiation, a compatibility window, or anything else
+that tolerates a client and a console disagreeing about the model. A change to
+`ShowFrame`, or to anything reachable from it, needs both ends redeployed and
+nothing more.
+
 ## Workspace crates
 
 | Crate | Purpose |
