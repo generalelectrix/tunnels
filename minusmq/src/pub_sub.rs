@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use log::{error, warn};
+use socket2::{SockRef, TcpKeepalive};
 use std::io::Write;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +16,34 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::wire;
+
+/// How long a connection goes without traffic before keepalive probing starts.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(5);
+
+/// How long the keepalive probes wait between one another.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How many keepalive probes go unanswered before the connection is failed.
+///
+/// Together with [`KEEPALIVE_IDLE`] and [`KEEPALIVE_INTERVAL`] this puts a
+/// silent peer's connection out of its misery about eleven seconds after the
+/// traffic stops, against the operating system's default of a couple of hours.
+const KEEPALIVE_RETRIES: u32 = 3;
+
+/// Ask the operating system to fail a connection whose peer has stopped
+/// answering, rather than hold it open indefinitely.
+///
+/// A peer that disappears without closing — an unplugged switch, a wireless
+/// link that drops — leaves behind a socket that looks healthy and carries
+/// nothing, and a thread reading from one waits on it forever. Keepalive
+/// probes turn that silence into an error the connection can be remade from.
+fn fail_a_silent_peer(socket: &TcpStream) -> std::io::Result<()> {
+    let keepalive = TcpKeepalive::new()
+        .with_time(KEEPALIVE_IDLE)
+        .with_interval(KEEPALIVE_INTERVAL)
+        .with_retries(KEEPALIVE_RETRIES);
+    SockRef::from(socket).set_tcp_keepalive(&keepalive)
+}
 
 // --- Publisher ---
 
@@ -342,6 +371,12 @@ fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
     if let Err(e) = stream.set_nodelay(true) {
         warn!("Failed to set TCP_NODELAY: {e}");
     }
+    // A subscriber that vanishes without closing would otherwise keep its
+    // sender thread and its place in the list for as long as the publisher
+    // lives, taking a copy of every message published in the meantime.
+    if let Err(e) = fail_a_silent_peer(&stream) {
+        warn!("Failed to set keepalive on subscriber {peer}: {e}");
+    }
     // Deliberately no write timeout. A sender thread is free to block for as
     // long as its subscriber takes, and a timeout firing mid-message would
     // leave a partial message on the wire, desynchronizing the framing for
@@ -481,6 +516,12 @@ impl Subscriber {
             let addr = format!("{}:{}", self.host, self.port);
             match TcpStream::connect(&addr) {
                 Ok(stream) => {
+                    // Without this, a publisher that goes away without closing
+                    // leaves this subscriber blocked in a read that no message
+                    // and no error will ever end.
+                    if let Err(e) = fail_a_silent_peer(&stream) {
+                        warn!("Failed to set keepalive on the connection to {addr}: {e}");
+                    }
                     log::debug!("Subscriber connected to {addr}");
                     self.stream = Some(stream);
                     return;
