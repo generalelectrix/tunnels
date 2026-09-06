@@ -103,6 +103,7 @@ impl eframe::App for ControlApp {
                 slider(ui, "spin speed", &mut layer.spin_speed, -1.0..=1.0);
                 slider(ui, "shear x", &mut layer.shear_x, -1.5..=1.5);
                 slider(ui, "shear y", &mut layer.shear_y, -1.5..=1.5);
+                slider(ui, "twist", &mut layer.twist, -1.0..=1.0);
                 slider(ui, "x", &mut layer.x, -1.0..=1.0);
                 slider(ui, "y", &mut layer.y, -1.0..=1.0);
             });

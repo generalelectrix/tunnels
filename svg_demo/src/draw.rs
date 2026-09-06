@@ -112,7 +112,12 @@ pub struct GeometryWave<'a> {
     pub wave: &'a LiveWave,
 }
 
-/// Displace a mesh's vertices under its geometry animations.
+/// Whether anything would move a vertex.
+pub fn warps_geometry(layer: &LayerParams, waves: &[GeometryWave]) -> bool {
+    layer.twist != 0.0 || !waves.is_empty()
+}
+
+/// Displace a mesh's vertices under its base twist and geometry animations.
 ///
 /// The mesh itself is untouched — this produces a new position for each vertex,
 /// once per frame, the same shape of work as evaluating phase. Nothing here can
@@ -125,6 +130,7 @@ pub struct GeometryWave<'a> {
 pub fn warp_verts_into(
     out: &mut Vec<[f32; 2]>,
     mesh: &RefinedMesh,
+    base_twist: f32,
     waves: &[GeometryWave],
     audio: UnipolarFloat,
 ) {
@@ -132,7 +138,9 @@ pub fn warp_verts_into(
     out.extend(mesh.verts.iter().enumerate().map(|(i, v)| {
             let (x, y) = (v[0], v[1]);
             let mut radius = (x * x + y * y).sqrt();
-            let mut angle = y.atan2(x);
+            // The base twist grows with radius, so the centre stays put and the
+            // rim carries the full turn — a spiral shear rather than a rotation.
+            let mut angle = y.atan2(x) + base_twist * radius * std::f32::consts::TAU;
             let (mut scale_x, mut scale_y) = (1.0f32, 1.0f32);
 
             for w in waves {
@@ -146,7 +154,7 @@ pub fn warp_verts_into(
                     // waveform around the angle turns a disc into petals.
                     AnimTarget::Radial => radius *= 1.0 + value,
                     AnimTarget::Twist => angle += value * MAX_TWIST,
-                    AnimTarget::Squash => {
+                    AnimTarget::AspectRatio => {
                         scale_x *= 1.0 + value;
                         scale_y *= 1.0 - value;
                     }

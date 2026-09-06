@@ -58,12 +58,16 @@ fn render_cell_at(
 /// zero — because a contact sheet cannot show motion, and the shape a waveform
 /// imposes is the thing worth judging.
 pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Result<()> {
-    let rows: [(AnimTarget, ColorPhase, &str); 5] = [
+    // The last row animates nothing: it sweeps the base twist knob, which is the
+    // one geometry control with no counterpart in `Tunnel` and so the only one
+    // that had to be added rather than reused.
+    let rows: [(AnimTarget, ColorPhase, &str); 6] = [
         (AnimTarget::Radial, ColorPhase::Angle, "radial along angle"),
         (AnimTarget::Radial, ColorPhase::Radius, "radial along radius"),
         (AnimTarget::Twist, ColorPhase::Radius, "twist along radius"),
-        (AnimTarget::Squash, ColorPhase::Angle, "squash along angle"),
+        (AnimTarget::AspectRatio, ColorPhase::Angle, "aspect along angle"),
         (AnimTarget::Hue, ColorPhase::Angle, "hue"),
+        (AnimTarget::Hue, ColorPhase::Angle, "base twist knob, no animation"),
     ];
     let cols: [(WaveformKind, u16, f64); 5] = [
         (WaveformKind::Sine, 3, 0.35),
@@ -81,6 +85,7 @@ pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Re
         image::Rgba([24, 24, 28, 255]),
     );
 
+    let base_twist_row = rows.len() - 1;
     for (r, (target, phase, name)) in rows.iter().enumerate() {
         for (c, (waveform, n_periods, size)) in cols.iter().enumerate() {
             let mut layer = LayerParams {
@@ -95,17 +100,22 @@ pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Re
                 col_sat: 0.85,
                 ..Default::default()
             };
-            layer.waves[0] = TargetedWave {
-                enabled: true,
-                target: *target,
-                phase: *phase,
-                wave: WaveParams {
-                    waveform: *waveform,
-                    n_periods: *n_periods,
-                    size: *size,
-                    ..Default::default()
-                },
-            };
+            if r == base_twist_row {
+                // Sweep the knob across the row instead of varying a waveform.
+                layer.twist = -0.6 + 0.3 * c as f64;
+            } else {
+                layer.waves[0] = TargetedWave {
+                    enabled: true,
+                    target: *target,
+                    phase: *phase,
+                    wave: WaveParams {
+                        waveform: *waveform,
+                        n_periods: *n_periods,
+                        size: *size,
+                        ..Default::default()
+                    },
+                };
+            }
             let img = render_animated(&shapes[idx], &layer, cell);
             paste(&mut sheet, &img, gap + c as u32 * pitch, gap + r as u32 * pitch);
         }
@@ -157,10 +167,10 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
     let field = PhaseField::of(layer);
 
     let mut positions = Vec::new();
-    if warps.is_empty() {
+    if warps.is_empty() && layer.twist == 0.0 {
         positions.extend_from_slice(&refined.verts);
     } else {
-        warp_verts_into(&mut positions, &refined, &warps, audio);
+        warp_verts_into(&mut positions, &refined, layer.twist as f32, &warps, audio);
     }
     draw_textured(
         &refined,

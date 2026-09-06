@@ -105,6 +105,29 @@ it costs:
 | hue, brightness, saturation | in the ramp texture | 1024 evaluations and one texture write, however fast it moves |
 | radial, twist, squash | per vertex, at draw time | one pass over the mesh, which is never re-refined |
 
+Every target in `Tunnel` modulates a value that also has its own knob —
+`AnimationTarget::Size` adds to `size`, `AspectRatio` to `aspect_ratio`. Held
+against that pattern, two of the geometry targets here are not new: a constant
+radial scale is `size`, and a constant aspect animation is `aspect_ratio`. Only
+**twist** had no base value to modulate, so `LayerParams::twist` adds one — a
+static spiral shear, growing with radius so the centre stays put.
+
+With radial as the target, the animation's own knobs turn out to be shape
+parameters:
+
+| animation knob | shape meaning | superformula |
+|---|---|---|
+| `n_periods` | lobe count / symmetry order | m |
+| `smoothing` | pointy vs. rounded lobes | n |
+| `size` | deformation depth | amplitude |
+| `duty_cycle` | lobe width against the flat gap | — |
+| `pulse` | lobes push out only, never in | — |
+| `standing` vs travelling | lobes pulse in place vs. rotate | — |
+
+Which is to say the parametric-shape idea arrives through the animation system
+rather than as a new `PathShape`, and costs no new control surface, because
+those knobs already exist on the animation page.
+
 Geometry targets are the interesting half. **Radial** scales each point's
 distance from the centre — run along the angle, that deforms a disc into petals,
 which is the superformula's whole trick arriving free on top of any shape in the

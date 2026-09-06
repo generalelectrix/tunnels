@@ -4,7 +4,7 @@
 use crate::anim::LiveWave;
 use crate::draw::{
     GeometryWave, draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs_into,
-    warp_verts_into,
+    warp_verts_into, warps_geometry,
 };
 use crate::mesh::{self, Level, MeshId, MeshLibrary};
 use crate::params::{DemoParams, LayerParams, PhaseField, PORT, TargetedWave};
@@ -308,11 +308,11 @@ impl Renderer {
                 // sliding across it.
                 let mark = Instant::now();
                 phase_uvs_into(uvs, mesh, field);
-                if warps.is_empty() {
+                if warps_geometry(layer, &warps) {
+                    warp_verts_into(positions, mesh, layer.twist as f32, &warps, audio);
+                } else {
                     positions.clear();
                     positions.extend_from_slice(&mesh.verts);
-                } else {
-                    warp_verts_into(positions, mesh, &warps, audio);
                 }
                 t.uv_us += mark.elapsed().as_micros();
 

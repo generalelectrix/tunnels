@@ -96,7 +96,12 @@ pub enum AnimTarget {
     /// shape. Along the radius that is a vortex.
     Twist,
     /// Stretches one axis while squeezing the other.
-    Squash,
+    ///
+    /// Named for the knob it modulates rather than for what it does, because a
+    /// constant value here is exactly `Tunnel::aspect_ratio`. Every target in
+    /// the real model works that way: an animation is meaningful because there
+    /// is a base value it adds to.
+    AspectRatio,
 }
 
 impl AnimTarget {
@@ -106,7 +111,7 @@ impl AnimTarget {
         Self::Saturation,
         Self::Radial,
         Self::Twist,
-        Self::Squash,
+        Self::AspectRatio,
     ];
 
     pub fn label(self) -> &'static str {
@@ -116,7 +121,7 @@ impl AnimTarget {
             Self::Saturation => "sat",
             Self::Radial => "radial",
             Self::Twist => "twist",
-            Self::Squash => "squash",
+            Self::AspectRatio => "aspect",
         }
     }
 
@@ -202,6 +207,13 @@ pub struct LayerParams {
     pub spin_speed: f64,
     pub shear_x: f64,
     pub shear_y: f64,
+    /// Static rotation that varies with distance from the centre, in turns at
+    /// the rim.
+    ///
+    /// The one geometry control here with no counterpart in `Tunnel`. Radial
+    /// and aspect animations modulate `size` and `aspect_ratio`, which already
+    /// have knobs; a twist has nothing to modulate until this exists.
+    pub twist: f64,
     /// Position offset, in units of the smaller screen dimension.
     pub x: f64,
     pub y: f64,
@@ -238,6 +250,7 @@ impl Default for LayerParams {
             spin_speed: 0.0,
             shear_x: 0.0,
             shear_y: 0.0,
+            twist: 0.0,
             x: 0.0,
             y: 0.0,
             draw_mode: DrawMode::Fill,
