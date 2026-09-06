@@ -80,6 +80,9 @@ fn layer_color(over: &[f32; 4], under: &[f32; 4]) -> [f32; 4] {
 ///
 /// Returns `None` when the point falls outside, or when the triangle is
 /// degenerate and has no interior to shade.
+/// A triangle's corners, paired with a per-corner attribute.
+type Attributed<T> = ([[f32; 2]; 3], [T; 3]);
+
 fn barycentric(tri: &[[f32; 2]], p: [f32; 2]) -> Option<[f32; 3]> {
     let (a, b, c) = (tri[0], tri[1], tri[2]);
     let det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
@@ -203,7 +206,7 @@ impl Graphics for RenderBuffer {
     where
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 4]])),
     {
-        let mut tris: Vec<([[f32; 2]; 3], [[f32; 4]; 3])> = Vec::new();
+        let mut tris: Vec<Attributed<[f32; 4]>> = Vec::new();
         f(&mut |vertices, colors| {
             for (v, c) in vertices.chunks(3).zip(colors.chunks(3)) {
                 if let ([a, b, cc], [ca, cb, ccc]) = (v, c) {
@@ -232,7 +235,7 @@ impl Graphics for RenderBuffer {
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]])),
     {
         let tint = *color;
-        let mut tris: Vec<([[f32; 2]; 3], [[f32; 2]; 3])> = Vec::new();
+        let mut tris: Vec<Attributed<[f32; 2]>> = Vec::new();
         f(&mut |vertices, coords| {
             for (v, t) in vertices.chunks(3).zip(coords.chunks(3)) {
                 if let ([a, b, c], [ta, tb, tc]) = (v, t) {

@@ -37,12 +37,12 @@ fn shape_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("SVG_DEMO_SHAPES") {
         return PathBuf::from(dir);
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(beside) = exe.parent().map(|d| d.join("shapes")) {
-            if beside.is_dir() {
-                return beside;
-            }
-        }
+    if let Some(beside) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join("shapes")))
+        .filter(|beside| beside.is_dir())
+    {
+        return beside;
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shapes")
 }

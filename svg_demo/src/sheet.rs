@@ -185,7 +185,6 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
 }
 
 /// Draw a layer, refining it first if its color varies across the shape.
-#[expect(clippy::too_many_arguments)]
 fn draw_one(
     shape: &ShapeMesh,
     outline: Option<&[[f32; 2]]>,

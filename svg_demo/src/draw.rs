@@ -226,10 +226,8 @@ pub fn draw_layer<G: Graphics>(
     if layer.draw_mode.draws_fill() {
         draw_tris(&mesh.fill, layer, transform, gl);
     }
-    if layer.draw_mode.draws_outline() {
-        if let Some(outline) = outline {
-            draw_tris(outline, layer, transform, gl);
-        }
+    if let Some(outline) = outline.filter(|_| layer.draw_mode.draws_outline()) {
+        draw_tris(outline, layer, transform, gl);
     }
 }
 

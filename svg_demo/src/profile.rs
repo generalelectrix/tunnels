@@ -4,7 +4,7 @@
 //! reflect the work rather than the display, and reports where the time went.
 
 use crate::params::{ColorPhase, DemoParams, DrawMode, LayerParams};
-use crate::render::{Renderer, Timings};
+use crate::render::{Frame, Renderer, Timings};
 use crate::shapes::load_dir;
 use anyhow::{Result, anyhow};
 use graphics::{Transformed, clear};
@@ -206,7 +206,7 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
         let mut seen = 0usize;
         let deadline = Duration::from_secs_f64(opts.seconds / 2.0);
 
-        while let Some(e) = window.next() {
+        for e in window.by_ref() {
             let Some(args) = e.render_args() else { continue };
             let time = start.elapsed().as_secs_f64();
             if animate_color {
@@ -223,7 +223,17 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
             gl.draw(args.viewport(), |c, gl| {
                 clear([0.0, 0.0, 0.0, 1.0], gl);
                 let base = c.transform.trans(w / 2.0, h / 2.0);
-                t = renderer.draw(gl, base, critical, &params, time, elapsed_hint, UnipolarFloat::ZERO);
+                t = renderer.draw(
+                    gl,
+                    &params,
+                    Frame {
+                        base,
+                        critical,
+                        time,
+                        delta: elapsed_hint,
+                        audio: UnipolarFloat::ZERO,
+                    },
+                );
             });
 
             let elapsed = last.elapsed();

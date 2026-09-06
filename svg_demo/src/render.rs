@@ -144,6 +144,20 @@ impl LayerRuntime {
     }
 }
 
+/// Everything about the frame being drawn that is not the show state.
+#[derive(Clone, Copy)]
+pub struct Frame {
+    /// Transform placing the origin at the centre of the viewport.
+    pub base: Matrix2d,
+    /// The smaller screen dimension, which geometry is scaled against.
+    pub critical: f64,
+    /// Seconds since the render started, driving spin.
+    pub time: f64,
+    /// Time since the previous frame, advancing each animation's clock.
+    pub delta: Duration,
+    pub audio: UnipolarFloat,
+}
+
 /// Where a frame's CPU time went.
 ///
 /// Reported by the profiler so a regression can be attributed to a stage
@@ -219,19 +233,17 @@ impl Renderer {
     }
 
     /// Draw every enabled layer, timing each stage.
-    pub fn draw<G>(
-        &mut self,
-        gl: &mut G,
-        base: Matrix2d,
-        critical: f64,
-        params: &DemoParams,
-        time: f64,
-        delta: Duration,
-        audio: UnipolarFloat,
-    ) -> Timings
+    pub fn draw<G>(&mut self, gl: &mut G, params: &DemoParams, frame: Frame) -> Timings
     where
         G: Graphics<Texture = Texture>,
     {
+        let Frame {
+            base,
+            critical,
+            time,
+            delta,
+            audio,
+        } = frame;
         let Self {
             shapes,
             target_px,
@@ -341,7 +353,7 @@ pub fn run(shape_dir: &Path) -> Result<()> {
     socket.set_nonblocking(true)?;
 
     let opengl = OpenGL::V3_2;
-    let mut window: PistonWindow<Sdl2Window> =
+    let window: PistonWindow<Sdl2Window> =
         WindowSettings::new("svg_demo: render", [1280, 720])
             .graphics_api(opengl)
             .exit_on_esc(true)
@@ -359,7 +371,7 @@ pub fn run(shape_dir: &Path) -> Result<()> {
     let mut buf = vec![0u8; 65536];
     let mut reported_meshes = 0;
 
-    while let Some(e) = window.next() {
+    for e in window {
         // Take the newest parameters waiting on the socket, dropping any
         // backlog — only the latest frame of control state matters.
         while let Ok(n) = socket.recv(&mut buf) {
@@ -379,9 +391,19 @@ pub fn run(shape_dir: &Path) -> Result<()> {
         gl.draw(args.viewport(), |c, gl| {
             clear([0.0, 0.0, 0.0, 1.0], gl);
             let base = c.transform.trans(w / 2.0, h / 2.0);
-            // No audio input in the demo, so animations that scale with the
-            // envelope simply do not.
-            renderer.draw(gl, base, critical, &params, time, delta, UnipolarFloat::ZERO);
+            renderer.draw(
+                gl,
+                &params,
+                Frame {
+                    base,
+                    critical,
+                    time,
+                    delta,
+                    // No audio input in the demo, so animations that scale with
+                    // the envelope simply do not.
+                    audio: UnipolarFloat::ZERO,
+                },
+            );
         });
 
         // Meshes are built the first time a shape is drawn at a given size, so
