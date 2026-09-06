@@ -54,7 +54,7 @@ struct Mailbox {
 #[derive(Default)]
 struct Slot {
     /// The message waiting to be sent, if there is one.
-    pending: Option<Arc<[u8]>>,
+    pending: Option<Arc<Vec<u8>>>,
     /// Messages replaced before the subscriber took them, since the last report.
     skipped: u64,
     /// When the last report of skipped messages was made, if any has been.
@@ -70,7 +70,7 @@ impl Mailbox {
     /// A subscriber that has stopped reading misses messages as fast as they
     /// are published, so they are counted and reported at most once per
     /// `SKIP_REPORT_PERIOD` rather than logged one apiece.
-    fn post(&self, msg: Arc<[u8]>, now: Instant) -> Option<u64> {
+    fn post(&self, msg: Arc<Vec<u8>>, now: Instant) -> Option<u64> {
         let mut slot = self.slot.lock().unwrap();
         let replaced = slot.pending.replace(msg).is_some();
         self.posted.notify_one();
@@ -89,7 +89,7 @@ impl Mailbox {
 
     /// Block until there is a message to send, and take it.
     /// Yields `None` once the publisher is gone and the last message is taken.
-    fn take(&self) -> Option<Arc<[u8]>> {
+    fn take(&self) -> Option<Arc<Vec<u8>>> {
         let mut slot = self.slot.lock().unwrap();
         loop {
             if let Some(msg) = slot.pending.take() {
@@ -184,6 +184,32 @@ impl Drop for Client {
     }
 }
 
+/// The publisher's subscribers, and the buffer their last message went out in.
+#[derive(Default)]
+struct Clients {
+    /// Every subscriber currently connected.
+    connected: Vec<Client>,
+    /// The message published last, kept so that the next one can be written
+    /// into it once nothing else holds it.
+    spare: Option<Arc<Vec<u8>>>,
+}
+
+/// Frame `data` into the buffer `spare` holds, or into a new one when a
+/// subscriber is still holding that buffer.
+///
+/// Reusing a buffer is what keeps a steady stream of messages from allocating.
+/// A buffer another thread still holds is a message a subscriber has not been
+/// sent yet, so it is left alone and this message gets a buffer of its own.
+fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>> {
+    let mut msg = spare.unwrap_or_default();
+    if let Some(buf) = Arc::get_mut(&mut msg) {
+        buf.clear();
+        wire::frame_msg_into(buf, data)?;
+        return Ok(msg);
+    }
+    Ok(Arc::new(wire::frame_msg(data)?))
+}
+
 /// A TCP-based publisher that pushes messages to connected subscribers.
 ///
 /// Spawns a background accept thread. Subscribers connect, send their channel
@@ -191,7 +217,7 @@ impl Drop for Client {
 /// A subscriber is dropped when its connection fails, and never for being
 /// slow — a slow subscriber misses messages instead.
 pub struct Publisher {
-    clients: Arc<Mutex<Vec<Client>>>,
+    clients: Arc<Mutex<Clients>>,
     shutdown: Arc<AtomicBool>,
     accept: Option<JoinHandle<()>>,
 }
@@ -208,7 +234,7 @@ impl Publisher {
             .context("failed to set the listener non-blocking")?;
         log::debug!("pub_sub publisher listening on {local_addr}");
 
-        let clients: Arc<Mutex<Vec<Client>>> = Arc::new(Mutex::new(Vec::new()));
+        let clients: Arc<Mutex<Clients>> = Arc::new(Mutex::new(Clients::default()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let accept = thread::Builder::new()
@@ -238,8 +264,9 @@ impl Publisher {
         // a deadline, and logging is not something to hold a lock across.
         let mut skip_reports = Vec::new();
         {
-            let clients = self.clients.lock().unwrap();
-            let mut subscribed = clients.iter().filter(|c| c.channel == channel).peekable();
+            let mut clients = self.clients.lock().unwrap();
+            let Clients { connected, spare } = &mut *clients;
+            let mut subscribed = connected.iter().filter(|c| c.channel == channel).peekable();
             // The message is framed once, however many subscribers share it,
             // and not at all if none do. Framing it here rather than on each
             // sender thread is what lets a thread write it in one call, so
@@ -247,8 +274,8 @@ impl Publisher {
             if subscribed.peek().is_none() {
                 return;
             }
-            let msg: Arc<[u8]> = match wire::frame_msg(data) {
-                Ok(framed) => Arc::from(framed),
+            let msg = match frame_into(spare.take(), data) {
+                Ok(msg) => msg,
                 Err(e) => {
                     error!("Dropping a message on channel {channel}: {e:#}");
                     return;
@@ -260,6 +287,7 @@ impl Publisher {
                     skip_reports.push(skipped);
                 }
             }
+            *spare = Some(msg);
         }
         for skipped in skip_reports {
             warn!("Subscriber (channel {channel}) is behind: skipped {skipped} messages.");
@@ -284,22 +312,22 @@ impl Drop for Publisher {
         }
 
         let mut clients = self.clients.lock().unwrap_or_else(PoisonError::into_inner);
-        for client in clients.iter() {
+        for client in clients.connected.iter() {
             client.mailbox.close();
         }
         let deadline = Instant::now() + FLUSH_TIMEOUT;
-        while Instant::now() < deadline && clients.iter().any(|c| !c.is_finished()) {
+        while Instant::now() < deadline && clients.connected.iter().any(|c| !c.is_finished()) {
             thread::sleep(Duration::from_millis(1));
         }
-        clients.clear();
+        clients.connected.clear();
     }
 }
 
-fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Vec<Client>>>, shutdown: Arc<AtomicBool>) {
+fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Arc<AtomicBool>) {
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, _)) => match subscribe(stream) {
-                Ok(client) => clients.lock().unwrap().push(client),
+                Ok(client) => clients.lock().unwrap().connected.push(client),
                 Err(e) => warn!("Failed to subscribe a client: {e:#}"),
             },
             Err(e) => {
@@ -382,10 +410,11 @@ fn write_framed(stream: &mut TcpStream, framed: &[u8]) -> Result<()> {
 
 /// Forget the subscribers whose sender threads have stopped, which they do
 /// only when the connection has failed.
-fn reap_disconnected(clients: &Mutex<Vec<Client>>) {
+fn reap_disconnected(clients: &Mutex<Clients>) {
     clients
         .lock()
         .unwrap()
+        .connected
         .retain(|client| !client.is_finished());
 }
 
@@ -471,6 +500,7 @@ impl Subscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use counting_allocator::allocations;
     use std::sync::mpsc::channel;
     use std::time::Instant;
 
@@ -744,6 +774,7 @@ mod tests {
             .clients
             .lock()
             .unwrap()
+            .connected
             .pop()
             .expect("the subscriber never connected");
         assert!(
@@ -767,4 +798,156 @@ mod tests {
             "the sender thread outlived the client that owned it"
         );
     }
+
+    /// A message the size of a show frame, the traffic the publisher is
+    /// shaped around.
+    const FRAME_SIZED_MESSAGE: usize = 4096;
+
+    /// How many messages are published before the buffer is expected to have
+    /// stopped growing.
+    const WARMUP_MESSAGES: usize = 4;
+
+    /// How many messages are published under measurement.
+    const MEASURED_MESSAGES: usize = 64;
+
+    /// How long the buffer of the last message published has to come back
+    /// before something is holding it that never lets go.
+    const RECLAIM_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Block until nothing but the publisher holds the buffer the last message
+    /// went out in, which is when the next message can be written into it.
+    ///
+    /// A subscriber's sender thread holds a message from the moment it takes
+    /// it to the moment it has written it, and a subscriber that has received
+    /// a message says nothing about whether the thread that wrote it has let
+    /// go. Waiting on the buffer itself is what makes reuse a fact rather than
+    /// a race. Allocates nothing, so it can be waited in under measurement.
+    fn wait_for_the_buffer(publisher: &Publisher) {
+        let deadline = Instant::now() + RECLAIM_TIMEOUT;
+        loop {
+            match &publisher.clients.lock().unwrap().spare {
+                None => return,
+                Some(spare) if Arc::strong_count(spare) == 1 => return,
+                Some(_) => (),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "a subscriber never let go of the buffer the last message went out in"
+            );
+            thread::yield_now();
+        }
+    }
+
+    /// Publishing to a subscriber that keeps up allocates nothing.
+    ///
+    /// The show loop publishes a frame every four milliseconds. What an
+    /// allocation costs there is not its average but its tail — arena
+    /// contention, a page fault on growth — landing on the thread that owes
+    /// the audience a frame. The buffer a message goes out in is the only
+    /// thing on that path large enough to grow, so it is reclaimed and
+    /// refilled rather than produced afresh.
+    #[test]
+    fn publishing_to_a_subscriber_that_keeps_up_allocates_nothing() {
+        let (publisher, port) = test_publisher();
+
+        // Kept alive for the test, so that the subscriber thread stays in its
+        // loop draining what it is sent; dropping it stops the thread.
+        let (received, _receipts) = channel();
+        thread::spawn(move || {
+            let mut sub = Subscriber::new("127.0.0.1", port, 0);
+            while received.send(sub.recv().len()).is_ok() {}
+        });
+        thread::sleep(Duration::from_millis(300));
+
+        let message = vec![0xABu8; FRAME_SIZED_MESSAGE];
+        for _ in 0..WARMUP_MESSAGES {
+            publisher.send(0, &message);
+            wait_for_the_buffer(&publisher);
+        }
+
+        let before = allocations();
+        for _ in 0..MEASURED_MESSAGES {
+            publisher.send(0, &message);
+            wait_for_the_buffer(&publisher);
+        }
+        let allocated = allocations() - before;
+        assert_eq!(
+            allocated, 0,
+            "publishing {MEASURED_MESSAGES} messages allocated {allocated} times"
+        );
+    }
+
+    /// A message framed into a buffer a subscriber still holds gets a buffer
+    /// of its own, and neither message is disturbed.
+    ///
+    /// Reclaiming is an optimization and failing to reclaim is the ordinary
+    /// case whenever a subscriber is mid-write, so the two paths must produce
+    /// the same message.
+    #[test]
+    fn a_message_is_framed_the_same_way_whether_or_not_a_buffer_comes_back() {
+        let held = frame_into(None, b"first").unwrap();
+        let borrowed = Arc::clone(&held);
+        let fresh = frame_into(Some(held), b"second").unwrap();
+        assert_eq!(*borrowed, wire::frame_msg(b"first").unwrap());
+        assert_eq!(*fresh, wire::frame_msg(b"second").unwrap());
+
+        let reused = frame_into(Some(fresh), b"third").unwrap();
+        assert_eq!(*reused, wire::frame_msg(b"third").unwrap());
+    }
+
+    /// The system allocator, counting what it is asked for.
+    ///
+    /// Each thread counts its own allocations, so a count taken on one thread
+    /// says nothing about what any other thread was doing at the time.
+    mod counting_allocator {
+        use std::alloc::{GlobalAlloc, Layout, System};
+        use std::cell::Cell;
+
+        thread_local! {
+            static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
+        }
+
+        /// An allocator that hands every request to the system, counting it
+        /// first.
+        pub struct CountingAllocator;
+
+        unsafe impl GlobalAlloc for CountingAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                count();
+                unsafe { System.alloc(layout) }
+            }
+
+            unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+                count();
+                unsafe { System.alloc_zeroed(layout) }
+            }
+
+            unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+                count();
+                unsafe { System.realloc(ptr, layout, new_size) }
+            }
+
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                unsafe { System.dealloc(ptr, layout) }
+            }
+        }
+
+        /// Record one allocation against the current thread, if it still has
+        /// a counter: a thread allocates while tearing its own storage down,
+        /// and an allocator that panicked there would abort the process.
+        fn count() {
+            let _ = ALLOCATIONS.try_with(|n| n.set(n.get() + 1));
+        }
+
+        /// How many allocations the current thread has made.
+        ///
+        /// Reading it allocates nothing, so a pair of readings bracketing a
+        /// piece of work measures the work rather than the measurement.
+        pub fn allocations() -> u64 {
+            ALLOCATIONS.with(Cell::get)
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: counting_allocator::CountingAllocator = counting_allocator::CountingAllocator;
 }
