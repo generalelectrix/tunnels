@@ -13,7 +13,6 @@ use crate::{
     mixer::{self, Mixer},
     palette::{self, ColorPalette},
     position_bank::{self, PositionBank},
-    send::FrameService,
     show_frame::ShowFrameRef,
     test_mode::TestModeSetup,
     tunnel,
@@ -30,6 +29,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tunnels_audio::EnvelopeStreams;
+use tunnels_net::frame_service::FramePublisher;
 
 use crate::midi::MidiDeviceInit;
 
@@ -167,7 +167,7 @@ impl Show {
         let mut frame_number = 0;
         // Owned by the loop rather than by the show, so that the port is
         // released when the loop ends and a restarted show can bind it again.
-        let mut frame_service = FrameService::new()?;
+        let mut frame_publisher = FramePublisher::new()?;
 
         let mut last_update = Instant::now();
 
@@ -178,7 +178,7 @@ impl Show {
                 self.update_state(time_since_update);
                 last_update = now;
 
-                frame_service.send(&ShowFrameRef {
+                frame_publisher.send(&ShowFrameRef {
                     frame_number,
                     mixer: &self.state.mixer,
                     clocks: self.state.clocks.as_static(),

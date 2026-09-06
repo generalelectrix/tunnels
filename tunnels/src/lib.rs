@@ -8,7 +8,6 @@ mod master_ui;
 pub mod midi;
 pub mod midi_controls;
 pub mod osc;
-mod send;
 pub mod show;
 pub mod test_mode;
 

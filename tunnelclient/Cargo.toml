@@ -24,8 +24,8 @@ pistoncore-sdl2_window = "0.71"
 sdl2 = { version = "0.37", features = ["bundled", "static-link"] }
 tunnels_lib = { path = "../tunnels_lib" }
 tunnels_model = { path = "../tunnels_model" }
+tunnels_net = { path = "../tunnels_net" }
 client_lib = { path = "../client_lib" }
-minusmq = { path = "../minusmq" }
 
 [dev-dependencies]
 image = "0.24"

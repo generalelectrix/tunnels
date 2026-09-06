@@ -47,6 +47,7 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 | `tunnels_model` | The show model and its render: mixer, beams, tunnels, animations, clocks, palette |
 | `tunnels_audio` | Audio input, envelope extraction, wavelet decomposition, ring buffers |
 | `tunnels_lib` | Cross-crate primitives: number types, color, smoothing, GUI repaint (`RepaintSignal`, `Notified`), transient indicator, bootstrap push protocol |
+| `tunnels_net` | The network services a show is made of: the show frame stream |
 | `console` | GUI binary (eframe/egui): show configuration, MIDI, audio, animation viz |
 | `tunnelclient` | Render client |
 | `tunnel-bootstrap` | Client bootstrapping |

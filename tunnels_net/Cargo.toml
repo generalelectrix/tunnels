@@ -1,0 +1,12 @@
+[package]
+name = "tunnels_net"
+version = "0.1.0"
+authors = ["Chris Macklin <chris.macklin@gmail.com>"]
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+
+tunnels_model = { path = "../tunnels_model" }
+minusmq = { path = "../minusmq" }

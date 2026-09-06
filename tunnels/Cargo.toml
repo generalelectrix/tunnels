@@ -26,8 +26,8 @@ arc-swap = "1"
 midi_harness = { path = "../midi_harness" }
 tunnels_lib = { path = "../tunnels_lib" }
 tunnels_model = { path = "../tunnels_model" }
+tunnels_net = { path = "../tunnels_net" }
 zero_configure = { path = "../zero_configure" }
-minusmq = { path = "../minusmq" }
 
 # Audio subsystem
 tunnels_audio = { path = "../tunnels_audio" }

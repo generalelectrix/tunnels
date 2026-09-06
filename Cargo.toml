@@ -5,6 +5,7 @@ members = [
     "tunnels_audio",
     "tunnels",
     "tunnels_model",
+    "tunnels_net",
     "tunnelclient",
     "tunnel-bootstrap",
     "zero_configure",

@@ -5569,7 +5569,6 @@ dependencies = [
  "client_lib",
  "image 0.24.9",
  "log",
- "minusmq",
  "piston2d-graphics 0.45.0",
  "piston2d-opengl_graphics",
  "piston_window",
@@ -5579,6 +5578,7 @@ dependencies = [
  "simplelog",
  "tunnels_lib",
  "tunnels_model",
+ "tunnels_net",
 ]
 
 [[package]]
@@ -5595,7 +5595,6 @@ dependencies = [
  "lazy_static",
  "log",
  "midi_harness",
- "minusmq",
  "rmp-serde",
  "rosc",
  "serde",
@@ -5604,6 +5603,7 @@ dependencies = [
  "tunnels_audio",
  "tunnels_lib",
  "tunnels_model",
+ "tunnels_net",
  "zero_configure",
 ]
 
@@ -5644,6 +5644,16 @@ dependencies = [
  "postcard",
  "serde",
  "tunnels_lib",
+]
+
+[[package]]
+name = "tunnels_net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "minusmq",
+ "tunnels_model",
 ]
 
 [[package]]
