@@ -2,9 +2,7 @@ use anyhow::Result;
 use log::{error, info};
 use std::net::TcpListener;
 
-use tunnels_model::show_frame::{FrameEncoder, ShowFrameRef};
-
-const PORT: u16 = 6000;
+use tunnels_model::show_frame::{FRAME_PORT, FrameEncoder, ShowFrameRef};
 
 /// Puts show frames in front of every connected client.
 ///
@@ -21,7 +19,7 @@ pub struct FrameService {
 impl FrameService {
     /// Bind the frame port and begin accepting clients.
     pub fn new() -> Result<Self> {
-        let listener = TcpListener::bind(format!("0.0.0.0:{PORT}"))?;
+        let listener = TcpListener::bind(format!("0.0.0.0:{FRAME_PORT}"))?;
         let publisher = minusmq::pub_sub::Publisher::new(listener)?;
         info!("Frame server started.");
         Ok(Self {

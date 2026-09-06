@@ -57,13 +57,17 @@ struct SubConfig {
 
 pub struct SubscriberService<T: DeserializeOwned> {
     browser: Browser<SubConfig>,
+    /// The longest message this service carries, applied to every subscriber
+    /// connected to it.
+    max_msg_len: usize,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> SubscriberService<T> {
-    /// Browse for publishers of the named service.
+    /// Browse for publishers of the named service, whose messages run to at
+    /// most `max_msg_len` bytes.
     /// Connect subscribers upon request.
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, max_msg_len: usize) -> Self {
         Self {
             browser: Browser::new(name, |service| {
                 Ok(SubConfig {
@@ -71,6 +75,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     port: service.port,
                 })
             }),
+            max_msg_len,
             _msg_type: PhantomData,
         }
     }
@@ -82,6 +87,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
 
     /// Connect a subscriber to the named service.
     pub fn subscribe(&self, name: &str) -> Result<Receiver<T>> {
+        let max_msg_len = self.max_msg_len;
         self.browser
             .use_service(name, move |cfg| {
                 // Resolve hostname to IP at subscribe time.
@@ -91,7 +97,11 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Could not resolve {}:{}", cfg.hostname, cfg.port)
                     })?;
-                Ok(Receiver::new(&addr.ip().to_string(), addr.port()))
+                Ok(Receiver::new(
+                    &addr.ip().to_string(),
+                    addr.port(),
+                    max_msg_len,
+                ))
             })
             .unwrap_or_else(|| bail!("no instance of service {} found", self.browser.name()))
     }
@@ -104,10 +114,11 @@ pub struct Receiver<T: DeserializeOwned> {
 }
 
 impl<T: DeserializeOwned> Receiver<T> {
-    /// Create a new subscriber connected to the provided host:port.
-    pub fn new(host: &str, port: u16) -> Self {
+    /// Create a new subscriber connected to the provided host:port, accepting
+    /// messages of up to `max_msg_len` bytes.
+    pub fn new(host: &str, port: u16, max_msg_len: usize) -> Self {
         Self {
-            subscriber: minusmq::pub_sub::Subscriber::new(host, port),
+            subscriber: minusmq::pub_sub::Subscriber::new(host, port, max_msg_len),
             _msg_type: PhantomData,
         }
     }

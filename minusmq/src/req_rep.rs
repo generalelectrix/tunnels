@@ -10,22 +10,16 @@ use std::time::Duration;
 
 use crate::wire;
 
-/// The largest message a request-response exchange accepts, in either
-/// direction.
-///
-/// The largest legitimate message on this transport is a pushed executable,
-/// which measures a few megabytes; the ceiling leaves an order of magnitude
-/// above that for one carrying debug information. Past it, a length prefix
-/// from a peer that is confused or hostile fails the exchange rather than
-/// reserving memory to match its claim.
-const MAX_MESSAGE_LEN: usize = 64 * 1024 * 1024;
-
 /// Run a request-response server on an already-bound listener.
 /// Reads one request per connection, calls `handler`, sends the response,
 /// and closes the connection.
 ///
+/// A request declaring more than `max_request_len` bytes is refused before
+/// anything is sized to it, so a length prefix from a client that is confused
+/// or hostile costs one connection rather than the memory it asked for.
+///
 /// Runs forever (until the process exits or an unrecoverable error occurs).
-pub fn serve<F>(listener: TcpListener, mut handler: F) -> Result<()>
+pub fn serve<F>(listener: TcpListener, max_request_len: usize, mut handler: F) -> Result<()>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
@@ -37,7 +31,7 @@ where
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                if let Err(e) = handle_one(&mut stream, &mut handler) {
+                if let Err(e) = handle_one(&mut stream, max_request_len, &mut handler) {
                     log::error!("req_rep handler error: {e:#}");
                 }
             }
@@ -50,11 +44,11 @@ where
     Ok(())
 }
 
-fn handle_one<F>(stream: &mut TcpStream, handler: &mut F) -> Result<()>
+fn handle_one<F>(stream: &mut TcpStream, max_request_len: usize, handler: &mut F) -> Result<()>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
-    let request = wire::read_msg(stream, MAX_MESSAGE_LEN).context("reading request")?;
+    let request = wire::read_msg(stream, max_request_len).context("reading request")?;
     let response = handler(&request);
     wire::write_msg(stream, &response).context("writing response")?;
     Ok(())
@@ -62,10 +56,13 @@ where
 
 /// Send a request and receive a response. Opens a fresh TCP connection,
 /// sends the message, reads the response, and closes.
-pub fn send(addr: impl ToSocketAddrs, msg: &[u8]) -> Result<Vec<u8>> {
+///
+/// A response declaring more than `max_response_len` bytes is refused before
+/// anything is sized to it.
+pub fn send(addr: impl ToSocketAddrs, msg: &[u8], max_response_len: usize) -> Result<Vec<u8>> {
     let mut stream = TcpStream::connect(addr).context("failed to connect")?;
     wire::write_msg(&mut stream, msg).context("writing request")?;
-    wire::read_msg(&mut stream, MAX_MESSAGE_LEN).context("reading response")
+    wire::read_msg(&mut stream, max_response_len).context("reading response")
 }
 
 /// Like `send`, but with a timeout on the connection and the read/write.
@@ -75,6 +72,7 @@ pub fn send_with_timeout(
     addr: impl ToSocketAddrs,
     msg: &[u8],
     timeout: Duration,
+    max_response_len: usize,
 ) -> Result<Vec<u8>> {
     const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
     let connect_timeout = timeout.min(MAX_CONNECT_TIMEOUT);
@@ -89,7 +87,7 @@ pub fn send_with_timeout(
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
     wire::write_msg(&mut stream, msg).context("writing request")?;
-    wire::read_msg(&mut stream, MAX_MESSAGE_LEN).context("reading response")
+    wire::read_msg(&mut stream, max_response_len).context("reading response")
 }
 
 #[cfg(test)]
@@ -97,11 +95,15 @@ mod tests {
     use super::*;
     use std::thread;
 
+    /// A limit no message in a test reaches, for the tests that are about
+    /// something other than the limit.
+    const TEST_MAX_MESSAGE_LEN: usize = 64 * 1024 * 1024;
+
     fn serve_echo() -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         thread::spawn(move || {
-            serve(listener, |req| req.to_vec()).unwrap();
+            serve(listener, TEST_MAX_MESSAGE_LEN, |req| req.to_vec()).unwrap();
         });
         addr
     }
@@ -109,7 +111,7 @@ mod tests {
     #[test]
     fn basic_echo() {
         let addr = serve_echo();
-        let response = send(addr, b"hello").unwrap();
+        let response = send(addr, b"hello", TEST_MAX_MESSAGE_LEN).unwrap();
         assert_eq!(response, b"hello");
     }
 
@@ -118,7 +120,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         thread::spawn(move || {
-            serve(listener, |req| {
+            serve(listener, TEST_MAX_MESSAGE_LEN, |req| {
                 let mut r = req.to_vec();
                 r.reverse();
                 r
@@ -127,7 +129,7 @@ mod tests {
         });
 
         thread::sleep(Duration::from_millis(50));
-        let response = send(addr, b"abcd").unwrap();
+        let response = send(addr, b"abcd", TEST_MAX_MESSAGE_LEN).unwrap();
         assert_eq!(response, b"dcba");
     }
 
@@ -138,7 +140,7 @@ mod tests {
 
         for i in 0..5 {
             let msg = format!("msg-{i}");
-            let response = send(addr, msg.as_bytes()).unwrap();
+            let response = send(addr, msg.as_bytes(), TEST_MAX_MESSAGE_LEN).unwrap();
             assert_eq!(response, msg.as_bytes());
         }
     }
@@ -149,7 +151,7 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
 
         let big = vec![0xAB; 2_000_000]; // 2 MB
-        let response = send(addr, &big).unwrap();
+        let response = send(addr, &big, TEST_MAX_MESSAGE_LEN).unwrap();
         assert_eq!(response, big);
     }
 
@@ -167,7 +169,12 @@ mod tests {
         });
 
         thread::sleep(Duration::from_millis(50));
-        let result = send_with_timeout(addr, b"hello", Duration::from_millis(100));
+        let result = send_with_timeout(
+            addr,
+            b"hello",
+            Duration::from_millis(100),
+            TEST_MAX_MESSAGE_LEN,
+        );
         assert!(result.is_err());
     }
 }

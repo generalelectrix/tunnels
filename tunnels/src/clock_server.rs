@@ -12,6 +12,16 @@ pub use crate::clock_bank::StaticClockBank;
 const SERVICE_NAME: &str = "showclocks";
 const PORT: u16 = 9090;
 
+/// The longest message this service carries.
+///
+/// A message is a bank of at most `MAX_CLOCKS` static clocks, each four
+/// numbers wide, and one audio envelope; msgpack writes the whole of it in
+/// under three hundred bytes. The ceiling is an order of magnitude above that,
+/// which is room for the clock to gain fields without anyone revisiting this,
+/// and far below what a length prefix from a publisher that is confused or
+/// hostile would otherwise be allowed to reserve.
+const MAX_MESSAGE_LEN: usize = 4 * 1024;
+
 /// Launch clock publisher service.
 pub fn clock_publisher() -> Result<ClockPublisher> {
     PublisherService::new(SERVICE_NAME, PORT)
@@ -19,7 +29,7 @@ pub fn clock_publisher() -> Result<ClockPublisher> {
 
 /// Launch clock subscriber service.
 pub fn clock_subscriber() -> ClockSubscriber {
-    SubscriberService::new(SERVICE_NAME.to_string())
+    SubscriberService::new(SERVICE_NAME.to_string(), MAX_MESSAGE_LEN)
 }
 
 /// A collection of static clock state data with audio envelope.

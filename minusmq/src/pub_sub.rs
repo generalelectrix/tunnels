@@ -399,16 +399,6 @@ fn reap_disconnected(clients: &Mutex<Clients>) {
 
 // --- Subscriber ---
 
-/// The largest message a subscriber accepts.
-///
-/// A message on this transport is one frame of show state, a couple of
-/// kilobytes of it, so the ceiling sits a thousandfold above anything
-/// legitimate and will not be met by a model that grows. It is here for the
-/// other end of the range: a length prefix from a publisher that is confused
-/// or hostile fails the read rather than reserving up to four gigabytes to
-/// match its claim.
-const MAX_MESSAGE_LEN: usize = 4 * 1024 * 1024;
-
 /// The buffer capacity a subscriber keeps between messages.
 ///
 /// A message far larger than the usual one would otherwise pin a buffer its
@@ -423,18 +413,24 @@ const RETAINED_BUF_CAPACITY: usize = 64 * 1024;
 pub struct Subscriber {
     host: String,
     port: u16,
+    /// The longest message this subscription carries. A length prefix
+    /// claiming more than this fails the read, rather than reserving up to
+    /// four gigabytes to match a publisher that is confused or hostile.
+    max_msg_len: usize,
     stream: Option<TcpStream>,
     /// The message received last, refilled by the next one to arrive.
     buf: Vec<u8>,
 }
 
 impl Subscriber {
-    /// Create a new subscriber. Does not connect immediately — connection
-    /// happens lazily on the first `recv()` call.
-    pub fn new(host: impl Into<String>, port: u16) -> Self {
+    /// Create a new subscriber that accepts messages of up to `max_msg_len`
+    /// bytes. Does not connect immediately — connection happens lazily on the
+    /// first `recv()` call.
+    pub fn new(host: impl Into<String>, port: u16, max_msg_len: usize) -> Self {
         Subscriber {
             host: host.into(),
             port,
+            max_msg_len,
             stream: None,
             buf: Vec::new(),
         }
@@ -463,7 +459,7 @@ impl Subscriber {
             match wire::read_msg_into(
                 self.stream.as_mut().unwrap(),
                 &mut self.buf,
-                MAX_MESSAGE_LEN,
+                self.max_msg_len,
             ) {
                 Ok(()) => break,
                 Err(e) => {
@@ -505,6 +501,10 @@ mod tests {
     use std::sync::mpsc::channel;
     use std::time::Instant;
 
+    /// A limit no message in a test reaches, for the tests that are about
+    /// something other than the limit.
+    const TEST_MAX_MESSAGE_LEN: usize = 4 * 1024 * 1024;
+
     fn test_publisher() -> (Publisher, u16) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn single_subscriber_receives_messages() {
         let (publisher, port) = test_publisher();
-        let mut sub = Subscriber::new("127.0.0.1", port);
+        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
 
         thread::spawn(move || {
             // Give subscriber time to connect.
@@ -535,14 +535,14 @@ mod tests {
 
         // Spawn two subscribers in threads since both need to recv().
         let handle1 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port);
+            let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
             sub.recv().to_vec()
         });
 
         // Second subscriber in another thread.
         let port2 = port;
         let handle2 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port2);
+            let mut sub = Subscriber::new("127.0.0.1", port2, TEST_MAX_MESSAGE_LEN);
             sub.recv().to_vec()
         });
 
@@ -582,7 +582,7 @@ mod tests {
             }
         });
 
-        let mut sub = Subscriber::new("127.0.0.1", port);
+        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
         sub.connect();
         // Let the publisher's accept thread take up the subscription.
         thread::sleep(Duration::from_millis(200));
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn large_frame() {
         let (publisher, port) = test_publisher();
-        let mut sub = Subscriber::new("127.0.0.1", port);
+        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
 
         let big = vec![0xAB; 1_000_000]; // 1 MB, typical large frame
         let big_clone = big.clone();
@@ -668,7 +668,7 @@ mod tests {
 
         let (received, receipts) = channel();
         thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port);
+            let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
             loop {
                 let msg = sub.recv().to_vec();
                 let is_last = msg == LAST_MESSAGE;
@@ -707,7 +707,7 @@ mod tests {
         // it is still subscribed, so reading again reaches the last one sent.
         let mut stalled_reached_last = false;
         for _ in 0..=MESSAGES_TO_STALL {
-            match wire::read_msg(&mut stalled, MAX_MESSAGE_LEN) {
+            match wire::read_msg(&mut stalled, TEST_MAX_MESSAGE_LEN) {
                 Ok(msg) if msg == LAST_MESSAGE => {
                     stalled_reached_last = true;
                     break;

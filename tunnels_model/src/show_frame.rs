@@ -40,6 +40,22 @@ const FRAME_MAGIC: [u8; 3] = *b"TNL";
 /// The size of the header an encoded show frame begins with.
 const FRAME_HEADER_LEN: usize = FRAME_MAGIC.len() + 1;
 
+/// The port a show frame stream is published on.
+pub const FRAME_PORT: u16 = 6000;
+
+/// The longest an encoded show frame is allowed to be.
+///
+/// A frame is compressed on the wire and a few kilobytes of it: the largest
+/// the stress fixtures produce is under three. The ceiling is set instead by
+/// the largest frame that could still be legitimate — a look nested to the
+/// depth `decode` allows, every channel of every level carrying a distinct
+/// tunnel — which serializes to around 140 kB before compression. Admitting
+/// that much even if it compresses to nothing means no frame a show can build
+/// is refused, while a length prefix from a publisher that is confused or
+/// hostile fails the read rather than reserving up to four gigabytes to match
+/// its claim.
+pub const MAX_ENCODED_LEN: usize = 256 * 1024;
+
 /// Everything a render reads to draw one frame, and nothing else.
 ///
 /// The beam model carries its own integrated per-frame state, so a frame is

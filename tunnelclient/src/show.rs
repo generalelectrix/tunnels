@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_model::mixer::{Mixer, VideoChannel};
-use tunnels_model::show_frame::{FrameDecoder, ShowFrame};
+use tunnels_model::show_frame::{FRAME_PORT, FrameDecoder, MAX_ENCODED_LEN, ShowFrame};
 
 /// The most recent show frame to have arrived, if any.
 ///
@@ -194,7 +194,8 @@ fn draw_waiting_spinner(c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig, el
 /// sequence of independent frames, so losing one costs a frame of animation
 /// and nothing more.
 fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
-    let mut subscriber = minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000);
+    let mut subscriber =
+        minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, FRAME_PORT, MAX_ENCODED_LEN);
     thread::Builder::new()
         .name("frame_receiver".to_string())
         .spawn(move || {

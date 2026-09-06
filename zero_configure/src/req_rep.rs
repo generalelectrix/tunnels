@@ -12,14 +12,22 @@ use crate::bare::{Browser, create_and_register};
 /// Advertise a service via bonsoir, using TCP request-response as the transport.
 /// Pass each message received on the socket to the action callback. Send the byte
 /// buffer returned by the action callback back to the requester.
-pub fn run_service_req_rep<F>(name: &str, port: u16, action: F) -> Result<()>
+///
+/// A request declaring more than `max_request_len` bytes is refused before
+/// anything is sized to it.
+pub fn run_service_req_rep<F>(
+    name: &str,
+    port: u16,
+    max_request_len: usize,
+    action: F,
+) -> Result<()>
 where
     F: FnMut(&[u8]) -> Vec<u8>,
 {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
     // Keep _registration alive on the stack; dropping it would end the heartbeats.
     let (_registration, _instance_name) = create_and_register(name, port)?;
-    minusmq::req_rep::serve(listener, action)
+    minusmq::req_rep::serve(listener, max_request_len, action)
 }
 
 /// Maintain a collection of service instances we can remotely interact with.
@@ -27,22 +35,32 @@ where
 pub struct Controller {
     browser: Browser<SocketAddr>,
     timeout: Option<Duration>,
+    /// The longest response this controller accepts. A length prefix claiming
+    /// more than this fails the exchange, rather than reserving memory to
+    /// match a service that is confused or hostile.
+    max_response_len: usize,
 }
 
 impl Controller {
-    /// Start up a new service controller at the given service name.
+    /// Start up a new service controller at the given service name, accepting
+    /// responses of up to `max_response_len` bytes.
     /// Asynchronously browse for new services, and remove them when they expire.
-    pub fn new(name: String) -> Self {
-        Self::with_recv_timeout(name, None)
+    pub fn new(name: String, max_response_len: usize) -> Self {
+        Self::with_recv_timeout(name, None, max_response_len)
     }
 
     /// Start up a new service controller with an optional timeout.
-    pub fn with_recv_timeout(name: String, timeout: Option<Duration>) -> Self {
+    pub fn with_recv_timeout(
+        name: String,
+        timeout: Option<Duration>,
+        max_response_len: usize,
+    ) -> Self {
         Self {
             browser: Browser::new(name, |service| {
                 resolve_addr(&service.hostname, service.port)
             }),
             timeout,
+            max_response_len,
         }
     }
 
@@ -54,12 +72,13 @@ impl Controller {
     /// Send a message to one of the services on this controller, returning the response.
     pub fn send(&self, name: &str, msg: &[u8]) -> Result<Vec<u8>> {
         let timeout = self.timeout;
+        let max_response_len = self.max_response_len;
         self.browser
             .use_service(name, |addr| {
                 if let Some(t) = timeout {
-                    minusmq::req_rep::send_with_timeout(*addr, msg, t)
+                    minusmq::req_rep::send_with_timeout(*addr, msg, t, max_response_len)
                 } else {
-                    minusmq::req_rep::send(*addr, msg)
+                    minusmq::req_rep::send(*addr, msg, max_response_len)
                 }
             })
             .unwrap_or_else(|| bail!(format!("No service named '{}' available.", name)))
@@ -98,6 +117,10 @@ mod tests {
         thread::sleep(Duration::from_millis(dt))
     }
 
+    /// A limit no message in a test reaches, for the tests that are about
+    /// something other than the limit.
+    const TEST_MAX_MESSAGE_LEN: usize = 64 * 1024;
+
     /// Test that we can advertise a single service and successfully connect to it.
     #[test]
     fn test_pair() {
@@ -105,7 +128,7 @@ mod tests {
         let name = "reqreptest";
         let port = 19992;
 
-        let controller = Controller::new(name.to_string());
+        let controller = Controller::new(name.to_string(), TEST_MAX_MESSAGE_LEN);
 
         // Wait a moment, and assert that we can't see any services.
         sleep(500);
@@ -114,7 +137,7 @@ mod tests {
 
         // Start up the service; return DEADBEEF as a response.
         thread::spawn(move || {
-            run_service_req_rep(name, port, |buffer| {
+            run_service_req_rep(name, port, TEST_MAX_MESSAGE_LEN, |buffer| {
                 assert_eq!(testbytes(), buffer);
                 deadbeef()
             })
