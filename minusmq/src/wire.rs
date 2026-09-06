@@ -36,13 +36,25 @@ pub fn write_msg(writer: &mut impl Write, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Read a length-prefixed message from the reader.
-pub fn read_msg(reader: &mut impl Read) -> Result<Vec<u8>> {
-    let mut len_buf = [0u8; 4];
+/// Read a length-prefixed message from the reader into a buffer, replacing
+/// what it holds.
+///
+/// A buffer holding a message at least as long as the one that arrives is
+/// refilled rather than regrown. What it holds after a failure is whatever the
+/// failure left there, and is not a message.
+pub fn read_msg_into(reader: &mut impl Read, out: &mut Vec<u8>) -> Result<()> {
+    let mut len_buf = [0u8; PREFIX_LEN];
     reader.read_exact(&mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf)?;
+    out.resize(len, 0);
+    reader.read_exact(out)?;
+    Ok(())
+}
+
+/// Read a length-prefixed message from the reader.
+pub fn read_msg(reader: &mut impl Read) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    read_msg_into(reader, &mut buf)?;
     Ok(buf)
 }
 
@@ -127,6 +139,25 @@ mod tests {
         buf.clear();
         frame_msg_into(&mut buf, b"third").unwrap();
         assert_eq!(buf, frame_msg(b"third").unwrap());
+    }
+
+    /// Reading into a buffer that already holds a longer message yields the
+    /// message that arrived, and nothing left over from the one before it.
+    #[test]
+    fn reading_into_a_buffer_replaces_what_it_holds() {
+        let mut wire = Vec::new();
+        write_msg(&mut wire, &[7u8; 5000]).unwrap();
+        write_msg(&mut wire, b"short").unwrap();
+        write_msg(&mut wire, b"").unwrap();
+
+        let mut cursor = Cursor::new(wire);
+        let mut buf = Vec::new();
+        read_msg_into(&mut cursor, &mut buf).unwrap();
+        assert_eq!(buf, [7u8; 5000]);
+        read_msg_into(&mut cursor, &mut buf).unwrap();
+        assert_eq!(buf, b"short");
+        read_msg_into(&mut cursor, &mut buf).unwrap();
+        assert!(buf.is_empty());
     }
 
     #[test]

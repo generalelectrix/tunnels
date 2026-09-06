@@ -134,6 +134,6 @@ impl<T: DeserializeOwned> Receive for Receiver<T> {
     fn receive_buffer(&mut self, _block: bool) -> ReceiveResult<Option<Vec<u8>>> {
         // minusmq subscriber always blocks. The `block` parameter is preserved
         // for API compatibility but is effectively always true.
-        Ok(Some(self.subscriber.recv()))
+        Ok(Some(self.subscriber.recv().to_vec()))
     }
 }

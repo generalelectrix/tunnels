@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_model::mixer::{Mixer, VideoChannel};
-use tunnels_model::show_frame::ShowFrame;
+use tunnels_model::show_frame::{FrameDecoder, ShowFrame};
 
 /// The publish-subscribe channel show frames arrive on.
 ///
@@ -206,13 +206,13 @@ fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
         .name("frame_receiver".to_string())
         .spawn(move || {
             let mut decode_errors = ErrorThrottle::new();
+            let mut decoder = FrameDecoder::new();
             loop {
                 if !run_flag.should_run() {
                     info!("Frame receiver shutting down.");
                     break;
                 }
-                let buf = subscriber.recv();
-                match ShowFrame::decode(&buf) {
+                match decoder.decode(subscriber.recv()) {
                     Ok(frame) => {
                         *frames.lock().unwrap() = Some(ReceivedFrame {
                             frame: Arc::new(frame),

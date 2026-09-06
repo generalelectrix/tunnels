@@ -427,6 +427,8 @@ pub struct Subscriber {
     port: u16,
     channel: u8,
     stream: Option<TcpStream>,
+    /// The message received last, refilled by the next one to arrive.
+    buf: Vec<u8>,
 }
 
 impl Subscriber {
@@ -438,12 +440,17 @@ impl Subscriber {
             port,
             channel,
             stream: None,
+            buf: Vec::new(),
         }
     }
 
     /// Block until the next message arrives. Handles reconnection internally —
     /// if the connection drops, reconnects and re-subscribes transparently.
-    pub fn recv(&mut self) -> Vec<u8> {
+    ///
+    /// The message stands until the next one is received, and arrives in the
+    /// buffer the one before it did, so a stream of messages of a settled size
+    /// costs no allocation to receive.
+    pub fn recv(&mut self) -> &[u8] {
         loop {
             // Ensure we have a connection.
             if self.stream.is_none() {
@@ -451,8 +458,8 @@ impl Subscriber {
             }
 
             // Try to read a message.
-            match wire::read_msg(self.stream.as_mut().unwrap()) {
-                Ok(data) => return data,
+            match wire::read_msg_into(self.stream.as_mut().unwrap(), &mut self.buf) {
+                Ok(()) => break,
                 Err(e) => {
                     // Connection lost — drop it and reconnect on next iteration.
                     warn!(
@@ -463,6 +470,7 @@ impl Subscriber {
                 }
             }
         }
+        &self.buf
     }
 
     /// Connect to the publisher, retrying with backoff until successful.
@@ -551,14 +559,14 @@ mod tests {
         // Spawn two subscribers in threads since both need to recv().
         let handle1 = thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port, 0);
-            sub.recv()
+            sub.recv().to_vec()
         });
 
         // Second subscriber in another thread.
         let port2 = port;
         let handle2 = thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port2, 0);
-            sub.recv()
+            sub.recv().to_vec()
         });
 
         // Give both subscribers time to connect.
@@ -582,13 +590,13 @@ mod tests {
 
         let handle_ch0 = thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port, 0);
-            sub.recv()
+            sub.recv().to_vec()
         });
 
         let port2 = port;
         let handle_ch1 = thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port2, 1);
-            sub.recv()
+            sub.recv().to_vec()
         });
 
         thread::sleep(Duration::from_millis(300));
@@ -660,7 +668,7 @@ mod tests {
         thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port, 0);
             loop {
-                let msg = sub.recv();
+                let msg = sub.recv().to_vec();
                 let is_last = msg == LAST_MESSAGE;
                 if received.send(msg).is_err() || is_last {
                     return;
