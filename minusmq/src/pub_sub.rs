@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use log::{error, warn};
 use socket2::{SockRef, TcpKeepalive};
 use std::io::Write;
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -47,9 +47,12 @@ fn fail_a_silent_peer(socket: &TcpStream) -> std::io::Result<()> {
 
 // --- Publisher ---
 
-/// How often the accept loop looks up from the listener, to notice that the
-/// publisher is gone and to reap subscribers whose connections have failed.
-const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// How long the accept loop waits for a subscriber before looking up.
+///
+/// A publisher on its way out releases the wait directly, so this is the
+/// backstop for a release that never arrives — and the period at which
+/// subscribers whose connections have failed are reaped.
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long a run of skipped messages goes unreported before its count is logged.
 const SKIP_REPORT_PERIOD: Duration = Duration::from_secs(1);
@@ -238,6 +241,9 @@ fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>> 
 pub struct Publisher {
     clients: Arc<Mutex<Clients>>,
     shutdown: Arc<AtomicBool>,
+    /// The port the listener is bound to. Connecting to it is what releases
+    /// the accept thread from its wait.
+    port: u16,
     accept: Option<JoinHandle<()>>,
 }
 
@@ -246,11 +252,13 @@ impl Publisher {
     /// Spawns a background thread to accept subscriber connections.
     pub fn new(listener: TcpListener) -> Result<Self> {
         let local_addr = listener.local_addr()?;
-        // Accepting without blocking is what lets the accept thread notice
-        // that the publisher has been dropped.
-        listener
-            .set_nonblocking(true)
-            .context("failed to set the listener non-blocking")?;
+        // A dropped publisher releases the accept thread by connecting to this
+        // listener itself. Bounding the wait is the backstop for a connection
+        // that cannot be made: the thread then looks up on its own rather than
+        // holding the drop open forever.
+        if let Err(e) = SockRef::from(&listener).set_read_timeout(Some(ACCEPT_TIMEOUT)) {
+            warn!("Failed to bound the wait for a subscriber: {e}");
+        }
         log::debug!("pub_sub publisher listening on {local_addr}");
 
         let clients: Arc<Mutex<Clients>> = Arc::new(Mutex::new(Clients::default()));
@@ -268,6 +276,7 @@ impl Publisher {
         Ok(Publisher {
             clients,
             shutdown,
+            port: local_addr.port(),
             accept: Some(accept),
         })
     }
@@ -324,6 +333,11 @@ impl Drop for Publisher {
     /// reading.
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
+        // A thread waiting for a subscriber is released by a subscriber, so
+        // the publisher makes the last connection itself. The flag is set
+        // first, so the thread sees it and drops that connection rather than
+        // subscribing it.
+        let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port));
         if let Some(accept) = self.accept.take() {
             let _ = accept.join();
         }
@@ -343,31 +357,43 @@ impl Drop for Publisher {
 fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Arc<AtomicBool>) {
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok((stream, peer)) => match subscribe(stream, peer) {
-                Ok(client) => clients.lock().unwrap().connected.push(client),
-                Err(e) => warn!("Failed to subscribe a client: {e:#}"),
-            },
-            Err(e) => {
-                if e.kind() != std::io::ErrorKind::WouldBlock {
-                    error!("pub_sub accept error: {e}");
+            Ok((stream, peer)) => {
+                // A publisher on its way out connects here to release the
+                // wait. That connection carries no subscriber behind it.
+                if shutdown.load(Ordering::Acquire) {
+                    return;
                 }
-                // Reaping belongs on this thread rather than on the publisher's:
-                // it happens between messages and nothing waits on it.
-                reap_disconnected(&clients);
-                thread::sleep(ACCEPT_POLL_INTERVAL);
+                match subscribe(stream, peer) {
+                    Ok(client) => clients.lock().unwrap().connected.push(client),
+                    Err(e) => warn!("Failed to subscribe a client: {e:#}"),
+                }
+            }
+            Err(e) if is_timeout(&e) => (),
+            Err(e) => {
+                error!("pub_sub accept error: {e}");
+                // An error that persists — a process out of file descriptors,
+                // say — would otherwise spin this thread and its log as fast
+                // as the two of them can go.
+                thread::sleep(ACCEPT_TIMEOUT);
             }
         }
+        // Reaping belongs on this thread rather than on the publisher's: it
+        // happens between messages and nothing waits on it.
+        reap_disconnected(&clients);
     }
+}
+
+/// Whether a failed accept is the wait running out rather than the listener
+/// failing.
+fn is_timeout(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
 }
 
 /// Start the thread that writes to a newly connected subscriber.
 fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
-    // The listener is non-blocking so that it can be shut down; the
-    // connections it yields are used blocking, on their own threads.
-    stream
-        .set_nonblocking(false)
-        .context("failed to set the connection blocking")?;
-
     if let Err(e) = stream.set_nodelay(true) {
         warn!("Failed to set TCP_NODELAY: {e}");
     }
