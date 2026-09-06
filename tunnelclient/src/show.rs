@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tunnelclient::draw::Draw;
-use tunnels_lib::RunFlag;
 use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
 use tunnels_net::{FrameSubscriber, SubscriberStop};
@@ -102,14 +101,13 @@ pub struct Show {
     /// The video channel drawn out of every frame.
     video_channel: VideoChannel,
     cfg: ClientConfig,
-    run_flag: RunFlag,
     window: PistonWindow<Sdl2Window>,
     /// Reference instant for animating the waiting-for-frame spinner.
     start_time: Instant,
 }
 
 impl Show {
-    pub fn new(cfg: ClientConfig, run_flag: RunFlag) -> Result<Self> {
+    pub fn new(cfg: ClientConfig) -> Result<Self> {
         let video_channel = VideoChannel(cfg.video_channel as usize);
         info!("Running on video channel {}.", cfg.video_channel);
 
@@ -140,7 +138,6 @@ impl Show {
             frames,
             video_channel,
             cfg,
-            run_flag,
             window,
             start_time: Instant::now(),
         })
@@ -150,17 +147,10 @@ impl Show {
     pub fn run(&mut self) {
         // Run the event loop.
         while let Some(e) = self.window.next() {
-            if !self.run_flag.should_run() {
-                info!("Quit flag tripped, ending show.");
-                break;
-            }
-
             if let Some(r) = e.render_args() {
                 self.render(&r);
             }
         }
-
-        self.run_flag.stop();
     }
 
     /// Render a frame to the window.

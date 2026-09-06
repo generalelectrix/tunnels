@@ -6,7 +6,6 @@ use simplelog::{Config as LogConfig, LevelFilter, WriteLogger};
 use std::env;
 use std::io::Read;
 use std::process::ExitCode;
-use tunnels_lib::RunFlag;
 
 fn main() -> ExitCode {
     let first_arg = env::args().nth(1).expect(
@@ -23,7 +22,7 @@ fn main() -> ExitCode {
             }
         };
         init_logger(&cfg);
-        match Show::new(cfg, RunFlag::default()) {
+        match Show::new(cfg) {
             Ok(mut show) => {
                 println!("OK");
                 show.run();
@@ -43,7 +42,7 @@ fn main() -> ExitCode {
         let cfg = ClientConfig::load(video_channel, &config_path).expect("Failed to load config");
         init_logger(&cfg);
 
-        let mut show = Show::new(cfg, RunFlag::default()).expect("Failed to initialize show");
+        let mut show = Show::new(cfg).expect("Failed to initialize show");
 
         show.run();
     }
