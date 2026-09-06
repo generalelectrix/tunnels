@@ -9,10 +9,11 @@ use noise::Simplex;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use std::time::Duration;
+use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::Smoother;
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, VariantArray)]
 pub enum Waveform {
     Sine,
     Triangle,

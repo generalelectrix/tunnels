@@ -525,6 +525,7 @@ pub mod fixture {
     use crate::clock_bank::{ClockBank, ClockIdx};
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use strum::VariantArray;
 
     use super::*;
 
@@ -982,8 +983,14 @@ pub mod fixture {
         vec![Arc::new(arcs)]
     }
 
-    /// Every target an animation can be pointed at.
-    const TARGETS: [AnimationTarget; 11] = [
+    /// Every target an animation can be pointed at, in the order slots are
+    /// handed them.
+    ///
+    /// Written out rather than taken from `AnimationTarget::VARIANTS` because
+    /// which slot draws which target is what the recorded renders are of. The
+    /// length comes from the enum, so a target added to it fails to build here
+    /// rather than going quietly undrawn.
+    const TARGETS: [AnimationTarget; AnimationTarget::VARIANTS.len()] = [
         AnimationTarget::Size,
         AnimationTarget::Thickness,
         AnimationTarget::ColorSaturation,
@@ -997,8 +1004,12 @@ pub mod fixture {
         AnimationTarget::Spin,
     ];
 
-    /// Every waveform an animation can be shaped by.
-    const WAVEFORMS: [Waveform; 6] = [
+    /// Every waveform an animation can be shaped by, in the order slots are
+    /// handed them.
+    ///
+    /// Written out for the same reason as `TARGETS`, and its length taken from
+    /// the enum for the same reason.
+    const WAVEFORMS: [Waveform; Waveform::VARIANTS.len()] = [
         Waveform::Sine,
         Waveform::Triangle,
         Waveform::Sawtooth,
@@ -1006,12 +1017,6 @@ pub mod fixture {
         Waveform::Noise,
         Waveform::Constant,
     ];
-
-    /// Every mode a shape can be drawn in.
-    const RENDER_MODES: [RenderMode; 3] = [RenderMode::Arc, RenderMode::Dot, RenderMode::Saucer];
-
-    /// Every path that segments can be distributed along.
-    const PATH_SHAPES: [PathShape; 2] = [PathShape::Ellipse, PathShape::Line];
 
     /// Configure a tunnel to vary as much as a tunnel can: full colour spread,
     /// no blacking, both integrated angles turning, and every animation slot
@@ -1054,11 +1059,11 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
-            StateChange::RenderMode(RENDER_MODES[index % RENDER_MODES.len()]),
+            StateChange::RenderMode(RenderMode::VARIANTS[index % RenderMode::VARIANTS.len()]),
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
-            StateChange::PathShape(PATH_SHAPES[index % PATH_SHAPES.len()]),
+            StateChange::PathShape(PathShape::VARIANTS[index % PathShape::VARIANTS.len()]),
             &mut NoopEmitter,
         );
 

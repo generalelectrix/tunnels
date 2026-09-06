@@ -5,9 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use strum::VariantArray;
 
 /// Controls how a shape is rendered.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash, VariantArray,
+)]
 pub enum RenderMode {
     /// Render as an arc segment (default).
     #[default]
@@ -19,7 +22,9 @@ pub enum RenderMode {
 }
 
 /// Controls the geometric path that segments are distributed along.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash, VariantArray,
+)]
 pub enum PathShape {
     /// Segments are distributed along an ellipse (default).
     #[default]

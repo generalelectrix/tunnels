@@ -30,3 +30,4 @@ simplelog = "0.12"
 lazy_static = "1"
 rmp-serde = "1"
 anyhow = "1"
+strum = { version = "0.28", features = ["derive"] }
