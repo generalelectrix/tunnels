@@ -16,13 +16,16 @@ pub const MAX_REQUEST_LEN: usize = 256 * 1024 * 1024;
 
 /// The longest a serialized push response is allowed to be.
 ///
-/// A response is one status line — a success message quoting the child's first
-/// words, or the reason the push failed — so it runs to a few hundred bytes.
-/// The ceiling leaves room for a bootstrapper to report something long-winded
-/// while still refusing a length prefix that could only come from one that is
-/// confused or hostile. The binary travels the other way and is bounded
-/// separately: a push is large in one direction only.
-pub const MAX_RESPONSE_LEN: usize = 64 * 1024;
+/// A response arrives behind a length prefix, and a reader that trusted the
+/// prefix would allocate whatever it asked for — up to four gigabytes from one
+/// that had been corrupted, or that came from something other than a
+/// bootstrapper. This is what the prefix is checked against.
+///
+/// It leaves room far past anything a bootstrapper has to say, deliberately.
+/// A response is how a failed push explains itself, and a bound tight enough
+/// to truncate that explanation would withhold the report exactly when it is
+/// the only thing worth having.
+pub const MAX_RESPONSE_LEN: usize = 128 * 1024 * 1024;
 
 /// Payload for a binary push.
 #[derive(Serialize, Deserialize)]
