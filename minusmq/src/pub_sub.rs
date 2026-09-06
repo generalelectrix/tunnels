@@ -650,4 +650,54 @@ mod tests {
             "dropping the publisher never finished: a thread it started is still running"
         );
     }
+
+    /// A client removed from the publisher's list takes its sender thread
+    /// with it.
+    ///
+    /// A client owns the thread that writes to its subscriber, so dropping one
+    /// must stop that thread — including a thread parked in a write to a
+    /// subscriber that has stopped reading, which only shutting the socket
+    /// down releases. The thread holds the client's mailbox for as long as it
+    /// runs, so the mailbox outliving the drop is the thread outliving it.
+    #[test]
+    fn dropping_a_client_stops_its_sender_thread() {
+        let (publisher, port) = test_publisher();
+        // Held open for the duration, so that the sender thread writing to it
+        // is blocked rather than merely finished.
+        let _stalled = stalled_subscriber(port, 0);
+        thread::sleep(Duration::from_millis(300));
+
+        let bulk = vec![0xABu8; LARGE_MESSAGE];
+        for _ in 0..MESSAGES_TO_STALL {
+            publisher.send(0, &bulk);
+        }
+
+        // Take the client out of the list, as any unsubscribe path would.
+        let client = publisher
+            .clients
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("the subscriber never connected");
+        assert!(
+            !client.sender.is_finished(),
+            "the sender thread stopped on its own, before the client was dropped"
+        );
+        let mailbox = Arc::clone(&client.mailbox);
+
+        let (dropped, completion) = channel();
+        thread::spawn(move || {
+            drop(client);
+            let _ = dropped.send(());
+        });
+        assert!(
+            completion.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "dropping the client never finished"
+        );
+        assert_eq!(
+            Arc::strong_count(&mailbox),
+            1,
+            "the sender thread outlived the client that owned it"
+        );
+    }
 }
