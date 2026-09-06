@@ -3,15 +3,27 @@
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 
+/// The size of the length prefix a framed message opens with.
+const PREFIX_LEN: usize = size_of::<u32>();
+
+/// Append a framed message — its length prefix and its payload, contiguous —
+/// to a buffer.
+///
+/// Fails for a payload too long to describe in the prefix, appending nothing.
+pub fn frame_msg_into(out: &mut Vec<u8>, data: &[u8]) -> Result<()> {
+    let len = u32::try_from(data.len()).context("message too large (>4GB)")?;
+    out.reserve(PREFIX_LEN + data.len());
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(data);
+    Ok(())
+}
+
 /// Frame a message: its length prefix and its payload, contiguous.
 ///
 /// Fails for a payload too long to describe in the prefix.
 pub fn frame_msg(data: &[u8]) -> Result<Vec<u8>> {
-    let len = u32::try_from(data.len()).context("message too large (>4GB)")?;
-    let prefix = len.to_be_bytes();
-    let mut framed = Vec::with_capacity(prefix.len() + data.len());
-    framed.extend_from_slice(&prefix);
-    framed.extend_from_slice(data);
+    let mut framed = Vec::with_capacity(PREFIX_LEN + data.len());
+    frame_msg_into(&mut framed, data)?;
     Ok(framed)
 }
 
@@ -95,6 +107,26 @@ mod tests {
             write_prefix_then_payload(&mut separate, data);
             assert_eq!(writer.written(), separate.written());
         }
+    }
+
+    /// Framing into a buffer that already holds a message appends the new
+    /// one, byte for byte as framing it on its own would.
+    ///
+    /// A buffer is refilled rather than reallocated between messages, so the
+    /// bytes must not depend on what the buffer held before.
+    #[test]
+    fn framing_into_a_buffer_appends_the_same_bytes() {
+        let mut buf = Vec::new();
+        frame_msg_into(&mut buf, b"first").unwrap();
+        frame_msg_into(&mut buf, b"second").unwrap();
+        assert_eq!(
+            buf,
+            [frame_msg(b"first").unwrap(), frame_msg(b"second").unwrap()].concat()
+        );
+
+        buf.clear();
+        frame_msg_into(&mut buf, b"third").unwrap();
+        assert_eq!(buf, frame_msg(b"third").unwrap());
     }
 
     #[test]

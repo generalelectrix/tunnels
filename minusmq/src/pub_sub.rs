@@ -54,7 +54,7 @@ struct Mailbox {
 #[derive(Default)]
 struct Slot {
     /// The message waiting to be sent, if there is one.
-    pending: Option<Arc<[u8]>>,
+    pending: Option<Arc<Vec<u8>>>,
     /// Messages replaced before the subscriber took them, since the last report.
     skipped: u64,
     /// When the last report of skipped messages was made, if any has been.
@@ -70,7 +70,7 @@ impl Mailbox {
     /// A subscriber that has stopped reading misses messages as fast as they
     /// are published, so they are counted and reported at most once per
     /// `SKIP_REPORT_PERIOD` rather than logged one apiece.
-    fn post(&self, msg: Arc<[u8]>, now: Instant) -> Option<u64> {
+    fn post(&self, msg: Arc<Vec<u8>>, now: Instant) -> Option<u64> {
         let mut slot = self.slot.lock().unwrap();
         let replaced = slot.pending.replace(msg).is_some();
         self.posted.notify_one();
@@ -89,7 +89,7 @@ impl Mailbox {
 
     /// Block until there is a message to send, and take it.
     /// Yields `None` once the publisher is gone and the last message is taken.
-    fn take(&self) -> Option<Arc<[u8]>> {
+    fn take(&self) -> Option<Arc<Vec<u8>>> {
         let mut slot = self.slot.lock().unwrap();
         loop {
             if let Some(msg) = slot.pending.take() {
@@ -184,6 +184,32 @@ impl Drop for Client {
     }
 }
 
+/// The publisher's subscribers, and the buffer their last message went out in.
+#[derive(Default)]
+struct Clients {
+    /// Every subscriber currently connected.
+    connected: Vec<Client>,
+    /// The message published last, kept so that the next one can be written
+    /// into it once nothing else holds it.
+    spare: Option<Arc<Vec<u8>>>,
+}
+
+/// Frame `data` into the buffer `spare` holds, or into a new one when a
+/// subscriber is still holding that buffer.
+///
+/// Reusing a buffer is what keeps a steady stream of messages from allocating.
+/// A buffer another thread still holds is a message a subscriber has not been
+/// sent yet, so it is left alone and this message gets a buffer of its own.
+fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>> {
+    let mut msg = spare.unwrap_or_default();
+    if let Some(buf) = Arc::get_mut(&mut msg) {
+        buf.clear();
+        wire::frame_msg_into(buf, data)?;
+        return Ok(msg);
+    }
+    Ok(Arc::new(wire::frame_msg(data)?))
+}
+
 /// A TCP-based publisher that pushes messages to connected subscribers.
 ///
 /// Spawns a background accept thread. Subscribers connect, send their channel
@@ -191,7 +217,7 @@ impl Drop for Client {
 /// A subscriber is dropped when its connection fails, and never for being
 /// slow — a slow subscriber misses messages instead.
 pub struct Publisher {
-    clients: Arc<Mutex<Vec<Client>>>,
+    clients: Arc<Mutex<Clients>>,
     shutdown: Arc<AtomicBool>,
     accept: Option<JoinHandle<()>>,
 }
@@ -208,7 +234,7 @@ impl Publisher {
             .context("failed to set the listener non-blocking")?;
         log::debug!("pub_sub publisher listening on {local_addr}");
 
-        let clients: Arc<Mutex<Vec<Client>>> = Arc::new(Mutex::new(Vec::new()));
+        let clients: Arc<Mutex<Clients>> = Arc::new(Mutex::new(Clients::default()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let accept = thread::Builder::new()
@@ -238,8 +264,9 @@ impl Publisher {
         // a deadline, and logging is not something to hold a lock across.
         let mut skip_reports = Vec::new();
         {
-            let clients = self.clients.lock().unwrap();
-            let mut subscribed = clients.iter().filter(|c| c.channel == channel).peekable();
+            let mut clients = self.clients.lock().unwrap();
+            let Clients { connected, spare } = &mut *clients;
+            let mut subscribed = connected.iter().filter(|c| c.channel == channel).peekable();
             // The message is framed once, however many subscribers share it,
             // and not at all if none do. Framing it here rather than on each
             // sender thread is what lets a thread write it in one call, so
@@ -247,8 +274,8 @@ impl Publisher {
             if subscribed.peek().is_none() {
                 return;
             }
-            let msg: Arc<[u8]> = match wire::frame_msg(data) {
-                Ok(framed) => Arc::from(framed),
+            let msg = match frame_into(spare.take(), data) {
+                Ok(msg) => msg,
                 Err(e) => {
                     error!("Dropping a message on channel {channel}: {e:#}");
                     return;
@@ -260,6 +287,7 @@ impl Publisher {
                     skip_reports.push(skipped);
                 }
             }
+            *spare = Some(msg);
         }
         for skipped in skip_reports {
             warn!("Subscriber (channel {channel}) is behind: skipped {skipped} messages.");
@@ -284,22 +312,22 @@ impl Drop for Publisher {
         }
 
         let mut clients = self.clients.lock().unwrap_or_else(PoisonError::into_inner);
-        for client in clients.iter() {
+        for client in clients.connected.iter() {
             client.mailbox.close();
         }
         let deadline = Instant::now() + FLUSH_TIMEOUT;
-        while Instant::now() < deadline && clients.iter().any(|c| !c.is_finished()) {
+        while Instant::now() < deadline && clients.connected.iter().any(|c| !c.is_finished()) {
             thread::sleep(Duration::from_millis(1));
         }
-        clients.clear();
+        clients.connected.clear();
     }
 }
 
-fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Vec<Client>>>, shutdown: Arc<AtomicBool>) {
+fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Arc<AtomicBool>) {
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, _)) => match subscribe(stream) {
-                Ok(client) => clients.lock().unwrap().push(client),
+                Ok(client) => clients.lock().unwrap().connected.push(client),
                 Err(e) => warn!("Failed to subscribe a client: {e:#}"),
             },
             Err(e) => {
@@ -382,10 +410,11 @@ fn write_framed(stream: &mut TcpStream, framed: &[u8]) -> Result<()> {
 
 /// Forget the subscribers whose sender threads have stopped, which they do
 /// only when the connection has failed.
-fn reap_disconnected(clients: &Mutex<Vec<Client>>) {
+fn reap_disconnected(clients: &Mutex<Clients>) {
     clients
         .lock()
         .unwrap()
+        .connected
         .retain(|client| !client.is_finished());
 }
 
@@ -744,6 +773,7 @@ mod tests {
             .clients
             .lock()
             .unwrap()
+            .connected
             .pop()
             .expect("the subscriber never connected");
         assert!(
@@ -766,5 +796,23 @@ mod tests {
             1,
             "the sender thread outlived the client that owned it"
         );
+    }
+
+    /// A message framed into a buffer a subscriber still holds gets a buffer
+    /// of its own, and neither message is disturbed.
+    ///
+    /// Reclaiming is an optimization and failing to reclaim is the ordinary
+    /// case whenever a subscriber is mid-write, so the two paths must produce
+    /// the same message.
+    #[test]
+    fn a_message_is_framed_the_same_way_whether_or_not_a_buffer_comes_back() {
+        let held = frame_into(None, b"first").unwrap();
+        let borrowed = Arc::clone(&held);
+        let fresh = frame_into(Some(held), b"second").unwrap();
+        assert_eq!(*borrowed, wire::frame_msg(b"first").unwrap());
+        assert_eq!(*fresh, wire::frame_msg(b"second").unwrap());
+
+        let reused = frame_into(Some(fresh), b"third").unwrap();
+        assert_eq!(*reused, wire::frame_msg(b"third").unwrap());
     }
 }
