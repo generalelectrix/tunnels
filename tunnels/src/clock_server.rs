@@ -5,34 +5,33 @@ use anyhow::Result;
 
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::UnipolarFloat;
-use zero_configure::pub_sub::{PublisherService, SubscriberService};
+use zero_configure::pub_sub::{Config, PublisherService, SubscriberService};
 
 pub use crate::clock_bank::StaticClockBank;
 
 const SERVICE_NAME: &str = "showclocks";
 const PORT: u16 = 9090;
 
-/// The longest message this service accepts.
+/// How the clock stream is carried.
 ///
-/// A subscriber reads a length prefix before the bytes it describes. Without a
-/// bound it would size a buffer to whatever that prefix claimed, so a prefix
-/// that had been corrupted in transit, or that came from something which is
-/// not this service's publisher, could ask for four gigabytes and get them.
-///
-/// The number is chosen to sit far above anything the protocol carries rather
-/// than close to it. Sized to the messages it actually sees, the bound would
-/// stand between the show and a message that had merely grown, and a clock
-/// stream that stops for that reason gives an operator nothing to work from.
-const MAX_MESSAGE_LEN: usize = 128 * 1024 * 1024;
+/// A bank of clocks is a few hundred bytes and compresses to no advantage, so
+/// the stream carries them as they are. The message ceiling is the transport's
+/// own, which sits deliberately far above anything the protocol carries: sized
+/// to the messages it actually sees, the bound would stand between the show
+/// and a message that had merely grown, and a clock stream that stops for that
+/// reason gives an operator nothing to work from.
+fn config() -> Config {
+    Config::default()
+}
 
 /// Launch clock publisher service.
 pub fn clock_publisher() -> Result<ClockPublisher> {
-    PublisherService::new(SERVICE_NAME, PORT)
+    PublisherService::new(SERVICE_NAME, PORT, config())
 }
 
 /// Launch clock subscriber service.
 pub fn clock_subscriber() -> ClockSubscriber {
-    SubscriberService::new(SERVICE_NAME.to_string(), MAX_MESSAGE_LEN)
+    SubscriberService::new(SERVICE_NAME.to_string(), config())
 }
 
 /// A collection of static clock state data with audio envelope.

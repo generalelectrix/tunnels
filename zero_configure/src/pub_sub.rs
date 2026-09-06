@@ -12,6 +12,8 @@ use crate::{
     msgpack::{Receive, ReceiveResult},
 };
 
+pub use minusmq::pub_sub::{Compression, Config, Keepalive};
+
 /// Advertise a DNS-SD pub/sub service, sending a stream of T using msgpack.
 /// The service will be advertised until dropped.
 pub struct PublisherService<T: Serialize> {
@@ -22,10 +24,12 @@ pub struct PublisherService<T: Serialize> {
 }
 
 impl<T: Serialize> PublisherService<T> {
-    pub fn new(name: &str, port: u16) -> Result<Self> {
+    /// Bind `port`, advertise it under `name`, and carry the stream `config`
+    /// describes.
+    pub fn new(name: &str, port: u16, config: Config) -> Result<Self> {
         let stop = register_service(name, port)?;
         let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
-        let publisher = minusmq::pub_sub::Publisher::new(listener)?;
+        let publisher = minusmq::pub_sub::Publisher::new(listener, config)?;
         Ok(Self {
             stop: Some(stop),
             publisher,
@@ -57,17 +61,17 @@ struct SubConfig {
 
 pub struct SubscriberService<T: DeserializeOwned> {
     browser: Browser<SubConfig>,
-    /// The longest message this service carries, applied to every subscriber
+    /// How this service's stream is carried, applied to every subscriber
     /// connected to it.
-    max_msg_len: usize,
+    config: Config,
     _msg_type: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> SubscriberService<T> {
-    /// Browse for publishers of the named service, whose messages run to at
-    /// most `max_msg_len` bytes.
+    /// Browse for publishers of the named service, whose stream `config`
+    /// describes.
     /// Connect subscribers upon request.
-    pub fn new(name: String, max_msg_len: usize) -> Self {
+    pub fn new(name: String, config: Config) -> Self {
         Self {
             browser: Browser::new(name, |service| {
                 Ok(SubConfig {
@@ -75,7 +79,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     port: service.port,
                 })
             }),
-            max_msg_len,
+            config,
             _msg_type: PhantomData,
         }
     }
@@ -87,7 +91,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
 
     /// Connect a subscriber to the named service.
     pub fn subscribe(&self, name: &str) -> Result<Receiver<T>> {
-        let max_msg_len = self.max_msg_len;
+        let config = self.config;
         self.browser
             .use_service(name, move |cfg| {
                 // Resolve hostname to IP at subscribe time.
@@ -97,11 +101,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Could not resolve {}:{}", cfg.hostname, cfg.port)
                     })?;
-                Ok(Receiver::new(
-                    &addr.ip().to_string(),
-                    addr.port(),
-                    max_msg_len,
-                ))
+                Ok(Receiver::new(&addr.ip().to_string(), addr.port(), config))
             })
             .unwrap_or_else(|| bail!("no instance of service {} found", self.browser.name()))
     }
@@ -114,11 +114,11 @@ pub struct Receiver<T: DeserializeOwned> {
 }
 
 impl<T: DeserializeOwned> Receiver<T> {
-    /// Create a new subscriber connected to the provided host:port, accepting
-    /// messages of up to `max_msg_len` bytes.
-    pub fn new(host: &str, port: u16, max_msg_len: usize) -> Self {
+    /// Create a new subscriber connected to the provided host:port, on the
+    /// stream `config` describes.
+    pub fn new(host: &str, port: u16, config: Config) -> Self {
         Self {
-            subscriber: minusmq::pub_sub::Subscriber::new(host, port, max_msg_len),
+            subscriber: minusmq::pub_sub::Subscriber::new(host, port, config),
             _msg_type: PhantomData,
         }
     }

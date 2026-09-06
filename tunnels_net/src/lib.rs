@@ -11,6 +11,7 @@
 
 use anyhow::Result;
 use log::{error, info};
+use minusmq::pub_sub::{Compression, Config};
 use std::net::TcpListener;
 
 pub use minusmq::pub_sub::SubscriberStop;
@@ -20,20 +21,6 @@ use tunnels_model::show_frame::{FrameCodecError, FrameEncoder, ShowFrame, ShowFr
 /// The port a show frame stream runs on.
 const PORT: u16 = 6000;
 
-/// The longest message this service accepts.
-///
-/// A length prefix arrives before the bytes it describes, so a reader that
-/// trusted one would size a buffer to whatever a corrupted prefix — or one
-/// sent by something that is not a publisher at all — happened to claim, up to
-/// four gigabytes. The bound is what a reader checks the prefix against, and
-/// nothing more.
-///
-/// It is deliberately far above any frame a show can produce, because the two
-/// failures it sits between are not comparable. A prefix refused for being
-/// absurd costs a reconnection. A frame refused for being long stops the show
-/// with no symptom anyone watching it could act on, and stays broken.
-const MAX_MESSAGE_LEN: usize = 128 * 1024 * 1024;
-
 /// The largest payload a frame of this service is allowed to expand into.
 ///
 /// A compressed frame is a fraction of the size it expands to, so the length
@@ -42,6 +29,23 @@ const MAX_MESSAGE_LEN: usize = 128 * 1024 * 1024;
 /// payload asks for a rejected expansion rather than a multi-gigabyte
 /// allocation.
 const MAX_DECOMPRESSED_LEN: usize = 8 * 1024 * 1024;
+
+/// How the show frame stream is carried.
+///
+/// A frame is a few kilobytes of model that compresses well, and there is one
+/// of them every four milliseconds for every client, so the stream carries
+/// them compressed. The message ceiling is the transport's own, which sits
+/// deliberately far above any frame a show can produce: a prefix refused for
+/// being absurd costs a reconnection, while a frame refused for being long
+/// stops the show with no symptom anyone watching it could act on.
+fn config() -> Config {
+    Config {
+        compression: Compression::Lz4 {
+            max_decompressed_len: MAX_DECOMPRESSED_LEN,
+        },
+        ..Default::default()
+    }
+}
 
 /// Puts show frames in front of every connected client.
 ///
@@ -65,13 +69,9 @@ impl FramePublisher {
     }
 
     /// Publish frames to the clients an already-bound listener accepts.
-    ///
-    /// A frame is a few kilobytes of model that compresses well, and there is
-    /// one of them every four milliseconds for every client, so the stream
-    /// carries them compressed.
     fn on(listener: TcpListener) -> Result<Self> {
         Ok(Self {
-            publisher: minusmq::pub_sub::Publisher::new(listener)?.compressed(),
+            publisher: minusmq::pub_sub::Publisher::new(listener, config())?,
             encoder: FrameEncoder::default(),
         })
     }
@@ -112,13 +112,9 @@ impl FrameSubscriber {
     }
 
     /// Subscribe to the frames published on one host and port.
-    ///
-    /// Frames arrive compressed, and a compressed frame declares what it
-    /// expands to, so the expansion is bounded as well as the message.
     fn at(host: &str, port: u16) -> Self {
         Self {
-            subscriber: minusmq::pub_sub::Subscriber::new(host, port, MAX_MESSAGE_LEN)
-                .compressed(MAX_DECOMPRESSED_LEN),
+            subscriber: minusmq::pub_sub::Subscriber::new(host, port, config()),
         }
     }
 

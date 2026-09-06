@@ -15,44 +15,102 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::{compress, wire};
+use crate::{DEFAULT_MAX_MESSAGE_LEN, compress, wire};
 
-/// How long a connection goes without traffic before keepalive probing starts.
-const KEEPALIVE_IDLE: Duration = Duration::from_secs(5);
-
-/// How long the keepalive probes wait between one another.
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
-
-/// How many keepalive probes go unanswered before the connection is failed.
-///
-/// Together with [`KEEPALIVE_IDLE`] and [`KEEPALIVE_INTERVAL`] this puts a
-/// silent peer's connection out of its misery about eleven seconds after the
-/// traffic stops, against the operating system's default of a couple of hours.
-const KEEPALIVE_RETRIES: u32 = 3;
-
-/// Ask the operating system to fail a connection whose peer has stopped
-/// answering, rather than hold it open indefinitely.
+/// When the operating system gives up on a peer that has stopped answering.
 ///
 /// A peer that disappears without closing — an unplugged switch, a wireless
 /// link that drops — leaves behind a socket that looks healthy and carries
-/// nothing, and a thread reading from one waits on it forever. Keepalive
-/// probes turn that silence into an error the connection can be remade from.
-fn fail_a_silent_peer(socket: &TcpStream) -> std::io::Result<()> {
-    let keepalive = TcpKeepalive::new()
-        .with_time(KEEPALIVE_IDLE)
-        .with_interval(KEEPALIVE_INTERVAL)
-        .with_retries(KEEPALIVE_RETRIES);
-    SockRef::from(socket).set_tcp_keepalive(&keepalive)
+/// nothing, and a thread reading from one waits on it forever. Probing turns
+/// that silence into an error the connection can be remade from.
+#[derive(Debug, Clone, Copy)]
+pub struct Keepalive {
+    /// How long a connection goes without traffic before probing starts.
+    pub idle: Duration,
+    /// How long the probes wait between one another.
+    pub interval: Duration,
+    /// How many probes go unanswered before the connection is failed.
+    pub retries: u32,
+}
+
+impl Default for Keepalive {
+    /// Put a silent peer's connection out of its misery about eleven seconds
+    /// after the traffic stops, against the operating system's default of a
+    /// couple of hours.
+    fn default() -> Self {
+        Self {
+            idle: Duration::from_secs(5),
+            interval: Duration::from_secs(2),
+            retries: 3,
+        }
+    }
+}
+
+/// How a stream's payloads are carried.
+///
+/// Compression is a property of a stream rather than of a message: nothing on
+/// the wire says a payload is compressed, so a publisher writes what this says
+/// and the subscribers of that stream are configured to read the same thing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Compression {
+    /// Payloads are carried exactly as they are given.
+    #[default]
+    Plain,
+    /// Payloads are compressed, and no message expands into more than
+    /// `max_decompressed_len` bytes.
+    ///
+    /// The bound is a second one, beyond the length a message may arrive at:
+    /// a small compressed payload can declare an enormous expansion, and a
+    /// declared length is not a reason to ask the allocator for one.
+    Lz4 { max_decompressed_len: usize },
+}
+
+/// How a publish-subscribe stream is carried.
+///
+/// The two ends of a stream are configured apart from one another and have to
+/// be told the same thing about what it carries. Everything else here is one
+/// end's own business, and the end it does not concern ignores it.
+#[derive(Debug, Clone, Copy)]
+pub struct Config {
+    /// The longest message this stream carries. A length prefix claiming more
+    /// than this fails the read, rather than reserving memory to match a
+    /// publisher that is confused or hostile.
+    pub max_message_len: usize,
+    /// Whether the payloads on this stream are compressed.
+    pub compression: Compression,
+    /// When a connection whose peer has gone silent is failed.
+    pub keepalive: Keepalive,
+    /// How long a publisher's accept loop waits for a subscriber before
+    /// looking up.
+    ///
+    /// A publisher on its way out releases the wait directly, so this is the
+    /// backstop for a release that never arrives — and the period at which
+    /// subscribers whose connections have failed are reaped.
+    pub accept_timeout: Duration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            max_message_len: DEFAULT_MAX_MESSAGE_LEN,
+            compression: Compression::default(),
+            keepalive: Keepalive::default(),
+            accept_timeout: Duration::from_secs(1),
+        }
+    }
+}
+
+/// Ask the operating system to fail a connection whose peer has stopped
+/// answering, rather than hold it open indefinitely.
+fn fail_a_silent_peer(socket: &TcpStream, keepalive: Keepalive) -> std::io::Result<()> {
+    let probes = TcpKeepalive::new()
+        .with_time(keepalive.idle)
+        .with_interval(keepalive.interval)
+        .with_retries(keepalive.retries);
+    SockRef::from(socket).set_tcp_keepalive(&probes)
 }
 
 // --- Publisher ---
-
-/// How long the accept loop waits for a subscriber before looking up.
-///
-/// A publisher on its way out releases the wait directly, so this is the
-/// backstop for a release that never arrives — and the period at which
-/// subscribers whose connections have failed are reaped.
-const ACCEPT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long a run of skipped messages goes unreported before its count is logged.
 const SKIP_REPORT_PERIOD: Duration = Duration::from_secs(1);
@@ -269,21 +327,22 @@ pub struct Publisher {
     /// The port the listener is bound to. Connecting to it is what releases
     /// the accept thread from its wait.
     port: u16,
-    /// Whether a message is compressed before it is framed.
-    compress: bool,
+    /// How this stream carries its payloads. A message is compressed, if it is
+    /// compressed at all, before it is framed.
+    compression: Compression,
     accept: Option<JoinHandle<()>>,
 }
 
 impl Publisher {
     /// Create a new publisher from an already-bound listener.
     /// Spawns a background thread to accept subscriber connections.
-    pub fn new(listener: TcpListener) -> Result<Self> {
+    pub fn new(listener: TcpListener, config: Config) -> Result<Self> {
         let local_addr = listener.local_addr()?;
         // A dropped publisher releases the accept thread by connecting to this
         // listener itself. Bounding the wait is the backstop for a connection
         // that cannot be made: the thread then looks up on its own rather than
         // holding the drop open forever.
-        if let Err(e) = SockRef::from(&listener).set_read_timeout(Some(ACCEPT_TIMEOUT)) {
+        if let Err(e) = SockRef::from(&listener).set_read_timeout(Some(config.accept_timeout)) {
             warn!("Failed to bound the wait for a subscriber: {e}");
         }
         log::debug!("pub_sub publisher listening on {local_addr}");
@@ -296,7 +355,7 @@ impl Publisher {
             .spawn({
                 let clients = clients.clone();
                 let shutdown = shutdown.clone();
-                move || accept_loop(listener, clients, shutdown)
+                move || accept_loop(listener, clients, shutdown, config)
             })
             .context("failed to spawn accept thread")?;
 
@@ -304,21 +363,9 @@ impl Publisher {
             clients,
             shutdown,
             port: local_addr.port(),
-            compress: false,
+            compression: config.compression,
             accept: Some(accept),
         })
-    }
-
-    /// Carry this publisher's messages compressed.
-    ///
-    /// Compression is a property of a stream rather than of a message: nothing
-    /// on the wire says a payload is compressed, so the subscribers of a
-    /// compressed stream are configured to expand what they receive. A stream
-    /// that does not opt in carries the bytes it is given, unchanged.
-    #[must_use]
-    pub fn compressed(mut self) -> Self {
-        self.compress = true;
-        self
     }
 
     /// Send data to every connected subscriber.
@@ -345,16 +392,15 @@ impl Publisher {
             if connected.is_empty() {
                 return;
             }
-            let payload = if self.compress {
-                match compress::compress_into(compressed, data) {
+            let payload = match self.compression {
+                Compression::Plain => data,
+                Compression::Lz4 { .. } => match compress::compress_into(compressed, data) {
                     Ok(()) => compressed.as_slice(),
                     Err(error) => {
                         error!("Dropping a message: {error:#}");
                         return;
                     }
-                }
-            } else {
-                data
+                },
             };
             let msg = match frame_into(spare.take(), payload) {
                 Ok(msg) => msg,
@@ -407,7 +453,12 @@ impl Drop for Publisher {
     }
 }
 
-fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Arc<AtomicBool>) {
+fn accept_loop(
+    listener: TcpListener,
+    clients: Arc<Mutex<Clients>>,
+    shutdown: Arc<AtomicBool>,
+    config: Config,
+) {
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, peer)) => {
@@ -416,7 +467,7 @@ fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Ar
                 if shutdown.load(Ordering::Acquire) {
                     return;
                 }
-                match subscribe(stream, peer) {
+                match subscribe(stream, peer, config.keepalive) {
                     Ok(client) => clients.lock().unwrap().connected.push(client),
                     Err(e) => warn!("Failed to subscribe a client: {e:#}"),
                 }
@@ -427,7 +478,7 @@ fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Ar
                 // An error that persists — a process out of file descriptors,
                 // say — would otherwise spin this thread and its log as fast
                 // as the two of them can go.
-                thread::sleep(ACCEPT_TIMEOUT);
+                thread::sleep(config.accept_timeout);
             }
         }
         // Reaping belongs on this thread rather than on the publisher's: it
@@ -446,7 +497,7 @@ fn is_timeout(e: &std::io::Error) -> bool {
 }
 
 /// Start the thread that writes to a newly connected subscriber.
-fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
+fn subscribe(stream: TcpStream, peer: SocketAddr, keepalive: Keepalive) -> Result<Client> {
     if let Err(e) = stream.set_nodelay(true) {
         warn!("Failed to set TCP_NODELAY: {e}");
     }
@@ -463,7 +514,7 @@ fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
     // of the problem: the half a show depends on is the subscriber's own end,
     // where a publisher that stops sending is idle by definition and the
     // probes do fire.
-    if let Err(e) = fail_a_silent_peer(&stream) {
+    if let Err(e) = fail_a_silent_peer(&stream, keepalive) {
         warn!("Failed to set keepalive on subscriber {peer}: {e}");
     }
     // Deliberately no write timeout. A sender thread is free to block for as
@@ -636,16 +687,11 @@ impl SubscriberStop {
 pub struct Subscriber {
     host: String,
     port: u16,
-    /// The longest message this subscription carries. A length prefix
-    /// claiming more than this fails the read, rather than reserving up to
-    /// four gigabytes to match a publisher that is confused or hostile.
-    max_msg_len: usize,
+    /// How this subscription's stream is carried.
+    config: Config,
     stream: Option<TcpStream>,
     /// The connection, shared with the handles that can stop it.
     subscription: Arc<SharedSubscription>,
-    /// The largest payload a message may expand into, on a subscription that
-    /// carries its payloads compressed. Empty on one that does not.
-    max_decompressed_len: Option<usize>,
     /// The message received last, refilled by the next one to arrive.
     buf: Vec<u8>,
     /// The message received last, expanded. Untouched on a subscription that
@@ -654,37 +700,19 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
-    /// Create a new subscriber that accepts messages of up to `max_msg_len`
-    /// bytes. Does not connect immediately — connection happens lazily on the
-    /// first `recv()` call.
-    pub fn new(host: impl Into<String>, port: u16, max_msg_len: usize) -> Self {
+    /// Create a new subscriber on the stream `config` describes. Does not
+    /// connect immediately — connection happens lazily on the first `recv()`
+    /// call.
+    pub fn new(host: impl Into<String>, port: u16, config: Config) -> Self {
         Subscriber {
             host: host.into(),
             port,
-            max_msg_len,
+            config,
             stream: None,
             subscription: Arc::new(SharedSubscription::default()),
-            max_decompressed_len: None,
             buf: Vec::new(),
             plain: Vec::new(),
         }
-    }
-
-    /// Expand this subscription's messages, each into at most
-    /// `max_decompressed_len` bytes.
-    ///
-    /// Compression is a property of a stream rather than of a message: nothing
-    /// on the wire says a payload is compressed, so a subscriber is configured
-    /// to expand what it receives from a publisher that compresses. A stream
-    /// that does not opt in yields the bytes it carries, unchanged.
-    ///
-    /// The bound is a second one, beyond the length a message may arrive at:
-    /// a small compressed payload can declare an enormous expansion, and a
-    /// declared length is not a reason to ask the allocator for one.
-    #[must_use]
-    pub fn compressed(mut self, max_decompressed_len: usize) -> Self {
-        self.max_decompressed_len = Some(max_decompressed_len);
-        self
     }
 
     /// A handle that stops this subscription from another thread.
@@ -716,7 +744,7 @@ impl Subscriber {
             match wire::read_msg_into(
                 self.stream.as_mut().unwrap(),
                 &mut self.buf,
-                self.max_msg_len,
+                self.config.max_message_len,
             ) {
                 Ok(()) => match self.expand() {
                     Ok(()) => break,
@@ -743,18 +771,20 @@ impl Subscriber {
                 }
             }
         }
-        Some(match self.max_decompressed_len {
-            Some(_) => &self.plain,
-            None => &self.buf,
+        Some(match self.config.compression {
+            Compression::Plain => &self.buf,
+            Compression::Lz4 { .. } => &self.plain,
         })
     }
 
     /// Expand the message just received, on a subscription that carries its
     /// payloads compressed.
     fn expand(&mut self) -> Result<()> {
-        match self.max_decompressed_len {
-            Some(max_len) => compress::decompress_into(&mut self.plain, &self.buf, max_len),
-            None => Ok(()),
+        match self.config.compression {
+            Compression::Plain => Ok(()),
+            Compression::Lz4 {
+                max_decompressed_len,
+            } => compress::decompress_into(&mut self.plain, &self.buf, max_decompressed_len),
         }
     }
 
@@ -779,7 +809,7 @@ impl Subscriber {
                     // Without this, a publisher that goes away without closing
                     // leaves this subscriber blocked in a read that no message
                     // and no error will ever end.
-                    if let Err(e) = fail_a_silent_peer(&stream) {
+                    if let Err(e) = fail_a_silent_peer(&stream, self.config.keepalive) {
                         warn!("Failed to set keepalive on the connection to {addr}: {e}");
                     }
                     // A connection that cannot be released is one to park a
@@ -814,10 +844,28 @@ mod tests {
     /// something other than the limit.
     const TEST_MAX_MESSAGE_LEN: usize = 4 * 1024 * 1024;
 
+    /// A stream carrying its payloads as they are, of the size a test sends.
+    fn test_config() -> Config {
+        Config {
+            max_message_len: TEST_MAX_MESSAGE_LEN,
+            ..Default::default()
+        }
+    }
+
+    /// The same stream, carrying its payloads compressed.
+    fn compressed_config() -> Config {
+        Config {
+            compression: Compression::Lz4 {
+                max_decompressed_len: TEST_MAX_MESSAGE_LEN,
+            },
+            ..test_config()
+        }
+    }
+
     fn test_publisher() -> (Publisher, u16) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let publisher = Publisher::new(listener).unwrap();
+        let publisher = Publisher::new(listener, test_config()).unwrap();
         // Give accept thread time to start.
         thread::sleep(Duration::from_millis(50));
         (publisher, port)
@@ -829,14 +877,14 @@ mod tests {
 
         // Spawn two subscribers in threads since both need to recv().
         let handle1 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+            let mut sub = Subscriber::new("127.0.0.1", port, test_config());
             sub.recv().unwrap().to_vec()
         });
 
         // Second subscriber in another thread.
         let port2 = port;
         let handle2 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port2, TEST_MAX_MESSAGE_LEN);
+            let mut sub = Subscriber::new("127.0.0.1", port2, test_config());
             sub.recv().unwrap().to_vec()
         });
 
@@ -893,7 +941,7 @@ mod tests {
         let (publisher, port) = test_publisher();
         let (received, receipts) = channel();
         let subscriber = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+            let mut sub = Subscriber::new("127.0.0.1", port, test_config());
             loop {
                 let msg = sub.recv().unwrap().to_vec();
                 let is_last = msg == AFTER;
@@ -946,7 +994,7 @@ mod tests {
             }
         });
 
-        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+        let mut sub = Subscriber::new("127.0.0.1", port, test_config());
         sub.connect();
         // Let the publisher's accept thread take up the subscription.
         thread::sleep(Duration::from_millis(200));
@@ -1020,7 +1068,7 @@ mod tests {
 
         let (received, receipts) = channel();
         thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+            let mut sub = Subscriber::new("127.0.0.1", port, test_config());
             loop {
                 let msg = sub.recv().unwrap().to_vec();
                 let is_last = msg == LAST_MESSAGE;
@@ -1171,7 +1219,7 @@ mod tests {
     fn a_compressed_stream_carries_every_message_whole() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let publisher = Publisher::new(listener).unwrap().compressed();
+        let publisher = Publisher::new(listener, compressed_config()).unwrap();
         // Give the accept thread time to start.
         thread::sleep(Duration::from_millis(50));
 
@@ -1182,8 +1230,7 @@ mod tests {
             }
         });
 
-        let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN)
-            .compressed(TEST_MAX_MESSAGE_LEN);
+        let mut sub = Subscriber::new("127.0.0.1", port, compressed_config());
         sub.connect();
         // Let the publisher's accept thread take up the subscription.
         thread::sleep(Duration::from_millis(200));
@@ -1232,7 +1279,7 @@ mod tests {
     fn stopping_a_subscription_releases_the_subscriber() {
         // Parked in a read: connected to a publisher that publishes nothing.
         let (publisher, port) = test_publisher();
-        let subscriber = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+        let subscriber = Subscriber::new("127.0.0.1", port, test_config());
         let stop = subscriber.stop_handle();
         let receipts = receive_on(subscriber);
         // Long enough to have connected and be waiting for a message.
@@ -1245,7 +1292,7 @@ mod tests {
         drop(publisher);
 
         // Waiting to connect: no publisher to connect to at all.
-        let subscriber = Subscriber::new("127.0.0.1", unused_port(), TEST_MAX_MESSAGE_LEN);
+        let subscriber = Subscriber::new("127.0.0.1", unused_port(), test_config());
         let stop = subscriber.stop_handle();
         let receipts = receive_on(subscriber);
         // Long enough for the first attempt to have failed and the wait
@@ -1262,7 +1309,7 @@ mod tests {
     #[test]
     fn a_subscription_stopped_first_never_connects() {
         let (_publisher, port) = test_publisher();
-        let mut subscriber = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+        let mut subscriber = Subscriber::new("127.0.0.1", port, test_config());
         subscriber.stop_handle().stop();
         assert!(subscriber.recv().is_none());
     }

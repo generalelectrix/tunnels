@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use tunnels_lib::bootstrap::{MAX_RESPONSE_LEN, PushBinaryRequest, PushBinaryResponse};
-use zero_configure::req_rep::Controller;
+use zero_configure::req_rep::{Config, Controller};
 
 const SERVICE_NAME: &str = "tunnelbootstrap";
 
@@ -21,10 +21,13 @@ impl BootstrapController {
     /// If None, push actions will block until they complete or explicitly fail.
     pub fn new(timeout: Option<Duration>) -> Self {
         Self {
-            controller: Controller::with_recv_timeout(
+            controller: Controller::new(
                 SERVICE_NAME.to_string(),
-                timeout,
-                MAX_RESPONSE_LEN,
+                Config {
+                    max_message_len: MAX_RESPONSE_LEN,
+                    request_timeout: timeout,
+                    ..Default::default()
+                },
             ),
         }
     }
