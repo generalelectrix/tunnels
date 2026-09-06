@@ -27,3 +27,10 @@ lz4_flex = { version = "0.11", default-features = false, features = [
     "safe-decode",
     "checked-decode",
 ] }
+
+[dev-dependencies]
+zstd = "0.13"
+
+[[example]]
+name = "compression_bench"
+required-features = ["fixtures"]

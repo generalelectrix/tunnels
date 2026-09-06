@@ -1096,6 +1096,19 @@ pub mod fixture {
         set(Invert(slot.is_multiple_of(5)));
     }
 
+    /// Set every animation slot of a tunnel to the noise waveform.
+    ///
+    /// Noise is the one waveform whose output is not periodic, so a tunnel
+    /// driven entirely by it is the least self-similar thing the model draws.
+    pub fn configure_all_noise(tunnel: &mut Tunnel) {
+        for anim in tunnel.anims.iter_mut() {
+            anim.animation.control(
+                AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Noise)),
+                &mut NoopEmitter,
+            );
+        }
+    }
+
     /// Point a tunnel at shared frame state, so that its hue, its centre and
     /// the timing and amplitude of its animations all come from the palette,
     /// the position bank, the clock bank and the audio envelope rather than
