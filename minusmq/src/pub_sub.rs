@@ -1,15 +1,14 @@
-//! TCP publish-subscribe with channel-based filtering.
+//! TCP publish-subscribe.
 //!
-//! Publisher binds a port and accepts subscriber connections. Each subscriber
-//! sends a single byte (channel number) on connect. The publisher only sends
-//! messages to subscribers whose channel matches.
+//! Publisher binds a port and accepts subscriber connections, and sends every
+//! message to every subscriber connected at the time.
 //!
 //! Subscribers automatically reconnect on connection loss.
 
 use anyhow::{Context, Result};
 use log::{error, warn};
-use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::io::Write;
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -22,14 +21,6 @@ use crate::wire;
 /// How often the accept loop looks up from the listener, to notice that the
 /// publisher is gone and to reap subscribers whose connections have failed.
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
-
-/// How long a connection has to name its channel before it is abandoned.
-///
-/// A subscriber sends its channel byte immediately after connecting, so this
-/// only ever expires on a connection that is not one. Bounding it keeps a
-/// connection that says nothing from wedging the accept loop, and with it the
-/// publisher's shutdown.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long a run of skipped messages goes unreported before its count is logged.
 const SKIP_REPORT_PERIOD: Duration = Duration::from_secs(1);
@@ -148,7 +139,8 @@ impl std::ops::Deref for MailboxHandle {
 /// A client owns its sender thread. Dropping one stops that thread and waits
 /// for it, so a client that is gone has no thread left behind it.
 struct Client {
-    channel: u8,
+    /// The address the subscriber connected from, to tell it apart in a log.
+    peer: SocketAddr,
     mailbox: MailboxHandle,
     /// A second handle on the subscriber's socket. Shutting it down is what
     /// releases a sender thread parked in a write to a subscriber that has
@@ -212,10 +204,10 @@ fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>> 
 
 /// A TCP-based publisher that pushes messages to connected subscribers.
 ///
-/// Spawns a background accept thread. Subscribers connect, send their channel
-/// byte, and receive length-prefixed messages, each on its own sender thread.
-/// A subscriber is dropped when its connection fails, and never for being
-/// slow — a slow subscriber misses messages instead.
+/// Spawns a background accept thread. Subscribers connect and receive
+/// length-prefixed messages, each on its own sender thread. A subscriber is
+/// dropped when its connection fails, and never for being slow — a slow
+/// subscriber misses messages instead.
 pub struct Publisher {
     clients: Arc<Mutex<Clients>>,
     shutdown: Arc<AtomicBool>,
@@ -253,44 +245,42 @@ impl Publisher {
         })
     }
 
-    /// Send data to all subscribers on the given channel.
+    /// Send data to every connected subscriber.
     ///
-    /// Returns once every subscriber on the channel has been given the data;
-    /// the writing happens on their own threads, so this never blocks on a
-    /// socket. A subscriber that has not yet been sent the previous message
-    /// misses it.
-    pub fn send(&self, channel: u8, data: &[u8]) {
+    /// Returns once every subscriber has been given the data; the writing
+    /// happens on their own threads, so this never blocks on a socket. A
+    /// subscriber that has not yet been sent the previous message misses it.
+    pub fn send(&self, data: &[u8]) {
         // Reports are logged after the lock is released. The caller may be on
         // a deadline, and logging is not something to hold a lock across.
         let mut skip_reports = Vec::new();
         {
             let mut clients = self.clients.lock().unwrap();
             let Clients { connected, spare } = &mut *clients;
-            let mut subscribed = connected.iter().filter(|c| c.channel == channel).peekable();
             // The message is framed once, however many subscribers share it,
             // and not at all if none do. Framing it here rather than on each
             // sender thread is what lets a thread write it in one call, so
             // that its length prefix shares a packet with its payload.
-            if subscribed.peek().is_none() {
+            if connected.is_empty() {
                 return;
             }
             let msg = match frame_into(spare.take(), data) {
                 Ok(msg) => msg,
                 Err(e) => {
-                    error!("Dropping a message on channel {channel}: {e:#}");
+                    error!("Dropping a message: {e:#}");
                     return;
                 }
             };
             let now = Instant::now();
-            for client in subscribed {
+            for client in connected.iter() {
                 if let Some(skipped) = client.mailbox.post(Arc::clone(&msg), now) {
-                    skip_reports.push(skipped);
+                    skip_reports.push((client.peer, skipped));
                 }
             }
             *spare = Some(msg);
         }
-        for skipped in skip_reports {
-            warn!("Subscriber (channel {channel}) is behind: skipped {skipped} messages.");
+        for (peer, skipped) in skip_reports {
+            warn!("Subscriber {peer} is behind: skipped {skipped} messages.");
         }
     }
 }
@@ -326,7 +316,7 @@ impl Drop for Publisher {
 fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Arc<AtomicBool>) {
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok((stream, _)) => match subscribe(stream) {
+            Ok((stream, peer)) => match subscribe(stream, peer) {
                 Ok(client) => clients.lock().unwrap().connected.push(client),
                 Err(e) => warn!("Failed to subscribe a client: {e:#}"),
             },
@@ -343,22 +333,13 @@ fn accept_loop(listener: TcpListener, clients: Arc<Mutex<Clients>>, shutdown: Ar
     }
 }
 
-/// Complete a subscriber's handshake and start the thread that writes to it.
-fn subscribe(mut stream: TcpStream) -> Result<Client> {
+/// Start the thread that writes to a newly connected subscriber.
+fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
     // The listener is non-blocking so that it can be shut down; the
     // connections it yields are used blocking, on their own threads.
     stream
         .set_nonblocking(false)
         .context("failed to set the connection blocking")?;
-    stream
-        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
-        .context("failed to set the handshake read timeout")?;
-
-    let mut channel_buf = [0u8; 1];
-    stream
-        .read_exact(&mut channel_buf)
-        .context("failed to read channel from subscriber")?;
-    let channel = channel_buf[0];
 
     if let Err(e) = stream.set_nodelay(true) {
         warn!("Failed to set TCP_NODELAY: {e}");
@@ -373,13 +354,13 @@ fn subscribe(mut stream: TcpStream) -> Result<Client> {
         .context("failed to duplicate the subscriber socket")?;
     let (mailbox, shared) = MailboxHandle::new();
     let sender = thread::Builder::new()
-        .name(format!("pub_sub-send-ch{channel}"))
-        .spawn(move || send_loop(stream, channel, &shared))
+        .name(format!("pub_sub-send-{peer}"))
+        .spawn(move || send_loop(stream, peer, &shared))
         .context("failed to spawn sender thread")?;
 
-    log::debug!("Subscriber connected (channel {channel})");
+    log::debug!("Subscriber {peer} connected");
     Ok(Client {
-        channel,
+        peer,
         mailbox,
         socket,
         sender: Some(sender),
@@ -388,10 +369,10 @@ fn subscribe(mut stream: TcpStream) -> Result<Client> {
 
 /// Write messages to one subscriber until its connection fails or the
 /// publisher goes away.
-fn send_loop(mut stream: TcpStream, channel: u8, mailbox: &Mailbox) {
+fn send_loop(mut stream: TcpStream, peer: SocketAddr, mailbox: &Mailbox) {
     while let Some(msg) = mailbox.take() {
         if let Err(e) = write_framed(&mut stream, &msg) {
-            warn!("Dropping subscriber (channel {channel}): {e:#}");
+            warn!("Dropping subscriber {peer}: {e:#}");
             return;
         }
     }
@@ -439,12 +420,11 @@ const MAX_MESSAGE_LEN: usize = 4 * 1024 * 1024;
 /// every time.
 const RETAINED_BUF_CAPACITY: usize = 64 * 1024;
 
-/// A TCP-based subscriber that connects to a publisher, subscribes to a
-/// channel, and receives messages. Automatically reconnects on connection loss.
+/// A TCP-based subscriber that connects to a publisher and receives every
+/// message it sends. Automatically reconnects on connection loss.
 pub struct Subscriber {
     host: String,
     port: u16,
-    channel: u8,
     stream: Option<TcpStream>,
     /// The message received last, refilled by the next one to arrive.
     buf: Vec<u8>,
@@ -453,18 +433,17 @@ pub struct Subscriber {
 impl Subscriber {
     /// Create a new subscriber. Does not connect immediately — connection
     /// happens lazily on the first `recv()` call.
-    pub fn new(host: impl Into<String>, port: u16, channel: u8) -> Self {
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
         Subscriber {
             host: host.into(),
             port,
-            channel,
             stream: None,
             buf: Vec::new(),
         }
     }
 
     /// Block until the next message arrives. Handles reconnection internally —
-    /// if the connection drops, reconnects and re-subscribes transparently.
+    /// if the connection drops, reconnects transparently.
     ///
     /// The message stands until the next one is received, and arrives in the
     /// buffer the one before it did, so a stream of messages of a settled size
@@ -491,10 +470,7 @@ impl Subscriber {
                 Ok(()) => break,
                 Err(e) => {
                     // Connection lost — drop it and reconnect on next iteration.
-                    warn!(
-                        "Subscriber read error ({}:{} channel {}): {e}",
-                        self.host, self.port, self.channel
-                    );
+                    warn!("Subscriber read error ({}:{}): {e}", self.host, self.port);
                     self.stream = None;
                 }
             }
@@ -509,9 +485,9 @@ impl Subscriber {
 
         loop {
             let addr = format!("{}:{}", self.host, self.port);
-            match self.try_connect(&addr) {
+            match TcpStream::connect(&addr) {
                 Ok(stream) => {
-                    log::debug!("Subscriber connected to {addr} (channel {})", self.channel);
+                    log::debug!("Subscriber connected to {addr}");
                     self.stream = Some(stream);
                     return;
                 }
@@ -522,15 +498,6 @@ impl Subscriber {
                 }
             }
         }
-    }
-
-    fn try_connect(&self, addr: &str) -> Result<TcpStream> {
-        let mut stream = TcpStream::connect(addr).context("TCP connect failed")?;
-        // Send the subscribe handshake: one byte, the channel number.
-        stream
-            .write_all(&[self.channel])
-            .context("failed to send channel byte")?;
-        Ok(stream)
     }
 }
 
@@ -552,12 +519,12 @@ mod tests {
     #[test]
     fn single_subscriber_receives_messages() {
         let (publisher, port) = test_publisher();
-        let mut sub = Subscriber::new("127.0.0.1", port, 0);
+        let mut sub = Subscriber::new("127.0.0.1", port);
 
         thread::spawn(move || {
             // Give subscriber time to connect.
             thread::sleep(Duration::from_millis(200));
-            publisher.send(0, b"hello");
+            publisher.send(b"hello");
         });
 
         let msg = sub.recv();
@@ -565,42 +532,25 @@ mod tests {
     }
 
     #[test]
-    fn channel_filtering() {
-        let (publisher, port) = test_publisher();
-        let mut sub = Subscriber::new("127.0.0.1", port, 1);
-
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(200));
-            // Send on channel 0 (should not reach subscriber on channel 1).
-            publisher.send(0, b"wrong channel");
-            // Send on channel 1 (should reach subscriber).
-            publisher.send(1, b"right channel");
-        });
-
-        let msg = sub.recv();
-        assert_eq!(msg, b"right channel");
-    }
-
-    #[test]
-    fn multiple_subscribers_same_channel() {
+    fn every_subscriber_receives_every_message() {
         let (publisher, port) = test_publisher();
 
         // Spawn two subscribers in threads since both need to recv().
         let handle1 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port, 0);
+            let mut sub = Subscriber::new("127.0.0.1", port);
             sub.recv().to_vec()
         });
 
         // Second subscriber in another thread.
         let port2 = port;
         let handle2 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port2, 0);
+            let mut sub = Subscriber::new("127.0.0.1", port2);
             sub.recv().to_vec()
         });
 
         // Give both subscribers time to connect.
         thread::sleep(Duration::from_millis(300));
-        publisher.send(0, b"broadcast");
+        publisher.send(b"broadcast");
 
         let msg1 = handle1.join().unwrap();
         let msg2 = handle2.join().unwrap();
@@ -612,31 +562,6 @@ mod tests {
     // with exponential backoff handles server restarts transparently.
     // Automated testing of reconnection requires SO_REUSEADDR + port rebinding
     // which is flaky in CI/sandbox environments due to TIME_WAIT.
-
-    #[test]
-    fn multiple_channels_independent() {
-        let (publisher, port) = test_publisher();
-
-        let handle_ch0 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port, 0);
-            sub.recv().to_vec()
-        });
-
-        let port2 = port;
-        let handle_ch1 = thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port2, 1);
-            sub.recv().to_vec()
-        });
-
-        thread::sleep(Duration::from_millis(300));
-        publisher.send(0, b"for-ch0");
-        publisher.send(1, b"for-ch1");
-
-        let msg0 = handle_ch0.join().unwrap();
-        let msg1 = handle_ch1.join().unwrap();
-        assert_eq!(msg0, b"for-ch0");
-        assert_eq!(msg1, b"for-ch1");
-    }
 
     /// A settled stream of messages is received into one allocation, and the
     /// capacity an outsized message takes is given back once it has been read.
@@ -655,11 +580,11 @@ mod tests {
         thread::spawn(move || {
             while let Ok(len) = to_publish.recv() {
                 let msg = vec![0xAB; len];
-                publisher.send(0, &msg);
+                publisher.send(&msg);
             }
         });
 
-        let mut sub = Subscriber::new("127.0.0.1", port, 0);
+        let mut sub = Subscriber::new("127.0.0.1", port);
         sub.connect();
         // Let the publisher's accept thread take up the subscription.
         thread::sleep(Duration::from_millis(200));
@@ -693,14 +618,14 @@ mod tests {
     #[test]
     fn large_frame() {
         let (publisher, port) = test_publisher();
-        let mut sub = Subscriber::new("127.0.0.1", port, 0);
+        let mut sub = Subscriber::new("127.0.0.1", port);
 
         let big = vec![0xAB; 1_000_000]; // 1 MB, typical large frame
         let big_clone = big.clone();
 
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(200));
-            publisher.send(0, &big_clone);
+            publisher.send(&big_clone);
         });
 
         let msg = sub.recv();
@@ -721,10 +646,8 @@ mod tests {
     const SEND_LIMIT: Duration = Duration::from_millis(50);
 
     /// Connect a subscriber that never reads a byte of what it is sent.
-    fn stalled_subscriber(port: u16, channel: u8) -> TcpStream {
-        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        stream.write_all(&[channel]).unwrap();
-        stream.flush().unwrap();
+    fn stalled_subscriber(port: u16) -> TcpStream {
+        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
@@ -743,11 +666,11 @@ mod tests {
 
         // Connect the subscriber that stalls first, so that a publisher
         // writing to its subscribers in turn reaches it before the other.
-        let mut stalled = stalled_subscriber(port, 0);
+        let mut stalled = stalled_subscriber(port);
 
         let (received, receipts) = channel();
         thread::spawn(move || {
-            let mut sub = Subscriber::new("127.0.0.1", port, 0);
+            let mut sub = Subscriber::new("127.0.0.1", port);
             loop {
                 let msg = sub.recv().to_vec();
                 let is_last = msg == LAST_MESSAGE;
@@ -763,10 +686,10 @@ mod tests {
         let mut slowest_send = Duration::ZERO;
         for _ in 0..MESSAGES_TO_STALL {
             let sent_at = Instant::now();
-            publisher.send(0, &bulk);
+            publisher.send(&bulk);
             slowest_send = slowest_send.max(sent_at.elapsed());
         }
-        publisher.send(0, LAST_MESSAGE);
+        publisher.send(LAST_MESSAGE);
 
         // The subscriber that kept reading was not held up by the one that
         // stopped: it still gets everything sent after the stall.
@@ -817,12 +740,12 @@ mod tests {
         let (publisher, port) = test_publisher();
         // Held open for the duration, so that the sender thread writing to it
         // is blocked rather than merely finished.
-        let _stalled = stalled_subscriber(port, 0);
+        let _stalled = stalled_subscriber(port);
         thread::sleep(Duration::from_millis(300));
 
         let bulk = vec![0xABu8; LARGE_MESSAGE];
         for _ in 0..MESSAGES_TO_STALL {
-            publisher.send(0, &bulk);
+            publisher.send(&bulk);
         }
 
         let (dropped, completion) = channel();
@@ -849,12 +772,12 @@ mod tests {
         let (publisher, port) = test_publisher();
         // Held open for the duration, so that the sender thread writing to it
         // is blocked rather than merely finished.
-        let _stalled = stalled_subscriber(port, 0);
+        let _stalled = stalled_subscriber(port);
         thread::sleep(Duration::from_millis(300));
 
         let bulk = vec![0xABu8; LARGE_MESSAGE];
         for _ in 0..MESSAGES_TO_STALL {
-            publisher.send(0, &bulk);
+            publisher.send(&bulk);
         }
 
         // Take the client out of the list, as any unsubscribe path would.

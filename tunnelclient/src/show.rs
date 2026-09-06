@@ -13,12 +13,6 @@ use tunnels_lib::RunFlag;
 use tunnels_model::mixer::{Mixer, VideoChannel};
 use tunnels_model::show_frame::{FrameDecoder, ShowFrame};
 
-/// The publish-subscribe channel show frames arrive on.
-///
-/// A frame describes the whole show, so every client subscribes to the same
-/// channel and selects its own video channel out of the frame when it renders.
-const FRAME_CHANNEL: u8 = 0;
-
 /// The most recent show frame to have arrived, if any.
 ///
 /// A single slot, overwritten by every arrival: frames are published faster
@@ -200,8 +194,7 @@ fn draw_waiting_spinner(c: &Context, gl: &mut GlGraphics, cfg: &ClientConfig, el
 /// sequence of independent frames, so losing one costs a frame of animation
 /// and nothing more.
 fn receive_frames(cfg: &ClientConfig, frames: FrameMailbox, run_flag: RunFlag) {
-    let mut subscriber =
-        minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000, FRAME_CHANNEL);
+    let mut subscriber = minusmq::pub_sub::Subscriber::new(&cfg.server_hostname, 6000);
     thread::Builder::new()
         .name("frame_receiver".to_string())
         .spawn(move || {

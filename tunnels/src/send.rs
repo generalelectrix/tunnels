@@ -6,13 +6,6 @@ use tunnels_model::show_frame::{FrameEncoder, ShowFrameRef};
 
 const PORT: u16 = 6000;
 
-/// The publish-subscribe channel show frames are published on.
-///
-/// A frame describes the whole show, so every client subscribes to the same
-/// channel, receives the same bytes, and selects its own video channel out of
-/// them when it renders.
-const FRAME_CHANNEL: u8 = 0;
-
 /// Puts show frames in front of every connected client.
 ///
 /// Sending a frame encodes it and hands the bytes to each client's own sender
@@ -43,7 +36,7 @@ impl FrameService {
     /// worth less than the show it would take down.
     pub fn send(&mut self, frame: &ShowFrameRef) {
         match self.encoder.encode(frame) {
-            Ok(bytes) => self.publisher.send(FRAME_CHANNEL, bytes),
+            Ok(bytes) => self.publisher.send(bytes),
             Err(e) => error!(
                 "Frame serialization error for frame {}: {e}.",
                 frame.frame_number

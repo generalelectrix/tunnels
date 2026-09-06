@@ -37,21 +37,8 @@ impl<T: Serialize> PublisherService<T> {
     pub fn send(&mut self, val: &T) -> Result<()> {
         self.send_buf.clear();
         val.serialize(&mut Serializer::new(&mut self.send_buf))?;
-        // Use channel 0 for topic-less broadcast (clock service).
-        self.publisher.send(0, &self.send_buf);
+        self.publisher.send(&self.send_buf);
         Ok(())
-    }
-
-    pub fn send_on_channel(&mut self, channel: u8, val: &T) -> Result<()> {
-        self.send_buf.clear();
-        val.serialize(&mut Serializer::new(&mut self.send_buf))?;
-        self.publisher.send(channel, &self.send_buf);
-        Ok(())
-    }
-
-    /// Send raw bytes on a channel (for frame broadcast which serializes externally).
-    pub fn send_raw(&self, channel: u8, data: &[u8]) {
-        self.publisher.send(channel, data);
     }
 }
 
@@ -93,8 +80,8 @@ impl<T: DeserializeOwned> SubscriberService<T> {
         self.browser.list()
     }
 
-    /// Connect a subscriber to a service on the given channel.
-    pub fn subscribe(&self, name: &str, channel: u8) -> Result<Receiver<T>> {
+    /// Connect a subscriber to the named service.
+    pub fn subscribe(&self, name: &str) -> Result<Receiver<T>> {
         self.browser
             .use_service(name, move |cfg| {
                 // Resolve hostname to IP at subscribe time.
@@ -104,7 +91,7 @@ impl<T: DeserializeOwned> SubscriberService<T> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Could not resolve {}:{}", cfg.hostname, cfg.port)
                     })?;
-                Ok(Receiver::new(&addr.ip().to_string(), addr.port(), channel))
+                Ok(Receiver::new(&addr.ip().to_string(), addr.port()))
             })
             .unwrap_or_else(|| bail!("no instance of service {} found", self.browser.name()))
     }
@@ -117,10 +104,10 @@ pub struct Receiver<T: DeserializeOwned> {
 }
 
 impl<T: DeserializeOwned> Receiver<T> {
-    /// Create a new subscriber connected to the provided host:port on the given channel.
-    pub fn new(host: &str, port: u16, channel: u8) -> Self {
+    /// Create a new subscriber connected to the provided host:port.
+    pub fn new(host: &str, port: u16) -> Self {
         Self {
-            subscriber: minusmq::pub_sub::Subscriber::new(host, port, channel),
+            subscriber: minusmq::pub_sub::Subscriber::new(host, port),
             _msg_type: PhantomData,
         }
     }
