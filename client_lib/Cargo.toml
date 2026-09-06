@@ -7,3 +7,6 @@ edition.workspace = true
 serde.workspace = true
 anyhow.workspace = true
 yaml-rust = "0.4"
+
+[dev-dependencies]
+postcard.workspace = true

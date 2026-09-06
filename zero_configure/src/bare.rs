@@ -30,7 +30,7 @@ pub(crate) struct ServiceEndpoint {
 /// Get the machine's display name for use as a service instance name.
 /// On macOS, uses the Computer Name (e.g. "Bore A").
 /// Falls back to the short hostname.
-fn machine_hostname() -> String {
+pub fn machine_hostname() -> String {
     // Try macOS Computer Name first.
     if let Ok(output) = std::process::Command::new("scutil")
         .args(["--get", "ComputerName"])

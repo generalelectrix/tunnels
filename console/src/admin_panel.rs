@@ -1,7 +1,7 @@
 //! egui-based panel for administering tunnel clients.
 
 use crate::bootstrap_controller::BootstrapController;
-use client_lib::config::ClientConfig;
+use client_lib::config::{ArtnetNodeSettings, ClientConfig};
 use client_lib::transform::{Transform, TransformDirection};
 use eframe::egui;
 use std::io::{BufRead, BufReader, Write};
@@ -113,6 +113,7 @@ pub struct AdminPanelState {
     fullscreen: bool,
     flip_horizontal: bool,
     capture_mouse: bool,
+    artnet_node: bool,
 
     // Async config send / monitor launch
     config_send_state: Arc<Mutex<Option<ConfigSendState>>>,
@@ -141,6 +142,7 @@ impl AdminPanelState {
             fullscreen: false,
             flip_horizontal: false,
             capture_mouse: false,
+            artnet_node: false,
             config_send_state: Arc::new(Mutex::new(None)),
             monitor_children: Arc::new(Mutex::new(Vec::new())),
         }
@@ -192,6 +194,7 @@ impl AdminPanelState {
         } else {
             None
         };
+        let artnet_node = self.artnet_node.then(ArtnetNodeSettings::default);
         Ok(ClientConfig::new(
             self.video_channel,
             self.hostname.clone(),
@@ -199,6 +202,7 @@ impl AdminPanelState {
             self.fullscreen,
             self.capture_mouse,
             transformation,
+            artnet_node,
             false,
         ))
     }
@@ -527,6 +531,7 @@ impl AdminPanelState {
             ui.checkbox(&mut self.fullscreen, "Fullscreen");
             ui.checkbox(&mut self.flip_horizontal, "Flip Horizontal");
             ui.checkbox(&mut self.capture_mouse, "Capture Mouse");
+            ui.checkbox(&mut self.artnet_node, "Run Art-Net Node");
 
             ui.add_space(16.0);
 
@@ -641,6 +646,21 @@ mod tests {
             .select_target(Target::RemoteClient("projector-1".to_string()));
         harness.run();
         assert!(harness.query_by_label("Send Configuration").is_some());
+    }
+
+    // --- Art-Net node tests ---
+
+    #[test]
+    fn the_node_checkbox_decides_whether_a_client_serves_one() {
+        let mut harness = test_harness(vec![]);
+        assert!(harness.query_by_label("Run Art-Net Node").is_some());
+
+        let app = harness.state_mut();
+        // Off by default: a client only serves a node when asked to.
+        assert!(app.build_config().unwrap().artnet_node.is_none());
+
+        app.artnet_node = true;
+        assert!(app.build_config().unwrap().artnet_node.is_some());
     }
 
     // --- Dynamic defaults tests ---
