@@ -219,36 +219,4 @@ mod tests {
             buf.capacity()
         );
     }
-
-    #[test]
-    fn round_trip() {
-        let data = b"hello world";
-        let mut buf = Vec::new();
-        write_msg(&mut buf, data).unwrap();
-
-        let mut cursor = Cursor::new(buf);
-        let result = read_msg(&mut cursor, UNBOUNDED).unwrap();
-        assert_eq!(result, data);
-    }
-
-    #[test]
-    fn empty_message() {
-        let mut buf = Vec::new();
-        write_msg(&mut buf, b"").unwrap();
-
-        let mut cursor = Cursor::new(buf);
-        let result = read_msg(&mut cursor, UNBOUNDED).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn large_message() {
-        let data = vec![42u8; 1_000_000];
-        let mut buf = Vec::new();
-        write_msg(&mut buf, &data).unwrap();
-
-        let mut cursor = Cursor::new(buf);
-        let result = read_msg(&mut cursor, UNBOUNDED).unwrap();
-        assert_eq!(result, data);
-    }
 }

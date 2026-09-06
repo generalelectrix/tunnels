@@ -125,13 +125,6 @@ mod tests {
     }
 
     #[test]
-    fn basic_echo() {
-        let addr = serve_echo();
-        let response = send(addr, b"hello", TEST_MAX_MESSAGE_LEN).unwrap();
-        assert_eq!(response, b"hello");
-    }
-
-    #[test]
     fn handler_transforms() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();

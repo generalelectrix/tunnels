@@ -212,20 +212,45 @@ struct Clients {
     spare: Option<Arc<Vec<u8>>>,
 }
 
+/// A message that could not be framed, and the spare buffer that framing it
+/// did not use.
+#[derive(Debug)]
+struct Unframed {
+    spare: Option<Arc<Vec<u8>>>,
+    error: anyhow::Error,
+}
+
 /// Frame `data` into the buffer `spare` holds, or into a new one when a
 /// subscriber is still holding that buffer.
 ///
 /// Reusing a buffer is what keeps a steady stream of messages from allocating.
 /// A buffer another thread still holds is a message a subscriber has not been
 /// sent yet, so it is left alone and this message gets a buffer of its own.
-fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>> {
+///
+/// A message that cannot be framed hands the buffer back rather than taking it
+/// down with it, so that the message after it still has one to be written
+/// into.
+fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>, Unframed> {
     let mut msg = spare.unwrap_or_default();
     if let Some(buf) = Arc::get_mut(&mut msg) {
         buf.clear();
-        wire::frame_msg_into(buf, data)?;
-        return Ok(msg);
+        // Framing appends nothing when it fails, so what the buffer holds is
+        // still nothing rather than half a message.
+        return match wire::frame_msg_into(buf, data) {
+            Ok(()) => Ok(msg),
+            Err(error) => Err(Unframed {
+                spare: Some(msg),
+                error,
+            }),
+        };
     }
-    Ok(Arc::new(wire::frame_msg(data)?))
+    match wire::frame_msg(data) {
+        Ok(framed) => Ok(Arc::new(framed)),
+        Err(error) => Err(Unframed {
+            spare: Some(msg),
+            error,
+        }),
+    }
 }
 
 /// A TCP-based publisher that pushes messages to connected subscribers.
@@ -298,8 +323,12 @@ impl Publisher {
             }
             let msg = match frame_into(spare.take(), data) {
                 Ok(msg) => msg,
-                Err(e) => {
-                    error!("Dropping a message: {e:#}");
+                Err(Unframed {
+                    spare: unused,
+                    error,
+                }) => {
+                    error!("Dropping a message: {error:#}");
+                    *spare = unused;
                     return;
                 }
             };
@@ -417,24 +446,17 @@ fn subscribe(stream: TcpStream, peer: SocketAddr) -> Result<Client> {
 
 /// Write messages to one subscriber until its connection fails or the
 /// publisher goes away.
+///
+/// Each message goes out in one write, so that its length prefix cannot reach
+/// the subscriber as a packet of its own. `TCP_NODELAY` is what carries that
+/// write promptly.
 fn send_loop(mut stream: TcpStream, peer: SocketAddr, mailbox: &Mailbox) {
     while let Some(msg) = mailbox.take() {
-        if let Err(e) = write_framed(&mut stream, &msg) {
-            warn!("Dropping subscriber {peer}: {e:#}");
+        if let Err(e) = stream.write_all(&msg) {
+            warn!("Dropping subscriber {peer}: {e}");
             return;
         }
     }
-}
-
-/// Write an already-framed message to a subscriber.
-///
-/// The message goes out in one write, so that its length prefix cannot reach
-/// the subscriber as a packet of its own.
-fn write_framed(stream: &mut TcpStream, framed: &[u8]) -> Result<()> {
-    stream.write_all(framed).context("write error")?;
-    // Flush to ensure data is sent promptly.
-    stream.flush().context("flush error")?;
-    Ok(())
 }
 
 /// Forget the subscribers whose sender threads have stopped, which they do

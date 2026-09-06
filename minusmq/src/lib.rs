@@ -2,7 +2,7 @@
 //!
 //! Two patterns:
 //! - `req_rep`: one-shot request-response over TCP
-//! - `pub_sub`: persistent publish-subscribe with channel-based filtering
+//! - `pub_sub`: persistent publish-subscribe, every subscriber receiving every message
 
 pub mod pub_sub;
 pub mod req_rep;
