@@ -15,8 +15,9 @@ use crate::{DEFAULT_MAX_MESSAGE_LEN, wire};
 ///
 /// A connection is made or refused in a millisecond on a working LAN, so a
 /// wait beyond this is a peer that is not there. Failing that fast leaves the
-/// rest of the wait for the exchange itself, and still beats the operating
-/// system's own timeout by a minute and a quarter.
+/// rest of the wait for the exchange itself, rather than spending it on a
+/// connection an operating system would go on attempting for a minute or
+/// more, by a margin that differs between them.
 const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How a request-response exchange is carried.
