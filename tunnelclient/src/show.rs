@@ -12,7 +12,7 @@ use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
-use tunnels_net::frame_service::FrameSubscriber;
+use tunnels_net::FrameSubscriber;
 
 /// A client's end of one console's stream of show frames.
 ///

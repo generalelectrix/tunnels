@@ -29,7 +29,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tunnels_audio::EnvelopeStreams;
-use tunnels_net::frame_service::FramePublisher;
+use tunnels_net::FramePublisher;
 
 use crate::midi::MidiDeviceInit;
 
