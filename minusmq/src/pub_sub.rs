@@ -554,7 +554,7 @@ impl Subscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc::channel;
+    use std::sync::mpsc::{Receiver, channel};
     use std::time::Instant;
 
     /// A limit no message in a test reaches, for the tests that are about
@@ -597,10 +597,76 @@ mod tests {
         assert_eq!(msg2, b"broadcast");
     }
 
-    // Reconnection is tested manually — the subscriber's connect() loop
-    // with exponential backoff handles server restarts transparently.
-    // Automated testing of reconnection requires SO_REUSEADDR + port rebinding
-    // which is flaky in CI/sandbox environments due to TIME_WAIT.
+    /// Publish `msg` until a subscriber reports receiving it.
+    ///
+    /// A subscription is taken up by the accept thread rather than by the
+    /// connect that starts it, so the moment a message first has somewhere to
+    /// go is not one a test can name. Republishing is free, and the messages
+    /// this transport carries are idempotent.
+    fn publish_until_received(publisher: &Publisher, msg: &[u8], receipts: &Receiver<Vec<u8>>) {
+        /// How long a subscriber gets to receive a message published over and
+        /// over, before it is taken not to be receiving at all.
+        const LIMIT: Duration = Duration::from_secs(10);
+        /// How long to wait on the receipts before publishing again.
+        const REPUBLISH_AFTER: Duration = Duration::from_millis(50);
+
+        let deadline = Instant::now() + LIMIT;
+        while Instant::now() < deadline {
+            publisher.send(msg);
+            while let Ok(received) = receipts.recv_timeout(REPUBLISH_AFTER) {
+                if received == msg {
+                    return;
+                }
+            }
+        }
+        panic!(
+            "no subscriber received {:?} in {LIMIT:?}",
+            String::from_utf8_lossy(msg)
+        );
+    }
+
+    /// A subscriber whose connection is closed under it reconnects and
+    /// receives what is published next.
+    ///
+    /// A publisher that restarts, or a network that comes back, reaches a
+    /// subscriber only through the reconnect inside `recv`. A subscriber that
+    /// stays blocked instead is a client showing a frame from before the
+    /// interruption until someone restarts the process.
+    #[test]
+    fn a_subscriber_reconnects_when_its_connection_is_closed() {
+        const BEFORE: &[u8] = b"before";
+        const AFTER: &[u8] = b"after";
+
+        let (publisher, port) = test_publisher();
+        let (received, receipts) = channel();
+        let subscriber = thread::spawn(move || {
+            let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+            loop {
+                let msg = sub.recv().to_vec();
+                let is_last = msg == AFTER;
+                if received.send(msg).is_err() || is_last {
+                    return;
+                }
+            }
+        });
+
+        publish_until_received(&publisher, BEFORE, &receipts);
+
+        // Closing the connection while the listener stays bound is what a
+        // publisher losing a subscriber looks like from the subscriber's end,
+        // whatever took the connection away.
+        let client = publisher
+            .clients
+            .lock()
+            .unwrap()
+            .connected
+            .pop()
+            .expect("the subscriber never connected");
+        drop(client);
+
+        publish_until_received(&publisher, AFTER, &receipts);
+        subscriber.join().unwrap();
+    }
 
     /// A settled stream of messages is received into one allocation, and the
     /// capacity an outsized message takes is given back once it has been read.
