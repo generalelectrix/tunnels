@@ -47,7 +47,6 @@ const FRAME_HEADER_LEN: usize = FRAME_MAGIC.len() + 1;
 /// first, and the same frame always expands into the same geometry.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShowFrame {
-    pub frame_number: u64,
     pub mixer: Mixer,
     pub clocks: StaticClockBank,
     pub palette: ColorPalette,
@@ -65,7 +64,6 @@ pub struct ShowFrame {
 /// A frame only serializes in this form. Decoding always yields the owned one.
 #[derive(Debug, Serialize)]
 pub struct ShowFrameRef<'a> {
-    pub frame_number: u64,
     pub mixer: &'a Mixer,
     pub clocks: StaticClockBank,
     pub palette: &'a ColorPalette,
@@ -336,7 +334,6 @@ pub mod fixture {
         }
         mixer.update_state(ADVANCE, UnipolarFloat::ZERO);
         ShowFrame {
-            frame_number: 1,
             mixer,
             clocks: StaticClockBank::default(),
             palette: ColorPalette::default(),
@@ -371,7 +368,6 @@ pub mod fixture {
         mixer.update_state(ADVANCE, audio_envelope());
 
         ShowFrame {
-            frame_number: 2,
             mixer,
             clocks: clocks(),
             palette: palette(),
@@ -397,7 +393,6 @@ pub mod fixture {
         mixer.update_state(ADVANCE, audio_envelope());
 
         ShowFrame {
-            frame_number: 3,
             mixer,
             clocks: clocks(),
             palette: palette(),
@@ -514,7 +509,6 @@ mod tests {
 
     fn frame() -> ShowFrame {
         ShowFrame {
-            frame_number: 7,
             mixer: Mixer::new(1),
             clocks: StaticClockBank::default(),
             palette: ColorPalette::default(),
@@ -638,7 +632,6 @@ mod tests {
     /// The same frame, named by reference rather than owned.
     fn borrow(frame: &ShowFrame) -> ShowFrameRef<'_> {
         ShowFrameRef {
-            frame_number: frame.frame_number,
             mixer: &frame.mixer,
             clocks: frame.clocks.clone(),
             palette: &frame.palette,
@@ -671,7 +664,6 @@ mod tests {
     fn round_trip_preserves_the_frame() {
         let mut encoder = FrameEncoder::default();
         let decoded = ShowFrame::decode(&encoded(&mut encoder, &frame())).unwrap();
-        assert_eq!(decoded.frame_number, 7);
         assert_eq!(decoded.audio_envelope, UnipolarFloat::new(0.5));
         assert_eq!(decoded.mixer.channel_count(), 8);
     }
@@ -743,11 +735,17 @@ mod tests {
             Err(FrameCodecError::Decompress(_))
         ));
 
-        // A truncated body cannot expand to the length the prefix promises.
-        assert!(matches!(
-            ShowFrame::decode(&wire[..wire.len() / 2]),
-            Err(FrameCodecError::Decompress(_))
-        ));
+        // A truncated body carries less than the frame it was written from,
+        // and where the cut lands decides which end notices: the block may
+        // fail to expand at all, or expand short and leave the frame
+        // unfinished.
+        assert!(
+            matches!(
+                ShowFrame::decode(&wire[..wire.len() / 2]),
+                Err(FrameCodecError::Decompress(_) | FrameCodecError::Deserialize(_))
+            ),
+            "half of a frame decoded as a whole one"
+        );
 
         // A corrupted length prefix is refused rather than allocated.
         let mut oversized = wire.clone();

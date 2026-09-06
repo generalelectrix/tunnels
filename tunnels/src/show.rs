@@ -164,7 +164,6 @@ impl Show {
         self.refresh_ui();
         self.snapshot_gui_state(GuiDirty::all());
 
-        let mut frame_number = 0;
         // Owned by the loop rather than by the show, so that the port is
         // released when the loop ends and a restarted show can bind it again.
         let mut frame_publisher = FramePublisher::new()?;
@@ -179,14 +178,12 @@ impl Show {
                 last_update = now;
 
                 frame_publisher.send(&ShowFrameRef {
-                    frame_number,
                     mixer: &self.state.mixer,
                     clocks: self.state.clocks.as_static(),
                     palette: &self.state.color_palette,
                     positions: &self.state.positions,
                     audio_envelope: self.audio_input.envelope(),
                 });
-                frame_number += 1;
                 self.send_clock_data();
                 self.snapshot_animation_state();
             }

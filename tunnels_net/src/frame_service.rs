@@ -61,10 +61,7 @@ impl FramePublisher {
     pub fn send(&mut self, frame: &ShowFrameRef) {
         match self.encoder.encode(frame) {
             Ok(bytes) => self.publisher.send(bytes),
-            Err(e) => error!(
-                "Frame serialization error for frame {}: {e}.",
-                frame.frame_number
-            ),
+            Err(e) => error!("Frame serialization error: {e}."),
         }
     }
 }
