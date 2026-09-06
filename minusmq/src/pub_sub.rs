@@ -490,6 +490,104 @@ fn reap_disconnected(clients: &Mutex<Clients>) {
 /// every time.
 const RETAINED_BUF_CAPACITY: usize = 64 * 1024;
 
+/// How long a subscriber waits before its first attempt to remake a
+/// connection, doubling up to [`MAX_CONNECT_BACKOFF`] while the attempts fail.
+const CONNECT_BACKOFF: Duration = Duration::from_millis(100);
+
+/// The longest a subscriber waits between attempts to remake a connection.
+const MAX_CONNECT_BACKOFF: Duration = Duration::from_secs(5);
+
+/// A subscription's connection, and whether the subscription is still wanted.
+#[derive(Default)]
+struct Subscription {
+    /// A second handle on the connection now in use, if there is one. Shutting
+    /// it down is what fails a read parked on a publisher that is sending
+    /// nothing.
+    socket: Option<TcpStream>,
+    /// Whether the subscription has been stopped. No further message is
+    /// received, and no further connection made.
+    stopped: bool,
+}
+
+/// The state a subscriber shares with whoever may stop it.
+#[derive(Default)]
+struct SharedSubscription {
+    state: Mutex<Subscription>,
+    /// Signalled when the subscription is stopped, so that a subscriber
+    /// waiting to try its connection again stops waiting.
+    stopped: Condvar,
+}
+
+impl SharedSubscription {
+    /// Whether the subscription has been stopped.
+    fn is_stopped(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopped
+    }
+
+    /// Adopt `socket` as the connection a stop releases, yielding whether the
+    /// subscription still wants one.
+    ///
+    /// A subscription stopped while the connection was being made adopts
+    /// nothing, so a socket cannot be installed behind a stop and read from
+    /// afterwards.
+    fn adopt(&self, socket: TcpStream) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.stopped {
+            return false;
+        }
+        state.socket = Some(socket);
+        true
+    }
+
+    /// Wait up to `backoff` for the subscription to be stopped, yielding
+    /// whether it is still running.
+    fn wait(&self, backoff: Duration) -> bool {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let (state, _) = self
+            .stopped
+            .wait_timeout_while(state, backoff, |state| !state.stopped)
+            .unwrap_or_else(PoisonError::into_inner);
+        !state.stopped
+    }
+
+    /// Stop the subscription, releasing a subscriber parked in a read or
+    /// waiting to try its connection again.
+    ///
+    /// A poisoned lock is taken as it stands rather than refused, so that
+    /// stopping cannot panic: it runs during teardown, where unwinding risks
+    /// aborting the process.
+    fn stop(&self) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.stopped = true;
+        if let Some(socket) = state.socket.take() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+        self.stopped.notify_all();
+    }
+}
+
+/// Stops a subscriber that is waiting for a message, from another thread.
+///
+/// A subscriber blocks until a message arrives, and a publisher that has gone
+/// quiet sends no last message to release it, so a subscriber handed to a
+/// thread of its own cannot be taken back from it. This is how that thread is
+/// released: the subscription is stopped, the read on it fails, and `recv`
+/// yields nothing rather than reconnecting.
+#[derive(Clone)]
+pub struct SubscriberStop(Arc<SharedSubscription>);
+
+impl SubscriberStop {
+    /// Stop the subscription, so that the subscriber receives no further
+    /// message and returns from the one it is waiting for. Stopping it again
+    /// changes nothing.
+    pub fn stop(&self) {
+        self.0.stop();
+    }
+}
+
 /// A TCP-based subscriber that connects to a publisher and receives every
 /// message it sends. Automatically reconnects on connection loss.
 pub struct Subscriber {
@@ -500,6 +598,8 @@ pub struct Subscriber {
     /// four gigabytes to match a publisher that is confused or hostile.
     max_msg_len: usize,
     stream: Option<TcpStream>,
+    /// The connection, shared with the handles that can stop it.
+    subscription: Arc<SharedSubscription>,
     /// The message received last, refilled by the next one to arrive.
     buf: Vec<u8>,
 }
@@ -514,17 +614,26 @@ impl Subscriber {
             port,
             max_msg_len,
             stream: None,
+            subscription: Arc::new(SharedSubscription::default()),
             buf: Vec::new(),
         }
+    }
+
+    /// A handle that stops this subscription from another thread.
+    pub fn stop_handle(&self) -> SubscriberStop {
+        SubscriberStop(Arc::clone(&self.subscription))
     }
 
     /// Block until the next message arrives. Handles reconnection internally —
     /// if the connection drops, reconnects transparently.
     ///
+    /// Yields nothing once the subscription has been stopped, which is the
+    /// only end to the wait a publisher cannot supply.
+    ///
     /// The message stands until the next one is received, and arrives in the
     /// buffer the one before it did, so a stream of messages of a settled size
     /// costs no allocation to receive.
-    pub fn recv(&mut self) -> &[u8] {
+    pub fn recv(&mut self) -> Option<&[u8]> {
         // Give back what an outsized message took, now that nothing holds it.
         if self.buf.capacity() > RETAINED_BUF_CAPACITY {
             self.buf.clear();
@@ -533,8 +642,8 @@ impl Subscriber {
 
         loop {
             // Ensure we have a connection.
-            if self.stream.is_none() {
-                self.connect();
+            if self.stream.is_none() && !self.connect() {
+                return None;
             }
 
             // Try to read a message.
@@ -545,38 +654,60 @@ impl Subscriber {
             ) {
                 Ok(()) => break,
                 Err(e) => {
+                    // A stopped subscription is what failed the read, and is
+                    // not a connection to be remade.
+                    if self.subscription.is_stopped() {
+                        return None;
+                    }
                     // Connection lost — drop it and reconnect on next iteration.
                     warn!("Subscriber read error ({}:{}): {e}", self.host, self.port);
                     self.stream = None;
                 }
             }
         }
-        &self.buf
+        Some(&self.buf)
     }
 
-    /// Connect to the publisher, retrying with backoff until successful.
-    fn connect(&mut self) {
-        let mut backoff = Duration::from_millis(100);
-        let max_backoff = Duration::from_secs(5);
+    /// Connect to the publisher, retrying with backoff until successful, and
+    /// yield whether a connection was made.
+    ///
+    /// A stopped subscription makes no connection and waits for none: it is
+    /// the one outcome other than success.
+    fn connect(&mut self) -> bool {
+        let mut backoff = CONNECT_BACKOFF;
 
         loop {
+            if self.subscription.is_stopped() {
+                return false;
+            }
             let addr = format!("{}:{}", self.host, self.port);
-            match TcpStream::connect(&addr) {
-                Ok(stream) => {
+            match TcpStream::connect(&addr).and_then(|stream| {
+                let socket = stream.try_clone()?;
+                Ok((stream, socket))
+            }) {
+                Ok((stream, socket)) => {
                     // Without this, a publisher that goes away without closing
                     // leaves this subscriber blocked in a read that no message
                     // and no error will ever end.
                     if let Err(e) = fail_a_silent_peer(&stream) {
                         warn!("Failed to set keepalive on the connection to {addr}: {e}");
                     }
+                    // A connection that cannot be released is one to park a
+                    // read on only to be stuck there, so the second handle on
+                    // it comes before it is used.
+                    if !self.subscription.adopt(socket) {
+                        return false;
+                    }
                     log::debug!("Subscriber connected to {addr}");
                     self.stream = Some(stream);
-                    return;
+                    return true;
                 }
                 Err(e) => {
                     warn!("Subscriber connect to {addr} failed: {e}. Retrying in {backoff:?}.");
-                    thread::sleep(backoff);
-                    backoff = (backoff * 2).min(max_backoff);
+                    if !self.subscription.wait(backoff) {
+                        return false;
+                    }
+                    backoff = (backoff * 2).min(MAX_CONNECT_BACKOFF);
                 }
             }
         }
@@ -609,14 +740,14 @@ mod tests {
         // Spawn two subscribers in threads since both need to recv().
         let handle1 = thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
-            sub.recv().to_vec()
+            sub.recv().unwrap().to_vec()
         });
 
         // Second subscriber in another thread.
         let port2 = port;
         let handle2 = thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port2, TEST_MAX_MESSAGE_LEN);
-            sub.recv().to_vec()
+            sub.recv().unwrap().to_vec()
         });
 
         // Give both subscribers time to connect.
@@ -674,7 +805,7 @@ mod tests {
         let subscriber = thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
             loop {
-                let msg = sub.recv().to_vec();
+                let msg = sub.recv().unwrap().to_vec();
                 let is_last = msg == AFTER;
                 if received.send(msg).is_err() || is_last {
                     return;
@@ -732,7 +863,7 @@ mod tests {
 
         let mut receive = |len: usize| -> usize {
             requests.send(len).unwrap();
-            let received = sub.recv();
+            let received = sub.recv().unwrap();
             assert_eq!(received.len(), len);
             assert!(
                 received.iter().all(|&b| b == FILL),
@@ -801,7 +932,7 @@ mod tests {
         thread::spawn(move || {
             let mut sub = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
             loop {
-                let msg = sub.recv().to_vec();
+                let msg = sub.recv().unwrap().to_vec();
                 let is_last = msg == LAST_MESSAGE;
                 if received.send(msg).is_err() || is_last {
                     return;
@@ -937,6 +1068,72 @@ mod tests {
             1,
             "the sender thread outlived the client that owned it"
         );
+    }
+
+    /// How long a released subscriber gets to return before it is taken to be
+    /// still parked.
+    const RELEASE_LIMIT: Duration = Duration::from_secs(10);
+
+    /// Receive on `subscriber` from a thread of its own, reporting what the
+    /// receive yielded.
+    fn receive_on(mut subscriber: Subscriber) -> Receiver<Option<Vec<u8>>> {
+        let (received, receipts) = channel();
+        thread::spawn(move || {
+            let _ = received.send(subscriber.recv().map(<[u8]>::to_vec));
+        });
+        receipts
+    }
+
+    /// A port nothing is listening on.
+    fn unused_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    /// Stopping a subscription releases a subscriber that is waiting, whether
+    /// it waits for a message or for a publisher to connect to.
+    ///
+    /// Both waits end only from outside: a publisher that has gone quiet sends
+    /// no last message, and a publisher that is not running accepts no
+    /// connection, so a subscriber given a thread of its own could not
+    /// otherwise be taken back from it.
+    #[test]
+    fn stopping_a_subscription_releases_the_subscriber() {
+        // Parked in a read: connected to a publisher that publishes nothing.
+        let (publisher, port) = test_publisher();
+        let subscriber = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+        let stop = subscriber.stop_handle();
+        let receipts = receive_on(subscriber);
+        // Long enough to have connected and be waiting for a message.
+        thread::sleep(Duration::from_millis(300));
+        stop.stop();
+        assert!(
+            matches!(receipts.recv_timeout(RELEASE_LIMIT), Ok(None)),
+            "a subscriber waiting for a message was not released by stopping it"
+        );
+        drop(publisher);
+
+        // Waiting to connect: no publisher to connect to at all.
+        let subscriber = Subscriber::new("127.0.0.1", unused_port(), TEST_MAX_MESSAGE_LEN);
+        let stop = subscriber.stop_handle();
+        let receipts = receive_on(subscriber);
+        // Long enough for the first attempt to have failed and the wait
+        // before the second to have begun.
+        thread::sleep(Duration::from_millis(300));
+        stop.stop();
+        assert!(
+            matches!(receipts.recv_timeout(RELEASE_LIMIT), Ok(None)),
+            "a subscriber waiting to connect was not released by stopping it"
+        );
+    }
+
+    /// A subscription stopped before it is used receives nothing.
+    #[test]
+    fn a_subscription_stopped_first_never_connects() {
+        let (_publisher, port) = test_publisher();
+        let mut subscriber = Subscriber::new("127.0.0.1", port, TEST_MAX_MESSAGE_LEN);
+        subscriber.stop_handle().stop();
+        assert!(subscriber.recv().is_none());
     }
 
     /// A message framed into a buffer a subscriber still holds gets a buffer

@@ -13,6 +13,8 @@ use anyhow::Result;
 use log::{error, info};
 use std::net::TcpListener;
 
+pub use minusmq::pub_sub::SubscriberStop;
+
 use tunnels_model::show_frame::{
     FrameCodecError, FrameDecoder, FrameEncoder, ShowFrame, ShowFrameRef,
 };
@@ -98,12 +100,18 @@ impl FrameSubscriber {
         }
     }
 
-    /// Block until the next frame arrives, and recover it.
+    /// A handle that stops this subscription from another thread.
+    pub fn stop_handle(&self) -> SubscriberStop {
+        self.subscriber.stop_handle()
+    }
+
+    /// Block until the next frame arrives, and recover it. Yields nothing once
+    /// the subscription has been stopped.
     ///
     /// Every way the bytes can be wrong is an error rather than a panic: each
     /// frame stands on its own, so bytes that do not describe one cost the
     /// frame they arrived in and nothing else.
-    pub fn recv(&mut self) -> Result<ShowFrame, FrameCodecError> {
-        self.decoder.decode(self.subscriber.recv())
+    pub fn recv(&mut self) -> Option<Result<ShowFrame, FrameCodecError>> {
+        Some(self.decoder.decode(self.subscriber.recv()?))
     }
 }

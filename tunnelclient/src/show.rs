@@ -12,7 +12,7 @@ use tunnelclient::draw::Draw;
 use tunnels_lib::RunFlag;
 use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
-use tunnels_net::FrameSubscriber;
+use tunnels_net::{FrameSubscriber, SubscriberStop};
 
 /// A client's end of one console's stream of show frames.
 ///
@@ -22,27 +22,24 @@ use tunnels_net::FrameSubscriber;
 pub struct FrameReceiver {
     /// The most recent frame to have arrived, if any has.
     latest: Arc<Mutex<Option<Arc<ShowFrame>>>>,
+    /// Stops the subscription the receiving thread is reading from.
+    stop: SubscriberStop,
     /// The thread taking frames off the stream, which lasts as long as the
-    /// receiver it feeds.
-    ///
-    /// Held rather than joined. It parks in a receive that only a frame ends,
-    /// and a console that has stopped publishing sends no last frame to
-    /// release it, so waiting for it would hold a client's shutdown open until
-    /// the console came back.
-    #[expect(unused)]
-    service: JoinHandle<()>,
+    /// receiver it feeds. Empty once it has been taken out to be joined.
+    service: Option<JoinHandle<()>>,
 }
 
 impl FrameReceiver {
     /// Subscribe to the frames a console publishes, and begin taking them off
     /// the stream.
     ///
-    /// Receiving runs on a thread of its own until the run flag is tripped. A
-    /// frame that cannot be decoded is logged and dropped; the stream is a
-    /// sequence of independent frames, so losing one costs a frame of
-    /// animation and nothing more.
+    /// Receiving runs on a thread of its own until the run flag is tripped or
+    /// the receiver is dropped. A frame that cannot be decoded is logged and
+    /// dropped; the stream is a sequence of independent frames, so losing one
+    /// costs a frame of animation and nothing more.
     pub fn new(host: &str, run_flag: RunFlag) -> Result<Self> {
         let mut subscriber = FrameSubscriber::new(host);
+        let stop = subscriber.stop_handle();
         let latest: Arc<Mutex<Option<Arc<ShowFrame>>>> = Arc::new(Mutex::new(None));
         let service = thread::Builder::new()
             .name("frame_receiver".to_string())
@@ -56,8 +53,12 @@ impl FrameReceiver {
                             break;
                         }
                         match subscriber.recv() {
-                            Ok(frame) => *latest.lock().unwrap() = Some(Arc::new(frame)),
-                            Err(e) => match decode_errors.record(Instant::now()) {
+                            None => {
+                                info!("Frame subscription stopped.");
+                                break;
+                            }
+                            Some(Ok(frame)) => *latest.lock().unwrap() = Some(Arc::new(frame)),
+                            Some(Err(e)) => match decode_errors.record(Instant::now()) {
                                 Some(ErrorReport::First) => error!("Frame decode error: {e}"),
                                 Some(ErrorReport::Repeated(count)) => error!(
                                     "{count} frame decode errors in the last {}s, most recently: {e}",
@@ -70,12 +71,31 @@ impl FrameReceiver {
                 }
             })
             .context("failed to spawn the frame receiver thread")?;
-        Ok(Self { latest, service })
+        Ok(Self {
+            latest,
+            stop,
+            service: Some(service),
+        })
     }
 
     /// The newest frame to have arrived, if any has.
     pub fn latest(&self) -> Option<Arc<ShowFrame>> {
         self.latest.lock().unwrap().clone()
+    }
+}
+
+impl Drop for FrameReceiver {
+    /// Stop the receiving thread and wait for it.
+    ///
+    /// The thread parks waiting for a frame, and a console that has stopped
+    /// publishing sends no last frame to release it, so the subscription is
+    /// stopped before the join: the wait is then only as long as it takes a
+    /// released thread to return.
+    fn drop(&mut self) {
+        self.stop.stop();
+        if let Some(service) = self.service.take() {
+            let _ = service.join();
+        }
     }
 }
 
@@ -261,10 +281,36 @@ impl ErrorThrottle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::channel;
 
     /// The interval show frames arrive at, and so the interval a failure with
     /// a persistent cause recurs at.
     const FRAME_INTERVAL: Duration = Duration::from_micros(4167);
+
+    /// A dropped receiver takes its thread with it, whether or not frames are
+    /// arriving.
+    ///
+    /// The thread parks waiting for a frame, and a console that is not
+    /// publishing sends none to release it, so a drop that returns is proof
+    /// that the wait ends from outside. Without that, quitting a client while
+    /// the console was down would hang until the console came back.
+    #[test]
+    fn dropping_the_receiver_stops_its_thread() {
+        let (dropped, completion) = channel();
+        thread::spawn(move || {
+            let receiver = FrameReceiver::new("127.0.0.1", RunFlag::default()).unwrap();
+            // Long enough for the thread to be waiting: for a frame if a
+            // console happens to be publishing here, and for a console to
+            // connect to if none is.
+            thread::sleep(Duration::from_millis(200));
+            drop(receiver);
+            let _ = dropped.send(());
+        });
+        assert!(
+            completion.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "dropping the receiver never finished: its thread is still waiting for a frame"
+        );
+    }
 
     /// A failure that repeats every frame costs one log line per period.
     #[test]
