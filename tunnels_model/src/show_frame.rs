@@ -3,7 +3,9 @@
 use std::error::Error;
 use std::fmt;
 
-use lz4_flex::block::{DecompressError, uncompressed_size};
+use lz4_flex::block::{
+    CompressError, DecompressError, compress_into, get_maximum_output_size, uncompressed_size,
+};
 use serde::{Deserialize, Serialize};
 use tunnels_lib::number::UnipolarFloat;
 
@@ -76,18 +78,70 @@ pub struct ShowFrameRef<'a> {
 /// prefix asks for a rejected decode rather than a multi-gigabyte allocation.
 const MAX_DECODED_LEN: usize = 8 * 1024 * 1024;
 
-/// Serialize a frame into the bytes `ShowFrame::decode` reads.
+/// The scratch a show frame is serialized and compressed in.
 ///
-/// The bytes carry a four byte header — magic, then the wire version — ahead
-/// of the compressed frame, so that bytes from a build holding a different
-/// model are recognized as such rather than decoded.
+/// The buffers are held rather than produced, so encoding a frame no larger
+/// than the largest one encoded before it writes into memory that is already
+/// there, rather than asking the allocator for more.
+#[derive(Debug, Default)]
+pub struct FrameEncoder {
+    /// The serialized frame, ahead of compression.
+    plain: Vec<u8>,
+    /// The header, and the compressed frame behind it.
+    wire: Vec<u8>,
+}
+
+impl FrameEncoder {
+    /// Create an encoder holding no scratch yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Serialize a frame into the bytes `ShowFrame::decode` reads, which stand
+    /// until the next frame is encoded.
+    pub fn encode(&mut self, frame: &ShowFrameRef) -> Result<&[u8], FrameCodecError> {
+        self.encode_serializable(frame)
+    }
+
+    /// Serialize anything shaped like a frame into the bytes
+    /// `ShowFrame::decode` reads.
+    ///
+    /// The bytes carry a four byte header — magic, then the wire version —
+    /// ahead of the compressed frame, so that bytes from a build holding a
+    /// different model are recognized as such rather than decoded. The
+    /// compressed frame opens with its uncompressed length, little-endian, as
+    /// an LZ4 block does.
+    fn encode_serializable<T: Serialize + ?Sized>(
+        &mut self,
+        frame: &T,
+    ) -> Result<&[u8], FrameCodecError> {
+        self.plain.clear();
+        postcard::to_io(frame, &mut self.plain).map_err(FrameCodecError::Serialize)?;
+        let plain_len = u32::try_from(self.plain.len())
+            .map_err(|_| FrameCodecError::TooLarge(self.plain.len()))?;
+
+        self.wire.clear();
+        self.wire.extend_from_slice(&FRAME_MAGIC);
+        self.wire.push(WIRE_VERSION);
+        self.wire.extend_from_slice(&plain_len.to_le_bytes());
+
+        // Compression writes into the buffer directly, so it needs room for
+        // the worst case the block format can produce before it starts.
+        let block = self.wire.len();
+        self.wire
+            .resize(block + get_maximum_output_size(self.plain.len()), 0);
+        let compressed = compress_into(&self.plain, &mut self.wire[block..])
+            .map_err(FrameCodecError::Compress)?;
+        self.wire.truncate(block + compressed);
+        Ok(&self.wire)
+    }
+}
+
+/// Serialize a frame into the bytes `ShowFrame::decode` reads.
 fn encode_frame<T: Serialize>(frame: &T) -> Result<Vec<u8>, FrameCodecError> {
-    let plain = postcard::to_allocvec(frame).map_err(FrameCodecError::Serialize)?;
-    let mut wire = Vec::with_capacity(FRAME_HEADER_LEN + plain.len());
-    wire.extend_from_slice(&FRAME_MAGIC);
-    wire.push(WIRE_VERSION);
-    wire.append(&mut lz4_flex::compress_prepend_size(&plain));
-    Ok(wire)
+    let mut encoder = FrameEncoder::new();
+    encoder.encode_serializable(frame)?;
+    Ok(encoder.wire)
 }
 
 impl ShowFrameRef<'_> {
@@ -160,6 +214,10 @@ impl ShowFrame {
 pub enum FrameCodecError {
     /// The frame could not be serialized.
     Serialize(postcard::Error),
+    /// The frame is too large to name its own length on the wire.
+    TooLarge(usize),
+    /// The serialized frame could not be compressed.
+    Compress(CompressError),
     /// The bytes do not open the way an encoded frame does.
     NotAFrame,
     /// The bytes describe a model of a different vintage than this one.
@@ -176,6 +234,11 @@ impl fmt::Display for FrameCodecError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Serialize(e) => write!(f, "could not serialize a show frame: {e}"),
+            Self::TooLarge(len) => write!(
+                f,
+                "a show frame serializing to {len} bytes is longer than a wire length can describe"
+            ),
+            Self::Compress(e) => write!(f, "could not compress a show frame: {e}"),
             Self::NotAFrame => write!(f, "these bytes are not an encoded show frame"),
             Self::WireVersion { found, expected } => write!(
                 f,
@@ -196,7 +259,11 @@ impl Error for FrameCodecError {
         match self {
             Self::Serialize(e) | Self::Deserialize(e) => Some(e),
             Self::Decompress(e) => Some(e),
-            Self::Oversized { .. } | Self::NotAFrame | Self::WireVersion { .. } => None,
+            Self::Compress(e) => Some(e),
+            Self::TooLarge(_)
+            | Self::Oversized { .. }
+            | Self::NotAFrame
+            | Self::WireVersion { .. } => None,
         }
     }
 }
@@ -734,6 +801,46 @@ mod tests {
         match ShowFrame::decode(&foreign).expect_err("foreign bytes must not decode") {
             FrameCodecError::NotAFrame => {}
             other => panic!("bytes that are not a frame failed as {other}"),
+        }
+    }
+
+    /// The bytes an encoded frame is defined to be, stated without reference
+    /// to the code that produces them: the magic, the wire version, the
+    /// uncompressed length little-endian, then an LZ4 block.
+    fn wire_format(frame: &ShowFrameRef) -> Vec<u8> {
+        let plain = postcard::to_allocvec(frame).unwrap();
+        let mut wire = Vec::new();
+        wire.extend_from_slice(b"TNL");
+        wire.push(1);
+        wire.extend_from_slice(&lz4_flex::compress_prepend_size(&plain));
+        wire
+    }
+
+    /// A reused encoder writes the bytes the wire format defines, frame after
+    /// frame.
+    ///
+    /// The bytes are a contract between applications rather than an internal
+    /// detail: every render client reads them, and reads them from a binary
+    /// built at another time. They are held against an independent statement
+    /// of the format, so that a change to how they are produced fails here
+    /// instead of quietly redefining what they are.
+    #[test]
+    fn an_encoded_frame_is_byte_for_byte_the_wire_format() {
+        let frames = fixture::all();
+        let mut encoder = FrameEncoder::new();
+        // Twice over, so that an encoder writing into buffers it has already
+        // filled is held to the same bytes as one writing into empty ones.
+        for pass in 1..=2 {
+            for NamedFrame { name, frame } in &frames {
+                let expected = wire_format(&borrow(frame));
+                let actual = encoder.encode(&borrow(frame)).unwrap();
+                assert!(
+                    actual == expected,
+                    "{name}, pass {pass}: encoded {} bytes against the {} the wire format defines",
+                    actual.len(),
+                    expected.len()
+                );
+            }
         }
     }
 }
