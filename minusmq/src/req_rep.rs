@@ -10,6 +10,15 @@ use std::time::Duration;
 
 use crate::wire;
 
+/// How long an accepted connection may go without producing data before it is
+/// abandoned.
+///
+/// The timeout bounds each read rather than the whole exchange, so it covers
+/// the longest gap between packets rather than the time a transfer takes: a
+/// request of hundreds of megabytes crosses a LAN well within it, while a
+/// connection that carries nothing at all costs this long and no more.
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Run a request-response server on an already-bound listener.
 /// Reads one request per connection, calls `handler`, sends the response,
 /// and closes the connection.
@@ -17,6 +26,10 @@ use crate::wire;
 /// A request declaring more than `max_request_len` bytes is refused before
 /// anything is sized to it, so a length prefix from a client that is confused
 /// or hostile costs one connection rather than the memory it asked for.
+///
+/// Requests are served one at a time, so a connection that stops producing
+/// data is abandoned rather than waited on: a client that says nothing costs
+/// itself and not the requests behind it.
 ///
 /// Runs forever (until the process exits or an unrecoverable error occurs).
 pub fn serve<F>(listener: TcpListener, max_request_len: usize, mut handler: F) -> Result<()>
@@ -31,6 +44,9 @@ where
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
+                if let Err(e) = stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT)) {
+                    log::warn!("req_rep could not bound the read on a connection: {e}");
+                }
                 if let Err(e) = handle_one(&mut stream, max_request_len, &mut handler) {
                     log::error!("req_rep handler error: {e:#}");
                 }
