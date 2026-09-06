@@ -13,8 +13,8 @@ use crate::{
     mixer::{self, Mixer},
     palette::{self, ColorPalette},
     position_bank::{self, PositionBank},
-    send::start_frame_service,
-    show_frame::ShowFrame,
+    send::FrameService,
+    show_frame::ShowFrameRef,
     test_mode::TestModeSetup,
     tunnel,
 };
@@ -165,7 +165,9 @@ impl Show {
         self.snapshot_gui_state(GuiDirty::all());
 
         let mut frame_number = 0;
-        let frame_sender = start_frame_service()?;
+        // Owned by the loop rather than by the show, so that the port is
+        // released when the loop ends and a restarted show can bind it again.
+        let frame_service = FrameService::new()?;
 
         let mut last_update = Instant::now();
 
@@ -176,19 +178,14 @@ impl Show {
                 self.update_state(time_since_update);
                 last_update = now;
 
-                if frame_sender
-                    .send(ShowFrame {
-                        frame_number,
-                        mixer: self.state.mixer.clone(),
-                        clocks: self.state.clocks.as_static(),
-                        palette: self.state.color_palette.clone(),
-                        positions: self.state.positions.clone(),
-                        audio_envelope: self.audio_input.envelope(),
-                    })
-                    .is_err()
-                {
-                    bail!("Frame server hung up.  Aborting show.");
-                }
+                frame_service.send(&ShowFrameRef {
+                    frame_number,
+                    mixer: &self.state.mixer,
+                    clocks: self.state.clocks.as_static(),
+                    palette: &self.state.color_palette,
+                    positions: &self.state.positions,
+                    audio_envelope: self.audio_input.envelope(),
+                });
                 frame_number += 1;
                 self.send_clock_data();
                 self.snapshot_animation_state();
