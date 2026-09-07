@@ -47,6 +47,7 @@ Useful knobs when the target hardware is slow:
 | `--samples N` | multisampling. Free on a modern GPU; on an integrated part sharing system memory it may dominate. `--samples 0` to find out. |
 | `--size WxH` | output resolution, which also selects the mesh level. |
 | `--budget-hz N` | frame rate the budget is measured against. Defaults to 120, matching `tunnelclient`'s own `max_fps` cap — which exists because vsync is unreliable on some machines, and on those the cap is what paces the loop. Pass 60 where vsync works. |
+| `--gpu` | draw fills through the GLSL path rather than through piston. Read `submit` differently under it: a `glDrawElements` returns before the GPU has done the work, so what the CPU stages stop accounting for reappears in `gpu + swap`. The number to compare across the two paths is frame time. |
 
 It opens a window with **vsync off** (with it on you measure the display, not
 the work), draws the heaviest shapes in the library near full screen with
@@ -226,13 +227,94 @@ pass. The gather is there because `tri_list_uv_c` takes pre-transformed
 vertices: a vertex shader would move it to the GPU, which is the same conclusion
 the fragment-shader argument reaches from the other side.
 
-### Other limits### Other limits
+### Other limits
 
 - The mesh is not resubdivided under a warp, so a deformation finer than the
   triangles carrying it facets rather than curves. Visible in the noise column
   of the animation sheet, and the same ceiling that bounds noise frequency.
 - A discontinuous waveform on a second colour axis bands at mesh resolution
   rather than cutting cleanly, for the same reason.
+
+## The GLSL fill path
+
+`gpu.rs` draws the same fills through a shader instead. It is an alternative to
+the CPU path, not a replacement — both are compiled in, and which one runs is a
+runtime choice:
+
+```
+cargo run --release -p svg_demo -- render --gpu
+cargo run --release -p svg_demo -- profile --gpu --shapes 72,83,75
+```
+
+or the **gpu fill (glsl)** checkbox in the control window, which flips it
+against a running scene. That is the point of it: the two paths are meant to be
+indistinguishable, and the way to find out is to switch between them while
+looking at the same shape.
+
+The split follows what is static and what is not. A `RefinedMesh` never changes
+after it is built, so it becomes a vertex buffer uploaded once. Everything a
+frame varies — the affine transform, the cycle count, the animation parameters —
+is a uniform. The vertex shader does the polar maths, the displacement and the
+ramp coordinate; the fragment shader samples the same ramp texture the CPU path
+samples. What disappears is the two per-vertex CPU walks a frame: `vertex_pass`
+and the projection-and-gather that `tri_list_uv` forces by taking pre-transformed
+vertices.
+
+Targets **GLSL 1.50 / OpenGL 3.2 core**, which is the ceiling on the render
+clients. No compute stage, no storage buffers, no `layout` qualifiers —
+attribute and fragment-output locations are bound at link time instead.
+
+### Sharing a context with piston
+
+`GlGraphics` batches vertices and caches the program and draw state it last
+bound. Issuing GL calls while it holds that cache corrupts the batch, and the
+symptom is a layer that intermittently fails to draw — the worst bug this could
+have. So every draw is bracketed by `Boundary`:
+
+| on the way in | why |
+|---|---|
+| `draw_end()` | flushes piston's pending batch, so nothing of ours lands in the middle of it and layer order is submission order |
+| `use_draw_state(&DrawState::default())` | the state the CPU path draws every layer under. Piston sets it on its own first draw of a frame and not before, so a frame drawn entirely through the shader would otherwise inherit whatever the last frame left — blending off, on the first frame of all |
+
+| on the way out | why |
+|---|---|
+| `clear_program()` | the program really is stale: it is ours |
+| `clear_draw_state()` | forces the next binding of blend, scissor and stencil to happen rather than be skipped as already in effect |
+| `BindTexture(0)`, `BindBuffer(ARRAY_BUFFER, 0)` | piston rebinds both before it uses them, so zero is a safe place to leave them |
+
+The vertex array binding is returned to zero by the draw itself, the active
+texture unit is never moved off zero, and face culling is left disabled — which
+is where every piston flush leaves it too.
+
+### What the shader will not do
+
+**Noise.** It reads a 2D simplex field indexed by a vertex's own position in the
+mesh, which is neither a closed form nor something a uniform can carry. A layer
+using it falls back to the CPU path in place, so it still reaches the
+framebuffer in the order its layer was submitted.
+
+### The angular seam
+
+The CPU path shifts a triangle's phase coordinates onto one branch as it gathers
+them, which it can do because it gathers them. A shared vertex buffer has no
+per-triangle place to put that shift, so it becomes a vertex attribute: the few
+triangles straddling the seam get their own copies of the vertices they need.
+The shift is a whole number of turns, which is the only jump that is ever real,
+so it survives every colour knob and is never rebuilt. `unwrapped` does this and
+is covered by a test.
+
+### Checking the shaders without a GPU
+
+The shaders compile and link independently of the program, which is worth doing
+on a machine with no display:
+
+```
+glslangValidator -l svg_demo/src/shaders/fill.vert svg_demo/src/shaders/fill.frag
+```
+
+That checks them against the GLSL 1.50 spec — it will reject a builtin from a
+later version — but a spec-clean shader is not the same as one a particular
+driver accepts, so it is a floor, not a guarantee.
 
 ## Meshing and color
 
