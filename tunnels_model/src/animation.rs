@@ -345,7 +345,47 @@ pub struct PreparedAnimation {
     active: bool,
 }
 
+/// The numbers a frame resolved a waveform down to.
+///
+/// A renderer that evaluates the waveform itself rather than calling
+/// `PreparedAnimation::value` — a shader, on the far side of a uniform — needs
+/// exactly these. `Waveform::Noise` is the one waveform they do not describe:
+/// its field is a simplex generator rather than a set of numbers.
+#[derive(Clone, Copy, Debug)]
+pub struct WaveformState {
+    pub waveform: Waveform,
+    pub n_periods: u16,
+    pub pulse: bool,
+    pub standing: bool,
+    pub invert: bool,
+    pub duty_cycle: UnipolarFloat,
+    /// Where the driving clock has got to.
+    pub phase_temporal: Phase,
+    /// The smoother's current value, not its target.
+    pub smoothing: UnipolarFloat,
+    /// Size, clock submaster and audio envelope, multiplied out.
+    pub scale: f64,
+    /// A zero-size animation contributes nothing and skips the waveform.
+    pub active: bool,
+}
+
 impl PreparedAnimation {
+    /// This frame's resolved waveform parameters.
+    pub fn state(&self) -> WaveformState {
+        WaveformState {
+            waveform: self.waveform,
+            n_periods: self.n_periods,
+            pulse: self.pulse,
+            standing: self.standing,
+            invert: self.invert,
+            duty_cycle: self.duty_cycle,
+            phase_temporal: self.phase_temporal,
+            smoothing: self.smoothing,
+            scale: self.scale,
+            active: self.active,
+        }
+    }
+
     /// The animation's value at a point, with amplitude applied.
     pub fn value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
         if !self.active {

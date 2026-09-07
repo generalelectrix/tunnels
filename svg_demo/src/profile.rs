@@ -3,6 +3,7 @@
 //! Runs the same `Renderer` the live window uses, with vsync off so frame times
 //! reflect the work rather than the display, and reports where the time went.
 
+use crate::gpu::GpuRenderer;
 use crate::params::{ColorPhase, DemoParams, DrawMode, LayerParams};
 use crate::render::{Frame, Renderer, Timings};
 use crate::shapes::load_dir;
@@ -38,6 +39,8 @@ pub struct Options {
     /// on some machines, so on those the loop is paced by that cap and a frame
     /// is 8.3ms, not 16.7ms.
     pub budget_hz: f64,
+    /// Draw fills through the GL shader rather than through piston.
+    pub gpu: bool,
 }
 
 impl Default for Options {
@@ -51,6 +54,7 @@ impl Default for Options {
             target_px: crate::mesh::DEFAULT_TARGET_PX,
             samples: 4,
             budget_hz: 120.0,
+            gpu: false,
         }
     }
 }
@@ -137,7 +141,7 @@ impl Run {
 }
 
 /// A layer set built to be pessimistic: big shapes, gradients on, spinning.
-fn scene(shapes: &[usize]) -> DemoParams {
+fn scene(shapes: &[usize], gpu: bool) -> DemoParams {
     let layers = shapes
         .iter()
         .enumerate()
@@ -158,7 +162,7 @@ fn scene(shapes: &[usize]) -> DemoParams {
             ..Default::default()
         })
         .collect();
-    DemoParams { layers }
+    DemoParams { layers, gpu }
 }
 
 pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
@@ -191,12 +195,20 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
             .map_err(|e| anyhow!("{e}"))?;
     window.set_max_fps(100_000);
     let mut gl = GlGraphics::new(opengl);
+    let mut gpu = if opts.gpu {
+        match GpuRenderer::new() {
+            Ok(gpu) => Some(gpu),
+            Err(e) => return Err(anyhow!("gl fill path unavailable: {e}")),
+        }
+    } else {
+        None
+    };
     let mut renderer = Renderer::new(shapes);
     renderer.target_px = opts.target_px;
 
     let mut runs = Vec::new();
     for (name, animate_color) in [("color animating", true), ("color held still", false)] {
-        let mut params = scene(&picks);
+        let mut params = scene(&picks, opts.gpu);
         renderer.ensure_layers(params.layers.len(), &params.layers[0]);
 
         let mut frames = Vec::new();
@@ -220,11 +232,13 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
             let critical = w.min(h);
             let elapsed_hint = last.elapsed();
             let mut t = Timings::default();
+            let pass = gpu.as_mut();
             gl.draw(args.viewport(), |c, gl| {
                 clear([0.0, 0.0, 0.0, 1.0], gl);
                 let base = c.transform.trans(w / 2.0, h / 2.0);
                 t = renderer.draw(
                     gl,
+                    pass,
                     &params,
                     Frame {
                         base,
@@ -255,12 +269,13 @@ pub fn run(shape_dir: &Path, opts: Options) -> Result<()> {
     }
 
     println!(
-        "\n{}x{}, {} layers, {}x msaa, {:.0}px triangles, vsync off, {} warmup frames discarded",
+        "\n{}x{}, {} layers, {}x msaa, {:.0}px triangles, {} fill, vsync off, {} warmup frames discarded",
         opts.width,
         opts.height,
         picks.len(),
         opts.samples,
         opts.target_px,
+        if opts.gpu { "glsl" } else { "cpu" },
         WARMUP_FRAMES
     );
     println!(

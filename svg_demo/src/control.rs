@@ -73,6 +73,9 @@ impl eframe::App for ControlApp {
                     ui.selectable_value(&mut self.selected, i, label);
                 }
             });
+            // The two fill paths are meant to be indistinguishable, so this
+            // sits where it can be flipped against a running scene.
+            ui.checkbox(&mut self.params.gpu, "gpu fill (glsl)");
             ui.separator();
 
             let names = &self.names;

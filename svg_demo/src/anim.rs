@@ -13,6 +13,7 @@ use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_model::animation::{
     Animation, ControlMessage, EmitStateChange, PreparedAnimation, StateChange, Waveform,
+    WaveformState,
 };
 use tunnels_model::clock_bank::StaticClockBank;
 
@@ -96,6 +97,14 @@ impl LiveWave {
         self.animation.update_state(delta, audio);
         self.prepared = self.animation.prepare(&self.clocks, audio);
         self.resample();
+    }
+
+    /// This frame's resolved waveform parameters.
+    ///
+    /// What a renderer needs to evaluate the same waveform somewhere the
+    /// animation cannot follow it.
+    pub fn state(&self) -> WaveformState {
+        self.prepared.state()
     }
 
     /// The animation's value at a point in its spatial phase.

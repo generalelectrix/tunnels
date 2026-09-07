@@ -11,7 +11,7 @@ path = "src/main.rs"
 # The interactive windows. Off by default so the tessellation and headless
 # rasterization paths can be checked without building SDL2 from source.
 default = ["windows"]
-windows = ["dep:piston_window", "dep:opengl_graphics", "dep:sdl2_window", "dep:sdl2", "dep:eframe"]
+windows = ["dep:piston_window", "dep:opengl_graphics", "dep:sdl2_window", "dep:sdl2", "dep:eframe", "dep:gl"]
 
 [dependencies]
 anyhow.workspace = true
@@ -36,6 +36,11 @@ piston_window = { version = "0.132", optional = true }
 opengl_graphics = { package = "piston2d-opengl_graphics", version = "0.89", optional = true }
 sdl2_window = { package = "pistoncore-sdl2_window", version = "0.71", optional = true }
 sdl2 = { version = "0.37", features = ["bundled", "static-link"], optional = true }
+
+# The GL fill path talks to the same context opengl_graphics does, through the
+# same binding, so the function pointers sdl2_window loaded are the ones it
+# calls.
+gl = { version = "0.14", optional = true }
 
 # Control window.
 eframe = { version = "0.33", optional = true }

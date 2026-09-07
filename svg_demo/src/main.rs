@@ -20,6 +20,8 @@ mod software;
 #[cfg(feature = "windows")]
 mod control;
 #[cfg(feature = "windows")]
+mod gpu;
+#[cfg(feature = "windows")]
 mod profile;
 #[cfg(feature = "windows")]
 mod render;
@@ -168,6 +170,10 @@ fn main() -> Result<()> {
                             .collect();
                         i += 2;
                     }
+                    "--gpu" => {
+                        opts.gpu = true;
+                        i += 1;
+                    }
                     _ => i += 1,
                 }
             }
@@ -177,7 +183,12 @@ fn main() -> Result<()> {
             profile::run(&shape_dir(), opts)
         }
         #[cfg(feature = "windows")]
-        "render" => render::run(&shape_dir()),
+        "render" => {
+            // Only the initial state: with a control window attached, its own
+            // toggle takes over on the first packet.
+            let gpu = args.any(|a| a == "--gpu");
+            render::run(&shape_dir(), gpu)
+        }
         #[cfg(feature = "windows")]
         "control" => control::run(&shape_dir()),
         other => Err(anyhow!(

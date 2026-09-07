@@ -283,13 +283,20 @@ impl Default for LayerParams {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DemoParams {
     pub layers: Vec<LayerParams>,
+    /// Draw fills through the GL shader rather than through piston.
+    ///
+    /// Both paths are meant to produce the same picture, so this is a live
+    /// toggle: the point of it is to be flipped back and forth against a
+    /// running scene.
+    #[serde(default)]
+    pub gpu: bool,
 }
 
 impl Default for DemoParams {
     fn default() -> Self {
         let mut layers = vec![LayerParams::default(); N_LAYERS];
         layers[0].enabled = true;
-        Self { layers }
+        Self { layers, gpu: false }
     }
 }
 

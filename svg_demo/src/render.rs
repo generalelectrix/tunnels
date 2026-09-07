@@ -6,6 +6,7 @@ use crate::draw::{
     AxisWave, GeometryWave, Shaded, VertexBuffers, VertexWork, draw_flat, draw_layer,
     draw_textured, flat_color, is_uniform, layer_transform, vertex_pass,
 };
+use crate::gpu::{GpuRenderer, LayerWaves, MeshSource, Uniforms};
 use crate::mesh::{self, Level, MeshId, MeshLibrary};
 use crate::params::{AnimTarget, DemoParams, LayerParams, PhaseField, PORT, TargetedWave};
 use tunnels_lib::number::UnipolarFloat;
@@ -14,7 +15,7 @@ use image::RgbaImage;
 use crate::shapes::{ShapeMesh, load_dir};
 use anyhow::{Result, anyhow};
 use graphics::math::Matrix2d;
-use graphics::{Graphics, Transformed, clear};
+use graphics::{Transformed, clear};
 use opengl_graphics::{Filter, GlGraphics, OpenGL, Texture, TextureSettings, Wrap};
 use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
@@ -258,10 +259,20 @@ impl Renderer {
     }
 
     /// Draw every enabled layer, timing each stage.
-    pub fn draw<G>(&mut self, gl: &mut G, params: &DemoParams, frame: Frame) -> Timings
-    where
-        G: Graphics<Texture = Texture>,
-    {
+    ///
+    /// A `GpuRenderer` moves the per-vertex work and the projection into a
+    /// shader: the mesh becomes a static vertex buffer and the transform, the
+    /// ramp and the animations become uniforms. A layer the shader cannot take
+    /// falls back to the CPU path in place, so both paths still reach the
+    /// framebuffer in the order the layers were submitted, which is what
+    /// stacking a mask over a lit shape depends on.
+    pub fn draw(
+        &mut self,
+        gl: &mut GlGraphics,
+        mut gpu: Option<&mut GpuRenderer>,
+        params: &DemoParams,
+        frame: Frame,
+    ) -> Timings {
         let Frame {
             base,
             critical,
@@ -298,10 +309,37 @@ impl Renderer {
             // A flat or masked layer has nothing to interpolate across a
             // triangle, so it draws straight from the source mesh.
             if is_uniform(layer) || layer.mask {
-                let mark = Instant::now();
-                draw_layer(&shapes[layer.shape], stroke.as_deref(), layer, m, gl);
-                t.submit_us += mark.elapsed().as_micros();
-                t.triangles += shapes[layer.shape].fill.len() / 3;
+                if let Some(gpu) = gpu.as_mut() {
+                    let uniforms = Uniforms::flat(flat_color(layer), m);
+                    let ramp = &rt.textures[rt.current];
+                    let mut sources: Vec<(&[[f32; 2]], Option<u32>)> = Vec::new();
+                    if layer.draw_mode.draws_fill() {
+                        sources.push((&shapes[layer.shape].fill, None));
+                    }
+                    if let Some(stroke) = &stroke {
+                        sources.push((stroke, Some((layer.stroke_width * 2000.0) as u32)));
+                    }
+                    for (tris, stroke_width) in sources {
+                        let stats = gpu.draw(
+                            gl,
+                            MeshSource::Source {
+                                shape: layer.shape,
+                                stroke_width,
+                                tris,
+                            },
+                            &uniforms,
+                            ramp,
+                        );
+                        t.mesh_us += stats.upload_us;
+                        t.submit_us += stats.submit_us;
+                        t.triangles += stats.triangles;
+                    }
+                } else {
+                    let mark = Instant::now();
+                    draw_layer(&shapes[layer.shape], stroke.as_deref(), layer, m, gl);
+                    t.submit_us += mark.elapsed().as_micros();
+                    t.triangles += shapes[layer.shape].fill.len() / 3;
+                }
                 continue;
             }
 
@@ -342,6 +380,20 @@ impl Renderer {
             let scale = layer.scale_x.abs().max(layer.scale_y.abs());
             let level = Level::for_scale(scale, critical, target_px);
             let field = PhaseField::of(layer);
+            // `None` where an animation uses a waveform the shader has no
+            // closed form for, which is the whole of the fallback condition.
+            let shaded = gpu.as_ref().filter(|_| !flat).and_then(|_| {
+                Uniforms::textured(
+                    layer,
+                    field,
+                    LayerWaves {
+                        warps: &warps,
+                        hue_axes: &hue_axes,
+                        bright_axes: &bright_axes,
+                    },
+                    m,
+                )
+            });
 
             let mut piece = |source: &[[f32; 2]], stroke_width: Option<u32>, t: &mut Timings| {
                 let id = MeshId {
@@ -352,6 +404,15 @@ impl Renderer {
                 let mark = Instant::now();
                 let mesh = meshes.get(id, source);
                 t.mesh_us += mark.elapsed().as_micros();
+
+                if let (Some(gpu), Some(uniforms)) = (gpu.as_mut(), shaded.as_ref()) {
+                    let source = MeshSource::Refined { id, mesh };
+                    let stats = gpu.draw(gl, source, uniforms, ramp_texture);
+                    t.mesh_us += stats.upload_us;
+                    t.submit_us += stats.submit_us;
+                    t.triangles += stats.triangles;
+                    return;
+                }
 
                 // Phase comes from the undeformed position, so a colour pattern
                 // stays glued to the shape while a warp moves it, rather than
@@ -406,7 +467,7 @@ impl Renderer {
     }
 }
 
-pub fn run(shape_dir: &Path) -> Result<()> {
+pub fn run(shape_dir: &Path, gpu: bool) -> Result<()> {
     let shapes = load_dir(shape_dir)?;
     println!("render: {} shapes", shapes.len());
 
@@ -424,13 +485,25 @@ pub fn run(shape_dir: &Path) -> Result<()> {
             .map_err(|e| anyhow!("{e}"))?;
     let mut gl = GlGraphics::new(opengl);
 
-    let mut params = DemoParams::default();
+    let mut params = DemoParams {
+        gpu,
+        ..DemoParams::default()
+    };
+    // A driver that rejects the shader costs the fill path, not the show.
+    let mut gpu = match GpuRenderer::new() {
+        Ok(gpu) => Some(gpu),
+        Err(e) => {
+            println!("gl fill path unavailable, staying on the cpu: {e}");
+            None
+        }
+    };
     let mut renderer = Renderer::new(shapes);
     renderer.ensure_layers(params.layers.len(), &params.layers[0]);
     let start = Instant::now();
     let mut last_frame = Instant::now();
     let mut buf = vec![0u8; 65536];
     let mut reported_meshes = 0;
+    let mut reported_uploads = 0;
 
     for e in window {
         // Take the newest parameters waiting on the socket, dropping any
@@ -449,11 +522,13 @@ pub fn run(shape_dir: &Path) -> Result<()> {
         let (w, h) = (args.window_size[0], args.window_size[1]);
         let critical = w.min(h);
 
+        let pass = params.gpu.then_some(gpu.as_mut()).flatten();
         gl.draw(args.viewport(), |c, gl| {
             clear([0.0, 0.0, 0.0, 1.0], gl);
             let base = c.transform.trans(w / 2.0, h / 2.0);
             renderer.draw(
                 gl,
+                pass,
                 &params,
                 Frame {
                     base,
@@ -468,11 +543,14 @@ pub fn run(shape_dir: &Path) -> Result<()> {
         });
 
         // Meshes are built the first time a shape is drawn at a given size, so
-        // say so — a hitch on first use is expected, a hitch later is not.
-        if renderer.mesh_count() != reported_meshes {
+        // say so — a hitch on first use is expected, a hitch later is not. The
+        // same goes for uploading one.
+        let uploaded = gpu.as_ref().map_or(0, GpuRenderer::mesh_count);
+        if renderer.mesh_count() != reported_meshes || uploaded != reported_uploads {
             reported_meshes = renderer.mesh_count();
+            reported_uploads = uploaded;
             println!(
-                "mesh library: {reported_meshes} meshes, {} triangles",
+                "mesh library: {reported_meshes} meshes, {} triangles, {reported_uploads} uploaded",
                 renderer.mesh_triangles()
             );
         }
