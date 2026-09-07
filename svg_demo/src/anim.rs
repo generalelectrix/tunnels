@@ -39,14 +39,16 @@ pub struct LiveWave {
     /// this stays empty and `clock_source` stays `None`.
     clocks: StaticClockBank,
     /// The waveform sampled across one sweep of spatial phase, rebuilt once a
-    /// frame.
+    /// frame — for sine only.
     ///
-    /// Every waveform but noise depends only on that phase, so evaluating it
-    /// tens of thousands of times a frame is asking the same question over and
-    /// over. Sampling it a thousand times and interpolating turns a
-    /// transcendental per vertex into a load and a multiply. Noise is the
-    /// exception — it reads the sample index as a second axis, so it has no
-    /// table and keeps the direct path.
+    /// Sine is the only waveform whose cost is the waveform. Triangle, square
+    /// and sawtooth are a few multiplies and a compare; what made them look
+    /// expensive in a profile was `get_value` rederiving frame-constant state
+    /// on every call, not the arithmetic.
+    ///
+    /// And sine is the only one it is safe to tabulate. Interpolating between
+    /// samples turns a jump into a ramp one cell wide, which is exactly the
+    /// edge a square or a sawtooth exists to have. Sine has no edge to lose.
     table: Vec<f32>,
 }
 
@@ -67,7 +69,7 @@ impl LiveWave {
     /// Cheap enough to do unconditionally: a thousand evaluations against the
     /// tens of thousands it saves.
     fn tabulate(&mut self, audio: UnipolarFloat) {
-        if matches!(self.params.waveform, WaveformKind::Noise) {
+        if !matches!(self.params.waveform, WaveformKind::Sine) {
             self.table.clear();
             return;
         }
@@ -116,7 +118,8 @@ impl LiveWave {
     #[inline]
     pub fn value_f32(&self, phase: f32, index: usize, audio: UnipolarFloat) -> f32 {
         if self.table.is_empty() {
-            // Noise, which reads the index and so cannot be tabulated.
+            // Everything but sine: either cheap to evaluate exactly, or noise,
+            // which reads the index and so has no table to read.
             return self.animation.get_value(
                 Phase::new(f64::from(phase)),
                 index,

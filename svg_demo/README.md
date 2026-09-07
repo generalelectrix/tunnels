@@ -202,9 +202,13 @@ perf report --stdio --no-children
 Three findings from doing that, in the order they mattered:
 
 - **Waveform evaluation was 44% of the frame**, nearly all of it `__sin` and
-  friends inside `libm`. Every waveform but noise depends only on spatial phase,
-  so `LiveWave` samples one into a 1024-entry table once a frame and
-  interpolates. 6.0ms to 3.3ms.
+  friends inside `libm`. `LiveWave` samples sine into a 1024-entry table once a
+  frame and interpolates. Only sine: interpolating between samples turns a jump
+  into a ramp one cell wide, which is exactly the edge a square or a sawtooth
+  exists to have, and sine is the one waveform with no edge to lose. It is also
+  the only one whose cost is the waveform — the others are a few multiplies, and
+  what made them look expensive was `get_value` rederiving frame-constant state
+  on every call. 6.0ms to 3.3ms.
 - **`atan2` was then 35%**, because three separate passes each computed it for
   the same vertex. They are one pass now — the ramp coordinate is an angle, a
   spin rotates about the same centre, and a radial animation scales the same
