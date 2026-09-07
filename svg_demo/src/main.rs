@@ -6,7 +6,9 @@
 //! see is what the client would produce. `sheet` writes PNGs headlessly.
 
 mod anim;
+mod bench;
 mod draw;
+mod fastmath;
 mod mesh;
 mod params;
 mod ramp;
@@ -77,6 +79,11 @@ fn main() -> Result<()> {
             sheet::feature_sheet(&shapes, &picks, &PathBuf::from(&out), 240)?;
             println!("wrote {out}");
             Ok(())
+        }
+        "bench" => {
+            let seconds: f64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(10.0);
+            let layers: usize = args.next().and_then(|a| a.parse().ok()).unwrap_or(3);
+            bench::run(&shape_dir(), seconds, layers)
         }
         "stats" => {
             let shapes = shapes::load_dir(&shape_dir())?;

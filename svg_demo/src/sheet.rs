@@ -2,9 +2,8 @@
 
 use crate::anim::{LiveWave, WaveformKind};
 use crate::draw::{
-    AxisWave, GeometryWave, Shaded, color_offsets_into, draw_flat, draw_layer,
-    draw_textured, flat_color, is_uniform, layer_transform, phase_uvs, phase_uvs_into,
-    warp_verts_into,
+    AxisWave, GeometryWave, Shaded, VertexBuffers, VertexWork, draw_flat, draw_layer,
+    draw_textured, flat_color, is_uniform, layer_transform, vertex_pass,
 };
 use crate::params::{AnimTarget, TargetedWave, WaveParams};
 use tunnels_lib::number::UnipolarFloat;
@@ -207,40 +206,30 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
     let refined = refine(&shape.fill, target);
     let field = PhaseField::of(layer);
 
-    let mut positions = Vec::new();
-    if warps.is_empty() && layer.spin == 0.0 {
-        positions.extend_from_slice(&refined.verts);
-    } else {
-        warp_verts_into(&mut positions, &refined, layer.spin as f32, &warps, audio);
-    }
+    let mut verts = VertexBuffers::default();
+    vertex_pass(
+        &mut verts,
+        &refined,
+        VertexWork {
+            field,
+            base_spin: layer.spin as f32,
+            warps: &warps,
+            hue_axes: &hue_axes,
+            bright_axes: &bright_axes,
+            audio,
+        },
+    );
     // Mirror the render loop's own decision, so this sheet exercises the same
     // paths the window does rather than a convenient subset of them.
     if is_uniform(layer) || layer.mask {
-        draw_flat(&refined, &positions, flat_color(layer), m, &mut buf);
+        draw_flat(&refined, &verts.positions, flat_color(layer), m, &mut buf);
     } else {
-        let mut hue_offsets = Vec::new();
-        let mut tints = Vec::new();
-        color_offsets_into(
-            &mut hue_offsets,
-            &mut tints,
-            &refined,
-            &hue_axes,
-            &bright_axes,
-            audio,
-        );
-        let mut uvs = Vec::new();
-        phase_uvs_into(
-            &mut uvs,
-            &refined,
-            field,
-            (!hue_axes.is_empty()).then_some(hue_offsets.as_slice()),
-        );
         draw_textured(
             &refined,
             Shaded {
-                positions: &positions,
-                uvs: &uvs,
-                tints: (!bright_axes.is_empty()).then_some(tints.as_slice()),
+                positions: &verts.positions,
+                uvs: &verts.uvs,
+                tints: (!bright_axes.is_empty()).then_some(verts.tints.as_slice()),
             },
             field.wrap_period(),
             &texture,
@@ -271,11 +260,24 @@ fn draw_one(
     let texture = RenderBuffer::from_image(ramp::build(layer));
     if layer.draw_mode.draws_fill() {
         let mesh = refine(&shape.fill, target);
+        let mut verts = VertexBuffers::default();
+        vertex_pass(
+            &mut verts,
+            &mesh,
+            VertexWork {
+                field,
+                base_spin: layer.spin as f32,
+                warps: &[],
+                hue_axes: &[],
+                bright_axes: &[],
+                audio: UnipolarFloat::ZERO,
+            },
+        );
         draw_textured(
             &mesh,
             Shaded {
-                positions: &mesh.verts,
-                uvs: &phase_uvs(&mesh, field),
+                positions: &verts.positions,
+                uvs: &verts.uvs,
                 tints: None,
             },
             field.wrap_period(),
@@ -286,11 +288,24 @@ fn draw_one(
     }
     if let Some(outline) = outline {
         let mesh = refine(outline, target);
+        let mut verts = VertexBuffers::default();
+        vertex_pass(
+            &mut verts,
+            &mesh,
+            VertexWork {
+                field,
+                base_spin: layer.spin as f32,
+                warps: &[],
+                hue_axes: &[],
+                bright_axes: &[],
+                audio: UnipolarFloat::ZERO,
+            },
+        );
         draw_textured(
             &mesh,
             Shaded {
-                positions: &mesh.verts,
-                uvs: &phase_uvs(&mesh, field),
+                positions: &verts.positions,
+                uvs: &verts.uvs,
                 tints: None,
             },
             field.wrap_period(),

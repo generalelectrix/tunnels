@@ -24,6 +24,13 @@ impl EmitStateChange for Discard {
     fn emit_animation_state_change(&mut self, _: StateChange) {}
 }
 
+/// Entries in the per-frame waveform table.
+///
+/// The table is indexed by spatial phase over one full sweep, and a mesh never
+/// resolves anything finer than this, so the sampling is not what limits
+/// quality.
+const TABLE_SIZE: usize = 1024;
+
 /// A running animation, plus the parameters it was built from.
 pub struct LiveWave {
     params: WaveParams,
@@ -31,14 +38,49 @@ pub struct LiveWave {
     /// No external clocks: the demo drives each animation's internal clock, so
     /// this stays empty and `clock_source` stays `None`.
     clocks: StaticClockBank,
+    /// The waveform sampled across one sweep of spatial phase, rebuilt once a
+    /// frame.
+    ///
+    /// Every waveform but noise depends only on that phase, so evaluating it
+    /// tens of thousands of times a frame is asking the same question over and
+    /// over. Sampling it a thousand times and interpolating turns a
+    /// transcendental per vertex into a load and a multiply. Noise is the
+    /// exception — it reads the sample index as a second axis, so it has no
+    /// table and keeps the direct path.
+    table: Vec<f32>,
 }
 
 impl LiveWave {
     pub fn new(params: &WaveParams) -> Self {
-        Self {
+        let mut wave = Self {
             params: params.clone(),
             animation: build(params),
             clocks: StaticClockBank::default(),
+            table: Vec::new(),
+        };
+        wave.tabulate(UnipolarFloat::ZERO);
+        wave
+    }
+
+    /// Resample the waveform for this frame.
+    ///
+    /// Cheap enough to do unconditionally: a thousand evaluations against the
+    /// tens of thousands it saves.
+    fn tabulate(&mut self, audio: UnipolarFloat) {
+        if matches!(self.params.waveform, WaveformKind::Noise) {
+            self.table.clear();
+            return;
+        }
+        self.table.clear();
+        self.table.reserve(TABLE_SIZE + 1);
+        for i in 0..=TABLE_SIZE {
+            let phase = i as f64 / TABLE_SIZE as f64;
+            self.table.push(self.animation.get_value(
+                Phase::new(phase),
+                0,
+                &self.clocks,
+                audio,
+            ) as f32);
         }
     }
 
@@ -55,6 +97,7 @@ impl LiveWave {
             self.params = params.clone();
         }
         self.animation.update_state(delta, audio);
+        self.tabulate(audio);
     }
 
     /// The animation's value at a point in its spatial phase.
@@ -63,8 +106,30 @@ impl LiveWave {
     /// reads — it uses it as the second axis of the simplex field, with
     /// smoothing as the correlation between neighbours.
     pub fn value(&self, phase: f64, index: usize, audio: UnipolarFloat) -> f64 {
-        self.animation
-            .get_value(Phase::new(phase), index, &self.clocks, audio)
+        f64::from(self.value_f32(phase as f32, index, audio))
+    }
+
+    /// The animation's value, from the table where there is one.
+    ///
+    /// This is the hot path: it runs once per vertex per animation per frame,
+    /// so the table is the difference between a transcendental and a load.
+    #[inline]
+    pub fn value_f32(&self, phase: f32, index: usize, audio: UnipolarFloat) -> f32 {
+        if self.table.is_empty() {
+            // Noise, which reads the index and so cannot be tabulated.
+            return self.animation.get_value(
+                Phase::new(f64::from(phase)),
+                index,
+                &self.clocks,
+                audio,
+            ) as f32;
+        }
+        let t = phase.rem_euclid(1.0) * TABLE_SIZE as f32;
+        let i = t as usize;
+        let frac = t - i as f32;
+        let a = self.table[i.min(TABLE_SIZE)];
+        let b = self.table[(i + 1).min(TABLE_SIZE)];
+        a + (b - a) * frac
     }
 }
 

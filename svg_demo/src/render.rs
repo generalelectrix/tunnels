@@ -3,9 +3,8 @@
 
 use crate::anim::LiveWave;
 use crate::draw::{
-    AxisWave, GeometryWave, Shaded, color_offsets_into, draw_flat, draw_layer,
-    draw_textured, flat_color, is_uniform, layer_transform, phase_uvs_into,
-    warp_verts_into, warps_geometry,
+    AxisWave, GeometryWave, Shaded, VertexBuffers, VertexWork, draw_flat, draw_layer,
+    draw_textured, flat_color, is_uniform, layer_transform, vertex_pass,
 };
 use crate::mesh::{self, Level, MeshId, MeshLibrary};
 use crate::params::{AnimTarget, DemoParams, LayerParams, PhaseField, PORT, TargetedWave};
@@ -67,10 +66,7 @@ struct LayerRuntime {
     waves: Vec<LiveWave>,
     /// Reused so a frame allocates nothing: at this triangle count, a fresh
     /// vertex buffer every frame is megabytes of churn.
-    positions: Vec<[f32; 2]>,
-    uvs: Vec<[f32; 2]>,
-    hue_offsets: Vec<f32>,
-    tints: Vec<[f32; 4]>,
+    verts: VertexBuffers,
 }
 
 /// The slots driving geometry, paired with their running animations.
@@ -125,10 +121,7 @@ impl LayerRuntime {
             current: 0,
             scratch: img,
             waves: template.waves.iter().map(|w| LiveWave::new(&w.wave)).collect(),
-            positions: Vec::new(),
-            uvs: Vec::new(),
-            hue_offsets: Vec::new(),
-            tints: Vec::new(),
+            verts: VertexBuffers::default(),
         }
     }
 
@@ -326,10 +319,7 @@ impl Renderer {
                 textures,
                 current,
                 waves,
-                positions,
-                uvs,
-                hue_offsets,
-                tints,
+                verts,
                 ..
             } = rt;
             let warps = geometry_waves(layer, waves);
@@ -337,9 +327,8 @@ impl Renderer {
             // fragment through the vertices rather than through the ramp.
             let hue_axes = off_axis_waves(layer, waves, AnimTarget::Hue);
             let bright_axes = off_axis_waves(layer, waves, AnimTarget::Brightness);
-            let extra_axes = !hue_axes.is_empty() || !bright_axes.is_empty();
             let ramp_texture = &textures[*current];
-            let warping = warps_geometry(layer, &warps);
+            let warping = layer.spin != 0.0 || !warps.is_empty();
             // A flat or masked layer has nothing to interpolate across a
             // triangle, so it can draw straight from the source mesh — but only
             // when nothing is displacing its vertices, since a displacement
@@ -367,39 +356,35 @@ impl Renderer {
                 // Phase comes from the undeformed position, so a colour pattern
                 // stays glued to the shape while a warp moves it, rather than
                 // sliding across it.
+                // One walk of the mesh produces displaced positions, ramp
+                // coordinates and tints together, because all three want the
+                // same polar coordinates for a vertex.
                 let mark = Instant::now();
-                if warping {
-                    warp_verts_into(positions, mesh, layer.spin as f32, &warps, audio);
-                } else {
-                    positions.clear();
-                    positions.extend_from_slice(&mesh.verts);
-                }
-                if !flat {
-                    if extra_axes {
-                        color_offsets_into(
-                            hue_offsets,
-                            tints,
-                            mesh,
-                            &hue_axes,
-                            &bright_axes,
-                            audio,
-                        );
-                    }
-                    let offsets = (!hue_axes.is_empty()).then_some(hue_offsets.as_slice());
-                    phase_uvs_into(uvs, mesh, field, offsets);
-                }
+                vertex_pass(
+                    verts,
+                    mesh,
+                    VertexWork {
+                        field,
+                        base_spin: layer.spin as f32,
+                        warps: &warps,
+                        hue_axes: &hue_axes,
+                        bright_axes: &bright_axes,
+                        audio,
+                    },
+                );
                 t.uv_us += mark.elapsed().as_micros();
 
                 let mark = Instant::now();
                 if flat {
-                    draw_flat(mesh, positions, flat_color(layer), m, gl);
+                    draw_flat(mesh, &verts.positions, flat_color(layer), m, gl);
                 } else {
                     draw_textured(
                         mesh,
                         Shaded {
-                            positions,
-                            uvs,
-                            tints: (!bright_axes.is_empty()).then_some(tints.as_slice()),
+                            positions: &verts.positions,
+                            uvs: &verts.uvs,
+                            tints: (!bright_axes.is_empty())
+                                .then_some(verts.tints.as_slice()),
                         },
                         field.wrap_period(),
                         ramp_texture,

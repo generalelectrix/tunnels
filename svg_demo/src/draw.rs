@@ -67,39 +67,6 @@ pub fn layer_transform(
         )
 }
 
-/// Texture coordinates carrying each vertex's phase.
-///
-/// The whole point of the split: the mesh holds positions, this holds where
-/// each one sits in the color cycle, and the ramp texture turns that into a
-/// color at the fragment. A cycle count larger than one falls out for free —
-/// the coordinate simply runs past one and the texture repeats.
-pub fn phase_uvs(mesh: &RefinedMesh, field: PhaseField) -> Vec<[f32; 2]> {
-    let mut out = Vec::new();
-    phase_uvs_into(&mut out, mesh, field, None);
-    out
-}
-
-/// As `phase_uvs`, reusing a buffer so a frame allocates nothing.
-pub fn phase_uvs_into(
-    out: &mut Vec<[f32; 2]>,
-    mesh: &RefinedMesh,
-    field: PhaseField,
-    hue_offsets: Option<&[f32]>,
-) {
-    out.clear();
-    match hue_offsets {
-        // A hue animation on a second axis shifts where in the ramp a vertex
-        // looks. One unit of offset sweeps a whole cycle of the ramp.
-        Some(offsets) => out.extend(
-            mesh.verts
-                .iter()
-                .zip(offsets)
-                .map(|(v, o)| [field.at(*v) + o, 0.5]),
-        ),
-        None => out.extend(mesh.verts.iter().map(|v| [field.at(*v), 0.5])),
-    }
-}
-
 /// Put two phase coordinates on the same branch.
 ///
 /// Angular phase jumps by a whole turn across the far side of the shape, where
@@ -130,109 +97,170 @@ pub struct AxisWave<'a> {
 /// A geometry animation. Same shape as any other; named for where it is used.
 pub type GeometryWave<'a> = AxisWave<'a>;
 
-/// Per-vertex contributions from colour animations that do not run along the
-/// layer's own colour axis.
+/// Buffers the per-vertex pass fills, reused across frames.
+#[derive(Default)]
+pub struct VertexBuffers {
+    pub positions: Vec<[f32; 2]>,
+    pub uvs: Vec<[f32; 2]>,
+    pub tints: Vec<[f32; 4]>,
+}
+
+/// Everything the per-vertex pass reads.
+pub struct VertexWork<'a> {
+    /// The coordinate indexing the ramp.
+    pub field: PhaseField,
+    /// The layer's static spin, in turns at the rim.
+    pub base_spin: f32,
+    /// Animations displacing geometry.
+    pub warps: &'a [AxisWave<'a>],
+    /// Hue animations on an axis other than the ramp's.
+    pub hue_axes: &'a [AxisWave<'a>],
+    /// Brightness animations on an axis other than the ramp's.
+    pub bright_axes: &'a [AxisWave<'a>],
+    pub audio: UnipolarFloat,
+}
+
+/// Everything a frame does per vertex, in one walk of the mesh.
 ///
-/// The ramp is a one-dimensional table, so only one coordinate can index it.
-/// Everything else has to reach the fragment another way: a hue animation on a
-/// second axis shifts where in the ramp a vertex looks, and a brightness
-/// animation on a third rides the vertex colour that multiplies the sample.
-/// Neither is resolved per fragment the way the ramp is, so a discontinuous
-/// waveform on one of these bands at mesh resolution rather than cutting
-/// cleanly — the same ceiling that bounds a warp.
-pub fn color_offsets_into(
-    hue_offsets: &mut Vec<f32>,
-    tints: &mut Vec<[f32; 4]>,
-    mesh: &RefinedMesh,
-    hue_waves: &[AxisWave],
-    bright_waves: &[AxisWave],
-    audio: UnipolarFloat,
-) {
-    hue_offsets.clear();
-    tints.clear();
+/// Fused because the three things it produces all want the same polar
+/// coordinates: the ramp coordinate is an angle, a spin is a rotation about the
+/// same centre, and a radial animation scales the same radius. Computed
+/// separately that was two `atan2` calls a vertex, which a profile put at a
+/// third of the frame.
+///
+/// Position comes out displaced; the ramp coordinate is read from the vertex
+/// *before* displacement, so a colour pattern stays glued to the shape while a
+/// warp moves it.
+pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork) {
+    let VertexWork {
+        field,
+        base_spin,
+        warps,
+        hue_axes,
+        bright_axes,
+        audio,
+    } = work;
+
+    out.positions.clear();
+    out.uvs.clear();
+    out.tints.clear();
+
+    // An angle costs an `atan2` and a radius a square root, so decide once
+    // whether anything actually asks for them.
+    let rotates = base_spin != 0.0 || warps.iter().any(|w| w.target == AnimTarget::Spin);
+    let all = || warps.iter().chain(hue_axes).chain(bright_axes);
+    let needs_angle = rotates
+        || field.phase == ColorPhase::Angle
+        || all().any(|w| w.phase == ColorPhase::Angle);
+    let needs_radius = rotates
+        || field.phase == ColorPhase::Radius
+        || warps
+            .iter()
+            .any(|w| matches!(w.target, AnimTarget::Radial | AnimTarget::AspectRatio))
+        || all().any(|w| w.phase == ColorPhase::Radius);
+    let tinting = !bright_axes.is_empty();
+
     for (i, v) in mesh.verts.iter().enumerate() {
-        let mut offset = 0.0f32;
-        for w in hue_waves {
-            let field = PhaseField {
-                phase: w.phase,
-                cycles: 1.0,
-            };
-            offset += w.wave.value(f64::from(field.unit_at(*v)), i, audio) as f32;
-        }
-        hue_offsets.push(offset);
+        let polar = Polar::of(*v, needs_angle, needs_radius);
 
-        let mut brightness = 1.0f32;
-        for w in bright_waves {
-            let field = PhaseField {
-                phase: w.phase,
-                cycles: 1.0,
-            };
-            let value = w.wave.value(f64::from(field.unit_at(*v)), i, audio) as f32;
-            // Only ever darkens, matching what the ramp does with brightness.
-            brightness *= (1.0 + value).clamp(0.0, 1.0);
-        }
-        tints.push([brightness, brightness, brightness, 1.0]);
-    }
-}
-
-/// Whether anything would move a vertex.
-pub fn warps_geometry(layer: &LayerParams, waves: &[GeometryWave]) -> bool {
-    layer.spin != 0.0 || !waves.is_empty()
-}
-
-/// Displace a mesh's vertices under its base spin and geometry animations.
-///
-/// The mesh itself is untouched — this produces a new position for each vertex,
-/// once per frame, the same shape of work as evaluating phase. Nothing here can
-/// invalidate the mesh, because the mesh is only ever refined against on-screen
-/// size.
-///
-/// Note what this cannot do: the mesh is not resubdivided, so a warp finer than
-/// the triangles carrying it will facet rather than curve. Mesh density is the
-/// ceiling on warp frequency, the same way it is on noise frequency.
-pub fn warp_verts_into(
-    out: &mut Vec<[f32; 2]>,
-    mesh: &RefinedMesh,
-    base_twist: f32,
-    waves: &[GeometryWave],
-    audio: UnipolarFloat,
-) {
-    out.clear();
-    out.extend(mesh.verts.iter().enumerate().map(|(i, v)| {
-            let (x, y) = (v[0], v[1]);
-            let mut radius = (x * x + y * y).sqrt();
-            // Spin grows with radius, so the centre stays put and the rim
-            // carries the full turn — a shear rather than a rotation.
-            let mut angle = y.atan2(x) + base_twist * radius * std::f32::consts::TAU;
-            let (mut scale_x, mut scale_y) = (1.0f32, 1.0f32);
-
-            for w in waves {
-                let field = PhaseField {
-                    phase: w.phase,
-                    cycles: 1.0,
-                };
-                let value = w.wave.value(f64::from(field.unit_at(*v)), i, audio) as f32;
-                match w.target {
-                    // Multiplicative, so the deformation is proportional: a
-                    // waveform around the angle turns a disc into petals.
-                    AnimTarget::Radial => radius *= 1.0 + value,
-                    AnimTarget::Spin => angle += value * MAX_SPIN,
-                    AnimTarget::AspectRatio => {
-                        scale_x *= 1.0 + value;
-                        scale_y *= 1.0 - value;
-                    }
-                    _ => {}
+        // Geometry.
+        let mut radial = 1.0f32;
+        let mut turn = base_spin * polar.radius * std::f32::consts::TAU;
+        let (mut scale_x, mut scale_y) = (1.0f32, 1.0f32);
+        for w in warps {
+            let value = w.wave.value_f32(polar.phase(*v, w.phase), i, audio);
+            match w.target {
+                // Multiplicative, so the deformation is proportional: a
+                // waveform around the angle turns a disc into petals.
+                AnimTarget::Radial => radial *= 1.0 + value,
+                AnimTarget::Spin => turn += value * MAX_SPIN,
+                AnimTarget::AspectRatio => {
+                    scale_x *= 1.0 + value;
+                    scale_y *= 1.0 - value;
                 }
+                _ => {}
             }
-
-            // A negative radius would turn the shape inside out through the
-            // origin rather than collapsing it.
-            let radius = radius.max(0.0);
+        }
+        // A negative radius would turn the shape inside out through the origin
+        // rather than collapsing it.
+        let radial = radial.max(0.0);
+        out.positions.push(if rotates {
+            let angle = polar.angle + turn;
+            let radius = polar.radius * radial;
             [
                 radius * angle.cos() * scale_x,
                 radius * angle.sin() * scale_y,
             ]
-        }));
+        } else {
+            // Without rotation the angle never changes, so scaling the radius
+            // is scaling x and y — no round trip through polar coordinates.
+            [v[0] * radial * scale_x, v[1] * radial * scale_y]
+        });
+
+        // Colour on the ramp's axis, plus any hue animation on another.
+        let mut u = polar.phase(*v, field.phase) * field.cycles;
+        for w in hue_axes {
+            u += w.wave.value_f32(polar.phase(*v, w.phase), i, audio);
+        }
+        out.uvs.push([u, 0.5]);
+
+        if tinting {
+            let mut brightness = 1.0f32;
+            for w in bright_axes {
+                let value = w.wave.value_f32(polar.phase(*v, w.phase), i, audio);
+                // Only ever darkens, matching what the ramp does with it.
+                brightness *= (1.0 + value).clamp(0.0, 1.0);
+            }
+            out.tints.push([brightness, brightness, brightness, 1.0]);
+        }
+    }
+}
+
+/// A vertex's polar coordinates, computed only where they are wanted.
+#[derive(Clone, Copy, Default)]
+struct Polar {
+    radius: f32,
+    angle: f32,
+}
+
+impl Polar {
+    #[inline]
+    fn of(v: [f32; 2], angle: bool, radius: bool) -> Self {
+        Self {
+            radius: if radius {
+                (v[0] * v[0] + v[1] * v[1]).sqrt()
+            } else {
+                0.0
+            },
+            angle: if angle {
+                crate::fastmath::atan2(v[1], v[0])
+            } else {
+                0.0
+            },
+        }
+    }
+
+    /// Unit phase along one coordinate, reusing what has already been computed.
+    #[inline]
+    fn phase(self, v: [f32; 2], phase: ColorPhase) -> f32 {
+        match phase {
+            ColorPhase::Angle => self.angle / std::f32::consts::TAU + 0.5,
+            ColorPhase::Radius => self.radius / std::f32::consts::SQRT_2,
+            ColorPhase::LinearX => (v[0] + 1.0) / 2.0,
+            ColorPhase::LinearY => (v[1] + 1.0) / 2.0,
+        }
+    }
+}
+
+/// Per-vertex attributes a draw reads, indexed the same way the mesh is.
+#[derive(Clone, Copy)]
+pub struct Shaded<'a> {
+    /// Shape-space positions, displaced if anything warps them.
+    pub positions: &'a [[f32; 2]],
+    /// Where each vertex looks in the ramp.
+    pub uvs: &'a [[f32; 2]],
+    /// Multiplier carrying colour animations from a second axis, if any.
+    pub tints: Option<&'a [[f32; 4]]>,
 }
 
 /// Draw a refined mesh in one flat color.
@@ -268,17 +296,6 @@ pub fn flat_color(layer: &LayerParams) -> [f32; 4] {
     } else {
         hsv_to_rgb(layer.col_center, layer.col_sat, 1.0, layer.level)
     }
-}
-
-/// Per-vertex attributes a draw reads, indexed the same way the mesh is.
-#[derive(Clone, Copy)]
-pub struct Shaded<'a> {
-    /// Shape-space positions, displaced if anything warps them.
-    pub positions: &'a [[f32; 2]],
-    /// Where each vertex looks in the ramp.
-    pub uvs: &'a [[f32; 2]],
-    /// Multiplier carrying colour animations from a second axis, if any.
-    pub tints: Option<&'a [[f32; 4]]>,
 }
 
 /// Draw a refined mesh, taking its color from a ramp texture indexed by phase.

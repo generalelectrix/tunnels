@@ -176,17 +176,51 @@ vertices), with `-- stats`:
 
 | | total | per vertex |
 |---|---|---|
-| phase only | 436us | 10ns |
-| + one colour animation, 2nd axis | 1,437us | 33ns |
-| + two colour animations, 2nd axis | 2,176us | 51ns |
-| one geometry animation (warp) | 2,562us | 60ns |
+| nothing animated | 257us | 6ns |
+| one colour animation, 2nd axis | 386us | 9ns |
+| two colour animations, 2nd axis | 493us | 11ns |
+| one geometry animation (radial) | 397us | 9ns |
+| one geometry animation (spin) | 733us | 17ns |
+| **one noise colour animation** | **1,502us** | **35ns** |
 
-That is the worst shape; the median one is about six times lighter. Three layers
-of the heaviest shape each carrying a geometry animation lands near 6ms, which
-matters against the 8.3ms a client gets where vsync is unreliable. `--target-px`
-is the lever — vertex count goes as its inverse square.
+Noise is the outlier, and it is the one waveform that cannot be tabulated —
+it reads the sample index as a second axis, so every vertex is a genuinely
+different question. Spin costs more than radial because a rotation is the only
+thing that forces the round trip through polar coordinates.
 
-### Other limits
+## Profiling the CPU pipeline
+
+`-- bench <seconds> <layers>` runs exactly the per-frame CPU pipeline with the
+rasteriser replaced by a sink, so a sampling profiler sees the work without a
+GPU or a display in the way:
+
+```
+perf record --call-graph fp -F 999 -- svg_demo bench 8 3
+perf report --stdio --no-children
+```
+
+Three findings from doing that, in the order they mattered:
+
+- **Waveform evaluation was 44% of the frame**, nearly all of it `__sin` and
+  friends inside `libm`. Every waveform but noise depends only on spatial phase,
+  so `LiveWave` samples one into a 1024-entry table once a frame and
+  interpolates. 6.0ms to 3.3ms.
+- **`atan2` was then 35%**, because three separate passes each computed it for
+  the same vertex. They are one pass now — the ramp coordinate is an angle, a
+  spin rotates about the same centre, and a radial animation scales the same
+  radius, so they all want the same polar coordinates. 3.3ms to 3.0ms.
+- **`atan2` was still 26%.** `libm` is accurate to under one ULP; an angle here
+  ends up as a ramp position or a vertex rotation. `fastmath::atan2` trades that
+  for 2.1e-4 radians, which moves a point on the rim of a thousand-pixel shape
+  by 0.15 of a pixel. The test measures the bound rather than trusting the
+  comment. 3.0ms to 2.5ms.
+
+What is left is 47% gathering and projecting vertices and 38% the per-vertex
+pass. The gather is there because `tri_list_uv_c` takes pre-transformed
+vertices: a vertex shader would move it to the GPU, which is the same conclusion
+the fragment-shader argument reaches from the other side.
+
+### Other limits### Other limits
 
 - The mesh is not resubdivided under a warp, so a deformation finer than the
   triangles carrying it facets rather than curves. Visible in the noise column

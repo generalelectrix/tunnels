@@ -5,8 +5,8 @@
 //! geometry that does not belong to it.
 
 use crate::anim::{LiveWave, WaveformKind};
-use crate::draw::{AxisWave, GeometryWave, color_offsets_into, phase_uvs, warp_verts_into};
-use crate::params::{AnimTarget, TargetedWave, WaveParams};
+use crate::draw::{AxisWave, VertexBuffers, VertexWork, vertex_pass};
+use crate::params::{AnimTarget, WaveParams};
 use tunnels_lib::number::UnipolarFloat;
 use crate::mesh::{self, Level, refine};
 use crate::ramp;
@@ -96,9 +96,21 @@ pub fn report(shapes: &[ShapeMesh]) {
     let mut color_us = Vec::new();
     for shape in shapes {
         let mesh = refine(&shape.fill, level.target_edge());
+        let mut buf = VertexBuffers::default();
         let start = Instant::now();
         for _ in 0..8 {
-            std::hint::black_box(phase_uvs(&mesh, PhaseField::of(&layer)));
+            vertex_pass(
+                &mut buf,
+                &mesh,
+                VertexWork {
+                    field: PhaseField::of(&layer),
+                    base_spin: 0.0,
+                    warps: &[],
+                    hue_axes: &[],
+                    bright_axes: &[],
+                    audio: UnipolarFloat::ZERO,
+                },
+            );
         }
         color_us.push((start.elapsed().as_micros() / 8, mesh.verts.len(), &shape.name));
     }
@@ -149,11 +161,11 @@ pub fn report(shapes: &[ShapeMesh]) {
         per as f64 / f64::from(ramp::RAMP_TEXELS)
     );
 
-    // Animations that run along the layer's own colour axis are baked into the
-    // ramp, a fixed thousand evaluations however many there are. Anything on a
-    // second axis, and every geometry animation, is evaluated once per vertex
-    // per frame instead — so its cost scales with the mesh.
-    println!("\n=== per-vertex animation cost, at the density above ===");
+    // Animations on the layer's own colour axis are baked into the ramp, a
+    // fixed thousand evaluations however many there are. Anything on a second
+    // axis, and every geometry animation, is evaluated once per vertex per
+    // frame instead — so its cost scales with the mesh.
+    println!("\n=== per-vertex pass, at the density above ===");
     let worst = heaviest(shapes);
     let mesh = refine(&shapes[worst].fill, level.target_edge());
     let verts = mesh.verts.len();
@@ -174,51 +186,46 @@ pub fn report(shapes: &[ShapeMesh]) {
     };
 
     let audio = UnipolarFloat::ZERO;
-    let mut offsets = Vec::new();
-    let mut tints = Vec::new();
-    let mut positions = Vec::new();
     let field = PhaseField::of(&layer);
+    let mut buffers = VertexBuffers::default();
 
-    let mut report = |label: &str, us: u128| {
+    let mut measure = |label: &str,
+                       warps: &[AxisWave],
+                       hue_axes: &[AxisWave],
+                       bright_axes: &[AxisWave]| {
+        let start = Instant::now();
+        for _ in 0..REPEATS {
+            vertex_pass(
+                &mut buffers,
+                &mesh,
+                VertexWork {
+                    field,
+                    base_spin: 0.0,
+                    warps,
+                    hue_axes,
+                    bright_axes,
+                    audio,
+                },
+            );
+        }
+        let us = start.elapsed().as_micros() / REPEATS;
         println!(
             "{label:<42} {us:>5}us  ({:.0}ns per vertex)",
             us as f64 * 1000.0 / verts as f64
         );
     };
 
-    let start = Instant::now();
-    for _ in 0..REPEATS {
-        std::hint::black_box(phase_uvs(&mesh, field));
-    }
-    report("phase only (baseline)", start.elapsed().as_micros() / REPEATS);
-
-    let one = [axis(AnimTarget::Hue, &sine)];
-    let start = Instant::now();
-    for _ in 0..REPEATS {
-        color_offsets_into(&mut offsets, &mut tints, &mesh, &one, &[], audio);
-    }
-    report("+ one colour animation on a 2nd axis", start.elapsed().as_micros() / REPEATS);
-
-    let two = [axis(AnimTarget::Hue, &sine), axis(AnimTarget::Hue, &sine)];
-    let start = Instant::now();
-    for _ in 0..REPEATS {
-        color_offsets_into(&mut offsets, &mut tints, &mesh, &two, &[], audio);
-    }
-    report("+ two colour animations on a 2nd axis", start.elapsed().as_micros() / REPEATS);
-
-    let noisy = [axis(AnimTarget::Hue, &noise)];
-    let start = Instant::now();
-    for _ in 0..REPEATS {
-        color_offsets_into(&mut offsets, &mut tints, &mesh, &noisy, &[], audio);
-    }
-    report("+ one noise colour animation", start.elapsed().as_micros() / REPEATS);
-
-    let warp: [GeometryWave; 1] = [axis(AnimTarget::Spin, &sine)];
-    let start = Instant::now();
-    for _ in 0..REPEATS {
-        warp_verts_into(&mut positions, &mesh, 0.0, &warp, audio);
-    }
-    report("one geometry animation (warp)", start.elapsed().as_micros() / REPEATS);
+    measure("nothing animated (baseline)", &[], &[], &[]);
+    measure("one colour animation, 2nd axis", &[], &[axis(AnimTarget::Hue, &sine)], &[]);
+    measure(
+        "two colour animations, 2nd axis",
+        &[],
+        &[axis(AnimTarget::Hue, &sine), axis(AnimTarget::Hue, &sine)],
+        &[],
+    );
+    measure("one noise colour animation", &[], &[axis(AnimTarget::Hue, &noise)], &[]);
+    measure("one geometry animation (radial)", &[axis(AnimTarget::Radial, &sine)], &[], &[]);
+    measure("one geometry animation (spin)", &[axis(AnimTarget::Spin, &sine)], &[], &[]);
 
     println!("\n=== stray geometry ===");
     let mut flagged = 0;

@@ -329,37 +329,5 @@ impl PhaseField {
         }
     }
 
-    /// The phase at a point in shape space, before the cycle count is applied.
-    ///
-    /// This is what a geometry animation runs along: the animation supplies its
-    /// own periodicity through `n_periods`, so multiplying by the color spread
-    /// as well would conflate two unrelated knobs.
-    pub fn unit_at(self, p: [f32; 2]) -> f32 {
-        let (x, y) = (p[0], p[1]);
-        match self.phase {
-            ColorPhase::Angle => y.atan2(x) / std::f32::consts::TAU + 0.5,
-            ColorPhase::Radius => (x * x + y * y).sqrt() / std::f32::consts::SQRT_2,
-            ColorPhase::LinearX => (x + 1.0) / 2.0,
-            ColorPhase::LinearY => (y + 1.0) / 2.0,
-        }
-    }
-
-    /// The phase at a point in shape space, scaled by the cycle count.
-    ///
-    /// Shape space is the normalised unit box, so this rides with the figure
-    /// rather than being pinned to the screen.
-    pub fn at(self, p: [f32; 2]) -> f32 {
-        let (x, y) = (p[0], p[1]);
-        let unit = match self.phase {
-            // The direct analogue of a tunnel segment's `rel_angle`.
-            ColorPhase::Angle => y.atan2(x) / std::f32::consts::TAU,
-            // The far corner of a unit box is at sqrt(2); dividing by that
-            // keeps a full sweep inside one cycle.
-            ColorPhase::Radius => (x * x + y * y).sqrt() / std::f32::consts::SQRT_2,
-            ColorPhase::LinearX => (x + 1.0) / 2.0,
-            ColorPhase::LinearY => (y + 1.0) / 2.0,
-        };
-        unit * self.cycles
-    }
 
 }
