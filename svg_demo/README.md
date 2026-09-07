@@ -110,7 +110,16 @@ Every target in `Tunnel` modulates a value that also has its own knob —
 against that pattern, two of the geometry targets here are not new: a constant
 radial scale is `size`, and a constant aspect animation is `aspect_ratio`. Only
 **twist** had no base value to modulate, so `LayerParams::twist` adds one — a
-static spiral shear, growing with radius so the centre stays put.
+spiral shear growing with radius, so the centre stays put and the rim carries
+the full turn.
+
+Twist is what `spin` becomes on a fill. Spin turns each drawn mark about its own
+centroid, which a filled shape cannot do — it has no marks, and an infinitesimal
+point has no orientation to turn. Orientation that varies from place to place
+only survives into a continuum as a shear. The analogy stops at one point:
+rotation, marquee and spin integrate an angle forever, because turning a mark
+five times looks like turning it once, whereas winding accumulates. So twist is
+a bounded amount with an animator on it rather than a speed.
 
 With radial as the target, the animation's own knobs turn out to be shape
 parameters:

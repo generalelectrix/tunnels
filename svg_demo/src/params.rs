@@ -207,12 +207,20 @@ pub struct LayerParams {
     pub spin_speed: f64,
     pub shear_x: f64,
     pub shear_y: f64,
-    /// Static rotation that varies with distance from the centre, in turns at
-    /// the rim.
+    /// Rotation that varies with distance from the centre, in turns at the rim.
     ///
-    /// The one geometry control here with no counterpart in `Tunnel`. Radial
-    /// and aspect animations modulate `size` and `aspect_ratio`, which already
-    /// have knobs; a twist has nothing to modulate until this exists.
+    /// This is what `spin` becomes on a filled shape. Spin turns each drawn
+    /// mark about its own centroid, which says nothing about a fill: there are
+    /// no marks, and an infinitesimal point has no orientation to turn. The
+    /// intent behind spin — orientation that varies from place to place — only
+    /// survives into a continuum as a shear.
+    ///
+    /// It is an amount rather than a speed, which is where the analogy stops.
+    /// Rotation, marquee and spin all integrate an angle forever, because
+    /// turning a mark five times looks like turning it once. Winding does not
+    /// work that way: five turns at the rim is five turns tighter than one, so
+    /// a `twist_speed` would spiral without bound. Bounded knob, animator to
+    /// move it.
     pub twist: f64,
     /// Position offset, in units of the smaller screen dimension.
     pub x: f64,
