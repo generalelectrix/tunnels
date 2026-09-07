@@ -83,6 +83,9 @@ fn layer_color(over: &[f32; 4], under: &[f32; 4]) -> [f32; 4] {
 /// A triangle's corners, paired with a per-corner attribute.
 type Attributed<T> = ([[f32; 2]; 3], [T; 3]);
 
+/// A textured triangle that also carries a per-corner tint.
+type Tinted = (Attributed<[f32; 2]>, [[f32; 4]; 3]);
+
 fn barycentric(tri: &[[f32; 2]], p: [f32; 2]) -> Option<[f32; 3]> {
     let (a, b, c) = (tri[0], tri[1], tri[2]);
     let det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
@@ -172,6 +175,52 @@ impl RenderBuffer {
     }
 }
 
+impl RenderBuffer {
+    /// Rasterise one textured triangle whose tint varies per vertex.
+    ///
+    /// This is the second colour channel: the texture carries whatever is
+    /// indexed by the ramp coordinate, and the vertex tint carries something
+    /// indexed by a different coordinate entirely.
+    fn raster_uv_c(
+        &mut self,
+        tri: &[[f32; 2]; 3],
+        uv: &[[f32; 2]; 3],
+        cols: &[[f32; 4]; 3],
+        texture: &RenderBuffer,
+    ) {
+        let mut tl = [f32::MAX, f32::MAX];
+        let mut br = [f32::MIN, f32::MIN];
+        for v in tri {
+            tl[0] = tl[0].min(v[0]);
+            tl[1] = tl[1].min(v[1]);
+            br[0] = br[0].max(v[0]);
+            br[1] = br[1].max(v[1]);
+        }
+        let x0 = tl[0].floor().max(0.0) as i32;
+        let y0 = tl[1].floor().max(0.0) as i32;
+        let x1 = br[0].ceil().min(self.inner.width() as f32) as i32;
+        let y1 = br[1].ceil().min(self.inner.height() as f32) as i32;
+
+        for x in x0..x1 {
+            for y in y0..y1 {
+                let Some(w) = barycentric(tri, [x as f32, y as f32]) else {
+                    continue;
+                };
+                let u = w[0] * uv[0][0] + w[1] * uv[1][0] + w[2] * uv[2][0];
+                let v = w[0] * uv[0][1] + w[1] * uv[1][1] + w[2] * uv[2][1];
+                let mut over = texture.sample(u, v);
+                for ch in 0..4 {
+                    over[ch] *= w[0] * cols[0][ch] + w[1] * cols[1][ch] + w[2] * cols[2][ch];
+                }
+                let under = color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
+                let blended = layer_color(&over, &under);
+                self.inner
+                    .put_pixel(x as u32, y as u32, color_f32_rgba(&blended));
+            }
+        }
+    }
+}
+
 impl Graphics for RenderBuffer {
     type Texture = RenderBuffer;
 
@@ -248,10 +297,24 @@ impl Graphics for RenderBuffer {
         }
     }
 
-    fn tri_list_uv_c<F>(&mut self, _: &DrawState, _: &Self::Texture, _: F)
+    fn tri_list_uv_c<F>(&mut self, _draw_state: &DrawState, texture: &Self::Texture, mut f: F)
     where
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]], &[[f32; 4]])),
     {
-        unimplemented!("the demo draws no textures")
+        let mut tris: Vec<Tinted> = Vec::new();
+        f(&mut |vertices, coords, colors| {
+            for ((v, t), c) in vertices
+                .chunks(3)
+                .zip(coords.chunks(3))
+                .zip(colors.chunks(3))
+            {
+                if let (([a, b, cc], [ta, tb, tc]), [ca, cb, ccc]) = ((v, t), c) {
+                    tris.push((([*a, *b, *cc], [*ta, *tb, *tc]), [*ca, *cb, *ccc]));
+                }
+            }
+        });
+        for ((tri, uv), cols) in tris {
+            self.raster_uv_c(&tri, &uv, &cols, texture);
+        }
     }
 }

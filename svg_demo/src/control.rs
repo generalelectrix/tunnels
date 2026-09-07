@@ -140,6 +140,7 @@ impl eframe::App for ControlApp {
             ui.separator();
 
             ui.label("animators");
+            let axis = layer.color_phase;
             for (i, slot) in layer.waves.iter_mut().enumerate() {
                 let title = format!(
                     "{} {} — {}{}",
@@ -154,7 +155,7 @@ impl eframe::App for ControlApp {
                 );
                 egui::CollapsingHeader::new(title)
                     .id_salt(i)
-                    .show(ui, |ui| wave_controls(ui, i, slot));
+                    .show(ui, |ui| wave_controls(ui, i, axis, slot));
             }
 
             ui.separator();
@@ -181,7 +182,12 @@ impl eframe::App for ControlApp {
 }
 
 /// One animation slot: what it drives, what it runs along, and its waveform.
-fn wave_controls(ui: &mut egui::Ui, index: usize, slot: &mut TargetedWave) {
+fn wave_controls(
+    ui: &mut egui::Ui,
+    index: usize,
+    layer_axis: ColorPhase,
+    slot: &mut TargetedWave,
+) {
     ui.checkbox(&mut slot.enabled, "enabled");
 
     ui.horizontal_wrapped(|ui| {
@@ -191,17 +197,24 @@ fn wave_controls(ui: &mut egui::Ui, index: usize, slot: &mut TargetedWave) {
         }
     });
 
-    // A colour target has to run along the ramp's own axis, since the ramp is a
-    // one-dimensional table shared by every colour animation on the layer.
+    ui.horizontal_wrapped(|ui| {
+        ui.label("along");
+        for phase in ColorPhase::ALL {
+            ui.selectable_value(&mut slot.phase, phase, phase.label());
+        }
+    });
+    // Only the layer's own colour axis indexes the ramp, which is what gives a
+    // discontinuity its clean edge. A colour animation on any other axis
+    // accumulates through the vertices instead, so a hard-edged waveform there
+    // bands at mesh resolution.
     if slot.target.is_color() {
-        ui.label("runs along the layer's colour axis");
-    } else {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("along");
-            for phase in ColorPhase::ALL {
-                ui.selectable_value(&mut slot.phase, phase, phase.label());
-            }
-        });
+        if slot.phase == layer_axis {
+            ui.label("on the ramp axis — sharp");
+        } else if slot.target == AnimTarget::Saturation {
+            ui.label("saturation only works on the ramp axis");
+        } else {
+            ui.label("second axis — accumulates, soft edges");
+        }
     }
 
     ui.horizontal_wrapped(|ui| {

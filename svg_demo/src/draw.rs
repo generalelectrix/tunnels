@@ -75,14 +75,29 @@ pub fn layer_transform(
 /// the coordinate simply runs past one and the texture repeats.
 pub fn phase_uvs(mesh: &RefinedMesh, field: PhaseField) -> Vec<[f32; 2]> {
     let mut out = Vec::new();
-    phase_uvs_into(&mut out, mesh, field);
+    phase_uvs_into(&mut out, mesh, field, None);
     out
 }
 
 /// As `phase_uvs`, reusing a buffer so a frame allocates nothing.
-pub fn phase_uvs_into(out: &mut Vec<[f32; 2]>, mesh: &RefinedMesh, field: PhaseField) {
+pub fn phase_uvs_into(
+    out: &mut Vec<[f32; 2]>,
+    mesh: &RefinedMesh,
+    field: PhaseField,
+    hue_offsets: Option<&[f32]>,
+) {
     out.clear();
-    out.extend(mesh.verts.iter().map(|v| [field.at(*v), 0.5]));
+    match hue_offsets {
+        // A hue animation on a second axis shifts where in the ramp a vertex
+        // looks. One unit of offset sweeps a whole cycle of the ramp.
+        Some(offsets) => out.extend(
+            mesh.verts
+                .iter()
+                .zip(offsets)
+                .map(|(v, o)| [field.at(*v) + o, 0.5]),
+        ),
+        None => out.extend(mesh.verts.iter().map(|v| [field.at(*v), 0.5])),
+    }
 }
 
 /// Put two phase coordinates on the same branch.
@@ -105,11 +120,59 @@ fn same_branch(reference: f32, u: f32, period: f32) -> f32 {
 /// How far a spin animation can rotate a point at full size: a quarter turn.
 const MAX_SPIN: f32 = std::f32::consts::TAU / 4.0;
 
-/// One geometry animation, ready to evaluate.
-pub struct GeometryWave<'a> {
+/// One animation, paired with the coordinate it runs along.
+pub struct AxisWave<'a> {
     pub target: AnimTarget,
     pub phase: ColorPhase,
     pub wave: &'a LiveWave,
+}
+
+/// A geometry animation. Same shape as any other; named for where it is used.
+pub type GeometryWave<'a> = AxisWave<'a>;
+
+/// Per-vertex contributions from colour animations that do not run along the
+/// layer's own colour axis.
+///
+/// The ramp is a one-dimensional table, so only one coordinate can index it.
+/// Everything else has to reach the fragment another way: a hue animation on a
+/// second axis shifts where in the ramp a vertex looks, and a brightness
+/// animation on a third rides the vertex colour that multiplies the sample.
+/// Neither is resolved per fragment the way the ramp is, so a discontinuous
+/// waveform on one of these bands at mesh resolution rather than cutting
+/// cleanly — the same ceiling that bounds a warp.
+pub fn color_offsets_into(
+    hue_offsets: &mut Vec<f32>,
+    tints: &mut Vec<[f32; 4]>,
+    mesh: &RefinedMesh,
+    hue_waves: &[AxisWave],
+    bright_waves: &[AxisWave],
+    audio: UnipolarFloat,
+) {
+    hue_offsets.clear();
+    tints.clear();
+    for (i, v) in mesh.verts.iter().enumerate() {
+        let mut offset = 0.0f32;
+        for w in hue_waves {
+            let field = PhaseField {
+                phase: w.phase,
+                cycles: 1.0,
+            };
+            offset += w.wave.value(f64::from(field.unit_at(*v)), i, audio) as f32;
+        }
+        hue_offsets.push(offset);
+
+        let mut brightness = 1.0f32;
+        for w in bright_waves {
+            let field = PhaseField {
+                phase: w.phase,
+                cycles: 1.0,
+            };
+            let value = w.wave.value(f64::from(field.unit_at(*v)), i, audio) as f32;
+            // Only ever darkens, matching what the ramp does with brightness.
+            brightness *= (1.0 + value).clamp(0.0, 1.0);
+        }
+        tints.push([brightness, brightness, brightness, 1.0]);
+    }
 }
 
 /// Whether anything would move a vertex.
@@ -207,44 +270,81 @@ pub fn flat_color(layer: &LayerParams) -> [f32; 4] {
     }
 }
 
+/// Per-vertex attributes a draw reads, indexed the same way the mesh is.
+#[derive(Clone, Copy)]
+pub struct Shaded<'a> {
+    /// Shape-space positions, displaced if anything warps them.
+    pub positions: &'a [[f32; 2]],
+    /// Where each vertex looks in the ramp.
+    pub uvs: &'a [[f32; 2]],
+    /// Multiplier carrying colour animations from a second axis, if any.
+    pub tints: Option<&'a [[f32; 4]]>,
+}
+
 /// Draw a refined mesh, taking its color from a ramp texture indexed by phase.
 ///
 /// The sampler resolves the waveform per fragment, so the sawtooth's jump lands
 /// exactly where it belongs however coarse the mesh is.
 pub fn draw_textured<G: Graphics>(
     mesh: &RefinedMesh,
-    positions: &[[f32; 2]],
-    uvs: &[[f32; 2]],
+    verts: Shaded,
     period: Option<f32>,
     texture: &G::Texture,
     m: Matrix2d,
     gl: &mut G,
 ) {
+    let Shaded {
+        positions,
+        uvs,
+        tints,
+    } = verts;
     if mesh.is_empty() {
         return;
     }
     let stride = CHUNK / 3 * 3;
     let mut pos = Vec::with_capacity(stride);
     let mut uv = Vec::with_capacity(stride);
-    gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
-        for chunk in mesh.indices.chunks(stride) {
-            pos.clear();
-            uv.clear();
-            for tri in chunk.chunks(3) {
-                let reference = uvs[tri[0] as usize][0];
-                for &i in tri {
-                    let v = uvs[i as usize];
-                    pos.push(project(m, positions[i as usize]));
-                    let u = match period {
-                        Some(p) => same_branch(reference, v[0], p),
-                        None => v[0],
-                    };
-                    uv.push([u, v[1]]);
+    let mut col = Vec::with_capacity(stride);
+
+    // Gather one chunk of triangles into the backend's layout.
+    let gather = |chunk: &[u32],
+                  pos: &mut Vec<[f32; 2]>,
+                  uv: &mut Vec<[f32; 2]>,
+                  col: &mut Vec<[f32; 4]>| {
+        pos.clear();
+        uv.clear();
+        col.clear();
+        for tri in chunk.chunks(3) {
+            let reference = uvs[tri[0] as usize][0];
+            for &i in tri {
+                let v = uvs[i as usize];
+                pos.push(project(m, positions[i as usize]));
+                let u = match period {
+                    Some(p) => same_branch(reference, v[0], p),
+                    None => v[0],
+                };
+                uv.push([u, v[1]]);
+                if let Some(tints) = tints {
+                    col.push(tints[i as usize]);
                 }
             }
-            f(&pos, &uv);
         }
-    });
+    };
+
+    match tints {
+        Some(_) => gl.tri_list_uv_c(&DrawState::default(), texture, |f| {
+            for chunk in mesh.indices.chunks(stride) {
+                gather(chunk, &mut pos, &mut uv, &mut col);
+                f(&pos, &uv, &col);
+            }
+        }),
+        None => gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
+            for chunk in mesh.indices.chunks(stride) {
+                gather(chunk, &mut pos, &mut uv, &mut col);
+                f(&pos, &uv);
+            }
+        }),
+    }
 }
 
 /// Draw one layer's shape.

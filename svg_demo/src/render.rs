@@ -3,11 +3,12 @@
 
 use crate::anim::LiveWave;
 use crate::draw::{
-    GeometryWave, draw_flat, draw_layer, draw_textured, flat_color, is_uniform,
-    layer_transform, phase_uvs_into, warp_verts_into, warps_geometry,
+    AxisWave, GeometryWave, Shaded, color_offsets_into, draw_flat, draw_layer,
+    draw_textured, flat_color, is_uniform, layer_transform, phase_uvs_into,
+    warp_verts_into, warps_geometry,
 };
 use crate::mesh::{self, Level, MeshId, MeshLibrary};
-use crate::params::{DemoParams, LayerParams, PhaseField, PORT, TargetedWave};
+use crate::params::{AnimTarget, DemoParams, LayerParams, PhaseField, PORT, TargetedWave};
 use tunnels_lib::number::UnipolarFloat;
 use crate::ramp::{self, RampKey};
 use image::RgbaImage;
@@ -68,6 +69,8 @@ struct LayerRuntime {
     /// vertex buffer every frame is megabytes of churn.
     positions: Vec<[f32; 2]>,
     uvs: Vec<[f32; 2]>,
+    hue_offsets: Vec<f32>,
+    tints: Vec<[f32; 4]>,
 }
 
 /// The slots driving geometry, paired with their running animations.
@@ -75,10 +78,34 @@ struct LayerRuntime {
 /// Free rather than a method so the borrow of the animations stays disjoint
 /// from the scratch buffers the draw writes into.
 fn geometry_waves<'a>(layer: &LayerParams, waves: &'a [LiveWave]) -> Vec<GeometryWave<'a>> {
+    pick(layer, waves, |w| !w.target.is_color())
+}
+
+/// Colour animations running along an axis other than the layer's own.
+///
+/// The ramp is a one-dimensional table, so only animations on the layer's own
+/// colour axis can be baked into it. These reach the fragment through the
+/// vertices instead — a second and third axis, at mesh resolution rather than
+/// per fragment.
+fn off_axis_waves<'a>(
+    layer: &LayerParams,
+    waves: &'a [LiveWave],
+    target: AnimTarget,
+) -> Vec<AxisWave<'a>> {
+    pick(layer, waves, |w| {
+        w.target == target && w.phase != layer.color_phase
+    })
+}
+
+fn pick<'a>(
+    layer: &LayerParams,
+    waves: &'a [LiveWave],
+    keep: impl Fn(&TargetedWave) -> bool,
+) -> Vec<AxisWave<'a>> {
     LayerRuntime::active(layer)
-        .filter(|(_, w)| !w.target.is_color())
+        .filter(|(_, w)| keep(w))
         .filter_map(|(i, w)| {
-            waves.get(i).map(|wave| GeometryWave {
+            waves.get(i).map(|wave| AxisWave {
                 target: w.target,
                 phase: w.phase,
                 wave,
@@ -100,6 +127,8 @@ impl LayerRuntime {
             waves: template.waves.iter().map(|w| LiveWave::new(&w.wave)).collect(),
             positions: Vec::new(),
             uvs: Vec::new(),
+            hue_offsets: Vec::new(),
+            tints: Vec::new(),
         }
     }
 
@@ -128,11 +157,14 @@ impl LayerRuntime {
     /// precisely because a rebuild is a thousand evaluations and a write to a
     /// texture nothing is still reading.
     fn refresh_ramp(&mut self, layer: &LayerParams, audio: UnipolarFloat) -> &Texture {
-        let animated = Self::active(layer).any(|(_, w)| w.target.is_color());
+        let animated = Self::active(layer)
+            .any(|(_, w)| w.target.is_color() && w.phase == layer.color_phase);
         let key = RampKey::of(layer);
         if animated || self.key != Some(key) {
+            // Only animations on the layer's own colour axis can be baked in:
+            // the ramp has one coordinate, and this is it.
             let waves: Vec<_> = Self::active(layer)
-                .filter(|(_, w)| w.target.is_color())
+                .filter(|(_, w)| w.target.is_color() && w.phase == layer.color_phase)
                 .map(|(i, w)| (w.target, &self.waves[i]))
                 .collect();
             ramp::build_into(&mut self.scratch, layer, &waves, audio);
@@ -296,9 +328,16 @@ impl Renderer {
                 waves,
                 positions,
                 uvs,
+                hue_offsets,
+                tints,
                 ..
             } = rt;
             let warps = geometry_waves(layer, waves);
+            // Colour animations on a second or third axis, reaching the
+            // fragment through the vertices rather than through the ramp.
+            let hue_axes = off_axis_waves(layer, waves, AnimTarget::Hue);
+            let bright_axes = off_axis_waves(layer, waves, AnimTarget::Brightness);
+            let extra_axes = !hue_axes.is_empty() || !bright_axes.is_empty();
             let ramp_texture = &textures[*current];
             let warping = warps_geometry(layer, &warps);
             // A flat or masked layer has nothing to interpolate across a
@@ -336,7 +375,18 @@ impl Renderer {
                     positions.extend_from_slice(&mesh.verts);
                 }
                 if !flat {
-                    phase_uvs_into(uvs, mesh, field);
+                    if extra_axes {
+                        color_offsets_into(
+                            hue_offsets,
+                            tints,
+                            mesh,
+                            &hue_axes,
+                            &bright_axes,
+                            audio,
+                        );
+                    }
+                    let offsets = (!hue_axes.is_empty()).then_some(hue_offsets.as_slice());
+                    phase_uvs_into(uvs, mesh, field, offsets);
                 }
                 t.uv_us += mark.elapsed().as_micros();
 
@@ -344,7 +394,18 @@ impl Renderer {
                 if flat {
                     draw_flat(mesh, positions, flat_color(layer), m, gl);
                 } else {
-                    draw_textured(mesh, positions, uvs, field.wrap_period(), ramp_texture, m, gl);
+                    draw_textured(
+                        mesh,
+                        Shaded {
+                            positions,
+                            uvs,
+                            tints: (!bright_axes.is_empty()).then_some(tints.as_slice()),
+                        },
+                        field.wrap_period(),
+                        ramp_texture,
+                        m,
+                        gl,
+                    );
                 }
                 t.submit_us += mark.elapsed().as_micros();
                 t.triangles += mesh.triangle_count();

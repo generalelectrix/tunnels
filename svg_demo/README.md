@@ -152,15 +152,47 @@ waveforms. The last row holds the colour flat while sweeping the spin knob,
 because a uniform layer takes a different path through the renderer and geometry
 has to survive it.
 
-Two limits worth knowing:
+### Colour on more than one axis
 
-- A colour target has to run along the ramp's own axis, since the ramp is a
-  one-dimensional table shared by every colour animation on the layer. Only
-  geometry targets get their own phase source.
+The ramp is a one-dimensional table, so only one coordinate can index it. A
+colour animation on the layer's own axis is baked in, and gets the ramp's
+per-fragment resolution — a discontinuity cuts cleanly. Animations on any other
+axis reach the fragment through the vertices instead:
+
+- **hue** shifts where in the ramp a vertex looks
+- **brightness** rides the per-vertex tint that multiplies the sample, via
+  `tri_list_uv_c`
+
+So hue can sweep around the angle while brightness rings by radius. Saturation
+is ramp-only: a multiply can darken but cannot desaturate.
+
+The two paths differ in more than sharpness. A ramp animation is a fixed
+thousand evaluations however many there are; a second-axis one is evaluated per
+vertex per frame, so it scales with the mesh. The sharp option is also the cheap
+one, which is a happy alignment.
+
+Measured on the heaviest shape in the library at the default density (43k
+vertices), with `-- stats`:
+
+| | total | per vertex |
+|---|---|---|
+| phase only | 436us | 10ns |
+| + one colour animation, 2nd axis | 1,437us | 33ns |
+| + two colour animations, 2nd axis | 2,176us | 51ns |
+| one geometry animation (warp) | 2,562us | 60ns |
+
+That is the worst shape; the median one is about six times lighter. Three layers
+of the heaviest shape each carrying a geometry animation lands near 6ms, which
+matters against the 8.3ms a client gets where vsync is unreliable. `--target-px`
+is the lever — vertex count goes as its inverse square.
+
+### Other limits
+
 - The mesh is not resubdivided under a warp, so a deformation finer than the
-  triangles carrying it facets rather than curves. That is visible in the noise
-  column of the animation sheet, and it is the same ceiling that bounds noise
-  frequency.
+  triangles carrying it facets rather than curves. Visible in the noise column
+  of the animation sheet, and the same ceiling that bounds noise frequency.
+- A discontinuous waveform on a second colour axis bands at mesh resolution
+  rather than cutting cleanly, for the same reason.
 
 ## Meshing and color
 

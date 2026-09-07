@@ -4,7 +4,10 @@
 //! what a frame costs once the meshes exist, and whether any shape carries
 //! geometry that does not belong to it.
 
-use crate::draw::phase_uvs;
+use crate::anim::{LiveWave, WaveformKind};
+use crate::draw::{AxisWave, GeometryWave, color_offsets_into, phase_uvs, warp_verts_into};
+use crate::params::{AnimTarget, TargetedWave, WaveParams};
+use tunnels_lib::number::UnipolarFloat;
 use crate::mesh::{self, Level, refine};
 use crate::ramp;
 use crate::params::{ColorPhase, LayerParams, PhaseField};
@@ -18,6 +21,17 @@ const OUTSIDE: f32 = 1.02;
 /// A triangle whose area is negligible against its longest edge is a sliver —
 /// long, thin, and usually a tessellation artifact.
 const SLIVER_RATIO: f32 = 0.002;
+
+/// Iterations each per-vertex measurement is averaged over.
+const REPEATS: u128 = 16;
+
+/// The shape with the most source triangles, which refines into the most
+/// vertices and so is the worst case for anything measured per vertex.
+fn heaviest(shapes: &[ShapeMesh]) -> usize {
+    (0..shapes.len())
+        .max_by_key(|&i| shapes[i].fill.len())
+        .unwrap_or(0)
+}
 
 fn double_area(t: &[[f32; 2]]) -> f32 {
     ((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])).abs()
@@ -134,6 +148,77 @@ pub fn report(shapes: &[ShapeMesh]) {
         per as f64 / 1000.0,
         per as f64 / f64::from(ramp::RAMP_TEXELS)
     );
+
+    // Animations that run along the layer's own colour axis are baked into the
+    // ramp, a fixed thousand evaluations however many there are. Anything on a
+    // second axis, and every geometry animation, is evaluated once per vertex
+    // per frame instead — so its cost scales with the mesh.
+    println!("\n=== per-vertex animation cost, at the density above ===");
+    let worst = heaviest(shapes);
+    let mesh = refine(&shapes[worst].fill, level.target_edge());
+    let verts = mesh.verts.len();
+    println!("{verts} vertices ({})", shapes[worst].name);
+
+    let params = |waveform: WaveformKind| WaveParams {
+        waveform,
+        n_periods: 4,
+        size: 0.6,
+        ..Default::default()
+    };
+    let sine = LiveWave::new(&params(WaveformKind::Sine));
+    let noise = LiveWave::new(&params(WaveformKind::Noise));
+    let axis = |target, wave| AxisWave {
+        target,
+        phase: ColorPhase::Radius,
+        wave,
+    };
+
+    let audio = UnipolarFloat::ZERO;
+    let mut offsets = Vec::new();
+    let mut tints = Vec::new();
+    let mut positions = Vec::new();
+    let field = PhaseField::of(&layer);
+
+    let mut report = |label: &str, us: u128| {
+        println!(
+            "{label:<42} {us:>5}us  ({:.0}ns per vertex)",
+            us as f64 * 1000.0 / verts as f64
+        );
+    };
+
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        std::hint::black_box(phase_uvs(&mesh, field));
+    }
+    report("phase only (baseline)", start.elapsed().as_micros() / REPEATS);
+
+    let one = [axis(AnimTarget::Hue, &sine)];
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        color_offsets_into(&mut offsets, &mut tints, &mesh, &one, &[], audio);
+    }
+    report("+ one colour animation on a 2nd axis", start.elapsed().as_micros() / REPEATS);
+
+    let two = [axis(AnimTarget::Hue, &sine), axis(AnimTarget::Hue, &sine)];
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        color_offsets_into(&mut offsets, &mut tints, &mesh, &two, &[], audio);
+    }
+    report("+ two colour animations on a 2nd axis", start.elapsed().as_micros() / REPEATS);
+
+    let noisy = [axis(AnimTarget::Hue, &noise)];
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        color_offsets_into(&mut offsets, &mut tints, &mesh, &noisy, &[], audio);
+    }
+    report("+ one noise colour animation", start.elapsed().as_micros() / REPEATS);
+
+    let warp: [GeometryWave; 1] = [axis(AnimTarget::Spin, &sine)];
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        warp_verts_into(&mut positions, &mesh, 0.0, &warp, audio);
+    }
+    report("one geometry animation (warp)", start.elapsed().as_micros() / REPEATS);
 
     println!("\n=== stray geometry ===");
     let mut flagged = 0;

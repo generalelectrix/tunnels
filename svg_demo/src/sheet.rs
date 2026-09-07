@@ -2,8 +2,9 @@
 
 use crate::anim::{LiveWave, WaveformKind};
 use crate::draw::{
-    GeometryWave, draw_flat, draw_layer, draw_textured, flat_color, is_uniform,
-    layer_transform, phase_uvs, warp_verts_into,
+    AxisWave, GeometryWave, Shaded, color_offsets_into, draw_flat, draw_layer,
+    draw_textured, flat_color, is_uniform, layer_transform, phase_uvs, phase_uvs_into,
+    warp_verts_into,
 };
 use crate::params::{AnimTarget, TargetedWave, WaveParams};
 use tunnels_lib::number::UnipolarFloat;
@@ -61,13 +62,18 @@ pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Re
     // The last row animates nothing: it sweeps the base spin knob, which is the
     // one geometry control with no counterpart in `Tunnel` and so the only one
     // that had to be added rather than reused.
-    let rows: [(AnimTarget, ColorPhase, &str); 6] = [
+    let rows: [(AnimTarget, ColorPhase, &str); 7] = [
         (AnimTarget::Radial, ColorPhase::Angle, "radial along angle"),
         (AnimTarget::Radial, ColorPhase::Radius, "radial along radius"),
         (AnimTarget::Spin, ColorPhase::Radius, "spin along radius"),
         (AnimTarget::AspectRatio, ColorPhase::Angle, "aspect along angle"),
         (AnimTarget::Hue, ColorPhase::Angle, "hue"),
         (AnimTarget::Hue, ColorPhase::Angle, "base spin knob, no animation"),
+        (
+            AnimTarget::Hue,
+            ColorPhase::Angle,
+            "two colour axes: hue on angle, brightness on radius",
+        ),
     ];
     let cols: [(WaveformKind, u16, f64); 5] = [
         (WaveformKind::Sine, 3, 0.35),
@@ -85,7 +91,8 @@ pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Re
         image::Rgba([24, 24, 28, 255]),
     );
 
-    let base_spin_row = rows.len() - 1;
+    let base_spin_row = rows.len() - 2;
+    let two_axis_row = rows.len() - 1;
     for (r, (target, phase, name)) in rows.iter().enumerate() {
         for (c, (waveform, n_periods, size)) in cols.iter().enumerate() {
             let mut layer = LayerParams {
@@ -119,6 +126,22 @@ pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Re
                         ..Default::default()
                     },
                 };
+                if r == two_axis_row {
+                    // Hue indexes the ramp along the angle; brightness rides the
+                    // vertices along the radius. Two independent axes at once,
+                    // which one ramp coordinate could not carry.
+                    layer.waves[1] = TargetedWave {
+                        enabled: true,
+                        target: AnimTarget::Brightness,
+                        phase: ColorPhase::Radius,
+                        wave: WaveParams {
+                            waveform: WaveformKind::Sine,
+                            n_periods: 3 + c as u16,
+                            size: 0.9,
+                            ..Default::default()
+                        },
+                    };
+                }
             }
             let img = render_animated(&shapes[idx], &layer, cell);
             paste(&mut sheet, &img, gap + c as u32 * pitch, gap + r as u32 * pitch);
@@ -148,10 +171,24 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
             .filter(|(_, w)| w.enabled && w.wave.size > 0.0)
     };
 
+    // Mirror the render loop's split: only the layer's own colour axis indexes
+    // the ramp; anything else reaches the fragment through the vertices.
     let color_waves: Vec<_> = active()
-        .filter(|(_, w)| w.target.is_color())
+        .filter(|(_, w)| w.target.is_color() && w.phase == layer.color_phase)
         .map(|(i, w)| (w.target, &live[i]))
         .collect();
+    let off_axis = |target| -> Vec<AxisWave> {
+        active()
+            .filter(|(_, w)| w.target == target && w.phase != layer.color_phase)
+            .map(|(i, w)| AxisWave {
+                target: w.target,
+                phase: w.phase,
+                wave: &live[i],
+            })
+            .collect()
+    };
+    let hue_axes = off_axis(AnimTarget::Hue);
+    let bright_axes = off_axis(AnimTarget::Brightness);
     let mut ramp_img = RgbaImage::new(ramp::RAMP_TEXELS, 1);
     ramp::build_into(&mut ramp_img, layer, &color_waves, audio);
     let texture = RenderBuffer::from_image(ramp_img);
@@ -181,10 +218,30 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
     if is_uniform(layer) || layer.mask {
         draw_flat(&refined, &positions, flat_color(layer), m, &mut buf);
     } else {
+        let mut hue_offsets = Vec::new();
+        let mut tints = Vec::new();
+        color_offsets_into(
+            &mut hue_offsets,
+            &mut tints,
+            &refined,
+            &hue_axes,
+            &bright_axes,
+            audio,
+        );
+        let mut uvs = Vec::new();
+        phase_uvs_into(
+            &mut uvs,
+            &refined,
+            field,
+            (!hue_axes.is_empty()).then_some(hue_offsets.as_slice()),
+        );
         draw_textured(
             &refined,
-            &positions,
-            &phase_uvs(&refined, field),
+            Shaded {
+                positions: &positions,
+                uvs: &uvs,
+                tints: (!bright_axes.is_empty()).then_some(tints.as_slice()),
+            },
             field.wrap_period(),
             &texture,
             m,
@@ -214,11 +271,33 @@ fn draw_one(
     let texture = RenderBuffer::from_image(ramp::build(layer));
     if layer.draw_mode.draws_fill() {
         let mesh = refine(&shape.fill, target);
-        draw_textured(&mesh, &mesh.verts, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
+        draw_textured(
+            &mesh,
+            Shaded {
+                positions: &mesh.verts,
+                uvs: &phase_uvs(&mesh, field),
+                tints: None,
+            },
+            field.wrap_period(),
+            &texture,
+            m,
+            buf,
+        );
     }
     if let Some(outline) = outline {
         let mesh = refine(outline, target);
-        draw_textured(&mesh, &mesh.verts, &phase_uvs(&mesh, field), field.wrap_period(), &texture, m, buf);
+        draw_textured(
+            &mesh,
+            Shaded {
+                positions: &mesh.verts,
+                uvs: &phase_uvs(&mesh, field),
+                tints: None,
+            },
+            field.wrap_period(),
+            &texture,
+            m,
+            buf,
+        );
     }
 }
 
