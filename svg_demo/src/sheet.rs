@@ -6,7 +6,7 @@ use crate::draw::{
     draw_textured, flat_color, is_uniform, layer_transform, vertex_pass,
 };
 use crate::params::{AnimTarget, TargetedWave, WaveParams};
-use tunnels_lib::number::UnipolarFloat;
+
 use crate::mesh::{self, Level, refine};
 use crate::params::PhaseField;
 use crate::ramp;
@@ -159,7 +159,6 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
     buf.clear_color([0.0, 0.0, 0.0, 1.0]);
     let base: Matrix2d = identity().trans(f64::from(hi) / 2.0, f64::from(hi) / 2.0);
     let m = layer_transform(base, layer, 0.0, f64::from(hi));
-    let audio = UnipolarFloat::ZERO;
 
     let live: Vec<LiveWave> = layer.waves.iter().map(|w| LiveWave::new(&w.wave)).collect();
     let active = || {
@@ -189,7 +188,7 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
     let hue_axes = off_axis(AnimTarget::Hue);
     let bright_axes = off_axis(AnimTarget::Brightness);
     let mut ramp_img = RgbaImage::new(ramp::RAMP_TEXELS, 1);
-    ramp::build_into(&mut ramp_img, layer, &color_waves, audio);
+    ramp::build_into(&mut ramp_img, layer, &color_waves);
     let texture = RenderBuffer::from_image(ramp_img);
 
     let warps: Vec<GeometryWave> = active()
@@ -216,7 +215,6 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
             warps: &warps,
             hue_axes: &hue_axes,
             bright_axes: &bright_axes,
-            audio,
         },
     );
     // Mirror the render loop's own decision, so this sheet exercises the same
@@ -270,7 +268,6 @@ fn draw_one(
                 warps: &[],
                 hue_axes: &[],
                 bright_axes: &[],
-                audio: UnipolarFloat::ZERO,
             },
         );
         draw_textured(
@@ -298,7 +295,6 @@ fn draw_one(
                 warps: &[],
                 hue_axes: &[],
                 bright_axes: &[],
-                audio: UnipolarFloat::ZERO,
             },
         );
         draw_textured(

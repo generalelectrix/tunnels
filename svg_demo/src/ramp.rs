@@ -9,7 +9,6 @@
 
 use crate::anim::LiveWave;
 use crate::params::{AnimTarget, LayerParams};
-use tunnels_lib::number::UnipolarFloat;
 use image::{Rgba, RgbaImage};
 
 /// Texels across one cycle of the waveform.
@@ -55,7 +54,7 @@ fn sawtooth(phase: f64) -> f64 {
 /// repeating wrap so the cycle count falls out of the texture coordinate.
 pub fn build(layer: &LayerParams) -> RgbaImage {
     let mut img = RgbaImage::new(RAMP_TEXELS, 1);
-    build_into(&mut img, layer, &[], UnipolarFloat::ZERO);
+    build_into(&mut img, layer, &[]);
     img
 }
 
@@ -66,12 +65,7 @@ pub fn build(layer: &LayerParams) -> RgbaImage {
 /// vertex or per pixel. That is why an animated color costs the same as a still
 /// one: however fast a waveform moves, the frame's work is a thousand
 /// evaluations and one texture write.
-pub fn build_into(
-    img: &mut RgbaImage,
-    layer: &LayerParams,
-    waves: &[(AnimTarget, &LiveWave)],
-    audio: UnipolarFloat,
-) {
+pub fn build_into(img: &mut RgbaImage, layer: &LayerParams, waves: &[(AnimTarget, &LiveWave)]) {
     for x in 0..RAMP_TEXELS {
         let phase = f64::from(x) / f64::from(RAMP_TEXELS);
 
@@ -83,7 +77,7 @@ pub fn build_into(
         // Animations add to it, the way `col_center_adjust` does in the real
         // per-segment render.
         for (target, wave) in waves {
-            let v = wave.value(phase, x as usize, audio);
+            let v = f64::from(wave.value_f32(phase as f32, x as usize));
             match target {
                 AnimTarget::Hue => hue += 0.5 * v,
                 AnimTarget::Saturation => sat = (sat + v).clamp(0.0, 1.0),

@@ -6,7 +6,6 @@
 use crate::mesh::RefinedMesh;
 use crate::anim::LiveWave;
 use crate::params::{AnimTarget, COLOR_SPREAD_SCALE, ColorPhase, LayerParams, PhaseField};
-use tunnels_lib::number::UnipolarFloat;
 use crate::shapes::ShapeMesh;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
@@ -117,7 +116,6 @@ pub struct VertexWork<'a> {
     pub hue_axes: &'a [AxisWave<'a>],
     /// Brightness animations on an axis other than the ramp's.
     pub bright_axes: &'a [AxisWave<'a>],
-    pub audio: UnipolarFloat,
 }
 
 /// Everything a frame does per vertex, in one walk of the mesh.
@@ -138,7 +136,6 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
         warps,
         hue_axes,
         bright_axes,
-        audio,
     } = work;
 
     out.positions.clear();
@@ -168,7 +165,7 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
         let mut turn = base_spin * polar.radius * std::f32::consts::TAU;
         let (mut scale_x, mut scale_y) = (1.0f32, 1.0f32);
         for w in warps {
-            let value = w.wave.value_f32(polar.phase(*v, w.phase), i, audio);
+            let value = w.wave.value_f32(polar.phase(*v, w.phase), i);
             match w.target {
                 // Multiplicative, so the deformation is proportional: a
                 // waveform around the angle turns a disc into petals.
@@ -200,14 +197,14 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
         // Colour on the ramp's axis, plus any hue animation on another.
         let mut u = polar.phase(*v, field.phase) * field.cycles;
         for w in hue_axes {
-            u += w.wave.value_f32(polar.phase(*v, w.phase), i, audio);
+            u += w.wave.value_f32(polar.phase(*v, w.phase), i);
         }
         out.uvs.push([u, 0.5]);
 
         if tinting {
             let mut brightness = 1.0f32;
             for w in bright_axes {
-                let value = w.wave.value_f32(polar.phase(*v, w.phase), i, audio);
+                let value = w.wave.value_f32(polar.phase(*v, w.phase), i);
                 // Only ever darkens, matching what the ramp does with it.
                 brightness *= (1.0 + value).clamp(0.0, 1.0);
             }

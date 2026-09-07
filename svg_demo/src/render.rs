@@ -149,7 +149,7 @@ impl LayerRuntime {
     /// A live colour animation moves it every frame, which is affordable
     /// precisely because a rebuild is a thousand evaluations and a write to a
     /// texture nothing is still reading.
-    fn refresh_ramp(&mut self, layer: &LayerParams, audio: UnipolarFloat) -> &Texture {
+    fn refresh_ramp(&mut self, layer: &LayerParams) -> &Texture {
         let animated = Self::active(layer)
             .any(|(_, w)| w.target.is_color() && w.phase == layer.color_phase);
         let key = RampKey::of(layer);
@@ -160,7 +160,7 @@ impl LayerRuntime {
                 .filter(|(_, w)| w.target.is_color() && w.phase == layer.color_phase)
                 .map(|(i, w)| (w.target, &self.waves[i]))
                 .collect();
-            ramp::build_into(&mut self.scratch, layer, &waves, audio);
+            ramp::build_into(&mut self.scratch, layer, &waves);
             self.current = (self.current + 1) % self.textures.len();
             self.textures[self.current].update(&self.scratch);
             self.key = Some(key);
@@ -310,7 +310,7 @@ impl Renderer {
             // nothing else. The mesh never moves.
             let mark = Instant::now();
             rt.tick(layer, delta, audio);
-            rt.refresh_ramp(layer, audio);
+            rt.refresh_ramp(layer);
             t.ramp_us += mark.elapsed().as_micros();
 
             // Split the runtime into disjoint pieces: the animations are read
@@ -369,7 +369,6 @@ impl Renderer {
                         warps: &warps,
                         hue_axes: &hue_axes,
                         bright_axes: &bright_axes,
-                        audio,
                     },
                 );
                 t.uv_us += mark.elapsed().as_micros();

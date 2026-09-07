@@ -201,14 +201,16 @@ perf report --stdio --no-children
 
 Three findings from doing that, in the order they mattered:
 
-- **Waveform evaluation was 44% of the frame**, nearly all of it `__sin` and
-  friends inside `libm`. `LiveWave` samples sine into a 1024-entry table once a
-  frame and interpolates. Only sine: interpolating between samples turns a jump
-  into a ramp one cell wide, which is exactly the edge a square or a sawtooth
-  exists to have, and sine is the one waveform with no edge to lose. It is also
-  the only one whose cost is the waveform — the others are a few multiplies, and
-  what made them look expensive was `get_value` rederiving frame-constant state
-  on every call. 6.0ms to 3.3ms.
+- **Waveform evaluation was 44% of the frame.** Two separate costs sat behind
+  that, and they needed different answers. `Animation::prepare` in
+  `tunnels_model` resolves what is fixed for a frame — which clock is driving,
+  where it is, where the smoother got to, what the amplitude multiplies out to —
+  so a render works that out once instead of once per vertex. The beam path
+  gets the same saving: a tunnel asks four animations the same question a
+  hundred and twenty-six times a segment sweep. On top of that, `LiveWave`
+  samples sine into a 1024-entry table. Only sine, because interpolating turns
+  a jump into a ramp one cell wide, which is exactly the edge a square or a
+  sawtooth exists to have. 6.0ms to 3.1ms.
 - **`atan2` was then 35%**, because three separate passes each computed it for
   the same vertex. They are one pass now — the ramp coordinate is an angle, a
   spin rotates about the same centre, and a radial animation scales the same

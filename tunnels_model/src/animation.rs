@@ -142,69 +142,38 @@ impl Animation {
         offset_index: usize,
         external_clocks: &impl ClockStore,
     ) -> f64 {
-        let result = match self.waveform {
-            Waveform::Sine => {
-                waveforms::sine(&self.waveform_args(spatial_phase_offset, external_clocks))
-            }
-            Waveform::Square => {
-                waveforms::square(&self.waveform_args(spatial_phase_offset, external_clocks))
-            }
-            Waveform::Sawtooth => {
-                waveforms::sawtooth(&self.waveform_args(spatial_phase_offset, external_clocks))
-            }
-            Waveform::Triangle => {
-                waveforms::triangle(&self.waveform_args(spatial_phase_offset, external_clocks))
-            }
-            Waveform::Noise => {
-                // Handle duty cycle - this is a bit odd compared to waveforms,
-                // since noise isn't periodic. Rather than trying to compress
-                // the waveform to maintain the waveshape, we just turn off
-                // the animation for a portion of each cycle.
-                let spatial_phase = spatial_phase_offset.val() * self.n_periods as f64;
-                let temporal_phase = self.phase(external_clocks).val();
+        // The envelope only scales, and a unit value is unscaled by definition.
+        self.prepare(external_clocks, UnipolarFloat::ZERO)
+            .unit_value(spatial_phase_offset, offset_index)
+    }
 
-                if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
-                    || self.duty_cycle == 0.0
-                {
-                    return 0.0;
-                }
-
-                let x_offset = self.ticks(external_clocks) as f64 + spatial_phase + temporal_phase;
-
-                // Use smoothing parameter as a "cross-correlation" term;
-                // increased smoothing means a smaller Y-offset between
-                // samples. Smoothing of zero offsets each sample by a full
-                // interval, which should produce fairly uncorrelated noise
-                // for different offsets.
-                // Always use a Y-offset of 0 in periodicity of 0 to preserve
-                // the expected behavior.
-                //
-                // Because of the smooth 2D landscape, smoothing parameters
-                // modestly lower than 1 tend to look similar to an
-                // increase in periodicity.
-                let y_offset = if self.n_periods == 0 {
-                    0.0
-                } else {
-                    (1.0 - self.smoothing.val().val()) * offset_index as f64
-                };
-
-                let mut val = self.simplex_gen.get([x_offset, y_offset]);
-
-                // Take the square for pulse mode to avoid sharp edges at zero,
-                // and to maintain a bias towards the animation value frequently
-                // touching zero. This produces more of a forest of peaks.
-                // Simply rescaling the full noise spectrum into the unipolar
-                // range would result in very rarely touching zero, which is
-                // unlikely to be what we're looking for, artistically speaking.
-                if self.pulse {
-                    val = val.powi(2);
-                }
-                val
-            }
-            Waveform::Constant => 1.0,
-        };
-
-        if self.invert { -result } else { result }
+    /// Resolve everything that is fixed for a frame, once.
+    ///
+    /// A render asks an animation for a value once per segment, or on a filled
+    /// shape once per vertex — tens of thousands of times. Most of what
+    /// answering that costs is the same every time: which clock is driving,
+    /// what phase it is at, where the smoother has got to, and the amplitude
+    /// the size, submaster and audio envelope multiply out to. None of it
+    /// depends on where in the figure the question is being asked.
+    pub fn prepare(
+        &self,
+        external_clocks: &impl ClockStore,
+        audio_envelope: UnipolarFloat,
+    ) -> PreparedAnimation {
+        PreparedAnimation {
+            waveform: self.waveform,
+            n_periods: self.n_periods,
+            pulse: self.pulse,
+            standing: self.standing,
+            invert: self.invert,
+            duty_cycle: self.duty_cycle,
+            phase_temporal: self.phase(external_clocks),
+            smoothing: self.smoothing.val(),
+            ticks: self.ticks(external_clocks),
+            scale: self.scale_value(external_clocks, audio_envelope, 1.0),
+            simplex_gen: self.simplex_gen,
+            active: self.active(),
+        }
     }
 
     /// Return the complete, scaled value of this animation for the provided parameters.
@@ -215,13 +184,8 @@ impl Animation {
         external_clocks: &impl ClockStore,
         audio_envelope: UnipolarFloat,
     ) -> f64 {
-        if !self.active() {
-            return 0.;
-        }
-
-        let result = self.get_unit_value(spatial_phase_offset, offset_index, external_clocks);
-
-        self.scale_value(external_clocks, audio_envelope, result)
+        self.prepare(external_clocks, audio_envelope)
+            .value(spatial_phase_offset, offset_index)
     }
 
     /// Scale a value using the amplitude scaling factors set by this animator.
@@ -251,22 +215,6 @@ impl Animation {
         }
 
         v
-    }
-
-    #[inline(always)]
-    fn waveform_args(
-        &self,
-        spatial_phase_offset: Phase,
-        external_clocks: &impl ClockStore,
-    ) -> WaveformArgs {
-        WaveformArgs {
-            phase_spatial: spatial_phase_offset * (self.n_periods as f64),
-            phase_temporal: self.phase(external_clocks),
-            smoothing: self.smoothing.val(),
-            duty_cycle: self.duty_cycle,
-            pulse: self.pulse,
-            standing: self.standing,
-        }
     }
 
     /// Emit the current value of all controllable animator state.
@@ -370,4 +318,110 @@ pub enum ControlMessage {
 
 pub trait EmitStateChange {
     fn emit_animation_state_change(&mut self, sc: StateChange);
+}
+
+/// An animation with everything that is constant for a frame already resolved.
+///
+/// Holds no reference to the animation it came from, so a render can prepare
+/// its animations once and then walk a figure without borrowing anything.
+#[derive(Clone, Copy)]
+pub struct PreparedAnimation {
+    waveform: Waveform,
+    n_periods: u16,
+    pulse: bool,
+    standing: bool,
+    invert: bool,
+    duty_cycle: UnipolarFloat,
+    /// Where the driving clock has got to.
+    phase_temporal: Phase,
+    /// The smoother's current value, not its target.
+    smoothing: UnipolarFloat,
+    /// Whole periods elapsed, which noise uses to drift its field.
+    ticks: Ticks,
+    /// Size, clock submaster and audio envelope, multiplied out.
+    scale: f64,
+    simplex_gen: &'static Simplex,
+    /// A zero-size animation contributes nothing and skips the waveform.
+    active: bool,
+}
+
+impl PreparedAnimation {
+    /// The animation's value at a point, with amplitude applied.
+    pub fn value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
+        if !self.active {
+            return 0.;
+        }
+        self.unit_value(spatial_phase_offset, offset_index) * self.scale
+    }
+
+    /// The waveform's own value, before amplitude.
+    pub fn unit_value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
+        let result = match self.waveform {
+            Waveform::Sine => waveforms::sine(&self.waveform_args(spatial_phase_offset)),
+            Waveform::Square => waveforms::square(&self.waveform_args(spatial_phase_offset)),
+            Waveform::Sawtooth => waveforms::sawtooth(&self.waveform_args(spatial_phase_offset)),
+            Waveform::Triangle => waveforms::triangle(&self.waveform_args(spatial_phase_offset)),
+            Waveform::Noise => {
+                // Handle duty cycle - this is a bit odd compared to waveforms,
+                // since noise isn't periodic. Rather than trying to compress
+                // the waveform to maintain the waveshape, we just turn off
+                // the animation for a portion of each cycle.
+                let spatial_phase = spatial_phase_offset.val() * self.n_periods as f64;
+                let temporal_phase = self.phase_temporal.val();
+
+                if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
+                    || self.duty_cycle == 0.0
+                {
+                    return 0.0;
+                }
+
+                let x_offset = self.ticks as f64 + spatial_phase + temporal_phase;
+
+                // Use smoothing parameter as a "cross-correlation" term;
+                // increased smoothing means a smaller Y-offset between
+                // samples. Smoothing of zero offsets each sample by a full
+                // interval, which should produce fairly uncorrelated noise
+                // for different offsets.
+                // Always use a Y-offset of 0 in periodicity of 0 to preserve
+                // the expected behavior.
+                //
+                // Because of the smooth 2D landscape, smoothing parameters
+                // modestly lower than 1 tend to look similar to an
+                // increase in periodicity.
+                let y_offset = if self.n_periods == 0 {
+                    0.0
+                } else {
+                    (1.0 - self.smoothing.val()) * offset_index as f64
+                };
+
+                let mut val = self.simplex_gen.get([x_offset, y_offset]);
+
+                // Take the square for pulse mode to avoid sharp edges at zero,
+                // and to maintain a bias towards the animation value frequently
+                // touching zero. This produces more of a forest of peaks.
+                // Simply rescaling the full noise spectrum into the unipolar
+                // range would result in very rarely touching zero, which is
+                // unlikely to be what we're looking for, artistically speaking.
+                if self.pulse {
+                    val = val.powi(2);
+                }
+                val
+            }
+            Waveform::Constant => 1.0,
+        };
+
+        if self.invert { -result } else { result }
+    }
+
+    #[inline(always)]
+    fn waveform_args(&self, spatial_phase_offset: Phase) -> WaveformArgs {
+        WaveformArgs {
+            phase_spatial: spatial_phase_offset * (self.n_periods as f64),
+            phase_temporal: self.phase_temporal,
+            smoothing: self.smoothing,
+            duty_cycle: self.duty_cycle,
+            pulse: self.pulse,
+            standing: self.standing,
+        }
+    }
 }

@@ -7,7 +7,7 @@
 use crate::anim::{LiveWave, WaveformKind};
 use crate::draw::{AxisWave, VertexBuffers, VertexWork, vertex_pass};
 use crate::params::{AnimTarget, WaveParams};
-use tunnels_lib::number::UnipolarFloat;
+
 use crate::mesh::{self, Level, refine};
 use crate::ramp;
 use crate::params::{ColorPhase, LayerParams, PhaseField};
@@ -108,7 +108,6 @@ pub fn report(shapes: &[ShapeMesh]) {
                     warps: &[],
                     hue_axes: &[],
                     bright_axes: &[],
-                    audio: UnipolarFloat::ZERO,
                 },
             );
         }
@@ -185,7 +184,6 @@ pub fn report(shapes: &[ShapeMesh]) {
         wave,
     };
 
-    let audio = UnipolarFloat::ZERO;
     let field = PhaseField::of(&layer);
     let mut buffers = VertexBuffers::default();
 
@@ -204,7 +202,6 @@ pub fn report(shapes: &[ShapeMesh]) {
                     warps,
                     hue_axes,
                     bright_axes,
-                    audio,
                 },
             );
         }

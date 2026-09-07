@@ -160,14 +160,13 @@ pub fn run(shape_dir: &Path, seconds: f64, n_layers: usize) -> Result<()> {
     let texture = RenderBuffer::from_image(ramp::build(&layers[0].params));
     let mut sink = Sink { vertices: 0 };
     let base = identity().trans(960.0, 540.0);
-    let audio = UnipolarFloat::ZERO;
     let delta = Duration::from_micros(8333);
 
     let start = Instant::now();
     let mut frames = 0u64;
     while start.elapsed().as_secs_f64() < seconds {
         for layer in &mut layers {
-            frame(layer, base, &texture, audio, delta, &mut sink);
+            frame(layer, base, &texture, UnipolarFloat::ZERO, delta, &mut sink);
         }
         frames += 1;
     }
@@ -202,7 +201,7 @@ fn frame(
         .filter(|(_, w)| w.target.is_color() && w.phase == layer.params.color_phase)
         .map(|(i, w)| (w.target, &layer.waves[i]))
         .collect();
-    ramp::build_into(&mut layer.ramp, &layer.params, &on_axis, audio);
+    ramp::build_into(&mut layer.ramp, &layer.params, &on_axis);
 
     let pick = |keep: &dyn Fn(&TargetedWave) -> bool| -> Vec<AxisWave> {
         layer
@@ -236,7 +235,6 @@ fn frame(
             warps: &warps,
             hue_axes: &hue_axes,
             bright_axes: &bright_axes,
-            audio,
         },
     );
     draw_textured(

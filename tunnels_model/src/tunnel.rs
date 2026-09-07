@@ -1,3 +1,4 @@
+use crate::animation::PreparedAnimation;
 use crate::layer::{Layer, PathShape, RenderMode, ShapeGeometry};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
@@ -196,6 +197,20 @@ impl Tunnel {
             self.col_center.val()
         };
 
+        // Resolve each animation's frame-constant state once. What an animation
+        // costs is mostly deciding which clock drives it, where that clock is,
+        // where its smoother has got to and what the amplitude works out to —
+        // none of which depends on the segment asking.
+        let anims: [(PreparedAnimation, AnimationTarget); N_ANIM] =
+            std::array::from_fn(|i| {
+                (
+                    self.anims[i]
+                        .animation
+                        .prepare(ctx.clocks, ctx.audio_envelope),
+                    self.anims[i].target,
+                )
+            });
+
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
             let should_draw_segment = if blacking > 0 {
@@ -221,16 +236,11 @@ impl Tunnel {
             let mut marquee_angle_adjust = 0.;
             let mut spin_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
-            for anim in &self.anims {
-                let anim_value = anim.animation.get_value(
-                    rel_angle,
-                    seg_num as usize,
-                    ctx.clocks,
-                    ctx.audio_envelope,
-                );
+            for (animation, target) in &anims {
+                let anim_value = animation.value(rel_angle, seg_num as usize);
 
                 use AnimationTarget::*;
-                match anim.target {
+                match target {
                     Rotation => rot_angle_adjust += anim_value,
                     MarqueeRotation => marquee_angle_adjust += anim_value,
                     Thickness => thickness_adjust += anim_value,
@@ -521,7 +531,7 @@ pub mod fixture {
     use crate::animation::{
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
     };
-    use crate::animation_target::AnimationTarget;
+use crate::animation_target::AnimationTarget;
     use crate::clock_bank::{ClockBank, ClockIdx};
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;

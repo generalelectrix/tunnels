@@ -6,10 +6,13 @@
 //! looks the same in a show.
 
 use crate::params::WaveParams;
+
+/// Samples across one sweep of spatial phase in the sine table.
+const SINE_TABLE: usize = 1024;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_model::animation::{
-    Animation, ControlMessage, EmitStateChange, StateChange, Waveform,
+    Animation, ControlMessage, EmitStateChange, PreparedAnimation, StateChange, Waveform,
 };
 use tunnels_model::clock_bank::StaticClockBank;
 
@@ -24,13 +27,6 @@ impl EmitStateChange for Discard {
     fn emit_animation_state_change(&mut self, _: StateChange) {}
 }
 
-/// Entries in the per-frame waveform table.
-///
-/// The table is indexed by spatial phase over one full sweep, and a mesh never
-/// resolves anything finer than this, so the sampling is not what limits
-/// quality.
-const TABLE_SIZE: usize = 1024;
-
 /// A running animation, plus the parameters it was built from.
 pub struct LiveWave {
     params: WaveParams,
@@ -38,51 +34,50 @@ pub struct LiveWave {
     /// No external clocks: the demo drives each animation's internal clock, so
     /// this stays empty and `clock_source` stays `None`.
     clocks: StaticClockBank,
-    /// The waveform sampled across one sweep of spatial phase, rebuilt once a
-    /// frame — for sine only.
+    /// Everything about the animation that is fixed for this frame.
     ///
-    /// Sine is the only waveform whose cost is the waveform. Triangle, square
-    /// and sawtooth are a few multiplies and a compare; what made them look
-    /// expensive in a profile was `get_value` rederiving frame-constant state
-    /// on every call, not the arithmetic.
+    /// Resolving it once is what makes a per-vertex animation affordable: what
+    /// answering costs is mostly deciding which clock drives it and what the
+    /// amplitude works out to, and none of that depends on the vertex asking.
+    prepared: PreparedAnimation,
+    /// Sine, sampled across one sweep of spatial phase.
     ///
-    /// And sine is the only one it is safe to tabulate. Interpolating between
-    /// samples turns a jump into a ramp one cell wide, which is exactly the
-    /// edge a square or a sawtooth exists to have. Sine has no edge to lose.
-    table: Vec<f32>,
+    /// Not because `sin` is slow — a polynomial replacing it saved a fifth of
+    /// what this does. The cost is the plumbing a waveform is reached through:
+    /// the args struct, the duty-cycle branches, the standing-wave envelope,
+    /// the dispatch. A table short-circuits all of it, and sine is the only
+    /// waveform it is safe to short-circuit, since interpolating turns a jump
+    /// into a ramp one cell wide and a sine has no jump to lose. Its error here
+    /// is around 1e-7.
+    sine_table: Vec<f32>,
 }
 
 impl LiveWave {
     pub fn new(params: &WaveParams) -> Self {
+        let animation = build(params);
+        let clocks = StaticClockBank::default();
         let mut wave = Self {
             params: params.clone(),
-            animation: build(params),
-            clocks: StaticClockBank::default(),
-            table: Vec::new(),
+            prepared: animation.prepare(&clocks, UnipolarFloat::ZERO),
+            animation,
+            clocks,
+            sine_table: Vec::new(),
         };
-        wave.tabulate(UnipolarFloat::ZERO);
+        wave.resample();
         wave
     }
 
-    /// Resample the waveform for this frame.
-    ///
-    /// Cheap enough to do unconditionally: a thousand evaluations against the
-    /// tens of thousands it saves.
-    fn tabulate(&mut self, audio: UnipolarFloat) {
+    /// Resample sine for this frame. A thousand evaluations against the tens of
+    /// thousands it saves.
+    fn resample(&mut self) {
+        self.sine_table.clear();
         if !matches!(self.params.waveform, WaveformKind::Sine) {
-            self.table.clear();
             return;
         }
-        self.table.clear();
-        self.table.reserve(TABLE_SIZE + 1);
-        for i in 0..=TABLE_SIZE {
-            let phase = i as f64 / TABLE_SIZE as f64;
-            self.table.push(self.animation.get_value(
-                Phase::new(phase),
-                0,
-                &self.clocks,
-                audio,
-            ) as f32);
+        self.sine_table.reserve(SINE_TABLE + 1);
+        for i in 0..=SINE_TABLE {
+            let phase = Phase::new(i as f64 / SINE_TABLE as f64);
+            self.sine_table.push(self.prepared.value(phase, 0) as f32);
         }
     }
 
@@ -99,39 +94,23 @@ impl LiveWave {
             self.params = params.clone();
         }
         self.animation.update_state(delta, audio);
-        self.tabulate(audio);
+        self.prepared = self.animation.prepare(&self.clocks, audio);
+        self.resample();
     }
 
     /// The animation's value at a point in its spatial phase.
     ///
-    /// `index` stands in for a tunnel segment's ordinal, which only `Noise`
-    /// reads — it uses it as the second axis of the simplex field, with
-    /// smoothing as the correlation between neighbours.
-    pub fn value(&self, phase: f64, index: usize, audio: UnipolarFloat) -> f64 {
-        f64::from(self.value_f32(phase as f32, index, audio))
-    }
-
-    /// The animation's value, from the table where there is one.
-    ///
-    /// This is the hot path: it runs once per vertex per animation per frame,
-    /// so the table is the difference between a transcendental and a load.
+    /// The hot path: once per vertex per animation per frame.
     #[inline]
-    pub fn value_f32(&self, phase: f32, index: usize, audio: UnipolarFloat) -> f32 {
-        if self.table.is_empty() {
-            // Everything but sine: either cheap to evaluate exactly, or noise,
-            // which reads the index and so has no table to read.
-            return self.animation.get_value(
-                Phase::new(f64::from(phase)),
-                index,
-                &self.clocks,
-                audio,
-            ) as f32;
+    pub fn value_f32(&self, phase: f32, index: usize) -> f32 {
+        if self.sine_table.is_empty() {
+            return self.prepared.value(Phase::new(f64::from(phase)), index) as f32;
         }
-        let t = phase.rem_euclid(1.0) * TABLE_SIZE as f32;
+        let t = phase.rem_euclid(1.0) * SINE_TABLE as f32;
         let i = t as usize;
         let frac = t - i as f32;
-        let a = self.table[i.min(TABLE_SIZE)];
-        let b = self.table[(i + 1).min(TABLE_SIZE)];
+        let a = self.sine_table[i.min(SINE_TABLE)];
+        let b = self.sine_table[(i + 1).min(SINE_TABLE)];
         a + (b - a) * frac
     }
 }
