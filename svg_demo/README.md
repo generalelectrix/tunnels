@@ -303,18 +303,55 @@ The shift is a whole number of turns, which is the only jump that is ever real,
 so it survives every colour knob and is never rebuilt. `unwrapped` does this and
 is covered by a test.
 
-### Checking the shaders without a GPU
+### Checking that both paths draw the same picture
 
-The shaders compile and link independently of the program, which is worth doing
-on a machine with no display:
+That claim is the one the whole thing rests on, and it does not need a display —
+SDL will hand back an offscreen context, so a scene can be drawn down both paths
+into the same framebuffer and read back:
+
+```
+cargo run --release -p svg_demo -- compare
+cargo run --release -p svg_demo -- compare --samples 4 --tolerance 0 --out /tmp/cmp
+```
+
+28 scenes, one per branch the shader can take: each phase coordinate, each
+geometry target, each waveform and each of its switches, the flat and mask
+paths, and a mask stacked over a gradient. Multisampling is off by default,
+because an edge lands on a different set of samples for a sub-pixel change in a
+vertex and every silhouette would report as a difference.
+
+Two controls keep the numbers honest. Every scene is drawn a third time down the
+CPU path and the two CPU frames must come back byte identical, or the scene is
+reported as unstable rather than compared. And the Noise scene falls back to the
+CPU by design, so it has to come back at exactly zero.
+
+At 800x600 the two paths agree everywhere except a few hundred pixels, and those
+are the CPU path's own approximation rather than the shader's:
+
+| | scenes over a 2/255 difference | worst scene |
+|---|---|---|
+| as shipped | 20 of 28 | 189 pixels, 0.039% of the frame |
+| with `fastmath::atan2` swapped for the exact one | 8 of 28 | 12 pixels, 0.003% |
+
+So nearly all of it is the 2.1e-4 radians `fastmath::atan2` trades accuracy for
+— the same 0.15 of a pixel described above, arriving as a vertex landing on the
+other side of a pixel boundary. What survives an exact `atan2` is single pixels
+on a silhouette, where f32 rounding differs between a CPU expression and a GPU
+one. No scene disagrees in its interior, which is the kind of difference that
+would mean the shader is wrong.
+
+### Checking the shaders without running them
+
+The shaders also compile and link on their own:
 
 ```
 glslangValidator -l svg_demo/src/shaders/fill.vert svg_demo/src/shaders/fill.frag
 ```
 
-That checks them against the GLSL 1.50 spec — it will reject a builtin from a
-later version — but a spec-clean shader is not the same as one a particular
-driver accepts, so it is a floor, not a guarantee.
+That checks them against the GLSL 1.50 spec — it rejects a builtin from a later
+version — but a spec-clean shader is not the same as one a particular driver
+accepts, so it is a floor, not a guarantee. The render clients are the only
+place that question gets a real answer.
 
 ## Meshing and color
 
