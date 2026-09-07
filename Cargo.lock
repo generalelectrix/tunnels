@@ -5472,6 +5472,7 @@ dependencies = [
  "image 0.25.6",
  "lyon_path",
  "lyon_tessellation",
+ "noise",
  "piston2d-graphics 0.45.0",
  "piston2d-opengl_graphics",
  "piston_window",

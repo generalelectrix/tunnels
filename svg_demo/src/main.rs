@@ -7,6 +7,7 @@
 
 mod anim;
 mod bench;
+mod noisebench;
 mod draw;
 mod fastmath;
 mod mesh;
@@ -89,6 +90,15 @@ fn main() -> Result<()> {
             let shapes = shapes::load_dir(&shape_dir())?;
             stats::report(&shapes);
             Ok(())
+        }
+        "noisebench" => {
+            noisebench::run();
+            Ok(())
+        }
+        "noiseprofile" => {
+            let case = args.next().unwrap_or_else(|| "noise".to_string());
+            let seconds: f64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(5.0);
+            noisebench::in_situ(&shape_dir(), &case, seconds)
         }
         "anim" => {
             let shapes = shapes::load_dir(&shape_dir())?;

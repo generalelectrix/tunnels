@@ -30,6 +30,7 @@ usvg = "0.48"
 # Pure Rust, no C toolchain: needed by every path including headless.
 graphics = { package = "piston2d-graphics", version = "0.45" }
 image = "0.25"
+noise = "0.9.0"
 
 # Render window: the same stack as tunnelclient, so output is comparable.
 piston_window = { version = "0.132", optional = true }
