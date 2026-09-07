@@ -303,6 +303,43 @@ The shift is a whole number of turns, which is the only jump that is ever real,
 so it survives every colour knob and is never rebuilt. `unwrapped` does this and
 is covered by a test.
 
+### Which path is faster
+
+`profile` measures one path. `ab` runs both against the same scene and prints
+the comparison, which is the question worth asking:
+
+```
+cargo run --release -p svg_demo -- ab
+cargo run --release -p svg_demo -- ab --layers 1,3,6,9 --seconds 8 --size 1920x1080
+```
+
+The first thing it prints is the GL renderer and vendor string, and it says so
+in a box if that turns out to be a software rasteriser — a machine with no
+driver still gives you a working OpenGL context and a full set of entirely
+plausible numbers that are about nothing.
+
+Design choices worth knowing, because they are what make the numbers mean
+anything:
+
+- **The paths alternate in short blocks** rather than running one after the
+  other. A laptop throttles and a desktop has other work on it, and a run that
+  does all of one then all of the other charges the drift to whichever went
+  second.
+- **A block's clock starts when recording does.** The first frame back on a path
+  is the slowest one it draws — a program rebind, a buffer it has not uploaded
+  yet — so the discarded frames would otherwise eat the window they precede.
+- **Hue is swept per frame, not per second.** `RampKey` quantises to half a
+  texel, so a wall-clock sweep on a fast machine steps inside one bucket and
+  rebuilds nothing, which would turn the animating case into a second copy of
+  the still one on exactly the hardware the question is about.
+- **Layer count is swept**, because one scene answers one question. The
+  interesting result is where each path stops fitting the budget and whether
+  they get there at the same rate.
+
+Read `submit` carefully: a `glDrawElements` returns before the GPU has finished,
+so work the CPU path accounts for reappears under `gpu + swap` on the shader
+path. Frame time is the number that compares across the two.
+
 ### Checking that both paths draw the same picture
 
 That claim is the one the whole thing rests on, and it does not need a display —
