@@ -341,6 +341,43 @@ fn scenes(shape: usize, stroke_shape: usize) -> Vec<Scene> {
         },
     );
 
+    // One frame with a layer on each path: the Noise layer falls back to
+    // piston while the layer over it goes through the shader. This is the only
+    // scene where a draw of ours lands in the middle of piston's batch, which
+    // is the arrangement that corrupts it if the bracket is wrong. Both orders,
+    // because a shader draw before piston's first draw of a frame and one after
+    // it are different situations.
+    let noisy = animated(
+        gradient(shape),
+        AnimTarget::Radial,
+        ColorPhase::Angle,
+        wave(WaveformKind::Noise, 0.35),
+    );
+    let shaded = LayerParams {
+        scale_x: 0.5,
+        scale_y: 0.5,
+        ..animated(
+            gradient(stroke_shape),
+            AnimTarget::Radial,
+            ColorPhase::Angle,
+            wave(WaveformKind::Sine, 0.35),
+        )
+    };
+    push(
+        "cpu layer under a shader layer",
+        DemoParams {
+            layers: vec![noisy.clone(), shaded.clone()],
+            gpu: false,
+        },
+    );
+    push(
+        "shader layer under a cpu layer",
+        DemoParams {
+            layers: vec![shaded, noisy],
+            gpu: false,
+        },
+    );
+
     out
 }
 
