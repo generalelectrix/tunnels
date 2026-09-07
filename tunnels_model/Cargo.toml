@@ -22,7 +22,3 @@ tunnels_lib = { path = "../tunnels_lib" }
 # The frame payload is encoded tagless: the schema is the Rust type, so nothing
 # self-describing needs to travel with it.
 postcard.workspace = true
-
-[[bench]]
-name = "render"
-harness = false
