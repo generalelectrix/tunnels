@@ -31,11 +31,20 @@ pub struct ShapeMesh {
 impl ShapeMesh {
     /// Triangles tracing the shape's outline at the given width.
     pub fn stroke(&self, width: f32) -> Vec<[f32; 2]> {
+        self.stroke_with(width, LineJoin::Round, LineCap::Round)
+    }
+
+    /// The outline, with the join and cap styles named.
+    ///
+    /// Round joins flatten to several segments apiece at this tolerance, and a
+    /// fan lands at every vertex of a polyline sampled in the thousands, so the
+    /// style chosen here drives output size as much as it drives time.
+    pub fn stroke_with(&self, width: f32, join: LineJoin, cap: LineCap) -> Vec<[f32; 2]> {
         let mut out = Vec::new();
         let opts = StrokeOptions::tolerance(TOLERANCE)
             .with_line_width(width.max(1e-4))
-            .with_line_join(LineJoin::Round)
-            .with_line_cap(LineCap::Round);
+            .with_line_join(join)
+            .with_line_cap(cap);
         for (path, _) in &self.contours {
             let mut buf: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
             let mut builder =

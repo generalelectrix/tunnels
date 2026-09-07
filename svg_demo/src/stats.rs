@@ -12,6 +12,7 @@ use crate::mesh::{self, Level, refine};
 use crate::ramp;
 use crate::params::{ColorPhase, LayerParams, PhaseField};
 use crate::shapes::ShapeMesh;
+use lyon_tessellation::{LineCap, LineJoin};
 use std::time::Instant;
 
 /// Shapes are normalised into [-1, 1]. Anything past this is a stray vertex,
@@ -325,6 +326,40 @@ pub fn report(shapes: &[ShapeMesh]) {
         srows[0].0 / 8333.0 * 100.0,
         smed.0,
         smed.0 / 8333.0 * 100.0
+    );
+
+    println!("\n=== stroke join style ===");
+    println!("round joins against miter, at the same width\n");
+    println!("{:<30} {:>9} {:>9} {:>9} {:>9}", "shape", "round tri", "miter tri", "round us", "miter us");
+    let worst: Vec<&str> = srows.iter().take(6).map(|r| r.2).collect();
+    let (mut rt, mut mt, mut ru, mut mu) = (0usize, 0usize, 0.0f64, 0.0f64);
+    for shape in shapes {
+        let r = shape.stroke_with(STROKE_W, LineJoin::Round, LineCap::Round).len() / 3;
+        let m = shape.stroke_with(STROKE_W, LineJoin::Miter, LineCap::Butt).len() / 3;
+        let t = Instant::now();
+        for _ in 0..TESS_REPEATS {
+            std::hint::black_box(shape.stroke_with(STROKE_W, LineJoin::Round, LineCap::Round));
+        }
+        let rus = t.elapsed().as_secs_f64() * 1e6 / TESS_REPEATS as f64;
+        let t = Instant::now();
+        for _ in 0..TESS_REPEATS {
+            std::hint::black_box(shape.stroke_with(STROKE_W, LineJoin::Miter, LineCap::Butt));
+        }
+        let mus = t.elapsed().as_secs_f64() * 1e6 / TESS_REPEATS as f64;
+        rt += r;
+        mt += m;
+        ru += rus;
+        mu += mus;
+        if worst.contains(&shape.name.as_str()) {
+            println!("{:<30} {r:>9} {m:>9} {rus:>9.1} {mus:>9.1}", shape.name);
+        }
+    }
+    println!(
+        "\nlibrary total: {rt} -> {mt} triangles ({:+.0}%), {:.1}ms -> {:.1}ms ({:+.0}%)",
+        (mt as f64 / rt as f64 - 1.0) * 100.0,
+        ru / 1000.0,
+        mu / 1000.0,
+        (mu / ru - 1.0) * 100.0
     );
 
     let slivers: usize = shapes
