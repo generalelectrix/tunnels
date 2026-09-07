@@ -4,9 +4,11 @@
 // the sawtooth's discontinuity lands exactly where it belongs however coarse
 // the mesh is and the cycle count never reaches the geometry.
 //
-// The texture is stored as sRGB and the framebuffer encodes on write, so the
-// values that arrive here are linear and the ones written out are converted
-// back — the same round trip a piston-drawn layer makes.
+// The ramp texture carries no gamma conversion of its own, so a texel arrives
+// here as the byte the ramp was built from, and sRGB encoding on the
+// framebuffer converts whatever is written on the way out. Both belong to the
+// context and the texture rather than to this shader, which is why a fill drawn
+// here and one drawn through piston land on the same colour.
 
 uniform sampler2D u_ramp;
 uniform int u_flat;
