@@ -31,6 +31,9 @@ const REPEATS: u128 = 16;
 /// magnitude dearer than a vertex walk, and the whole library is measured.
 const TESS_REPEATS: u32 = 8;
 
+/// The stroke width the stroke measurement uses, in normalised shape units.
+const STROKE_W: f32 = 0.04;
+
 /// The shape with the most source triangles, which refines into the most
 /// vertices and so is the worst case for anything measured per vertex.
 fn heaviest(shapes: &[ShapeMesh]) -> usize {
@@ -295,6 +298,33 @@ pub fn report(shapes: &[ShapeMesh]) {
     println!(
         "a frame at 120Hz has 8333us; the worst shape is {:.1}% of it",
         rows[0].0 / 8333.0 * 100.0
+    );
+
+    println!("\n=== stroke tessellation cost ===");
+    println!("what one StrokeTessellator pass costs, at the default width\n");
+    let mut srows: Vec<(f64, usize, &str)> = Vec::new();
+    for shape in shapes {
+        let tris = shape.stroke(STROKE_W).len() / 3;
+        let t = Instant::now();
+        for _ in 0..TESS_REPEATS {
+            std::hint::black_box(shape.stroke(STROKE_W));
+        }
+        let us = t.elapsed().as_secs_f64() * 1e6 / TESS_REPEATS as f64;
+        srows.push((us, tris, &shape.name));
+    }
+    srows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    println!("{:<46} {:>10} {:>10}", "shape", "tris", "us");
+    for (us, tris, name) in srows.iter().take(6) {
+        println!("{name:<46} {tris:>10} {us:>10.1}");
+    }
+    let smed = srows[srows.len() / 2];
+    println!("{:<46} {:>10} {:>10.1}", format!("median ({})", smed.2), smed.1, smed.0);
+    println!(
+        "\nworst {:.1}us = {:.0}% of a 120Hz frame; median {:.1}us = {:.1}%",
+        srows[0].0,
+        srows[0].0 / 8333.0 * 100.0,
+        smed.0,
+        smed.0 / 8333.0 * 100.0
     );
 
     let slivers: usize = shapes
