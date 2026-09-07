@@ -18,6 +18,8 @@ mod stats;
 mod software;
 
 #[cfg(feature = "windows")]
+mod compare;
+#[cfg(feature = "windows")]
 mod control;
 #[cfg(feature = "windows")]
 mod gpu;
@@ -190,9 +192,41 @@ fn main() -> Result<()> {
             render::run(&shape_dir(), gpu)
         }
         #[cfg(feature = "windows")]
+        "compare" => {
+            let mut opts = compare::Options::default();
+            let rest: Vec<String> = args.collect();
+            let mut i = 0;
+            while i < rest.len() {
+                let take = |i: usize| rest.get(i + 1).cloned().unwrap_or_default();
+                match rest[i].as_str() {
+                    "--size" => {
+                        if let Some((w, h)) = take(i).split_once('x') {
+                            opts.width = w.parse().unwrap_or(opts.width);
+                            opts.height = h.parse().unwrap_or(opts.height);
+                        }
+                        i += 2;
+                    }
+                    "--samples" => {
+                        opts.samples = take(i).parse().unwrap_or(opts.samples);
+                        i += 2;
+                    }
+                    "--tolerance" => {
+                        opts.tolerance = take(i).parse().unwrap_or(opts.tolerance);
+                        i += 2;
+                    }
+                    "--out" => {
+                        opts.out_dir = PathBuf::from(take(i));
+                        i += 2;
+                    }
+                    _ => i += 1,
+                }
+            }
+            compare::run(&shape_dir(), opts)
+        }
+        #[cfg(feature = "windows")]
         "control" => control::run(&shape_dir()),
         other => Err(anyhow!(
-            "unknown command {other:?}; expected control, render, profile, stats, sheet, features or zoom"
+            "unknown command {other:?}; expected control, render, profile, compare, stats, sheet, features or zoom"
         )),
     }
 }
