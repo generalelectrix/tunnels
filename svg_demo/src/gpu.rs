@@ -722,3 +722,86 @@ unsafe fn info_log(
             .to_string()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// A vertex's phase after its branch offset is applied, which is what the
+    /// shader interpolates across a triangle.
+    fn unwrapped_phase(v: [f32; 3]) -> f32 {
+        v[1].atan2(v[0]) / TAU + 0.5 + v[2]
+    }
+
+    /// The widest gap between any two of a triangle's phases.
+    fn spread(p: [f32; 3]) -> f32 {
+        let hi = p.iter().copied().fold(f32::MIN, f32::max);
+        let lo = p.iter().copied().fold(f32::MAX, f32::min);
+        hi - lo
+    }
+
+    #[test]
+    fn unwrapping_puts_every_triangle_on_one_branch() {
+        // Two slivers, one hugging each end of the x axis. The first straddles
+        // the negative axis where `atan2` wraps; the second sits nowhere near
+        // it. Both are small, as a refined mesh's triangles are — a triangle
+        // spanning half the shape has no near branch to be put on.
+        let mesh = RefinedMesh {
+            verts: vec![
+                [-1.0, 0.01],
+                [-1.0, -0.01],
+                [-0.5, 0.0],
+                [1.0, 0.01],
+                [1.0, -0.01],
+                [0.5, 0.0],
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+        };
+        let (verts, indices) = unwrapped(&mesh);
+
+        // Only the straddling triangle needs a copy, and only of the one vertex
+        // that sits on the far side of the wrap from its reference.
+        assert_eq!(
+            verts.len(),
+            mesh.verts.len() + 1,
+            "expected one duplicated vertex, got {}",
+            verts.len() as i64 - mesh.verts.len() as i64
+        );
+        assert_eq!(indices.len(), mesh.indices.len());
+
+        // A copy is the same point read on a different branch. Anything else
+        // would move the geometry.
+        let copy = verts[mesh.verts.len()];
+        assert_eq!([copy[0], copy[1]], [-1.0, -0.01]);
+        assert_eq!(copy[2], 1.0);
+
+        // The triangle clear of the seam keeps the vertices it started with.
+        assert_eq!(&indices[3..], &[3, 4, 5]);
+
+        // The invariant the whole thing exists for: no triangle spans more than
+        // half a turn, so interpolating across it takes the short way round and
+        // paints no band of spurious rainbow along the seam.
+        for tri in indices.as_chunks::<3>().0 {
+            let phases = tri.map(|i| unwrapped_phase(verts[i as usize]));
+            let width = spread(phases);
+            assert!(
+                width < 0.5,
+                "triangle {tri:?} spans {width} of a turn at phases {phases:?}"
+            );
+        }
+
+        // Whole turns are the only shift that is ever real, so a mesh with no
+        // triangle crossing the seam comes back untouched.
+        let clear = RefinedMesh {
+            verts: mesh.verts[3..].to_vec(),
+            indices: vec![0, 1, 2],
+        };
+        let (verts, indices) = unwrapped(&clear);
+        assert_eq!(verts.len(), clear.verts.len());
+        assert_eq!(indices, clear.indices);
+        assert!(
+            verts.iter().all(|v| v[2] == 0.0),
+            "nothing crosses the seam, so nothing should be shifted: {verts:?}"
+        );
+    }
+}
