@@ -50,6 +50,28 @@ impl ShapeMesh {
         out
     }
 
+    /// Re-run the fill tessellation from the retained contours.
+    ///
+    /// The result is what `fill` already holds. It exists so the cost of
+    /// tessellation can be measured on its own, apart from the SVG parse that
+    /// normally precedes it.
+    pub fn retessellate_fill(&self) -> Vec<[f32; 2]> {
+        let mut out = Vec::new();
+        for (path, rule) in &self.contours {
+            let opts = FillOptions::tolerance(TOLERANCE).with_fill_rule(*rule);
+            let mut buf: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+            let mut builder =
+                BuffersBuilder::new(&mut buf, |v: FillVertex| v.position().to_array());
+            if FillTessellator::new()
+                .tessellate_path(path, &opts, &mut builder)
+                .is_ok()
+            {
+                expand(&buf, &mut out);
+            }
+        }
+        out
+    }
+
     pub fn triangle_count(&self) -> usize {
         self.fill.len() / 3
     }

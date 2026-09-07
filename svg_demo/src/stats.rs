@@ -25,6 +25,12 @@ const SLIVER_RATIO: f32 = 0.002;
 /// Iterations each per-vertex measurement is averaged over.
 const REPEATS: u128 = 16;
 
+/// Iterations each tessellation measurement is averaged over.
+///
+/// Lower than `REPEATS` because a tessellation pass is three orders of
+/// magnitude dearer than a vertex walk, and the whole library is measured.
+const TESS_REPEATS: u32 = 8;
+
 /// The shape with the most source triangles, which refines into the most
 /// vertices and so is the worst case for anything measured per vertex.
 fn heaviest(shapes: &[ShapeMesh]) -> usize {
@@ -244,6 +250,52 @@ pub fn report(shapes: &[ShapeMesh]) {
     if flagged == 0 {
         println!("none: every fill and stroke vertex is finite and inside the unit box");
     }
+
+    println!("\n=== fill tessellation cost ===");
+    println!("what one lyon FillTessellator pass costs, parse excluded\n");
+    let mut rows: Vec<(f64, usize, &str)> = Vec::new();
+    for shape in shapes {
+        // Once outside the clock: lyon allocates internal scratch on the first
+        // pass over a path, and charging that to the steady state would measure
+        // the warm-up instead.
+        let tris = shape.retessellate_fill().len() / 3;
+        let t = Instant::now();
+        for _ in 0..TESS_REPEATS {
+            std::hint::black_box(shape.retessellate_fill());
+        }
+        let us = t.elapsed().as_secs_f64() * 1e6 / TESS_REPEATS as f64;
+        rows.push((us, tris, &shape.name));
+    }
+    let total: f64 = rows.iter().map(|r| r.0).sum();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    println!("{:<46} {:>10} {:>10} {:>10}", "shape", "tris", "us", "ns/tri");
+    for (us, tris, name) in rows.iter().take(10) {
+        let per = if *tris > 0 { us * 1000.0 / *tris as f64 } else { 0.0 };
+        println!("{name:<46} {tris:>10} {us:>10.1} {per:>10.1}");
+    }
+    let median = rows[rows.len() / 2];
+    let per_med = if median.1 > 0 { median.0 * 1000.0 / median.1 as f64 } else { 0.0 };
+    println!("{:<46} {:>10} {:>10} {:>10}", "...", "", "", "");
+    println!(
+        "{:<46} {:>10} {:>10.1} {:>10.1}",
+        format!("median ({})", median.2),
+        median.1,
+        median.0,
+        per_med
+    );
+    println!(
+        "\n{} shapes, {:.1}ms to tessellate the whole library once",
+        rows.len(),
+        total / 1000.0
+    );
+    println!(
+        "worst single shape {:.1}us ({}), median {:.1}us",
+        rows[0].0, rows[0].2, median.0
+    );
+    println!(
+        "a frame at 120Hz has 8333us; the worst shape is {:.1}% of it",
+        rows[0].0 / 8333.0 * 100.0
+    );
 
     let slivers: usize = shapes
         .iter()
