@@ -17,15 +17,17 @@
 //! `GlGraphics` batches vertices and caches the program and draw state it last
 //! bound. Issuing GL calls while it holds that cache corrupts the batch, and
 //! the symptom is a layer that intermittently fails to draw. So a draw here is
-//! bracketed: piston's batch is flushed first, and its caches are invalidated
-//! afterwards so it rebinds from scratch rather than trusting what it
-//! remembers. See `Boundary`.
+//! bracketed: piston's batch is flushed first, the blend state the CPU path
+//! composites under is asked for explicitly rather than inherited, and its
+//! caches are invalidated afterwards so it rebinds from scratch rather than
+//! trusting what it remembers. See `Boundary`.
 
 use crate::draw::AxisWave;
 use crate::mesh::{MeshId, RefinedMesh};
 use crate::params::{AnimTarget, ColorPhase, LayerParams, PhaseField};
 use gl::types::{GLchar, GLenum, GLint, GLsizeiptr, GLuint};
 use graphics::color::gamma_srgb_to_linear;
+use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
 use opengl_graphics::{GlGraphics, Texture};
 use std::collections::HashMap;
@@ -34,6 +36,15 @@ use tunnels_model::animation::{Waveform, WaveformState};
 
 /// Animation slots the shader carries, matching `params::N_WAVES`.
 const MAX_WAVES: usize = crate::params::N_WAVES;
+
+// An array size in GLSL has to be a constant expression written in the shader
+// source, so the same number is spelled out in `fill.vert` and cannot be
+// derived from this one. It can at least be made impossible to change only
+// here.
+const _: () = assert!(
+    MAX_WAVES == 3,
+    "fill.vert declares MAX_WAVES as a literal; change it alongside N_WAVES"
+);
 
 const VERTEX_SRC: &str = include_str!("shaders/fill.vert");
 const FRAGMENT_SRC: &str = include_str!("shaders/fill.frag");
@@ -415,6 +426,10 @@ impl GpuRenderer {
     ) -> DrawStats {
         let mut stats = DrawStats::default();
         let id = source.id();
+        // Building a buffer binds a vertex array and an element buffer, so it
+        // belongs inside the bracket alongside the draw rather than in front of
+        // it.
+        let _boundary = Boundary::enter(gl);
         let mesh = *self.meshes.entry(id).or_insert_with(|| {
             let mark = std::time::Instant::now();
             let mesh = upload(&source);
@@ -427,7 +442,6 @@ impl GpuRenderer {
         stats.triangles = mesh.triangles;
 
         let mark = std::time::Instant::now();
-        let _boundary = Boundary::enter(gl);
         unsafe {
             gl::UseProgram(self.program);
             self.set(uniforms);
@@ -498,19 +512,31 @@ impl GpuRenderer {
 
 /// A clean boundary between piston's batch and ours.
 ///
-/// Entering flushes whatever piston has queued, so nothing of ours lands in
-/// the middle of it and the drawing order across the two paths is the order
-/// the layers were submitted in. Leaving drops the caches `GlGraphics` keeps
-/// of the program and draw state it last bound, because both are now stale:
-/// the program is ours, and the blend, scissor and stencil state is only
-/// guaranteed to be what piston last set if nothing between then and now
-/// touched it. Dropping them costs one redundant rebind per frame and removes
-/// the entire class of bug where piston skips a state change it believes is
-/// in effect.
+/// Entering flushes whatever piston has queued, so nothing of ours lands in the
+/// middle of it and the drawing order across the two paths is the order the
+/// layers were submitted in.
+///
+/// Entering also asks for the draw state the CPU path draws every layer under.
+/// Piston establishes that on its own first draw of a frame and not before, so
+/// a frame drawn entirely through this pass would never give it the chance,
+/// and blending would be left wherever the previous frame happened to leave
+/// it — off, on the first frame of all. Going through `use_draw_state` rather
+/// than raw GL is what keeps piston's own record of it true.
+///
+/// Leaving drops the caches `GlGraphics` keeps of the program and the draw
+/// state it last bound. The program is genuinely stale, because it is ours.
+/// The draw state is not, but dropping it means the next pass through here
+/// rebinds blend, scissor and stencil unconditionally rather than trusting a
+/// record of them, which costs three state calls a draw and removes the entire
+/// class of bug where either side skips a change it believes is in effect. The
+/// symptom that buys is a layer that intermittently fails to draw, so the
+/// trade is not close.
 ///
 /// The rest of the state this pass touches it restores itself: the vertex
-/// array binding goes back to zero, the texture unit stays at zero, and face
-/// culling is left disabled, which is where every piston flush leaves it.
+/// array binding goes back to zero, the array buffer binding to zero, the
+/// texture binding to zero, the active texture unit is never moved off zero,
+/// and face culling is left disabled — which is where every piston flush
+/// leaves it too.
 struct Boundary<'a> {
     gl: &'a mut GlGraphics,
 }
@@ -518,6 +544,7 @@ struct Boundary<'a> {
 impl<'a> Boundary<'a> {
     fn enter(gl: &'a mut GlGraphics) -> Self {
         gl.draw_end();
+        gl.use_draw_state(&DrawState::default());
         Self { gl }
     }
 }
