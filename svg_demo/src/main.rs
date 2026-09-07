@@ -18,6 +18,8 @@ mod stats;
 mod software;
 
 #[cfg(feature = "windows")]
+mod ab;
+#[cfg(feature = "windows")]
 mod compare;
 #[cfg(feature = "windows")]
 mod control;
@@ -192,6 +194,60 @@ fn main() -> Result<()> {
             render::run(&shape_dir(), gpu)
         }
         #[cfg(feature = "windows")]
+        "ab" => {
+            let mut opts = ab::Options::default();
+            let rest: Vec<String> = args.collect();
+            let mut i = 0;
+            while i < rest.len() {
+                let take = |i: usize| rest.get(i + 1).cloned().unwrap_or_default();
+                match rest[i].as_str() {
+                    "--layers" => {
+                        opts.layers = take(i)
+                            .split(',')
+                            .filter_map(|s| s.trim().parse().ok())
+                            .collect();
+                        i += 2;
+                    }
+                    "--seconds" => {
+                        opts.seconds = take(i).parse().unwrap_or(opts.seconds);
+                        i += 2;
+                    }
+                    "--blocks" => {
+                        opts.blocks = take(i).parse().unwrap_or(opts.blocks);
+                        i += 2;
+                    }
+                    "--size" => {
+                        if let Some((w, h)) = take(i).split_once('x') {
+                            opts.width = w.parse().unwrap_or(opts.width);
+                            opts.height = h.parse().unwrap_or(opts.height);
+                        }
+                        i += 2;
+                    }
+                    "--target-px" => {
+                        opts.target_px = take(i).parse().unwrap_or(opts.target_px);
+                        i += 2;
+                    }
+                    "--samples" => {
+                        opts.samples = take(i).parse().unwrap_or(opts.samples);
+                        i += 2;
+                    }
+                    "--budget-hz" => {
+                        opts.budget_hz = take(i).parse().unwrap_or(opts.budget_hz);
+                        i += 2;
+                    }
+                    "--shapes" => {
+                        opts.shapes = take(i)
+                            .split(',')
+                            .filter_map(|s| s.trim().parse().ok())
+                            .collect();
+                        i += 2;
+                    }
+                    _ => i += 1,
+                }
+            }
+            ab::run(&shape_dir(), opts)
+        }
+        #[cfg(feature = "windows")]
         "compare" => {
             let mut opts = compare::Options::default();
             let rest: Vec<String> = args.collect();
@@ -226,7 +282,7 @@ fn main() -> Result<()> {
         #[cfg(feature = "windows")]
         "control" => control::run(&shape_dir()),
         other => Err(anyhow!(
-            "unknown command {other:?}; expected control, render, profile, compare, stats, sheet, features or zoom"
+            "unknown command {other:?}; expected control, render, profile, ab, compare, stats, sheet, features or zoom"
         )),
     }
 }
