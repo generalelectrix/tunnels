@@ -148,7 +148,9 @@ Phase for the colour comes from the *undeformed* position, so a colour pattern
 stays glued to the shape while a warp moves it rather than sliding across it.
 
 See them all with `-- anim <shape index>`: rows are targets, columns are
-waveforms.
+waveforms. The last row holds the colour flat while sweeping the spin knob,
+because a uniform layer takes a different path through the renderer and geometry
+has to survive it.
 
 Two limits worth knowing:
 

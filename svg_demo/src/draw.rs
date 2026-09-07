@@ -172,6 +172,41 @@ pub fn warp_verts_into(
         }));
 }
 
+/// Draw a refined mesh in one flat color.
+///
+/// Needed because a warped layer cannot take the unrefined fast path even when
+/// its color is uniform: the displacement lives on the refined mesh's vertices.
+pub fn draw_flat<G: Graphics>(
+    mesh: &RefinedMesh,
+    positions: &[[f32; 2]],
+    color: [f32; 4],
+    m: Matrix2d,
+    gl: &mut G,
+) {
+    if mesh.is_empty() {
+        return;
+    }
+    let stride = CHUNK / 3 * 3;
+    let mut pos = Vec::with_capacity(stride);
+    gl.tri_list(&DrawState::default(), &color, |f| {
+        for chunk in mesh.indices.chunks(stride) {
+            pos.clear();
+            pos.extend(chunk.iter().map(|&i| project(m, positions[i as usize])));
+            f(&pos);
+        }
+    });
+}
+
+/// The single color a uniform or masked layer draws in.
+pub fn flat_color(layer: &LayerParams) -> [f32; 4] {
+    if layer.mask {
+        // A mask paints opaque black, punching a hole in everything beneath.
+        [0.0, 0.0, 0.0, 1.0]
+    } else {
+        hsv_to_rgb(layer.col_center, layer.col_sat, 1.0, layer.level)
+    }
+}
+
 /// Draw a refined mesh, taking its color from a ramp texture indexed by phase.
 ///
 /// The sampler resolves the waveform per fragment, so the sawtooth's jump lands

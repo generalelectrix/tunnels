@@ -2,8 +2,8 @@
 
 use crate::anim::{LiveWave, WaveformKind};
 use crate::draw::{
-    GeometryWave, draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs,
-    warp_verts_into,
+    GeometryWave, draw_flat, draw_layer, draw_textured, flat_color, is_uniform,
+    layer_transform, phase_uvs, warp_verts_into,
 };
 use crate::params::{AnimTarget, TargetedWave, WaveParams};
 use tunnels_lib::number::UnipolarFloat;
@@ -85,7 +85,7 @@ pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Re
         image::Rgba([24, 24, 28, 255]),
     );
 
-    let base_twist_row = rows.len() - 1;
+    let base_spin_row = rows.len() - 1;
     for (r, (target, phase, name)) in rows.iter().enumerate() {
         for (c, (waveform, n_periods, size)) in cols.iter().enumerate() {
             let mut layer = LayerParams {
@@ -100,9 +100,13 @@ pub fn anim_sheet(shapes: &[ShapeMesh], idx: usize, out: &Path, cell: u32) -> Re
                 col_sat: 0.85,
                 ..Default::default()
             };
-            if r == base_twist_row {
-                // Sweep the knob across the row instead of varying a waveform.
+            if r == base_spin_row {
+                // Sweep the knob across the row instead of varying a waveform,
+                // and hold the colour flat. A uniform layer takes a different
+                // path through the renderer, and geometry has to survive it —
+                // it did not, which is how the spin knob came to do nothing.
                 layer.spin = -0.6 + 0.3 * c as f64;
+                layer.col_width = 0.0;
             } else {
                 layer.waves[0] = TargetedWave {
                     enabled: true,
@@ -172,15 +176,21 @@ fn render_animated(shape: &ShapeMesh, layer: &LayerParams, size: u32) -> RgbaIma
     } else {
         warp_verts_into(&mut positions, &refined, layer.spin as f32, &warps, audio);
     }
-    draw_textured(
-        &refined,
-        &positions,
-        &phase_uvs(&refined, field),
-        field.wrap_period(),
-        &texture,
-        m,
-        &mut buf,
-    );
+    // Mirror the render loop's own decision, so this sheet exercises the same
+    // paths the window does rather than a convenient subset of them.
+    if is_uniform(layer) || layer.mask {
+        draw_flat(&refined, &positions, flat_color(layer), m, &mut buf);
+    } else {
+        draw_textured(
+            &refined,
+            &positions,
+            &phase_uvs(&refined, field),
+            field.wrap_period(),
+            &texture,
+            m,
+            &mut buf,
+        );
+    }
     downsample(&buf.into_image(), ss)
 }
 
@@ -194,7 +204,7 @@ fn draw_one(
     target_px: f64,
     buf: &mut RenderBuffer,
 ) {
-    if is_uniform(layer) || layer.mask {
+    if (is_uniform(layer) || layer.mask) && layer.spin == 0.0 {
         draw_layer(shape, outline, layer, m, buf);
         return;
     }

@@ -3,8 +3,8 @@
 
 use crate::anim::LiveWave;
 use crate::draw::{
-    GeometryWave, draw_layer, draw_textured, is_uniform, layer_transform, phase_uvs_into,
-    warp_verts_into, warps_geometry,
+    GeometryWave, draw_flat, draw_layer, draw_textured, flat_color, is_uniform,
+    layer_transform, phase_uvs_into, warp_verts_into, warps_geometry,
 };
 use crate::mesh::{self, Level, MeshId, MeshLibrary};
 use crate::params::{DemoParams, LayerParams, PhaseField, PORT, TargetedWave};
@@ -300,6 +300,16 @@ impl Renderer {
             } = rt;
             let warps = geometry_waves(layer, waves);
             let ramp_texture = &textures[*current];
+            let warping = warps_geometry(layer, &warps);
+            // A flat or masked layer has nothing to interpolate across a
+            // triangle, so it can draw straight from the source mesh — but only
+            // when nothing is displacing its vertices, since a displacement
+            // lives on the refined mesh.
+            let flat = is_uniform(layer) || layer.mask;
+            if flat && !warping {
+                draw_layer(&shapes[layer.shape], stroke.as_deref(), layer, m, gl);
+                continue;
+            }
 
             let scale = layer.scale_x.abs().max(layer.scale_y.abs());
             let level = Level::for_scale(scale, critical, target_px);
@@ -319,17 +329,23 @@ impl Renderer {
                 // stays glued to the shape while a warp moves it, rather than
                 // sliding across it.
                 let mark = Instant::now();
-                phase_uvs_into(uvs, mesh, field);
-                if warps_geometry(layer, &warps) {
+                if warping {
                     warp_verts_into(positions, mesh, layer.spin as f32, &warps, audio);
                 } else {
                     positions.clear();
                     positions.extend_from_slice(&mesh.verts);
                 }
+                if !flat {
+                    phase_uvs_into(uvs, mesh, field);
+                }
                 t.uv_us += mark.elapsed().as_micros();
 
                 let mark = Instant::now();
-                draw_textured(mesh, positions, uvs, field.wrap_period(), ramp_texture, m, gl);
+                if flat {
+                    draw_flat(mesh, positions, flat_color(layer), m, gl);
+                } else {
+                    draw_textured(mesh, positions, uvs, field.wrap_period(), ramp_texture, m, gl);
+                }
                 t.submit_us += mark.elapsed().as_micros();
                 t.triangles += mesh.triangle_count();
             };
