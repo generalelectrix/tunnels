@@ -147,7 +147,7 @@ fn scene(shapes: &[usize]) -> DemoParams {
             // Near-full-screen, which selects the finest mesh level in play.
             scale_x: 1.0,
             scale_y: 1.0,
-            spin_speed: 0.05 + 0.01 * i as f64,
+            rot_speed: 0.05 + 0.01 * i as f64,
             draw_mode: DrawMode::Fill,
             color_phase: ColorPhase::Angle,
             col_center: 0.45,

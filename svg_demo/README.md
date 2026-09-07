@@ -108,18 +108,18 @@ it costs:
 Every target in `Tunnel` modulates a value that also has its own knob —
 `AnimationTarget::Size` adds to `size`, `AspectRatio` to `aspect_ratio`. Held
 against that pattern, two of the geometry targets here are not new: a constant
-radial scale is `size`, and a constant aspect animation is `aspect_ratio`. Only
-**twist** had no base value to modulate, so `LayerParams::twist` adds one — a
-spiral shear growing with radius, so the centre stays put and the rim carries
-the full turn.
+radial scale is `size`, and a constant aspect animation is `aspect_ratio`. **Spin** is the same knob `Tunnel` already has, doing the analogous thing in a
+different medium. On a segmented beam it turns each drawn mark about its own
+centroid. A fill has no marks — an infinitesimal point has no orientation to
+turn — so the same intent, orientation varying from place to place, arrives as a
+shear growing with radius: centre pinned, rim carrying the full turn. Flip a
+beam between marks and fill and the knob keeps meaning what it meant.
 
-Twist is what `spin` becomes on a fill. Spin turns each drawn mark about its own
-centroid, which a filled shape cannot do — it has no marks, and an infinitesimal
-point has no orientation to turn. Orientation that varies from place to place
-only survives into a continuum as a shear. The analogy stops at one point:
-rotation, marquee and spin integrate an angle forever, because turning a mark
-five times looks like turning it once, whereas winding accumulates. So twist is
-a bounded amount with an animator on it rather than a speed.
+One thing does not carry over. Rotation, marquee and a segmented spin integrate
+an angle forever, because turning a mark five times looks like turning it once.
+Winding does not work that way: five turns at the rim stays five turns tighter
+than one. So on a fill this is a bounded amount with an animator on it rather
+than a speed, and `LayerParams::spin` is the base value it modulates.
 
 With radial as the target, the animation's own knobs turn out to be shape
 parameters:

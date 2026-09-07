@@ -92,9 +92,12 @@ pub enum AnimTarget {
     /// superformula's whole trick, arriving free on top of any shape in the
     /// library. Along the radius it pinches into rings.
     Radial,
-    /// Rotates each point about the centre by an amount that varies across the
-    /// shape. Along the radius that is a vortex.
-    Twist,
+    /// Spin, in its continuum form: rotates each point about the centre by an
+    /// amount that varies across the shape. Along the radius that is a vortex.
+    ///
+    /// The same target `Tunnel` already has. On a segmented beam it turns each
+    /// mark in place; on a fill there are no marks to turn, so it shears.
+    Spin,
     /// Stretches one axis while squeezing the other.
     ///
     /// Named for the knob it modulates rather than for what it does, because a
@@ -110,7 +113,7 @@ impl AnimTarget {
         Self::Brightness,
         Self::Saturation,
         Self::Radial,
-        Self::Twist,
+        Self::Spin,
         Self::AspectRatio,
     ];
 
@@ -120,7 +123,7 @@ impl AnimTarget {
             Self::Brightness => "bright",
             Self::Saturation => "sat",
             Self::Radial => "radial",
-            Self::Twist => "twist",
+            Self::Spin => "spin",
             Self::AspectRatio => "aspect",
         }
     }
@@ -203,8 +206,9 @@ pub struct LayerParams {
     pub scale_y: f64,
     /// Static rotation, in turns.
     pub rotation: f64,
-    /// Continuous rotation, in turns per second.
-    pub spin_speed: f64,
+    /// Continuous rotation of the whole figure, in turns per second. The
+    /// demo's analogue of `Tunnel::rot_speed`.
+    pub rot_speed: f64,
     pub shear_x: f64,
     pub shear_y: f64,
     /// Rotation that varies with distance from the centre, in turns at the rim.
@@ -221,7 +225,7 @@ pub struct LayerParams {
     /// work that way: five turns at the rim is five turns tighter than one, so
     /// a `twist_speed` would spiral without bound. Bounded knob, animator to
     /// move it.
-    pub twist: f64,
+    pub spin: f64,
     /// Position offset, in units of the smaller screen dimension.
     pub x: f64,
     pub y: f64,
@@ -255,10 +259,10 @@ impl Default for LayerParams {
             scale_x: 0.8,
             scale_y: 0.8,
             rotation: 0.0,
-            spin_speed: 0.0,
+            rot_speed: 0.0,
             shear_x: 0.0,
             shear_y: 0.0,
-            twist: 0.0,
+            spin: 0.0,
             x: 0.0,
             y: 0.0,
             draw_mode: DrawMode::Fill,

@@ -321,7 +321,7 @@ impl Renderer {
                 let mark = Instant::now();
                 phase_uvs_into(uvs, mesh, field);
                 if warps_geometry(layer, &warps) {
-                    warp_verts_into(positions, mesh, layer.twist as f32, &warps, audio);
+                    warp_verts_into(positions, mesh, layer.spin as f32, &warps, audio);
                 } else {
                     positions.clear();
                     positions.extend_from_slice(&mesh.verts);

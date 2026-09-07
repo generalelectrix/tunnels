@@ -57,7 +57,7 @@ pub fn layer_transform(
     time: f64,
     critical: f64,
 ) -> Matrix2d {
-    let angle = (layer.rotation + layer.spin_speed * time) * TAU;
+    let angle = (layer.rotation + layer.rot_speed * time) * TAU;
     base.trans(layer.x * critical, layer.y * critical)
         .rot_rad(angle)
         .shear(layer.shear_x, layer.shear_y)
@@ -102,8 +102,8 @@ fn same_branch(reference: f32, u: f32, period: f32) -> f32 {
     u + ((reference - u) / period).round() * period
 }
 
-/// How far a twist animation can rotate a point at full size: a quarter turn.
-const MAX_TWIST: f32 = std::f32::consts::TAU / 4.0;
+/// How far a spin animation can rotate a point at full size: a quarter turn.
+const MAX_SPIN: f32 = std::f32::consts::TAU / 4.0;
 
 /// One geometry animation, ready to evaluate.
 pub struct GeometryWave<'a> {
@@ -114,10 +114,10 @@ pub struct GeometryWave<'a> {
 
 /// Whether anything would move a vertex.
 pub fn warps_geometry(layer: &LayerParams, waves: &[GeometryWave]) -> bool {
-    layer.twist != 0.0 || !waves.is_empty()
+    layer.spin != 0.0 || !waves.is_empty()
 }
 
-/// Displace a mesh's vertices under its base twist and geometry animations.
+/// Displace a mesh's vertices under its base spin and geometry animations.
 ///
 /// The mesh itself is untouched — this produces a new position for each vertex,
 /// once per frame, the same shape of work as evaluating phase. Nothing here can
@@ -138,8 +138,8 @@ pub fn warp_verts_into(
     out.extend(mesh.verts.iter().enumerate().map(|(i, v)| {
             let (x, y) = (v[0], v[1]);
             let mut radius = (x * x + y * y).sqrt();
-            // The base twist grows with radius, so the centre stays put and the
-            // rim carries the full turn — a spiral shear rather than a rotation.
+            // Spin grows with radius, so the centre stays put and the rim
+            // carries the full turn — a shear rather than a rotation.
             let mut angle = y.atan2(x) + base_twist * radius * std::f32::consts::TAU;
             let (mut scale_x, mut scale_y) = (1.0f32, 1.0f32);
 
@@ -153,7 +153,7 @@ pub fn warp_verts_into(
                     // Multiplicative, so the deformation is proportional: a
                     // waveform around the angle turns a disc into petals.
                     AnimTarget::Radial => radius *= 1.0 + value,
-                    AnimTarget::Twist => angle += value * MAX_TWIST,
+                    AnimTarget::Spin => angle += value * MAX_SPIN,
                     AnimTarget::AspectRatio => {
                         scale_x *= 1.0 + value;
                         scale_y *= 1.0 - value;
