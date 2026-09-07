@@ -23,15 +23,38 @@ pub enum Waveform {
     Constant,
 }
 
+/// The shape of the wave an animation traces, independent of how big it is or
+/// how fast it moves.
+///
+/// Everything here is a setting rather than a resolved quantity, so it is the
+/// same whether it is being read off an animation or off a preparation of one.
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+pub struct WaveformShape {
+    pub waveform: Waveform,
+    pub pulse: bool,
+    pub standing: bool,
+    pub invert: bool,
+    pub n_periods: u16,
+    pub duty_cycle: UnipolarFloat,
+}
+
+impl Default for WaveformShape {
+    fn default() -> Self {
+        Self {
+            waveform: Waveform::Sine,
+            pulse: false,
+            standing: false,
+            invert: false,
+            n_periods: 1,
+            duty_cycle: UnipolarFloat::ONE,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Animation {
-    waveform: Waveform,
-    pulse: bool,
-    standing: bool,
-    invert: bool,
-    n_periods: u16,
+    shape: WaveformShape,
     size: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
     /// Use a smoother for the smoothing parameter.
     /// This is only necessary when used as the noise cross-correlation parameter,
     /// since small changes imply significant movements in the noise distribution.
@@ -54,13 +77,8 @@ fn get_simplex_gen() -> &'static Simplex {
 impl Default for Animation {
     fn default() -> Self {
         Self {
-            waveform: Waveform::Sine,
-            pulse: false,
-            standing: false,
-            invert: false,
-            n_periods: 1,
+            shape: WaveformShape::default(),
             size: UnipolarFloat::ZERO,
-            duty_cycle: UnipolarFloat::ONE,
             smoothing: Smoother::new(
                 UnipolarFloat::new(0.25),
                 Self::SMOOTH_SMOOTH_TIME,
@@ -84,7 +102,7 @@ impl Animation {
 
     /// Return the current value of the duty cycle.
     pub fn duty_cycle(&self) -> UnipolarFloat {
-        self.duty_cycle
+        self.shape.duty_cycle
     }
 
     /// Return the current value of the smoothing parameter.
@@ -94,7 +112,7 @@ impl Animation {
 
     /// Return the current selected number of animation periods.
     pub fn n_periods(&self) -> u16 {
-        self.n_periods
+        self.shape.n_periods
     }
 
     /// Return true if this animation has nonzero size.
@@ -134,19 +152,6 @@ impl Animation {
         }
     }
 
-    /// Return the value of this animation, but with the amplitude always scaled
-    /// to 1.0 regardless of parameters.
-    pub fn get_unit_value(
-        &self,
-        spatial_phase_offset: Phase,
-        offset_index: usize,
-        external_clocks: &impl ClockStore,
-    ) -> f64 {
-        // The envelope only scales, and a unit value is unscaled by definition.
-        self.prepare(external_clocks, UnipolarFloat::ZERO)
-            .unit_value(spatial_phase_offset, offset_index)
-    }
-
     /// Resolve everything that is fixed for a frame, once.
     ///
     /// A render asks an animation for a value once per segment, or on a filled
@@ -161,12 +166,7 @@ impl Animation {
         audio_envelope: UnipolarFloat,
     ) -> PreparedAnimation {
         PreparedAnimation {
-            waveform: self.waveform,
-            n_periods: self.n_periods,
-            pulse: self.pulse,
-            standing: self.standing,
-            invert: self.invert,
-            duty_cycle: self.duty_cycle,
+            shape: self.shape,
             phase_temporal: self.phase(external_clocks),
             smoothing: self.smoothing.val(),
             ticks: self.ticks(external_clocks),
@@ -176,20 +176,9 @@ impl Animation {
         }
     }
 
-    /// Return the complete, scaled value of this animation for the provided parameters.
-    pub fn get_value(
-        &self,
-        spatial_phase_offset: Phase,
-        offset_index: usize,
-        external_clocks: &impl ClockStore,
-        audio_envelope: UnipolarFloat,
-    ) -> f64 {
-        self.prepare(external_clocks, audio_envelope)
-            .value(spatial_phase_offset, offset_index)
-    }
-
-    /// Scale a value using the amplitude scaling factors set by this animator.
-    pub fn scale_value(
+    /// Scale a value by the amplitude factors: size, clock submaster, and audio
+    /// envelope.
+    fn scale_value(
         &self,
         external_clocks: &impl ClockStore,
         audio_envelope: UnipolarFloat,
@@ -220,14 +209,14 @@ impl Animation {
     /// Emit the current value of all controllable animator state.
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
         use StateChange::*;
-        emitter.emit_animation_state_change(Waveform(self.waveform));
-        emitter.emit_animation_state_change(Pulse(self.pulse));
-        emitter.emit_animation_state_change(Standing(self.standing));
-        emitter.emit_animation_state_change(Invert(self.invert));
-        emitter.emit_animation_state_change(NPeriods(self.n_periods));
+        emitter.emit_animation_state_change(Waveform(self.shape.waveform));
+        emitter.emit_animation_state_change(Pulse(self.shape.pulse));
+        emitter.emit_animation_state_change(Standing(self.shape.standing));
+        emitter.emit_animation_state_change(Invert(self.shape.invert));
+        emitter.emit_animation_state_change(NPeriods(self.shape.n_periods));
         emitter.emit_animation_state_change(Speed(self.clock_speed()));
         emitter.emit_animation_state_change(Size(self.size));
-        emitter.emit_animation_state_change(DutyCycle(self.duty_cycle));
+        emitter.emit_animation_state_change(DutyCycle(self.shape.duty_cycle));
         emitter.emit_animation_state_change(Smoothing(self.smoothing.target()));
         emitter.emit_animation_state_change(ClockSource(self.clock_source));
         emitter.emit_animation_state_change(UseAudioSize(self.use_audio_size));
@@ -244,16 +233,16 @@ impl Animation {
                 self.handle_state_change(StateChange::ClockSource(source), emitter);
             }
             TogglePulse => {
-                self.pulse = !self.pulse;
-                emitter.emit_animation_state_change(StateChange::Pulse(self.pulse));
+                self.shape.pulse = !self.shape.pulse;
+                emitter.emit_animation_state_change(StateChange::Pulse(self.shape.pulse));
             }
             ToggleStanding => {
-                self.standing = !self.standing;
-                emitter.emit_animation_state_change(StateChange::Standing(self.standing));
+                self.shape.standing = !self.shape.standing;
+                emitter.emit_animation_state_change(StateChange::Standing(self.shape.standing));
             }
             ToggleInvert => {
-                self.invert = !self.invert;
-                emitter.emit_animation_state_change(StateChange::Invert(self.invert));
+                self.shape.invert = !self.shape.invert;
+                emitter.emit_animation_state_change(StateChange::Invert(self.shape.invert));
             }
             ToggleUseAudioSize => {
                 self.use_audio_size = !self.use_audio_size;
@@ -271,14 +260,14 @@ impl Animation {
     fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use StateChange::*;
         match sc {
-            Waveform(v) => self.waveform = v,
-            Pulse(v) => self.pulse = v,
-            Standing(v) => self.standing = v,
-            Invert(v) => self.invert = v,
-            NPeriods(v) => self.n_periods = v,
+            Waveform(v) => self.shape.waveform = v,
+            Pulse(v) => self.shape.pulse = v,
+            Standing(v) => self.shape.standing = v,
+            Invert(v) => self.shape.invert = v,
+            NPeriods(v) => self.shape.n_periods = v,
             Speed(v) => self.set_clock_speed(v),
             Size(v) => self.size = v,
-            DutyCycle(v) => self.duty_cycle = v,
+            DutyCycle(v) => self.shape.duty_cycle = v,
             Smoothing(v) => self.smoothing.set_target(v),
             ClockSource(v) => self.clock_source = v,
             UseAudioSize(v) => self.use_audio_size = v,
@@ -326,12 +315,7 @@ pub trait EmitStateChange {
 /// its animations once and then walk a figure without borrowing anything.
 #[derive(Clone, Copy)]
 pub struct PreparedAnimation {
-    waveform: Waveform,
-    n_periods: u16,
-    pulse: bool,
-    standing: bool,
-    invert: bool,
-    duty_cycle: UnipolarFloat,
+    shape: WaveformShape,
     /// Where the driving clock has got to.
     phase_temporal: Phase,
     /// The smoother's current value, not its target.
@@ -354,9 +338,15 @@ impl PreparedAnimation {
         self.unit_value(spatial_phase_offset, offset_index) * self.scale
     }
 
+    /// Scale a value by the amplitude factors: size, clock submaster, and audio
+    /// envelope.
+    pub fn scale_value(&self, v: f64) -> f64 {
+        v * self.scale
+    }
+
     /// The waveform's own value, before amplitude.
     pub fn unit_value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
-        let result = match self.waveform {
+        let result = match self.shape.waveform {
             Waveform::Sine => waveforms::sine(&self.waveform_args(spatial_phase_offset)),
             Waveform::Square => waveforms::square(&self.waveform_args(spatial_phase_offset)),
             Waveform::Sawtooth => waveforms::sawtooth(&self.waveform_args(spatial_phase_offset)),
@@ -366,11 +356,11 @@ impl PreparedAnimation {
                 // since noise isn't periodic. Rather than trying to compress
                 // the waveform to maintain the waveshape, we just turn off
                 // the animation for a portion of each cycle.
-                let spatial_phase = spatial_phase_offset.val() * self.n_periods as f64;
+                let spatial_phase = spatial_phase_offset.val() * self.shape.n_periods as f64;
                 let temporal_phase = self.phase_temporal.val();
 
-                if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
-                    || self.duty_cycle == 0.0
+                if Phase::new(spatial_phase + temporal_phase) > self.shape.duty_cycle
+                    || self.shape.duty_cycle == 0.0
                 {
                     return 0.0;
                 }
@@ -388,7 +378,7 @@ impl PreparedAnimation {
                 // Because of the smooth 2D landscape, smoothing parameters
                 // modestly lower than 1 tend to look similar to an
                 // increase in periodicity.
-                let y_offset = if self.n_periods == 0 {
+                let y_offset = if self.shape.n_periods == 0 {
                     0.0
                 } else {
                     (1.0 - self.smoothing.val()) * offset_index as f64
@@ -402,7 +392,7 @@ impl PreparedAnimation {
                 // Simply rescaling the full noise spectrum into the unipolar
                 // range would result in very rarely touching zero, which is
                 // unlikely to be what we're looking for, artistically speaking.
-                if self.pulse {
+                if self.shape.pulse {
                     val = val.powi(2);
                 }
                 val
@@ -410,18 +400,18 @@ impl PreparedAnimation {
             Waveform::Constant => 1.0,
         };
 
-        if self.invert { -result } else { result }
+        if self.shape.invert { -result } else { result }
     }
 
     #[inline(always)]
     fn waveform_args(&self, spatial_phase_offset: Phase) -> WaveformArgs {
         WaveformArgs {
-            phase_spatial: spatial_phase_offset * (self.n_periods as f64),
+            phase_spatial: spatial_phase_offset * (self.shape.n_periods as f64),
             phase_temporal: self.phase_temporal,
             smoothing: self.smoothing,
-            duty_cycle: self.duty_cycle,
-            pulse: self.pulse,
-            standing: self.standing,
+            duty_cycle: self.shape.duty_cycle,
+            pulse: self.shape.pulse,
+            standing: self.shape.standing,
         }
     }
 }

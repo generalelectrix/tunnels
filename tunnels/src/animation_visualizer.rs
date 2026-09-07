@@ -31,43 +31,35 @@ impl VisualizerPanelState {
             1.0 / state.fixture_count as f64
         };
 
+        // The animation is the same for every point being plotted, so resolve
+        // its frame-constant state once rather than a thousand times. The unit
+        // waveform ignores the amplitude, so one preparation serves all three
+        // plots.
+        let anim = state
+            .animation
+            .prepare(&state.clocks.clock_bank, state.clocks.audio_envelope);
+
         // Unit waveform (amplitude always 1).
         self.preview.clear();
         self.preview.extend((0..NUM_WAVE_POINTS).map(|i| {
             let phase = i as f64 / NUM_WAVE_POINTS as f64;
             let offset_index = (phase / phase_offset_per_fixture) as usize;
-            let y = state.animation.get_unit_value(
-                Phase::new(phase),
-                offset_index,
-                &state.clocks.clock_bank,
-            );
-            PlotPoint::new(phase, y)
+            PlotPoint::new(phase, anim.unit_value(Phase::new(phase), offset_index))
         }));
 
         // Scaled waveform (applies audio envelope and animation scaling).
         self.live.clear();
-        self.live.extend(self.preview.iter().map(|point| {
-            PlotPoint::new(
-                point.x,
-                state.animation.scale_value(
-                    &state.clocks.clock_bank,
-                    state.clocks.audio_envelope,
-                    point.y,
-                ),
-            )
-        }));
+        self.live.extend(
+            self.preview
+                .iter()
+                .map(|point| PlotPoint::new(point.x, anim.scale_value(point.y))),
+        );
 
         // Individual fixture dots.
         self.dots.clear();
         self.dots.extend((0..state.fixture_count).map(|i| {
             let phase = i as f64 * phase_offset_per_fixture;
-            let y = state.animation.get_value(
-                Phase::new(phase),
-                i,
-                &state.clocks.clock_bank,
-                state.clocks.audio_envelope,
-            );
-            PlotPoint::new(phase, y)
+            PlotPoint::new(phase, anim.value(Phase::new(phase), i))
         }));
     }
 
