@@ -1,14 +1,12 @@
 use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
-    ColorField, ColorPhase, DrawMode, FillLayer, Layer, Placement, RenderMode, SegmentLayer,
-    SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+    ColorAdjust, ColorField, ColorPhase, DrawMode, FillLayer, Layer, Placement, RenderMode,
+    SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
-use crate::waveforms::sawtooth;
 use crate::{
     animation_target::AnimationTarget, palette::ColorPaletteIdx, position_bank::PositionIdx,
-    waveforms::WaveformArgs,
 };
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -449,9 +447,25 @@ impl Tunnel {
             rot_angle: (self.curr_rot_angle + uniform(AnimationTarget::Rotation)).val(),
         };
 
-        let color = if as_mask {
-            // Opaque black, punching a hole in everything already drawn — the
-            // same value a masked segment carries.
+        FillLayer {
+            sprite: self.sprite,
+            placement,
+            spin_speed: self.spin_speed.val(),
+            thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
+                .abs(),
+            draw_mode: self.draw_mode,
+            color: self.color_field(base_hue, level_scale, as_mask),
+            color_anims: fill_animations(anims, AnimationTarget::is_color),
+            warps: fill_animations(anims, |target| !target.is_color()),
+        }
+    }
+
+    /// The colour model this beam's shapes are resolved from.
+    ///
+    /// A mask paints opaque black, punching a hole in whatever lies under it,
+    /// so it carries no colour of its own however the colour knobs are set.
+    fn color_field(&self, base_hue: f64, level_scale: UnipolarFloat, as_mask: bool) -> ColorField {
+        if as_mask {
             ColorField {
                 phase: self.color_phase,
                 cycles: 0.,
@@ -471,18 +485,6 @@ impl Tunnel {
                 val: 1.0,
                 level: level_scale.val(),
             }
-        };
-
-        FillLayer {
-            sprite: self.sprite,
-            placement,
-            spin_speed: self.spin_speed.val(),
-            thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
-                .abs(),
-            draw_mode: self.draw_mode,
-            color,
-            color_anims: fill_animations(anims, AnimationTarget::is_color),
-            warps: fill_animations(anims, |target| !target.is_color()),
         }
     }
 
@@ -508,6 +510,7 @@ impl Tunnel {
         let marquee_interval = 1.0 / segs as f64;
 
         let ((x_offset, y_offset), base_hue) = self.placement_and_hue(ctx);
+        let color_field = self.color_field(base_hue, level_scale, as_mask);
 
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
@@ -594,55 +597,31 @@ impl Tunnel {
             let rot_angle = self.curr_rot_angle + rot_angle_adjust;
             let spin_angle = self.curr_spin_angle + spin_angle_adjust;
 
-            let arc = if as_mask {
-                ShapeGeometry {
-                    level: 1.0,
-                    thickness: stroke_weight,
-                    hue: 0.0,
-                    sat: 0.0,
-                    val: 0.0,
-                    x: x_center,
-                    y: y_center,
-                    extent_x,
-                    extent_y,
-                    start: start_angle.val(),
-                    rot_angle: rot_angle.val(),
-                    spin_angle: spin_angle.val(),
-                }
-            } else {
-                let hue = Phase::new(
-                    (base_hue + col_center_adjust)
-                        + (0.5
-                            * (self.col_width.val() + col_width_adjust)
-                            * sawtooth(&WaveformArgs {
-                                phase_spatial: rel_angle
-                                    * ((COLOR_SPREAD_SCALE * self.col_spread.val()).floor()),
-                                phase_temporal: Phase::ZERO,
-                                smoothing: UnipolarFloat::ZERO,
-                                duty_cycle: UnipolarFloat::ONE,
-                                pulse: false,
-                                standing: false,
-                            })),
-                );
+            // A segment's index around the path is what indexes the colour
+            // ramp, standing in for the coordinate a figure is sampled at.
+            let color = color_field.sample(
+                rel_angle * color_field.cycles,
+                ColorAdjust {
+                    center: col_center_adjust,
+                    width: col_width_adjust,
+                    sat: col_sat_adjust,
+                },
+            );
 
-                let sat = UnipolarFloat::new(self.col_sat.val() + col_sat_adjust);
-
-                ShapeGeometry {
-                    level: level_scale.val(),
-                    thickness: stroke_weight,
-                    hue: hue.val(),
-                    sat: sat.val(),
-                    val: 1.0,
-                    x: x_center,
-                    y: y_center,
-                    extent_x,
-                    extent_y,
-                    start: start_angle.val(),
-                    rot_angle: rot_angle.val(),
-                    spin_angle: spin_angle.val(),
-                }
-            };
-            arcs.push(arc);
+            arcs.push(ShapeGeometry {
+                level: color.level,
+                thickness: stroke_weight,
+                hue: color.hue,
+                sat: color.sat,
+                val: color.val,
+                x: x_center,
+                y: y_center,
+                extent_x,
+                extent_y,
+                start: start_angle.val(),
+                rot_angle: rot_angle.val(),
+                spin_angle: spin_angle.val(),
+            });
         }
         SegmentLayer::new(self.render_mode, segment_path, marquee_interval, arcs)
     }
