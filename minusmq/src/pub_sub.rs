@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use log::{error, info, warn};
 use socket2::{SockRef, TcpKeepalive};
 use std::io::Write;
-use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -87,13 +87,23 @@ pub struct Config {
     /// When a connection whose peer has gone silent is failed. Applied
     /// wherever a socket is opened, so it takes effect at both ends.
     pub keepalive: Keepalive,
-    /// How long a publisher's accept loop waits for a subscriber before
-    /// looking up. A subscriber has no listener and ignores it.
+    /// How long a publisher's accept loop sleeps between passes. A subscriber
+    /// has no listener and ignores it.
     ///
-    /// A publisher on its way out releases the wait directly, so this is the
-    /// backstop for a release that never arrives — and the period at which
-    /// departed subscribers are reaped.
-    pub accept_timeout: Duration,
+    /// The loop asks whether anyone has connected rather than waiting for
+    /// someone to, so one interval bounds three things: how long a connecting
+    /// subscriber waits to be accepted, how long a departed one stays on the
+    /// list after its sender thread has failed, and how long a publisher being
+    /// dropped waits for its accept thread to notice. A subscriber connects
+    /// once and stays for the length of a show, so the first of those is the
+    /// cheapest of the three to pay for the other two.
+    ///
+    /// It asks rather than waits because a receive timeout bounds a receive,
+    /// and whether an `accept` counts as one is the platform's business. On
+    /// macOS it does not, and a loop waiting on the listener comes round only
+    /// when somebody connects — so nothing is reaped between connections, on
+    /// the platform a console publishes from.
+    pub poll_interval: Duration,
     /// How long a write to a subscriber may make no progress before that
     /// subscriber is dropped. A subscriber writes to nobody and ignores it.
     ///
@@ -104,14 +114,18 @@ pub struct Config {
     /// publisher sets is what ends that wait, and ends it the same way on
     /// every platform.
     ///
-    /// It bounds one write to the socket rather than one message, so a message
-    /// large enough to need several writes can take a multiple of it. It is
-    /// also only part of what a departed subscriber costs: the write it fails
-    /// is the write that finds the buffers already full, and filling those
-    /// takes as long as it takes. Measured on a stream of 4 kB messages at
-    /// 240 Hz, an autotuned 2.6 MB send buffer took 3.15s to fill and the
-    /// subscriber was dropped 5.84s after it departed, against the 2s set
-    /// here. The buffer term dominates and no setting here shortens it.
+    /// It bounds one write to the socket rather than one message, and
+    /// `write_all` retries a short write, so failing a message takes as many
+    /// deadlines as it takes writes: two on macOS and three on Linux, against
+    /// a peer that has stopped reading.
+    ///
+    /// It is also the smaller half of what a departed subscriber costs, since
+    /// the write it fails is the one that finds the buffers already full.
+    /// Those are autotuned and no setting here shortens them: about 2.6 MB on
+    /// Linux, which a stream of 4 kB messages at 240 Hz fills in 3.15s, for a
+    /// subscriber dropped 5.84s after it departed against the 2s set here; and
+    /// about 786 kB on macOS, a third of that, so the filling term there is
+    /// proportionally smaller and detection correspondingly quicker.
     ///
     /// Dropping a subscriber early is the cheaper mistake: one that is still
     /// there reconnects on its own, while one that is not costs a thread, a
@@ -126,7 +140,7 @@ impl Default for Config {
             max_message_len: DEFAULT_MAX_MESSAGE_LEN,
             compression: Compression::default(),
             keepalive: Keepalive::default(),
-            accept_timeout: Duration::from_secs(1),
+            poll_interval: Duration::from_millis(100),
             write_timeout: Duration::from_secs(2),
         }
     }
@@ -404,9 +418,6 @@ fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>, 
 pub struct Publisher {
     clients: Arc<Mutex<Clients>>,
     shutdown: Arc<AtomicBool>,
-    /// The port the listener is bound to. Connecting to it is what releases
-    /// the accept thread from its wait.
-    port: u16,
     /// How this stream carries its payloads. A message is compressed, if it is
     /// compressed at all, before it is framed.
     compression: Compression,
@@ -418,13 +429,6 @@ impl Publisher {
     /// Spawns a background thread to accept subscriber connections.
     pub fn new(listener: TcpListener, config: Config) -> Result<Self> {
         let local_addr = listener.local_addr()?;
-        // A dropped publisher releases the accept thread by connecting to this
-        // listener itself. Bounding the wait is the backstop for a connection
-        // that cannot be made: the thread then looks up on its own rather than
-        // holding the drop open forever.
-        if let Err(e) = SockRef::from(&listener).set_read_timeout(Some(config.accept_timeout)) {
-            warn!("Failed to bound the wait for a subscriber: {e}");
-        }
         log::debug!("pub_sub publisher listening on {local_addr}");
 
         let clients: Arc<Mutex<Clients>> = Arc::new(Mutex::new(Clients::default()));
@@ -442,7 +446,6 @@ impl Publisher {
         Ok(Publisher {
             clients,
             shutdown,
-            port: local_addr.port(),
             compression: config.compression,
             accept: Some(accept),
         })
@@ -519,13 +522,12 @@ impl Drop for Publisher {
     /// the ones present have been dealt with. Dropping the clients then stops
     /// every sender thread, including one parked in a write to a subscriber
     /// that is not reading.
+    ///
+    /// The accept thread is not waiting on anything and needs nothing to
+    /// release it: it comes round every [`Config::poll_interval`] and sees the
+    /// flag, so that is the longest this waits for it.
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
-        // A thread waiting for a subscriber is released by a subscriber, so
-        // the publisher makes the last connection itself. The flag is set
-        // first, so the thread sees it and drops that connection rather than
-        // subscribing it.
-        let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port));
         if let Some(accept) = self.accept.take() {
             let _ = accept.join();
         }
@@ -544,26 +546,28 @@ fn accept_loop(
     shutdown: Arc<AtomicBool>,
     config: Config,
 ) {
+    // Asking whether anyone has connected, rather than waiting until someone
+    // does, is what lets this loop reap between connections and notice a
+    // publisher on its way out without being sent anything to wake it.
+    if let Err(e) = listener.set_nonblocking(true) {
+        error!("Failed to poll for subscribers, so none will be reaped: {e}");
+        return;
+    }
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok((stream, peer)) => {
-                // A publisher on its way out connects here to release the
-                // wait. That connection carries no subscriber behind it.
-                if shutdown.load(Ordering::Acquire) {
-                    return;
-                }
-                match subscribe(stream, peer, config) {
-                    Ok(client) => clients.lock().unwrap().connected.push(client),
-                    Err(e) => warn!("Failed to subscribe a client: {e:#}"),
-                }
+            Ok((stream, peer)) => match subscribe(stream, peer, config) {
+                Ok(client) => clients.lock().unwrap().connected.push(client),
+                Err(e) => warn!("Failed to subscribe a client: {e:#}"),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(config.poll_interval);
             }
-            Err(e) if is_timeout(&e) => (),
             Err(e) => {
                 error!("pub_sub accept error: {e}");
                 // An error that persists — a process out of file descriptors,
                 // say — would otherwise spin this thread and its log as fast
                 // as the two of them can go.
-                thread::sleep(config.accept_timeout);
+                thread::sleep(config.poll_interval);
             }
         }
         // Reaping belongs on this thread rather than on the publisher's: it
@@ -572,17 +576,16 @@ fn accept_loop(
     }
 }
 
-/// Whether a failed accept is the wait running out rather than the listener
-/// failing.
-fn is_timeout(e: &std::io::Error) -> bool {
-    matches!(
-        e.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    )
-}
-
 /// Start the thread that writes to a newly connected subscriber.
 fn subscribe(stream: TcpStream, peer: SocketAddr, config: Config) -> Result<Client> {
+    // Whether a socket accepted from a listener that does not block inherits
+    // that from it is the platform's business — BSD hands it down and Linux
+    // does not — and a sender thread given a socket that does not block would
+    // fail its first full buffer instantly rather than waiting out the
+    // deadline. Saying which is wanted costs one call and settles it.
+    if let Err(e) = stream.set_nonblocking(false) {
+        warn!("Failed to make subscriber {peer} block: {e}");
+    }
     if let Err(e) = stream.set_nodelay(true) {
         warn!("Failed to set TCP_NODELAY: {e}");
     }
@@ -1279,7 +1282,7 @@ mod tests {
             // deadline: otherwise the time a subscriber takes to disappear
             // would be this rather than the deadline, and would say nothing
             // about which of them dropped it.
-            accept_timeout: Duration::from_millis(100),
+            poll_interval: Duration::from_millis(100),
             ..test_config()
         });
         // Held open for the duration, so that the subscriber is stalled rather
