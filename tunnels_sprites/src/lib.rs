@@ -262,6 +262,19 @@ mod test {
     /// Only an odd rotational order can want this. An even one contains the
     /// half turn, which maps the bounding box onto itself and so puts its
     /// centre on the centre of rotation.
+    ///
+    /// A count of petals is not a rotational order, and `blossoms/six_petal`
+    /// is where the two part company: it reads as six petals and misses both
+    /// the sixth turn and the half turn, which is why it is here alongside the
+    /// five-fold figures. `blossoms/snowflake` is the six-armed figure that
+    /// does carry its turn, and its box is centred.
+    ///
+    /// `blossoms/five_petal_open` looks as though it belongs here too — five
+    /// petals, and an outline centroid well off the origin. Its top petal is
+    /// drawn unlike the other four, so it misses the fifth turn by more than
+    /// any figure accepted here, and that centroid is not a centre of
+    /// rotation. Moving the figure onto it would take a centred box off
+    /// centre for nothing.
     const RECENTRED: [&str; 5] = [
         "pinwheels/five_pointed",
         "stars/five_pointed",
@@ -270,12 +283,104 @@ mod test {
         "emblems/biohazard",
     ];
 
-    /// `blossoms/five_petal_open` is not in that list and looks as though it
-    /// should be: it has five petals and sits about 0.068 high. Its top petal
-    /// is drawn differently from the other four, so it is not five-fold, and
-    /// it leaves a fifth of its angular energy unexplained by any rotation —
-    /// against 0.083 for the worst figure that is accepted. Admitting it means
-    /// admitting `hands/victory` too, so it keeps its wobble.
+    /// The figure of this name, which the library is expected to carry.
+    fn named(name: &str) -> &'static Sprite {
+        all()
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("the library carries no {name}"))
+    }
+
+    /// How far a figure sits from its own image under a turn of `turns`:
+    /// the furthest any of its points lands from the nearest point of it.
+    ///
+    /// Zero for a figure the turn maps exactly onto itself. Flattening a
+    /// contour into line segments moves the sample points around the outline,
+    /// so a figure that does carry a turn still measures a little above zero.
+    fn rotation_residual(sprite: &Sprite, turns: f64) -> f64 {
+        let points: Vec<[f64; 2]> = sprite
+            .figures
+            .iter()
+            .flat_map(|f| f.subpaths.iter().flat_map(|c| c.points()))
+            .map(|p| p.to_array().map(f64::from))
+            .collect();
+        let (sin, cos) = (turns * std::f64::consts::TAU).sin_cos();
+        points
+            .iter()
+            .map(|p| {
+                let turned = [cos * p[0] - sin * p[1], sin * p[0] + cos * p[1]];
+                points
+                    .iter()
+                    .map(|q| (turned[0] - q[0]).powi(2) + (turned[1] - q[1]).powi(2))
+                    .fold(f64::MAX, f64::min)
+                    .sqrt()
+            })
+            .fold(0.0, f64::max)
+    }
+
+    /// How far a figure may sit from its own turned image and still be taken
+    /// to turn onto itself.
+    ///
+    /// A tolerance and not a property of the geometry: flattening a contour
+    /// into line segments moves the sample points around the outline, so even
+    /// a figure a turn maps exactly onto itself measures above zero, by an
+    /// amount depending on how finely it was flattened. This sits between the
+    /// two populations it has to separate — the figures below it read as
+    /// turning onto themselves, and every re-centred figure is above it. Only
+    /// one direction of the comparison is worth making: a figure above it may
+    /// still be symmetric about some centre that is not the origin.
+    const LANDS_BACK: f64 = 0.1;
+
+    /// The half turn pins a figure's bounding box to its centre of rotation,
+    /// so a figure that carries the half turn can never want re-centring.
+    /// Every re-centred figure therefore has to miss its own half-turn image,
+    /// including the one whose name counts an even number of petals.
+    #[test]
+    fn nothing_placed_on_its_centre_of_rotation_carries_the_half_turn() {
+        for name in RECENTRED {
+            let missed = rotation_residual(named(name), 0.5);
+            assert!(
+                missed > LANDS_BACK,
+                "{name} sits only {missed} from its own half-turn image"
+            );
+        }
+
+        // The one whose name says otherwise. `blossoms/snowflake` has six arms
+        // and does land back on itself under a sixth turn, which is what makes
+        // the blossom's failure a fact about the figure rather than about how
+        // finely the library flattens six-fold things.
+        assert!(
+            rotation_residual(named("blossoms/snowflake"), 1.0 / 6.0) < LANDS_BACK,
+            "a six-armed figure that turns onto itself has to read that way"
+        );
+        let missed = rotation_residual(named("blossoms/six_petal"), 1.0 / 6.0);
+        assert!(
+            missed > LANDS_BACK,
+            "blossoms/six_petal sits only {missed} from its own sixth-turn image, so it is six-fold after all"
+        );
+
+        // The near miss that is left where it lies: five petals and an outline
+        // centroid off the origin, but the fifth turn lands it back less well
+        // than it lands any of the five-fold figures that are accepted.
+        let open = named("blossoms/five_petal_open");
+        let missed = rotation_residual(open, 0.2);
+        for name in [
+            "pinwheels/five_pointed",
+            "stars/five_pointed",
+            "blossoms/five_petal",
+        ] {
+            let accepted = rotation_residual(named(name), 0.2);
+            assert!(
+                missed > accepted,
+                "blossoms/five_petal_open misses the fifth turn by {missed}, no worse than the accepted {name} at {accepted}"
+            );
+        }
+        let centre = outline_centroid(open);
+        assert!(
+            centre[0].hypot(centre[1]) > 0.005,
+            "blossoms/five_petal_open would not be mistaken for a re-centred figure at all"
+        );
+    }
 
     #[test]
     fn a_figure_that_turns_onto_itself_sits_on_the_point_it_turns_about() {
