@@ -559,7 +559,7 @@ mod tests {
                 }
                 (Layer::Fill(e), Layer::Fill(a)) => {
                     compared.fills += 1;
-                    assert_eq!(e.sprite, a.sprite, "{label}: layer {i} sprite");
+                    assert_eq!(e.figure, a.figure, "{label}: layer {i} figure");
                     assert_eq!(e.draw_mode, a.draw_mode, "{label}: layer {i} draw mode");
                     assert_eq!(
                         e.color.phase, a.color.phase,

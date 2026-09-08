@@ -5934,6 +5934,7 @@ dependencies = [
  "tunnels_lib",
  "tunnels_model",
  "tunnels_net",
+ "tunnels_shapes",
  "tunnels_sprites",
  "zero_configure",
 ]
@@ -6001,6 +6002,7 @@ dependencies = [
  "serde",
  "strum",
  "tunnels_lib",
+ "tunnels_shapes",
  "tunnels_sprites",
 ]
 
@@ -6019,6 +6021,9 @@ dependencies = [
 [[package]]
 name = "tunnels_shapes"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "tunnels_sprites"

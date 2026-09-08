@@ -1,7 +1,7 @@
 use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
-    ColorAdjust, ColorField, ColorPhase, DrawMode, FillLayer, Layer, Placement, RenderMode,
-    SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+    ColorAdjust, ColorField, ColorPhase, DrawMode, FigureId, FillLayer, GeneratedId, Layer,
+    Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
@@ -10,10 +10,8 @@ use crate::{
     palette::ColorPaletteIdx,
     position_bank::{Position, PositionIdx},
 };
-use log::error;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
-use std::sync::Once;
 use std::time::Duration;
 use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
@@ -145,6 +143,12 @@ pub struct Tunnel {
     /// back out of the library's shape. Neither is derived from the fields the
     /// other mode reads, so turning a knob in one mode leaves the other alone.
     sprite: SpriteId,
+    /// Which figure a generated mode builds.
+    ///
+    /// The same arrangement as `sprite` over a library that is computed rather
+    /// than baked: the whole selection is held resolved, so a figure set
+    /// outright is as good a state as one arrived at through the knobs.
+    generated: GeneratedId,
 }
 
 impl Default for Tunnel {
@@ -187,6 +191,7 @@ impl Default for Tunnel {
             color_phase: ColorPhase::default(),
             draw_mode: DrawMode::default(),
             sprite: SpriteId::default(),
+            generated: GeneratedId::default(),
         }
     }
 }
@@ -379,10 +384,6 @@ impl Tunnel {
     }
 
     /// Render the current state of the tunnel.
-    ///
-    /// A generated figure has no geometry yet, so it draws nothing and says so
-    /// once. A show holding one is a show missing a beam, not a show that
-    /// stops.
     pub fn render(&self, level_scale: UnipolarFloat, as_mask: bool, ctx: RenderContext) -> Layer {
         // Resolve each animation's frame-constant state once. What an animation
         // costs is mostly deciding which clock drives it, where that clock is,
@@ -406,19 +407,20 @@ impl Tunnel {
                 ctx,
                 &anims,
             )),
-            ShapeMode::Sprite => Layer::Fill(self.render_fill(level_scale, as_mask, ctx, &anims)),
-            ShapeMode::Generated => {
-                static REPORTED: Once = Once::new();
-                REPORTED.call_once(|| error!("Generated figures have no geometry yet."));
-                // Empty, so it is dropped before it reaches a renderer. The
-                // segment path is arbitrary: nothing is drawn along it.
-                Layer::Segments(SegmentLayer::new(
-                    self.render_mode,
-                    SegmentPath::Ellipse,
-                    0.,
-                    Vec::new(),
-                ))
-            }
+            ShapeMode::Sprite => Layer::Fill(self.render_fill(
+                FigureId::Baked(self.sprite),
+                level_scale,
+                as_mask,
+                ctx,
+                &anims,
+            )),
+            ShapeMode::Generated => Layer::Fill(self.render_fill(
+                FigureId::Generated(self.generated),
+                level_scale,
+                as_mask,
+                ctx,
+                &anims,
+            )),
         }
     }
 
@@ -462,6 +464,7 @@ impl Tunnel {
     /// figure's own geometry is.
     fn render_fill(
         &self,
+        figure: FigureId,
         level_scale: UnipolarFloat,
         as_mask: bool,
         ctx: RenderContext,
@@ -491,7 +494,7 @@ impl Tunnel {
         };
 
         FillLayer {
-            sprite: self.sprite,
+            figure,
             placement,
             spin_speed: self.spin_speed.val(),
             thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
@@ -962,6 +965,7 @@ mod test {
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
     use strum::VariantArray;
+    use tunnels_shapes::{Arity, Secondary, ShapeFamily};
 
     /// An emitter for a test that is about what the tunnel holds rather than
     /// what it reports.
@@ -1012,38 +1016,36 @@ mod test {
         assert!(recorder.0.contains(&names_both), "{:?}", recorder.0);
     }
 
-    /// A show runs in front of an audience, so a mode with nothing to draw
-    /// draws nothing rather than stopping the frame.
+    /// A figure's layer says where to draw a figure and how, and carries no
+    /// geometry: what travels is the name of a figure, and the two modes that
+    /// fill an area differ only in which library the name comes from.
     #[test]
-    fn a_generated_figure_draws_nothing_without_panicking() {
-        let tunnel = Tunnel {
-            shape_mode: ShapeMode::Generated,
-            ..Default::default()
+    fn a_figure_mode_renders_a_placed_figure() {
+        let generated = GeneratedId {
+            family: ShapeFamily::Rose,
+            arity: Arity::new(5),
+            secondary: Secondary::new(0.5),
         };
-        assert!(
-            render_fixture(&tunnel).is_empty(),
-            "a generated figure has nothing to contribute yet"
-        );
-    }
-
-    /// A sprite's layer says where to draw a figure and how, and carries no
-    /// geometry: the figure itself is baked into the client.
-    #[test]
-    fn a_sprite_renders_a_placed_figure() {
-        let tunnel = Tunnel {
-            shape_mode: ShapeMode::Sprite,
-            sprite: SpriteId(7),
-            ..Default::default()
-        };
-        let Layer::Fill(fill) = render_fixture(&tunnel) else {
-            panic!("a sprite renders a figure, not segments");
-        };
-        assert_eq!(fill.sprite, SpriteId(7));
-        // The default half-extents are the ellipse formula's, so a figure and
-        // a tunnel at the same knob settings cover the same ground.
-        assert_eq!(fill.placement.extent_x, 0.5);
-        assert_eq!(fill.placement.extent_y, 0.5);
-        assert!(fill.color.is_uniform(), "the default colour is one colour");
+        for (mode, expected) in [
+            (ShapeMode::Sprite, FigureId::Baked(SpriteId(7))),
+            (ShapeMode::Generated, FigureId::Generated(generated)),
+        ] {
+            let tunnel = Tunnel {
+                shape_mode: mode,
+                sprite: SpriteId(7),
+                generated,
+                ..Default::default()
+            };
+            let Layer::Fill(fill) = render_fixture(&tunnel) else {
+                panic!("{mode:?} renders a figure, not segments");
+            };
+            assert_eq!(fill.figure, expected);
+            // The default half-extents are the ellipse formula's, so a figure
+            // and a tunnel at the same knob settings cover the same ground.
+            assert_eq!(fill.placement.extent_x, 0.5);
+            assert_eq!(fill.placement.extent_y, 0.5);
+            assert!(fill.color.is_uniform(), "the default colour is one colour");
+        }
     }
 
     /// The segment and blacking controls write the fields their mode reads and

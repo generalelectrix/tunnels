@@ -10,6 +10,7 @@
 
 mod draw;
 mod fastmath;
+mod figure;
 mod geom;
 mod geometry;
 mod mesh;
@@ -19,6 +20,7 @@ use self::draw::{
     PhaseField, VertexBuffers, VertexWork, draw_flat, draw_list_flat, draw_list_textured,
     draw_points, draw_textured,
 };
+use self::figure::FigureCache;
 use self::geometry::{FillGeometry, Scale, StrokeGeometry, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampSpan;
@@ -31,7 +33,7 @@ use image::RgbaImage;
 use log::{error, info};
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
-use tunnels_model::layer::{ColorAdjust, FillLayer, Layer, LayerCollection, SpriteId};
+use tunnels_model::layer::{ColorAdjust, FigureId, FillLayer, Layer, LayerCollection, SpriteId};
 
 /// How many frames a texture may still be read after the last draw that used
 /// it.
@@ -176,6 +178,7 @@ where
 /// Generic over the texture type so the GL client and the golden-image tests
 /// share one draw path rather than each having its own.
 pub struct Renderer<T> {
+    figures: FigureCache,
     fills: FillGeometry,
     outlines: StrokeGeometry,
     meshes: MeshLibrary,
@@ -192,6 +195,7 @@ where
 {
     fn default() -> Self {
         Self {
+            figures: FigureCache::default(),
             fills: FillGeometry::default(),
             outlines: StrokeGeometry::default(),
             meshes: MeshLibrary::default(),
@@ -228,11 +232,8 @@ where
     /// Build the figure meshes a show is likely to want, before it starts.
     ///
     /// Sixty-two figures at the four coarsest densities: **248 meshes, 1.6
-    /// million triangles, 26 MB, 200 ms**, fixed at that and unable to grow,
-    /// because nothing in the key
-    /// varies at runtime — an outline is not meshed, and the size knob only
-    /// chooses among the six densities. It covers a figure at the default size
-    /// on a 1080-line projector and everything smaller.
+    /// million triangles, 26 MB, 200 ms**. It covers a figure at the default
+    /// size on a 1080-line projector and everything smaller.
     ///
     /// The two finest densities are reachable but not built here. They are 90%
     /// of the cost of building everything — 2.5 s and 317 MB against 200 ms and
@@ -243,9 +244,10 @@ where
     /// at the level table will assume otherwise, which is why it is written
     /// here.
     ///
-    /// So the set is bounded but not small: this table cannot grow, and past
-    /// it the key is still content-addressed and enumerable — 62 figures times
-    /// 6 densities, 372 meshes and 317 MB if every one were ever drawn.
+    /// So the baked meshes are bounded but not small: 62 figures times 6
+    /// densities, 372 meshes and 317 MB if every one were ever drawn. That
+    /// bound is a property of a fixed library and does not extend to a figure
+    /// generated from a knob position.
     ///
     /// All of it is vertex and index data on the CPU, not textures. It does
     /// not compete for the share of system memory an integrated GPU takes,
@@ -260,16 +262,10 @@ where
             let Some(sprite) = tunnels_sprites::sprite(id) else {
                 continue;
             };
-            let sprite_id = SpriteId(id);
-            let fill = self.fills.get(sprite_id, sprite);
+            let figure = FigureId::Baked(SpriteId(id));
+            let fill = self.fills.get(figure, &sprite.figures);
             for level in Level::eager() {
-                self.meshes.get(
-                    MeshId {
-                        sprite: sprite_id,
-                        level,
-                    },
-                    fill,
-                );
+                self.meshes.get(MeshId { figure, level }, fill);
             }
         }
         info!(
@@ -292,6 +288,7 @@ where
         cfg: &ClientConfig,
     ) {
         let Self {
+            figures,
             fills,
             outlines,
             meshes,
@@ -300,7 +297,7 @@ where
         } = self;
 
         // A figure this build does not carry draws nothing.
-        let Some(sprite) = tunnels_sprites::sprite(fill.sprite.0) else {
+        let Some(contours) = figures.get(fill.figure) else {
             return;
         };
 
@@ -343,8 +340,8 @@ where
         let interior = fill
             .draw_mode
             .draws_fill()
-            .then(|| fills.get(fill.sprite, sprite));
-        let outline = stroke.map(|thickness| outlines.get(fill.sprite, sprite, thickness));
+            .then(|| fills.get(fill.figure, contours));
+        let outline = stroke.map(|thickness| outlines.get(fill.figure, contours, thickness));
         // A uniform figure needs no ramp; a varying one needs the texture
         // holding its colour, which the pool may already have.
         let texture = if flat {
@@ -381,7 +378,7 @@ where
         if let Some(interior) = interior {
             let mesh = meshes.get(
                 MeshId {
-                    sprite: fill.sprite,
+                    figure: fill.figure,
                     level,
                 },
                 interior,
@@ -501,7 +498,7 @@ mod test {
     /// A figure whose colour is decided by `center` and nothing else.
     fn fill(center: f64) -> FillLayer {
         FillLayer {
-            sprite: SpriteId(0),
+            figure: FigureId::Baked(SpriteId(0)),
             placement: Placement {
                 x: 0.,
                 y: 0.,

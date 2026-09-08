@@ -23,6 +23,7 @@ pub mod truchet;
 pub mod twist_rings;
 
 use crate::geom::Figure;
+use serde::{Deserialize, Serialize};
 
 pub use bars::{Frames, Grid, Slats};
 pub use cycloid::{CycloidKind, CycloidRosette};
@@ -44,7 +45,7 @@ pub use truchet::Truchet;
 pub use twist_rings::TwistRings;
 
 /// The family a figure belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ShapeFamily {
     StarPolygon,
     Rose,

@@ -5,15 +5,24 @@ pub const CENTER: f64 = 500.0;
 
 /// The width of the square a figure is built around.
 ///
-/// It is not a bound. Nothing here clips, and three families reach outside it:
-/// every star lattice does, by up to 860 units, because it is a field cut out of
-/// a tiling rather than an object standing in the middle of one, and truchet
-/// tilings and phyllotaxes overhang by the half-width of a mark at the border.
+/// It is not a bound. Nothing here clips, and four families reach outside it:
+///
+/// - every star lattice does, by up to 863 units, because it is a field cut out
+///   of a tiling rather than an object standing in the middle of one;
+/// - a petal mandala does at its widest overlaps, by up to 161 units, where a
+///   petal's radius outgrows the ring the petals are centred on;
+/// - truchet tilings and phyllotaxes overhang by the half-width of a mark at the
+///   border, around 16 units.
+///
 /// The figures these were ported from were clipped by the SVG viewBox that
 /// carried them, and contours carry no viewBox.
 ///
+/// These are the reaches of every figure the arity and secondary ranges admit,
+/// not of the curated presets alone: the curated mandalas all sit inside the
+/// frame, and only the overlaps above them run out of it.
+///
 /// **Whoever draws a figure has to decide about clipping**, and the decision is
-/// not the same for the three: clipping a star lattice is what makes it a field,
+/// not the same for the four: clipping a star lattice is what makes it a field,
 /// while clipping a truchet tiling shaves its border marks in half.
 pub const EXTENT: f64 = 1000.0;
 

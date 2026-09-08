@@ -8,6 +8,7 @@ use crate::waveforms::{WaveformArgs, sawtooth};
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use tunnels_lib::number::{Phase, UnipolarFloat};
+use tunnels_shapes::{Arity, Secondary, ShapeFamily};
 
 /// Controls how a shape is rendered.
 #[derive(
@@ -111,6 +112,44 @@ impl DrawMode {
 /// Identifies one figure baked into the build.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub struct SpriteId(pub u16);
+
+/// Identifies one figure computed on demand.
+///
+/// A family and the two numbers that place a figure inside it, which is the
+/// whole of what builds one. Every other number a family carries follows from
+/// these, so this is the figure and not a handle to it.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct GeneratedId {
+    pub family: ShapeFamily,
+    pub arity: Arity,
+    pub secondary: Secondary,
+}
+
+impl Default for GeneratedId {
+    /// The first family at the bottom of its range, which is the figure a beam
+    /// draws before any knob has named another.
+    fn default() -> Self {
+        let family = ShapeFamily::ALL[0];
+        Self {
+            family,
+            arity: Arity::new(*family.arity_range().start()),
+            secondary: Secondary::new(0.0),
+        }
+    }
+}
+
+/// Identifies one figure, however it came to exist.
+///
+/// A figure is drawn the same way whichever half of the library it came from,
+/// so this is what the caches between the model and the screen are keyed on:
+/// one figure, one set of contours, one mesh per density.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum FigureId {
+    /// A figure baked into the build from artwork.
+    Baked(SpriteId),
+    /// A figure built from a family and its two parameters.
+    Generated(GeneratedId),
+}
 
 /// A command to draw a single shape, less the render mode and segment path
 /// that the layer holding it fixes for all of its shapes at once.
@@ -265,12 +304,12 @@ pub struct Hsva {
 
 /// A figure drawn as an area rather than as a run of segments.
 ///
-/// Carries no geometry: the figure itself is baked into the build and the
-/// client looks it up, so what travels is where to put it and how to colour
-/// it.
+/// Carries no geometry: a figure is named rather than described, and the client
+/// is where the name becomes contours, so what travels is where to put it and
+/// how to colour it.
 #[derive(Debug, Clone)]
 pub struct FillLayer {
-    pub sprite: SpriteId,
+    pub figure: FigureId,
     pub placement: Placement,
     /// The beam's spin knob, as the operator set it.
     pub spin_speed: f64,
@@ -300,7 +339,7 @@ impl Layer {
         match self {
             Self::Segments(l) => l.shapes.is_empty(),
             // A figure is one shape and is always there; whether the build
-            // carries the sprite it names is the renderer's question.
+            // carries the figure it names is the renderer's question.
             Self::Fill(_) => false,
         }
     }

@@ -7,7 +7,7 @@
 
 use super::geom::{IndexBatch, Triangle, TriangleList};
 use std::collections::HashMap;
-use tunnels_model::layer::SpriteId;
+use tunnels_model::layer::FigureId;
 use tunnels_sprites::Point;
 
 /// How much finer triangles get as they approach the origin.
@@ -154,17 +154,22 @@ impl Level {
 /// out of this key.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct MeshId {
-    pub sprite: SpriteId,
+    pub figure: FigureId,
     pub level: Level,
 }
 
 /// Meshes built so far, keyed by figure and density.
 ///
-/// Never evicts, and nothing animated reaches the key: a figure is drawn at
-/// one of six densities and a show touches a handful of figures, so the set
-/// converges within seconds and nothing rebuilds mid-show. Building every
-/// level of every figure up front would instead cost millions of triangles for
-/// meshes that are never drawn.
+/// Nothing evicts, and nothing animated reaches the key: a mesh built for a
+/// figure at a density holds while the colour on it changes every frame.
+///
+/// **How far the set can grow depends on which library a figure comes from,
+/// and only one of the two is bounded.** The baked library is a fixed table,
+/// so its share cannot exceed the figures the build carries times the six
+/// densities, and a show touching a handful of them converges within seconds.
+/// A generated figure is one point of its family's arity and secondary ranges,
+/// which run to hundreds of positions: sweeping a knob across one names a
+/// different figure at every position, and each is meshed here and kept.
 #[derive(Default)]
 pub struct MeshLibrary {
     built: HashMap<MeshId, RefinedMesh>,
