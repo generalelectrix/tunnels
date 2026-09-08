@@ -306,7 +306,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0348a1c054491f4bfe6ab86a7b6ab1e44e45d899005de92f58b3df180b36ddaf"
 dependencies = [
  "clipboard-win",
- "image 0.25.6",
+ "image",
  "log",
  "objc2 0.6.1",
  "objc2-app-kit 0.3.1",
@@ -1393,7 +1393,7 @@ dependencies = [
  "anyhow",
  "colored",
  "getopts",
- "image 0.25.6",
+ "image",
  "rayon",
 ]
 
@@ -1499,7 +1499,7 @@ dependencies = [
  "glow",
  "glutin 0.32.3",
  "glutin-winit 0.5.0",
- "image 0.25.6",
+ "image",
  "js-sys",
  "log",
  "objc2 0.5.2",
@@ -1607,7 +1607,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-wgpu",
- "image 0.25.6",
+ "image",
  "kittest",
  "open",
  "pollster",
@@ -2599,24 +2599,6 @@ dependencies = [
 
 [[package]]
 name = "image"
-version = "0.24.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5690139d2f55868e080017335e4b94cb7414274c74f1669c84fb5feba2c9f69d"
-dependencies = [
- "bytemuck",
- "byteorder",
- "color_quant",
- "exr",
- "gif",
- "jpeg-decoder",
- "num-traits",
- "png",
- "qoi",
- "tiff",
-]
-
-[[package]]
-name = "image"
 version = "0.25.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db35664ce6b9810857a38a906215e75a9c879f0696556a39f59c62829710251a"
@@ -2874,9 +2856,6 @@ name = "jpeg-decoder"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5d4a7da358eff58addd2877a45865158f0d78c911d43a5784ceb7bbf52833b0"
-dependencies = [
- "rayon",
-]
 
 [[package]]
 name = "js-sys"
@@ -4151,7 +4130,7 @@ checksum = "166aea080fe534a166747683508d78f6314953c33681797c96b32a15d9096d06"
 dependencies = [
  "gfx",
  "gfx_core",
- "image 0.25.6",
+ "image",
  "piston-texture",
 ]
 
@@ -4234,7 +4213,7 @@ checksum = "3c187673f5aa98fa5d0d52d88f46d3ed585b73a0cd6312feb490b9220370ea5c"
 dependencies = [
  "fnv",
  "gl 0.14.0",
- "image 0.25.6",
+ "image",
  "khronos_api",
  "piston-shaders_graphics2d",
  "piston-texture",
@@ -5708,8 +5687,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client_lib",
- "image 0.24.9",
+ "image",
  "log",
+ "piston-texture",
  "piston2d-graphics 0.45.0",
  "piston2d-opengl_graphics",
  "piston_window",
