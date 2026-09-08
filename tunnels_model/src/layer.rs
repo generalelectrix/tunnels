@@ -201,6 +201,22 @@ impl ColorField {
         self.width == 0.0 || self.cycles == 0.0
     }
 
+    /// Whether this field masks: opaque black everywhere, whatever is asked of
+    /// it.
+    ///
+    /// Every channel a colour resolves to is scaled by the value, so a field
+    /// with no value paints black at any point and under any colour animation
+    /// -- hue and saturation are multiplied away before they can reach a
+    /// pixel. That is what lets a mask be resolved once instead of per point
+    /// or per texel.
+    ///
+    /// The three adjustments an animation makes -- centre, width, saturation
+    /// -- are what this rests on. A target that moved the value would break
+    /// it, and there is none.
+    pub fn is_mask(&self) -> bool {
+        self.val == 0.0
+    }
+
     /// The colour at a point of one cycle.
     ///
     /// This is a tunnel's own hue expression with the cycle count taken out:
@@ -292,3 +308,69 @@ impl Layer {
 }
 
 pub type LayerCollection = Vec<Arc<Layer>>;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// A mask is resolved once for the whole layer rather than once per point.
+    /// That is only sound if no adjustment an animation can make reaches the
+    /// result.
+    #[test]
+    fn no_adjustment_moves_what_a_mask_paints() {
+        let mask = ColorField {
+            phase: ColorPhase::Angle,
+            cycles: 0.,
+            center: 0.,
+            width: 0.,
+            sat: 0.,
+            val: 0.,
+            level: 1.,
+        };
+        assert!(mask.is_mask());
+
+        let flat = mask.sample(Phase::ZERO, ColorAdjust::default());
+        for adjust in [
+            ColorAdjust {
+                center: 0.4,
+                width: 0.,
+                sat: 0.,
+            },
+            ColorAdjust {
+                center: 0.,
+                width: 1.,
+                sat: 0.,
+            },
+            ColorAdjust {
+                center: 0.,
+                width: 0.,
+                sat: 1.,
+            },
+            ColorAdjust {
+                center: 0.9,
+                width: 1.,
+                sat: 1.,
+            },
+        ] {
+            for phase in [0., 0.25, 0.5, 0.75] {
+                let sampled = mask.sample(Phase::new(phase), adjust);
+                assert_eq!(
+                    sampled.val, flat.val,
+                    "a mask gained a value from {adjust:?}"
+                );
+                assert_eq!(
+                    sampled.level, flat.level,
+                    "a mask changed alpha under {adjust:?}"
+                );
+            }
+        }
+
+        // A field with a value does move, so the test above is not vacuous.
+        let lit = ColorField { val: 1., ..mask };
+        assert!(!lit.is_mask());
+        assert_ne!(
+            lit.sample(Phase::ZERO, ColorAdjust::default()).val,
+            flat.val
+        );
+    }
+}

@@ -498,6 +498,11 @@ impl Tunnel {
 
         let (offset, base_hue) = self.placement_and_hue(ctx);
         let color_field = self.color_field(base_hue, level_scale, as_mask);
+        // A mask paints one colour whatever an animation adds, so it is
+        // resolved once here rather than per segment.
+        let mask = color_field
+            .is_mask()
+            .then(|| color_field.sample(Phase::ZERO, ColorAdjust::default()));
 
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
@@ -586,14 +591,16 @@ impl Tunnel {
 
             // A segment's index around the path is what indexes the colour
             // ramp, standing in for the coordinate a figure is sampled at.
-            let color = color_field.sample(
-                rel_angle * color_field.cycles,
-                ColorAdjust {
-                    center: col_center_adjust,
-                    width: col_width_adjust,
-                    sat: col_sat_adjust,
-                },
-            );
+            let color = mask.unwrap_or_else(|| {
+                color_field.sample(
+                    rel_angle * color_field.cycles,
+                    ColorAdjust {
+                        center: col_center_adjust,
+                        width: col_width_adjust,
+                        sat: col_sat_adjust,
+                    },
+                )
+            });
 
             arcs.push(ShapeGeometry {
                 color,

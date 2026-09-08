@@ -334,7 +334,9 @@ where
         // A figure with one colour everywhere needs no ramp and no
         // interpolation — but a colour animation moves that one colour every
         // frame, so it is only uniform when there is no animation on it either.
-        let flat = fill.color_anims.is_empty() && fill.color.is_uniform();
+        // A mask is the exception: no animation can move opaque black, so it
+        // takes this path however many are running on it.
+        let flat = fill.color.is_mask() || (fill.color_anims.is_empty() && fill.color.is_uniform());
         let color = flat_color(fill);
         let warping = fill.spin_speed != 0.0 || !fill.warps.is_empty();
         // A colour animation that varies across the figure has to be resolved
