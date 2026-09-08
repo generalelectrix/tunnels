@@ -10,7 +10,8 @@
 use crate::draw::hsv_to_rgb;
 use image::{Rgba, RgbaImage};
 use tunnels_lib::number::Phase;
-use tunnels_model::layer::{ColorAdjust, ColorField, FillAnimation, FillTarget};
+use tunnels_model::animation_target::AnimationTarget;
+use tunnels_model::layer::{ColorAdjust, ColorField, FillAnimation};
 
 /// Texels across one cycle of the waveform.
 ///
@@ -37,12 +38,12 @@ pub fn build_into(img: &mut RgbaImage, color: &ColorField, anims: &[FillAnimatio
         let mut adjust = ColorAdjust::default();
         for anim in anims {
             let value = anim.animation.value(phase, x as usize);
+            // The same adjustments a beam makes to its own colour, against
+            // the ramp's coordinate instead of a segment index.
             match anim.target {
-                // Halved the way a beam halves its own colour animation, so
-                // the knob means the same thing in either medium.
-                FillTarget::Hue => adjust.center += value * 0.5,
-                FillTarget::ColorWidth => adjust.width += value,
-                FillTarget::Saturation => adjust.sat += value,
+                AnimationTarget::Color => adjust.center += value * 0.5,
+                AnimationTarget::ColorSpread => adjust.width += value,
+                AnimationTarget::ColorSaturation => adjust.sat += value,
                 _ => {}
             }
         }

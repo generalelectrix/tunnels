@@ -24,3 +24,16 @@ pub enum AnimationTarget {
     PositionY,
     Spin,
 }
+
+impl AnimationTarget {
+    /// Whether this target moves a colour rather than a geometry.
+    ///
+    /// The two are answered in different places and at different rates, so
+    /// which kind a target is decides where it gets resolved.
+    pub fn is_color(self) -> bool {
+        matches!(
+            self,
+            Self::Color | Self::ColorSpread | Self::ColorSaturation
+        )
+    }
+}

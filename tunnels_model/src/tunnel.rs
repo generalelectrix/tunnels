@@ -1,7 +1,7 @@
 use crate::animation::PreparedAnimation;
 use crate::layer::{
-    ColorField, ColorPhase, DrawMode, FillAnimation, FillLayer, FillTarget, Layer, LayerKey,
-    MarkLayer, Placement, RenderMode, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+    ColorField, ColorPhase, DrawMode, FillAnimation, FillLayer, Layer, LayerKey, MarkLayer,
+    Placement, RenderMode, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
@@ -343,7 +343,7 @@ impl Tunnel {
                 .abs(),
             draw_mode: self.draw_mode,
             color,
-            color_anims: fill_animations(anims, FillTarget::is_color),
+            color_anims: fill_animations(anims, AnimationTarget::is_color),
             warps: fill_animations(anims, |target| !target.is_color()),
         }
     }
@@ -618,44 +618,37 @@ impl Tunnel {
 /// The animations driving one half of a figure, resolved for this frame.
 ///
 /// Split in the model rather than in the renderer because the two halves are
-/// answered in different places — the colour ones once per ramp texel, the rest
-/// once per point of the figure — and neither wants to walk past the other.
-/// An animation contributing nothing is dropped rather than asked for a zero
-/// tens of thousands of times.
+/// answered in different places — the colour ones once per ramp texel, the
+/// rest once per point of the figure — and neither wants to walk past the
+/// other. An animation contributing nothing is dropped rather than asked for a
+/// zero tens of thousands of times.
 fn fill_animations(
     anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
-    keep: impl Fn(FillTarget) -> bool,
+    keep: impl Fn(AnimationTarget) -> bool,
 ) -> Vec<FillAnimation> {
     anims
         .iter()
-        .filter(|(animation, _)| animation.is_active())
-        .filter_map(|(animation, target)| {
-            let target = fill_target(*target)?;
-            keep(target).then_some(FillAnimation {
-                target,
-                animation: *animation,
-            })
+        .filter(|(animation, target)| {
+            animation.is_active() && varies_across_figure(*target) && keep(*target)
+        })
+        .map(|(animation, target)| FillAnimation {
+            target: *target,
+            animation: *animation,
         })
         .collect()
 }
 
-/// What an animation target means on a figure, or `None` where it means
-/// nothing that varies across one.
+/// Whether this target varies from point to point across a figure.
 ///
-/// The targets left out are resolved before the layer is built: a rotation, a
-/// thickness or a position offset is one number for the whole figure. A
-/// marquee is the exception that is simply dead — it slides marks along a
-/// path, and a figure has no marks.
-fn fill_target(target: AnimationTarget) -> Option<FillTarget> {
+/// A figure is one shape rather than a run of them, so a target that means the
+/// same thing everywhere on it is resolved into a single number before the
+/// layer is built and never has to reach the points. A marquee is the one that
+/// is simply dead: it slides marks along a path, and a figure has no marks.
+fn varies_across_figure(target: AnimationTarget) -> bool {
     use AnimationTarget::*;
     match target {
-        Size => Some(FillTarget::Radial),
-        AspectRatio => Some(FillTarget::AspectRatio),
-        Spin => Some(FillTarget::Spin),
-        Color => Some(FillTarget::Hue),
-        ColorSpread => Some(FillTarget::ColorWidth),
-        ColorSaturation => Some(FillTarget::Saturation),
-        Rotation | Thickness | PositionX | PositionY | MarqueeRotation => None,
+        Size | AspectRatio | Spin | Color | ColorSpread | ColorSaturation => true,
+        Rotation | Thickness | PositionX | PositionY | MarqueeRotation => false,
     }
 }
 

@@ -10,7 +10,8 @@ use graphics::Graphics;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
 use tunnels_lib::number::Phase;
-use tunnels_model::layer::{ColorPhase, FillAnimation, FillTarget};
+use tunnels_model::animation_target::AnimationTarget;
+use tunnels_model::layer::{ColorPhase, FillAnimation};
 use tunnels_shapes::Point;
 
 /// Vertices per chunk handed to the backend. `BACK_END_MAX_VERTEX_COUNT` is
@@ -89,13 +90,16 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
 
     // An angle costs an `atan2` and a radius a square root, so decide once
     // whether anything actually asks for them.
-    let rotates = base_spin != 0.0 || warps.iter().any(|w| w.target == FillTarget::Spin);
+    let rotates = base_spin != 0.0 || warps.iter().any(|w| w.target == AnimationTarget::Spin);
     let needs_angle = rotates || field.phase == ColorPhase::Angle;
     let needs_radius = rotates
         || field.phase == ColorPhase::Radius
-        || warps
-            .iter()
-            .any(|w| matches!(w.target, FillTarget::Radial | FillTarget::AspectRatio));
+        || warps.iter().any(|w| {
+            matches!(
+                w.target,
+                AnimationTarget::Size | AnimationTarget::AspectRatio
+            )
+        });
 
     for (i, v) in mesh.verts.iter().enumerate() {
         let polar = Polar::of(*v, needs_angle, needs_radius);
@@ -106,12 +110,18 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
         let (mut scale_x, mut scale_y) = (1.0f32, 1.0f32);
         for warp in warps {
             let value = warp.animation.value(Phase::new(f64::from(along)), i) as f32;
+            // Where a target means something different on a figure than on a
+            // run of marks, this is where it is reinterpreted. `Size` scales a
+            // segment; here it scales each point's distance from the centre,
+            // so run along the angle it deforms a disc into petals and along
+            // the radius it pinches one into rings. `Spin` turns a mark about
+            // its own centroid; a point has no orientation to turn, so the
+            // same intent arrives as a shear growing with radius.
             match warp.target {
-                // Multiplicative, so the deformation is proportional: a
-                // waveform around the angle turns a disc into petals.
-                FillTarget::Radial => radial *= 1.0 + value,
-                FillTarget::Spin => turn += value * MAX_SPIN,
-                FillTarget::AspectRatio => {
+                // Multiplicative, so the deformation is proportional.
+                AnimationTarget::Size => radial *= 1.0 + value,
+                AnimationTarget::Spin => turn += value * MAX_SPIN,
+                AnimationTarget::AspectRatio => {
                     scale_x *= 1.0 + value;
                     scale_y *= 1.0 - value;
                 }

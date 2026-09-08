@@ -4,6 +4,7 @@
 //! and everything here describes shapes on a screen.
 
 use crate::animation::PreparedAnimation;
+use crate::animation_target::AnimationTarget;
 use crate::waveforms::{WaveformArgs, sawtooth};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -248,46 +249,16 @@ pub struct Hsva {
     pub level: f64,
 }
 
-/// What an animation drives on a figure, and the animation resolved for this
-/// frame.
+/// An animation resolved for this frame, and the knob it drives.
 ///
-/// Only the targets that vary across the figure travel: a rotation or a
-/// position offset is one number for the whole figure and is added before the
-/// layer is built. These are the ones that need a coordinate to be evaluated
-/// at, and so have to be carried to wherever the figure's points are.
+/// The target is the one the operator set, not a translation of it: a figure
+/// and a beam share a control surface, so they share the vocabulary that
+/// surface speaks. What a target *means* on a figure is decided where the
+/// figure is drawn.
 #[derive(Debug, Clone, Copy)]
 pub struct FillAnimation {
-    pub target: FillTarget,
+    pub target: AnimationTarget,
     pub animation: PreparedAnimation,
-}
-
-/// An animation target that varies across a figure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FillTarget {
-    /// Scales each point's distance from the centre. Run along the angle it
-    /// deforms a disc into petals; along the radius it pinches it into rings.
-    Radial,
-    /// Turns each point about the centre by an amount growing with radius.
-    Spin,
-    /// Stretches one axis while squeezing the other.
-    AspectRatio,
-    /// Shifts the hue, resolved once per ramp texel rather than per point.
-    Hue,
-    /// Widens the hue sweep.
-    ColorWidth,
-    Saturation,
-}
-
-impl FillTarget {
-    /// Whether this target is resolved when the colour ramp is built.
-    ///
-    /// The ramp is a table indexed by the figure's colour coordinate, so an
-    /// animation along that coordinate costs a fixed thousand evaluations
-    /// however fast it moves. A geometry target has to be answered per point
-    /// instead.
-    pub fn is_color(self) -> bool {
-        matches!(self, Self::Hue | Self::ColorWidth | Self::Saturation)
-    }
 }
 
 /// Identifies one layer across frames, so its caches survive the mixer moving.
