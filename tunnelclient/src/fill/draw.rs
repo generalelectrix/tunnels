@@ -186,14 +186,7 @@ impl Needs {
         Self {
             rotates,
             angle: rotates || work.field.phase == ColorPhase::Angle,
-            radius: rotates
-                || work.field.phase == ColorPhase::Radius
-                || work.warps.iter().any(|w| {
-                    matches!(
-                        w.target,
-                        AnimationTarget::Size | AnimationTarget::AspectRatio
-                    )
-                }),
+            radius: rotates || work.field.phase == ColorPhase::Radius,
         }
     }
 }
@@ -472,6 +465,59 @@ fn project(m: Matrix2d, v: Point) -> [f32; 2] {
 #[cfg(test)]
 mod test {
     use super::*;
+    use tunnels_lib::number::UnipolarFloat;
+    use tunnels_model::animation::Animation;
+    use tunnels_model::clock_bank::ClockBank;
+
+    /// An animation aimed at `target`. Its value is never asked for here; only
+    /// what it is aimed at decides which coordinates a layer pays for.
+    fn warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation> {
+        TargetedAnimation {
+            animation: Animation::default().prepare(&ClockBank::default(), UnipolarFloat::ZERO),
+            target,
+        }
+    }
+
+    /// An angle costs an arctangent and a radius a square root, so a layer
+    /// should ask for a coordinate only where something reads it.
+    #[test]
+    fn a_layer_asks_only_for_the_coordinates_something_reads() {
+        let needs = |phase, spin_speed, targets: &[AnimationTarget]| {
+            let warps: Vec<_> = targets.iter().copied().map(warp).collect();
+            Needs::of(&VertexWork {
+                field: PhaseField {
+                    phase,
+                    cycles: 1.0,
+                    span: RampSpan::Cycle,
+                },
+                spin_speed,
+                warps: &warps,
+            })
+        };
+
+        // Size and aspect ratio deform a point by the animation's value along
+        // the phase coordinate. Neither reads where the point is.
+        let deformed = needs(
+            ColorPhase::Linear,
+            0.0,
+            &[AnimationTarget::Size, AnimationTarget::AspectRatio],
+        );
+        assert!(!deformed.radius, "a deformed layer asked for the radius");
+        assert!(!deformed.angle, "a deformed layer asked for the angle");
+        assert!(!deformed.rotates);
+
+        // The radius is read where the colour runs along it, and wherever the
+        // figure turns — a spin is a rotation about the centre the radius is
+        // measured from.
+        assert!(needs(ColorPhase::Radius, 0.0, &[]).radius);
+        assert!(needs(ColorPhase::Linear, 0.5, &[]).radius);
+        assert!(needs(ColorPhase::Linear, 0.0, &[AnimationTarget::Spin]).radius);
+
+        // The angle likewise.
+        assert!(needs(ColorPhase::Angle, 0.0, &[]).angle);
+        assert!(!needs(ColorPhase::Linear, 0.0, &[]).angle);
+        assert!(needs(ColorPhase::Linear, 0.0, &[AnimationTarget::Spin]).angle);
+    }
 
     #[test]
     fn the_seam_takes_the_short_way_round() {
