@@ -105,7 +105,13 @@ pub struct Config {
     /// every platform.
     ///
     /// It bounds one write to the socket rather than one message, so a message
-    /// large enough to need several writes can take a multiple of it.
+    /// large enough to need several writes can take a multiple of it. It is
+    /// also only part of what a departed subscriber costs: the write it fails
+    /// is the write that finds the buffers already full, and filling those
+    /// takes as long as it takes. Measured on a stream of 4 kB messages at
+    /// 240 Hz, an autotuned 2.6 MB send buffer took 3.15s to fill and the
+    /// subscriber was dropped 5.84s after it departed, against the 2s set
+    /// here. The buffer term dominates and no setting here shortens it.
     ///
     /// Dropping a subscriber early is the cheaper mistake: one that is still
     /// there reconnects on its own, while one that is not costs a thread, a
@@ -157,7 +163,9 @@ const CONCERNING_SKIP_RATE: f64 = 5.0;
 struct Skips {
     /// How many messages were replaced before the subscriber took them.
     count: u64,
-    /// How long the run of them covers.
+    /// How long the run they were counted in ran for, measured from the
+    /// message that opened it. At least [`SKIP_REPORT_PERIOD`], and longer
+    /// when the messages that would have closed it sooner were not published.
     over: Duration,
 }
 
@@ -188,11 +196,14 @@ struct Mailbox {
 struct Slot {
     /// The message waiting to be sent, if there is one.
     pending: Option<Arc<Vec<u8>>>,
-    /// Messages replaced before the subscriber took them, since the last report.
-    skipped: u64,
-    /// When the run of skipped messages now being counted began, if a run is
+    /// Messages replaced before the subscriber took them, in the run now
     /// being counted.
-    reported_at: Option<Instant>,
+    skipped: u64,
+    /// When the message that opened the run now being counted was posted, if
+    /// a run is open. A run opens on the first message the subscriber misses
+    /// and closes when it is reported, so this anchors the run itself rather
+    /// than the gap since whatever was reported before it.
+    skipping_since: Option<Instant>,
     /// Whether the publisher has gone away. No further messages will arrive.
     closed: bool,
 }
@@ -206,26 +217,28 @@ impl Mailbox {
     }
 
     /// Store `msg` as the message to send next, replacing any the subscriber
-    /// has not taken, and report what it has missed if a report is due.
+    /// has not taken, and report what it has missed if a run of missed
+    /// messages has been open for [`SKIP_REPORT_PERIOD`].
     ///
     /// A subscriber that has stopped reading misses messages as fast as they
-    /// are published, so they are counted and reported at most once per
-    /// [`SKIP_REPORT_PERIOD`] rather than logged one apiece. The first skip of
-    /// a run opens the period rather than being reported on its own, so that a
-    /// report always covers a stretch of time long enough to divide by.
+    /// are published, so they are counted and reported once a period rather
+    /// than logged one apiece. What closes a run is the period elapsing, not
+    /// the next message missed: a burst that ends inside a period would
+    /// otherwise wait for a miss that may be hours away, and be reported
+    /// against a stretch of time it did not occupy.
     fn post(&self, msg: Arc<Vec<u8>>, now: Instant) -> Option<Skips> {
         let mut slot = self.slot.lock().unwrap();
         let replaced = slot.pending.replace(msg).is_some();
         self.posted.notify_one();
-        if !replaced {
-            return None;
+        if replaced {
+            slot.skipped += 1;
+            slot.skipping_since.get_or_insert(now);
         }
-        slot.skipped += 1;
-        let over = now.duration_since(*slot.reported_at.get_or_insert(now));
+        let over = now.duration_since(slot.skipping_since?);
         if over < SKIP_REPORT_PERIOD {
             return None;
         }
-        slot.reported_at = Some(now);
+        slot.skipping_since = None;
         Some(Skips {
             count: std::mem::take(&mut slot.skipped),
             over,
@@ -639,10 +652,15 @@ fn send_loop(mut stream: TcpStream, peer: SocketAddr, mailbox: &Mailbox) {
 ///
 /// A sender thread stops when a write to its subscriber fails, which both a
 /// connection that has failed and a subscriber that has stopped accepting
-/// messages bring about — the second by way of the write deadline. It writes
-/// only when there is a message to write, so a subscriber that has departed is
-/// discovered by the next message published and not before. Until then its
-/// client and its thread stand, however long the gap between messages is.
+/// messages bring about — the second by way of the write deadline.
+///
+/// So a departed subscriber is discovered only while messages are still being
+/// published, and only once enough of them have gone unread to fill the
+/// buffers in front of it. A publisher that goes quiet, or whose messages stop
+/// reaching this point because they cannot be compressed or framed, notices
+/// nothing until it publishes again; the keepalive probes fail the connection
+/// eventually, because a publisher that is not writing is idle by definition,
+/// and the next message published finds a client already finished.
 fn reap_departed(clients: &Mutex<Clients>) {
     // Dropping a client joins its sender thread, and a thread parked in a
     // write gets there only once the socket has been shut down under it. That
@@ -1508,6 +1526,69 @@ mod tests {
         // A run covering no time at all has no rate to take, and is treated as
         // the fault rather than as an infinity.
         assert!(skips(1, 0.0).is_concerning());
+    }
+
+    /// A burst of missed messages is reported at the rate of the burst, not
+    /// at a rate diluted by however long the subscriber was healthy before it.
+    ///
+    /// A subscriber that misses one message and then behaves for an hour, and
+    /// one that misses hundreds in a second, are the same count over wildly
+    /// different stretches of time. Counting from the last report rather than
+    /// from the start of the run being reported puts the healthy hour in the
+    /// denominator, and a fault that should be warned about is reported as
+    /// though it were the ordinary loss this transport is built to absorb.
+    #[test]
+    fn a_burst_of_missed_messages_is_reported_at_the_rate_of_the_burst() {
+        /// The gap between messages on a stream of a few hundred per second.
+        const GAP: f64 = 0.004;
+
+        let (mailbox, _shared) = Mailbox::new();
+        let start = Instant::now();
+        let at = |secs: f64| start + Duration::from_secs_f64(secs);
+        let msg = || Arc::new(vec![0u8]);
+
+        // One message missed, then a subscriber that goes on taking them.
+        assert!(mailbox.post(msg(), at(0.0)).is_none());
+        assert!(mailbox.post(msg(), at(GAP)).is_none());
+        mailbox.take();
+
+        // The one it missed is reported on its own once the period is up, at a
+        // rate that says it is a straggler.
+        let straggler = mailbox
+            .post(msg(), at(1.5))
+            .expect("a missed message went unreported past the reporting period");
+        assert_eq!(straggler.count, 1);
+        assert!(
+            !straggler.is_concerning(),
+            "one missed message was reported as a subscriber that has stopped keeping up"
+        );
+        mailbox.take();
+
+        // An hour of health, and then a burst: every message missed for a
+        // second and a half.
+        let burst_at = |i: u32| at(3600.0 + f64::from(i) * GAP);
+        assert!(mailbox.post(msg(), burst_at(0)).is_none());
+        let reports: Vec<Skips> = (1..375)
+            .filter_map(|i| mailbox.post(msg(), burst_at(i)))
+            .collect();
+        let [burst] = reports.as_slice() else {
+            panic!(
+                "a burst of 374 missed messages was reported {} times",
+                reports.len()
+            )
+        };
+        assert!(
+            burst.count > 240,
+            "a burst of 374 missed messages was reported as {} of them",
+            burst.count
+        );
+        assert!(
+            burst.is_concerning(),
+            "{} messages missed in {:?} was reported as the ordinary loss of a subscriber that \
+             is keeping up",
+            burst.count,
+            burst.over
+        );
     }
 
     /// A message framed into a buffer a subscriber still holds gets a buffer
