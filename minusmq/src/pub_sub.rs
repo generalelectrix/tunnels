@@ -7,10 +7,10 @@
 //! Subscribers automatically reconnect on connection loss.
 
 use anyhow::{Context, Result};
-use log::{error, warn};
+use log::{error, info, warn};
 use socket2::{SockRef, TcpKeepalive};
 use std::io::Write;
-use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -87,13 +87,60 @@ pub struct Config {
     /// When a connection whose peer has gone silent is failed. Applied
     /// wherever a socket is opened, so it takes effect at both ends.
     pub keepalive: Keepalive,
-    /// How long a publisher's accept loop waits for a subscriber before
-    /// looking up. A subscriber has no listener and ignores it.
+    /// How long a publisher's accept loop sleeps between passes. A subscriber
+    /// has no listener and ignores it.
     ///
-    /// A publisher on its way out releases the wait directly, so this is the
-    /// backstop for a release that never arrives — and the period at which
-    /// subscribers whose connections have failed are reaped.
-    pub accept_timeout: Duration,
+    /// The loop asks whether anyone has connected rather than waiting for
+    /// someone to, so one interval bounds three things: how long a connecting
+    /// subscriber waits to be accepted, how long a departed one stays on the
+    /// list after its sender thread has failed, and how long a publisher being
+    /// dropped waits for its accept thread to notice. A subscriber connects
+    /// once and stays for the length of a show, so the first of those is the
+    /// cheapest of the three to pay for the other two.
+    ///
+    /// It asks rather than waits because a receive timeout bounds a receive,
+    /// and whether an `accept` counts as one is the platform's business. On
+    /// macOS it does not, and a loop waiting on the listener comes round only
+    /// when somebody connects — so nothing is reaped between connections, on
+    /// the platform a console publishes from.
+    pub poll_interval: Duration,
+    /// How long a write to a subscriber may make no progress before that
+    /// subscriber is dropped. A subscriber writes to nobody and ignores it.
+    ///
+    /// A subscriber that goes away without closing leaves a connection that
+    /// does not fail: its socket accepts writes until the buffers behind it
+    /// fill, and the write after that neither completes nor fails for as long
+    /// as the operating system goes on retransmitting. A deadline the
+    /// publisher sets is what ends that wait, and ends it the same way on
+    /// every platform.
+    ///
+    /// It bounds one write to the socket rather than one message, and
+    /// `write_all` retries a short write, so failing a message takes as many
+    /// deadlines as it takes writes: two on macOS and three on Linux, against
+    /// a peer that has stopped reading.
+    ///
+    /// What it therefore does not bound is a peer that reads just enough to
+    /// keep the writes short rather than stopping them. Every short write
+    /// restarts the deadline, so a subscriber accepting a trickle holds its
+    /// sender thread for as long as it goes on trickling, and is never
+    /// reported as behind because nothing it was sent was ever replaced. That
+    /// is a subscriber alive and keeping up badly rather than one that has
+    /// departed, so it is left alone deliberately: bounding a whole message
+    /// would drop a subscriber that is still there for being slow.
+    ///
+    /// It is also the smaller half of what a departed subscriber costs, since
+    /// the write it fails is the one that finds the buffers already full.
+    /// Those are autotuned and no setting here shortens them: about 2.6 MB on
+    /// Linux, which a stream of 4 kB messages at 240 Hz fills in 3.15s, for a
+    /// subscriber dropped 5.84s after it departed against the 2s set here; and
+    /// about 786 kB on macOS, a third of that, so the filling term there is
+    /// proportionally smaller and detection correspondingly quicker.
+    ///
+    /// Dropping a subscriber early is the cheaper mistake: one that is still
+    /// there reconnects on its own, while one that is not costs a thread, a
+    /// copy of every message published, and a report of what it missed every
+    /// [`SKIP_REPORT_PERIOD`] for as long as the publisher lives.
+    pub write_timeout: Duration,
 }
 
 impl Default for Config {
@@ -102,7 +149,8 @@ impl Default for Config {
             max_message_len: DEFAULT_MAX_MESSAGE_LEN,
             compression: Compression::default(),
             keepalive: Keepalive::default(),
-            accept_timeout: Duration::from_secs(1),
+            poll_interval: Duration::from_millis(100),
+            write_timeout: Duration::from_secs(2),
         }
     }
 }
@@ -122,6 +170,38 @@ fn fail_a_silent_peer(socket: &TcpStream, keepalive: Keepalive) -> std::io::Resu
 /// How long a run of skipped messages goes unreported before its count is logged.
 const SKIP_REPORT_PERIOD: Duration = Duration::from_secs(1);
 
+/// The rate of missed messages, in messages per second, that separates a
+/// subscriber dropping the occasional one from a subscriber that has stopped
+/// keeping up.
+///
+/// Below it a subscriber is still showing the stream and losing the odd
+/// message out of it, which is what this transport is for and not news. Above
+/// it, what it shows is a fraction of what was published, which is a fault
+/// worth putting in front of whoever is running the show.
+const CONCERNING_SKIP_RATE: f64 = 5.0;
+
+/// A run of messages a subscriber missed, and the stretch of time it missed
+/// them over.
+#[derive(Debug, Clone, Copy)]
+struct Skips {
+    /// How many messages were replaced before the subscriber took them.
+    count: u64,
+    /// How long the run they were counted in ran for, measured from the
+    /// message that opened it. At least [`SKIP_REPORT_PERIOD`], and longer
+    /// when the messages that would have closed it sooner were not published.
+    over: Duration,
+}
+
+impl Skips {
+    /// Whether these were missed faster than [`CONCERNING_SKIP_RATE`].
+    ///
+    /// The comparison is scaled rather than divided so that a run measured
+    /// over no time at all is concerning, rather than an infinity.
+    fn is_concerning(&self) -> bool {
+        self.count as f64 > CONCERNING_SKIP_RATE * self.over.as_secs_f64()
+    }
+}
+
 /// The one message a subscriber has been given and not yet been sent.
 ///
 /// The publisher stores a message and moves on; the subscriber's sender thread
@@ -139,10 +219,14 @@ struct Mailbox {
 struct Slot {
     /// The message waiting to be sent, if there is one.
     pending: Option<Arc<Vec<u8>>>,
-    /// Messages replaced before the subscriber took them, since the last report.
+    /// Messages replaced before the subscriber took them, in the run now
+    /// being counted.
     skipped: u64,
-    /// When the last report of skipped messages was made, if any has been.
-    reported_at: Option<Instant>,
+    /// When the message that opened the run now being counted was posted, if
+    /// a run is open. A run opens on the first message the subscriber misses
+    /// and closes when it is reported, so this anchors the run itself rather
+    /// than the gap since whatever was reported before it.
+    skipping_since: Option<Instant>,
     /// Whether the publisher has gone away. No further messages will arrive.
     closed: bool,
 }
@@ -156,26 +240,32 @@ impl Mailbox {
     }
 
     /// Store `msg` as the message to send next, replacing any the subscriber
-    /// has not taken, and report how many it has missed if a report is due.
+    /// has not taken, and report what it has missed if a run of missed
+    /// messages has been open for [`SKIP_REPORT_PERIOD`].
     ///
     /// A subscriber that has stopped reading misses messages as fast as they
-    /// are published, so they are counted and reported at most once per
-    /// `SKIP_REPORT_PERIOD` rather than logged one apiece.
-    fn post(&self, msg: Arc<Vec<u8>>, now: Instant) -> Option<u64> {
+    /// are published, so they are counted and reported once a period rather
+    /// than logged one apiece. What closes a run is the period elapsing, not
+    /// the next message missed: a burst that ends inside a period would
+    /// otherwise wait for a miss that may be hours away, and be reported
+    /// against a stretch of time it did not occupy.
+    fn post(&self, msg: Arc<Vec<u8>>, now: Instant) -> Option<Skips> {
         let mut slot = self.slot.lock().unwrap();
         let replaced = slot.pending.replace(msg).is_some();
         self.posted.notify_one();
-        if !replaced {
+        if replaced {
+            slot.skipped += 1;
+            slot.skipping_since.get_or_insert(now);
+        }
+        let over = now.duration_since(slot.skipping_since?);
+        if over < SKIP_REPORT_PERIOD {
             return None;
         }
-        slot.skipped += 1;
-        match slot.reported_at {
-            Some(reported_at) if now.duration_since(reported_at) < SKIP_REPORT_PERIOD => None,
-            _ => {
-                slot.reported_at = Some(now);
-                Some(std::mem::take(&mut slot.skipped))
-            }
-        }
+        slot.skipping_since = None;
+        Some(Skips {
+            count: std::mem::take(&mut slot.skipped),
+            over,
+        })
     }
 
     /// Block until there is a message to send, and take it.
@@ -326,14 +416,17 @@ fn frame_into(spare: Option<Arc<Vec<u8>>>, data: &[u8]) -> Result<Arc<Vec<u8>>, 
 ///
 /// Spawns a background accept thread. Subscribers connect and receive
 /// length-prefixed messages, each on its own sender thread. A subscriber is
-/// dropped when its connection fails, and never for being slow — a slow
-/// subscriber misses messages instead.
+/// dropped when a write to it fails, which a write making no progress within
+/// [`Config::write_timeout`] is one way to do: a peer that has departed
+/// without closing and a peer too slow to accept a message are both dropped
+/// that way, and are not told apart.
+///
+/// What a subscriber is never dropped for is missing messages. It misses them
+/// while a write to it is outstanding, and a write that completes leaves it
+/// subscribed however many it missed in the meantime.
 pub struct Publisher {
     clients: Arc<Mutex<Clients>>,
     shutdown: Arc<AtomicBool>,
-    /// The port the listener is bound to. Connecting to it is what releases
-    /// the accept thread from its wait.
-    port: u16,
     /// How this stream carries its payloads. A message is compressed, if it is
     /// compressed at all, before it is framed.
     compression: Compression,
@@ -345,13 +438,6 @@ impl Publisher {
     /// Spawns a background thread to accept subscriber connections.
     pub fn new(listener: TcpListener, config: Config) -> Result<Self> {
         let local_addr = listener.local_addr()?;
-        // A dropped publisher releases the accept thread by connecting to this
-        // listener itself. Bounding the wait is the backstop for a connection
-        // that cannot be made: the thread then looks up on its own rather than
-        // holding the drop open forever.
-        if let Err(e) = SockRef::from(&listener).set_read_timeout(Some(config.accept_timeout)) {
-            warn!("Failed to bound the wait for a subscriber: {e}");
-        }
         log::debug!("pub_sub publisher listening on {local_addr}");
 
         let clients: Arc<Mutex<Clients>> = Arc::new(Mutex::new(Clients::default()));
@@ -369,7 +455,6 @@ impl Publisher {
         Ok(Publisher {
             clients,
             shutdown,
-            port: local_addr.port(),
             compression: config.compression,
             accept: Some(accept),
         })
@@ -422,14 +507,19 @@ impl Publisher {
             };
             let now = Instant::now();
             for client in connected.iter() {
-                if let Some(skipped) = client.mailbox.post(Arc::clone(&msg), now) {
-                    skip_reports.push((client.peer, skipped));
+                if let Some(skips) = client.mailbox.post(Arc::clone(&msg), now) {
+                    skip_reports.push((client.peer, skips));
                 }
             }
             *spare = Some(msg);
         }
-        for (peer, skipped) in skip_reports {
-            warn!("Subscriber {peer} is behind: skipped {skipped} messages.");
+        for (peer, skips) in skip_reports {
+            let Skips { count, over } = skips;
+            if skips.is_concerning() {
+                warn!("Subscriber {peer} is behind: skipped {count} messages in {over:?}.");
+            } else {
+                info!("Subscriber {peer} is behind: skipped {count} messages in {over:?}.");
+            }
         }
     }
 }
@@ -441,13 +531,12 @@ impl Drop for Publisher {
     /// the ones present have been dealt with. Dropping the clients then stops
     /// every sender thread, including one parked in a write to a subscriber
     /// that is not reading.
+    ///
+    /// The accept thread is not waiting on anything and needs nothing to
+    /// release it: it comes round every [`Config::poll_interval`] and sees the
+    /// flag, so that is the longest this waits for it.
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
-        // A thread waiting for a subscriber is released by a subscriber, so
-        // the publisher makes the last connection itself. The flag is set
-        // first, so the thread sees it and drops that connection rather than
-        // subscribing it.
-        let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port));
         if let Some(accept) = self.accept.take() {
             let _ = accept.join();
         }
@@ -466,45 +555,49 @@ fn accept_loop(
     shutdown: Arc<AtomicBool>,
     config: Config,
 ) {
+    // Asking whether anyone has connected, rather than waiting until someone
+    // does, is what lets this loop reap between connections and notice a
+    // publisher on its way out without being sent anything to wake it.
+    if let Err(e) = listener.set_nonblocking(true) {
+        // Every other socket option here warns and carries on, and this one
+        // has more reason to: a loop that gives up accepts nobody, which is a
+        // show with no clients, while a loop that waits on the listener still
+        // accepts and still reaps — just only when somebody connects.
+        warn!("Failed to poll for subscribers, so none will be reaped until one connects: {e}");
+    }
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok((stream, peer)) => {
-                // A publisher on its way out connects here to release the
-                // wait. That connection carries no subscriber behind it.
-                if shutdown.load(Ordering::Acquire) {
-                    return;
-                }
-                match subscribe(stream, peer, config.keepalive) {
-                    Ok(client) => clients.lock().unwrap().connected.push(client),
-                    Err(e) => warn!("Failed to subscribe a client: {e:#}"),
-                }
+            Ok((stream, peer)) => match subscribe(stream, peer, config) {
+                Ok(client) => clients.lock().unwrap().connected.push(client),
+                Err(e) => warn!("Failed to subscribe a client: {e:#}"),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(config.poll_interval);
             }
-            Err(e) if is_timeout(&e) => (),
             Err(e) => {
                 error!("pub_sub accept error: {e}");
                 // An error that persists — a process out of file descriptors,
                 // say — would otherwise spin this thread and its log as fast
                 // as the two of them can go.
-                thread::sleep(config.accept_timeout);
+                thread::sleep(config.poll_interval);
             }
         }
         // Reaping belongs on this thread rather than on the publisher's: it
         // happens between messages and nothing waits on it.
-        reap_disconnected(&clients);
+        reap_departed(&clients);
     }
 }
 
-/// Whether a failed accept is the wait running out rather than the listener
-/// failing.
-fn is_timeout(e: &std::io::Error) -> bool {
-    matches!(
-        e.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    )
-}
-
 /// Start the thread that writes to a newly connected subscriber.
-fn subscribe(stream: TcpStream, peer: SocketAddr, keepalive: Keepalive) -> Result<Client> {
+fn subscribe(stream: TcpStream, peer: SocketAddr, config: Config) -> Result<Client> {
+    // Whether a socket accepted from a listener that does not block inherits
+    // that from it is the platform's business — BSD hands it down and Linux
+    // does not — and a sender thread given a socket that does not block would
+    // fail its first full buffer instantly rather than waiting out the
+    // deadline. Saying which is wanted costs one call and settles it.
+    if let Err(e) = stream.set_nonblocking(false) {
+        warn!("Failed to make subscriber {peer} block: {e}");
+    }
     if let Err(e) = stream.set_nodelay(true) {
         warn!("Failed to set TCP_NODELAY: {e}");
     }
@@ -516,18 +609,26 @@ fn subscribe(stream: TcpStream, peer: SocketAddr, keepalive: Keepalive) -> Resul
     // connection carrying a stream of messages is not: with unacknowledged
     // data outstanding it is the retransmission timer that governs, and a
     // subscriber that vanishes mid-stream is held until that gives up.
-    // `TCP_USER_TIMEOUT` would cover it. What it costs meanwhile is a client
-    // that is not reaped and a run of skip warnings, which is the cheap half
-    // of the problem: the half a show depends on is the subscriber's own end,
-    // where a publisher that stops sending is idle by definition and the
-    // probes do fire.
-    if let Err(e) = fail_a_silent_peer(&stream, keepalive) {
+    // `TCP_USER_TIMEOUT` caps that wait where it exists, which is Linux and
+    // not the macOS a console publishes from. The write deadline below is the
+    // portable answer and covers the same failure.
+    //
+    // The half a show depends on is the subscriber's own end, where a
+    // publisher that stops sending is idle by definition and the probes do
+    // fire.
+    if let Err(e) = fail_a_silent_peer(&stream, config.keepalive) {
         warn!("Failed to set keepalive on subscriber {peer}: {e}");
     }
-    // Deliberately no write timeout. A sender thread is free to block for as
-    // long as its subscriber takes, and a timeout firing mid-message would
-    // leave a partial message on the wire, desynchronizing the framing for
-    // every message after it.
+    // The deadline that fails a write to a subscriber which has stopped
+    // accepting messages, whether it has departed or is only too slow to take
+    // one. Abandoning a message part-way through costs nothing: the failure
+    // ends the sender thread, the client is reaped, and the subscriber
+    // reconnects onto a stream that begins at a message boundary. Nothing
+    // writes to this socket again — the client keeps a handle on it only to
+    // shut it down.
+    if let Err(e) = stream.set_write_timeout(Some(config.write_timeout)) {
+        warn!("Failed to set the write deadline on subscriber {peer}: {e}");
+    }
 
     let socket = stream
         .try_clone()
@@ -564,16 +665,30 @@ fn send_loop(mut stream: TcpStream, peer: SocketAddr, mailbox: &Mailbox) {
 
 /// Forget the subscribers whose sender threads have stopped.
 ///
-/// A sender thread stops when a write to its subscriber fails, and it writes
-/// only when there is a message to write, so a subscriber that has departed is
-/// discovered by the next message published and not before. Until then its
-/// client and its thread stand, however long the gap between messages is.
-fn reap_disconnected(clients: &Mutex<Clients>) {
-    clients
-        .lock()
-        .unwrap()
-        .connected
-        .retain(|client| !client.is_finished());
+/// A sender thread stops when a write to its subscriber fails, which both a
+/// connection that has failed and a subscriber that has stopped accepting
+/// messages bring about — the second by way of the write deadline.
+///
+/// So a departed subscriber is discovered only while messages are still being
+/// published, and only once enough of them have gone unread to fill the
+/// buffers in front of it. A publisher that goes quiet, or whose messages stop
+/// reaching this point because they cannot be compressed or framed, notices
+/// nothing until it publishes again; the keepalive probes fail the connection
+/// eventually, because a publisher that is not writing is idle by definition,
+/// and the next message published finds a client already finished.
+fn reap_departed(clients: &Mutex<Clients>) {
+    // Dropping a client joins its sender thread, and a thread parked in a
+    // write gets there only once the socket has been shut down under it. That
+    // is not work to hold the lock a publisher sends under, so the departed
+    // come out of the list here and are dropped once it is released.
+    let departed: Vec<Client> = {
+        let mut clients = clients.lock().unwrap();
+        clients
+            .connected
+            .extract_if(.., |client| client.is_finished())
+            .collect()
+    };
+    drop(departed);
 }
 
 // --- Subscriber ---
@@ -835,6 +950,7 @@ impl Subscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     use std::sync::mpsc::{Receiver, channel};
     use std::time::Instant;
 
@@ -843,9 +959,15 @@ mod tests {
     const TEST_MAX_MESSAGE_LEN: usize = 4 * 1024 * 1024;
 
     /// A stream carrying its payloads as they are, of the size a test sends.
+    ///
+    /// A stalled subscriber is how several tests hold a sender thread still,
+    /// so the write deadline is long enough that no test reaches it by
+    /// accident: a test about something other than reaping must not have a
+    /// subscriber reaped out from under it.
     fn test_config() -> Config {
         Config {
             max_message_len: TEST_MAX_MESSAGE_LEN,
+            write_timeout: Duration::from_secs(600),
             ..Default::default()
         }
     }
@@ -860,13 +982,19 @@ mod tests {
         }
     }
 
-    fn test_publisher() -> (Publisher, u16) {
+    /// A publisher carrying the stream `config` describes, and the port it is
+    /// reached on.
+    fn publisher_with(config: Config) -> (Publisher, u16) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let publisher = Publisher::new(listener, test_config()).unwrap();
+        let publisher = Publisher::new(listener, config).unwrap();
         // Give accept thread time to start.
         thread::sleep(Duration::from_millis(50));
         (publisher, port)
+    }
+
+    fn test_publisher() -> (Publisher, u16) {
+        publisher_with(test_config())
     }
 
     #[test]
@@ -1055,6 +1183,11 @@ mod tests {
     /// subscriber with it, and dropping that subscriber for being slow costs
     /// it everything until it reconnects. Both cost more than the messages it
     /// misses, which the messages that follow supersede.
+    ///
+    /// A subscriber that stops accepting messages altogether is dropped in
+    /// the end, when a write to it runs past the deadline; the deadline here
+    /// is far beyond anything the test reaches, so what is measured is the
+    /// cost of missing messages alone.
     #[test]
     fn a_subscriber_that_stops_reading_costs_only_itself() {
         let (publisher, port) = test_publisher();
@@ -1121,6 +1254,115 @@ mod tests {
         assert!(
             slowest_send < SEND_LIMIT,
             "publishing blocked for {slowest_send:?} on a subscriber that stopped reading"
+        );
+    }
+
+    /// How long a departed subscriber gets to be noticed before the publisher
+    /// is taken to be keeping it forever.
+    const REAP_LIMIT: Duration = Duration::from_secs(10);
+
+    /// A subscriber that stops accepting what it is sent is dropped, and not
+    /// before the write deadline has run.
+    ///
+    /// A subscriber that vanishes without closing — an unplugged client, a
+    /// switch that loses power — leaves behind a socket the publisher can go
+    /// on writing into until its buffers fill, and a sender thread that then
+    /// parks in a write with nothing to end it. Nothing about the connection
+    /// says the subscriber is gone. A publisher that does not notice keeps a
+    /// client, a thread and a copy of every message published for a peer that
+    /// is never coming back.
+    ///
+    /// A peer stalled on the loopback is the hard case rather than a weaker
+    /// stand-in for an unplugged one: it acknowledges everything it is sent,
+    /// so no timeout the operating system keeps will ever fail the
+    /// connection. Only a deadline the publisher sets itself can.
+    ///
+    /// Reaping removes a client whose sender thread has stopped, and a peer
+    /// that closes stops one too — so an empty list on its own does not say
+    /// which of the two emptied it. What says so is that the deadline had to
+    /// run first, and that the peer's connection was still carrying the
+    /// stream when the publisher gave up on it.
+    #[test]
+    fn a_subscriber_that_stops_accepting_what_it_is_sent_is_dropped() {
+        /// Long enough to outlast a healthy write, short enough to keep the
+        /// test quick.
+        const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+
+        let (publisher, port) = publisher_with(Config {
+            write_timeout: WRITE_TIMEOUT,
+            // Reaping runs at this cadence, so it sits well inside the
+            // deadline: otherwise the time a subscriber takes to disappear
+            // would be this rather than the deadline, and would say nothing
+            // about which of them dropped it.
+            poll_interval: Duration::from_millis(100),
+            ..test_config()
+        });
+        // Held open for the duration, so that the subscriber is stalled rather
+        // than closed and its connection stays healthy throughout.
+        let mut stalled = stalled_subscriber(port);
+        thread::sleep(Duration::from_millis(300));
+
+        // Published from inside the wait rather than in a burst before it: how
+        // many messages it takes to fill a subscriber's buffers is the
+        // operating system's business, and a test that stops publishing while
+        // there is still room in them waits on a write that is not blocked.
+        let bulk = vec![0xABu8; LARGE_MESSAGE];
+        let started = Instant::now();
+        while started.elapsed() < REAP_LIMIT {
+            publisher.send(&bulk);
+            if !publisher.clients.lock().unwrap().connected.is_empty() {
+                continue;
+            }
+            let elapsed = started.elapsed();
+            assert!(
+                elapsed >= WRITE_TIMEOUT,
+                "a subscriber was dropped after {elapsed:?}, too soon for a write to it to have \
+                 run past the {WRITE_TIMEOUT:?} deadline: its connection failed rather than \
+                 stalling"
+            );
+            let mut byte = [0u8; 1];
+            let read = stalled
+                .read(&mut byte)
+                .expect("the stalled subscriber's connection had failed rather than stalling");
+            assert_eq!(
+                read, 1,
+                "the stalled subscriber's connection had been closed rather than stalling"
+            );
+            return;
+        }
+        // Nothing was reaped inside the wait. Which of the three things that
+        // could mean is worth knowing before guessing, and the answer is only
+        // available here, so the failure states it rather than the fact of it.
+        //
+        // Whether the sender thread finished says whether the write deadline
+        // did its job: a client that is finished had its write fail on
+        // schedule and only reaping is missing. Whether the list drains once
+        // this thread stops spinning says whether the accept thread was being
+        // starved of the lock it needs. Whether it drains only after a
+        // connection arrives says the accept loop was parked in `accept`,
+        // which happens where a receive timeout does not bound one.
+        let census = |when: &str| {
+            let clients = publisher.clients.lock().unwrap();
+            let finished = clients.connected.iter().filter(|c| c.is_finished()).count();
+            format!(
+                "{when}: {} connected, {finished} finished",
+                clients.connected.len()
+            )
+        };
+        let inside_the_wait = census("inside the wait");
+        thread::sleep(Duration::from_millis(500));
+        let after_the_spin = census("500ms after the spin stopped");
+        let poke = TcpStream::connect(("127.0.0.1", port));
+        thread::sleep(Duration::from_millis(500));
+        let after_a_connection = census("500ms after a connection arrived");
+        panic!(
+            "a subscriber that accepted nothing it was sent was still subscribed after \
+             {REAP_LIMIT:?}\n  {inside_the_wait}\n  {after_the_spin}\n  {after_a_connection}\n  \
+             (the poke connected: {})\n  a finished client that outlives the spin but not a \
+             connection means the accept loop was parked in accept; one that goes as soon as the \
+             spin stops means it was starved of the clients lock; one that is never finished \
+             means the write deadline never failed a write.",
+            poke.is_ok()
         );
     }
 
@@ -1214,11 +1456,7 @@ mod tests {
     /// what its buffer holds.
     #[test]
     fn a_compressed_stream_carries_every_message_whole() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let publisher = Publisher::new(listener, compressed_config()).unwrap();
-        // Give the accept thread time to start.
-        thread::sleep(Duration::from_millis(50));
+        let (publisher, port) = publisher_with(compressed_config());
 
         let (requests, to_publish) = channel::<Vec<u8>>();
         thread::spawn(move || {
@@ -1309,6 +1547,94 @@ mod tests {
         let mut subscriber = Subscriber::new("127.0.0.1", port, test_config());
         subscriber.stop_handle().stop();
         assert!(subscriber.recv().is_none());
+    }
+
+    /// A run of skipped messages is judged by the rate it was missed at
+    /// rather than by how many were missed.
+    ///
+    /// The count alone means nothing without the stretch of time it covers:
+    /// the same run reported over a period ten times as long is a tenth of the
+    /// fault, and a threshold read off the count would move the moment the
+    /// reporting period did.
+    #[test]
+    fn skips_are_judged_by_their_rate_rather_than_their_count() {
+        let skips = |count: u64, secs: f64| Skips {
+            count,
+            over: Duration::from_secs_f64(secs),
+        };
+        assert!(!skips(4, 1.0).is_concerning());
+        assert!(skips(6, 1.0).is_concerning());
+
+        // The same two rates, reported over ten times the period.
+        assert!(!skips(40, 10.0).is_concerning());
+        assert!(skips(60, 10.0).is_concerning());
+
+        // A run covering no time at all has no rate to take, and is treated as
+        // the fault rather than as an infinity.
+        assert!(skips(1, 0.0).is_concerning());
+    }
+
+    /// A burst of missed messages is reported at the rate of the burst, not
+    /// at a rate diluted by however long the subscriber was healthy before it.
+    ///
+    /// A subscriber that misses one message and then behaves for an hour, and
+    /// one that misses hundreds in a second, are the same count over wildly
+    /// different stretches of time. Counting from the last report rather than
+    /// from the start of the run being reported puts the healthy hour in the
+    /// denominator, and a fault that should be warned about is reported as
+    /// though it were the ordinary loss this transport is built to absorb.
+    #[test]
+    fn a_burst_of_missed_messages_is_reported_at_the_rate_of_the_burst() {
+        /// The gap between messages on a stream of a few hundred per second.
+        const GAP: f64 = 0.004;
+
+        let (mailbox, _shared) = Mailbox::new();
+        let start = Instant::now();
+        let at = |secs: f64| start + Duration::from_secs_f64(secs);
+        let msg = || Arc::new(vec![0u8]);
+
+        // One message missed, then a subscriber that goes on taking them.
+        assert!(mailbox.post(msg(), at(0.0)).is_none());
+        assert!(mailbox.post(msg(), at(GAP)).is_none());
+        mailbox.take();
+
+        // The one it missed is reported on its own once the period is up, at a
+        // rate that says it is a straggler.
+        let straggler = mailbox
+            .post(msg(), at(1.5))
+            .expect("a missed message went unreported past the reporting period");
+        assert_eq!(straggler.count, 1);
+        assert!(
+            !straggler.is_concerning(),
+            "one missed message was reported as a subscriber that has stopped keeping up"
+        );
+        mailbox.take();
+
+        // An hour of health, and then a burst: every message missed for a
+        // second and a half.
+        let burst_at = |i: u32| at(3600.0 + f64::from(i) * GAP);
+        assert!(mailbox.post(msg(), burst_at(0)).is_none());
+        let reports: Vec<Skips> = (1..375)
+            .filter_map(|i| mailbox.post(msg(), burst_at(i)))
+            .collect();
+        let [burst] = reports.as_slice() else {
+            panic!(
+                "a burst of 374 missed messages was reported {} times",
+                reports.len()
+            )
+        };
+        assert!(
+            burst.count > 240,
+            "a burst of 374 missed messages was reported as {} of them",
+            burst.count
+        );
+        assert!(
+            burst.is_concerning(),
+            "{} messages missed in {:?} was reported as the ordinary loss of a subscriber that \
+             is keeping up",
+            burst.count,
+            burst.over
+        );
     }
 
     /// A message framed into a buffer a subscriber still holds gets a buffer
