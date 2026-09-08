@@ -1,18 +1,20 @@
-//! The coordinate system every baked figure is expressed in.
+//! The coordinate system every figure a renderer draws is expressed in.
 //!
-//! The crate holding the procedurally generated figures defines its own
-//! equivalents of these types for the same coordinate system. Which of the two
-//! survives, or whether both give way to a shared one, is a question for
-//! whoever brings the generated and baked halves together — neither side can
-//! answer it alone, so the duplication stands until then rather than being
-//! resolved by whichever landed second.
+//! The crate holding the procedurally generated figures works in its own
+//! coordinates, in the numbers its families and their curated parameters are
+//! written in, and converts into these on the way out — the same move the SVG
+//! library makes at build time. So there are two coordinate systems and one
+//! renderer geometry, and this is it: a figure that has reached a renderer is
+//! in these types whatever built it.
 
-/// A point in figure space: the unit box centred on the origin that every
-/// figure is normalised into.
+/// A point in figure space: the unit box centred on the origin that a figure is
+/// drawn in, and may reach outside of.
 ///
-/// Normalising is what makes a beam's size knob mean the same thing whatever
-/// coordinate system the source artwork used, and this type is what says a
-/// value is in that space rather than in pixels on a screen.
+/// The box is what makes a beam's size knob mean the same thing whatever
+/// coordinate system a figure was built in, and this type is what says a value
+/// is in that space rather than in pixels on a screen. Baked artwork is
+/// normalised to fill the box exactly; a generated figure is mapped into it at
+/// a fixed scale instead, so a family composed to overrun its frame still does.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(transparent)]
 pub struct Point([f32; 2]);

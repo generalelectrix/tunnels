@@ -13,8 +13,8 @@ use lyon_tessellation::{
     LineJoin, StrokeOptions, StrokeTessellator, StrokeVertex, VertexBuffers,
 };
 use std::collections::HashMap;
-use tunnels_model::layer::SpriteId;
-use tunnels_sprites::{FillRule, Point, Sprite};
+use tunnels_model::layer::FigureId;
+use tunnels_sprites::{Figure, FillRule, Point};
 
 /// How finely the tessellator may deviate, in figure units.
 ///
@@ -45,7 +45,7 @@ const STROKE_SEGMENT: f32 = 0.025;
 /// names the geometry it stands for and nothing else has to be checked.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 struct StrokeId {
-    sprite: SpriteId,
+    figure: FigureId,
     thickness_bits: u32,
 }
 
@@ -56,16 +56,16 @@ struct StrokeId {
 /// how wide the stroke is.
 #[derive(Default)]
 pub struct GeometryCache {
-    fills: HashMap<SpriteId, TriangleList>,
+    fills: HashMap<FigureId, TriangleList>,
     strokes: HashMap<StrokeId, StrokeMesh>,
 }
 
 impl GeometryCache {
     /// The figure's interior, tessellated on first use.
-    pub fn fill(&mut self, id: SpriteId, sprite: &Sprite) -> &TriangleList {
+    pub fn fill(&mut self, id: FigureId, figures: &[Figure]) -> &TriangleList {
         self.fills.entry(id).or_insert_with(|| {
             let mut out = TriangleList::default();
-            for figure in &sprite.figures {
+            for figure in figures {
                 let rule = match figure.rule {
                     FillRule::NonZero => LyonFillRule::NonZero,
                     FillRule::EvenOdd => LyonFillRule::EvenOdd,
@@ -89,10 +89,15 @@ impl GeometryCache {
     }
 
     /// The figure's outline stroked at `thickness`, tessellated on first use.
-    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &StrokeMesh {
+    pub fn stroke(
+        &mut self,
+        id: FigureId,
+        figures: &[Figure],
+        thickness: Thickness,
+    ) -> &StrokeMesh {
         self.strokes
             .entry(StrokeId {
-                sprite: id,
+                figure: id,
                 thickness_bits: thickness.key(),
             })
             .or_insert_with(|| {
@@ -101,7 +106,7 @@ impl GeometryCache {
                     .with_line_join(LineJoin::Round)
                     .with_line_cap(LineCap::Round);
                 let mut out = StrokeMesh::default();
-                for figure in &sprite.figures {
+                for figure in figures {
                     let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
                     let mut builder =
                         BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
@@ -241,8 +246,8 @@ impl Thickness {
     }
 }
 
-/// One `<path>` element's subpaths as a lyon path, every loop closed.
-fn path_of(figure: &tunnels_sprites::Figure) -> Path {
+/// One figure's subpaths as a lyon path, every loop closed.
+fn path_of(figure: &Figure) -> Path {
     path_of_capped(figure, f32::MAX)
 }
 
@@ -255,7 +260,7 @@ fn path_of(figure: &tunnels_sprites::Figure) -> Path {
 /// longer coincides with the others meeting it. Where several subpaths return
 /// to one shared vertex, that is the difference between a winding rule seeing
 /// one point and seeing a cluster of nearly-identical ones.
-fn path_of_capped(figure: &tunnels_sprites::Figure, max: f32) -> Path {
+fn path_of_capped(figure: &Figure, max: f32) -> Path {
     let mut builder = Path::builder();
     for subpath in &figure.subpaths {
         let Some((first, rest)) = subpath.points().split_first() else {
@@ -346,7 +351,8 @@ mod test {
     /// A ring is two loops, and the rule between them is what makes it a ring.
     #[test]
     fn the_winding_rule_decides_whether_a_ring_has_a_hole() {
-        use tunnels_sprites::{Contour, Figure};
+        use tunnels_model::layer::SpriteId;
+        use tunnels_sprites::Contour;
 
         let square = |half: f32| {
             Contour::new(vec![
@@ -357,12 +363,11 @@ mod test {
             ])
             .expect("four corners is a loop")
         };
-        let ring = |rule| Sprite {
-            name: "ring",
-            figures: vec![Figure {
+        let ring = |rule| {
+            [Figure {
                 rule,
                 subpaths: vec![square(1.0), square(0.5)],
-            }],
+            }]
         };
 
         let area = |tris: &TriangleList| -> f32 {
@@ -376,8 +381,8 @@ mod test {
         };
 
         let mut cache = GeometryCache::default();
-        let hollow = area(cache.fill(SpriteId(0), &ring(FillRule::EvenOdd)));
-        let solid = area(cache.fill(SpriteId(1), &ring(FillRule::NonZero)));
+        let hollow = area(cache.fill(FigureId::Baked(SpriteId(0)), &ring(FillRule::EvenOdd)));
+        let solid = area(cache.fill(FigureId::Baked(SpriteId(1)), &ring(FillRule::NonZero)));
 
         // The outer square is 4 units of area, the inner 1.
         assert!((solid - 4.0).abs() < 0.01, "nonzero filled {solid}, not 4");
