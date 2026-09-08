@@ -131,8 +131,6 @@ impl StrokeGeometry {
                 let mut builder =
                     BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
                         position: Point::from_array(v.position().to_array()),
-                        // Where on the contour this vertex was offset
-                        // from, which is what colours it.
                         on_path: Point::from_array(v.position_on_path().to_array()),
                     });
                 if StrokeTessellator::new()
@@ -153,9 +151,11 @@ impl StrokeGeometry {
 
 /// A stroked vertex: where it is, and where on the contour it came from.
 #[derive(Copy, Clone)]
-struct StrokeVertexPair {
-    position: Point,
-    on_path: Point,
+pub struct StrokeVertexPair {
+    pub position: Point,
+    /// Where on the contour this vertex was offset from, which is what
+    /// colours it.
+    pub on_path: Point,
 }
 
 /// A stroked outline, as a flat triangle list carrying its contour points.
@@ -203,11 +203,16 @@ impl StrokeMesh {
     }
 
     /// Each vertex, paired with the contour point that colours it.
-    pub fn vertices(&self) -> impl Iterator<Item = (Point, Point)> + '_ {
+    ///
+    /// Stored as parallel runs so [`points`](Self::points) can hand the
+    /// positions over as one slice, and paired back up here because the two
+    /// points mean opposite things and a caller that takes them the wrong way
+    /// round silently colours a ribbon by where it landed.
+    pub fn vertices(&self) -> impl Iterator<Item = StrokeVertexPair> + '_ {
         self.positions
             .iter()
-            .copied()
-            .zip(self.on_path.iter().copied())
+            .zip(self.on_path.iter())
+            .map(|(&position, &on_path)| StrokeVertexPair { position, on_path })
     }
 }
 

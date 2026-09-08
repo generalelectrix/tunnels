@@ -148,12 +148,12 @@ pub fn stroke_vertex_pass(out: &mut VertexBuffers, mesh: &StrokeMesh, work: Vert
     out.positions.clear();
     out.uvs.clear();
 
-    for (i, (position, on_path)) in mesh.vertices().enumerate() {
-        let polar = Polar::of(on_path, needs.angle, needs.radius);
-        let along = polar.phase(on_path, work.field.phase);
+    for (i, vertex) in mesh.vertices().enumerate() {
+        let polar = Polar::of(vertex.on_path, needs.angle, needs.radius);
+        let along = polar.phase(vertex.on_path, work.field.phase);
         let displacement = Displacement::of(&work, polar, along, i);
 
-        let (x, y) = (position.x(), position.y());
+        let (x, y) = (vertex.position.x(), vertex.position.y());
         let (x, y) = if needs.rotates {
             let (sin, cos) = displacement.turn.sin_cos();
             (x * cos - y * sin, x * sin + y * cos)
