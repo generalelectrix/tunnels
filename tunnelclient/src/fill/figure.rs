@@ -159,6 +159,28 @@ mod test {
         assert_eq!(cache.generated.len(), 2);
     }
 
+    /// A loop of fewer than three points encloses nothing and is dropped on
+    /// the way in, so a family whose marks came out that short would arrive
+    /// empty and draw nothing at all rather than draw badly.
+    #[test]
+    fn every_family_the_knobs_reach_arrives_with_something_to_fill() {
+        for family in ShapeFamily::ALL {
+            let range = family.arity_range();
+            let middle = (range.start() + range.end()) / 2;
+            for arity in [*range.start(), middle, *range.end()] {
+                for secondary in [0.0, 0.5, 1.0] {
+                    let figure = build(id(family, arity, secondary));
+                    let points: usize = figure.subpaths.iter().map(|c| c.points().len()).sum();
+                    assert!(
+                        points > 0,
+                        "{family:?} at arity {arity} and secondary {secondary} \
+                         arrived with nothing to fill"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_figure_the_build_does_not_carry_has_no_contours() {
         let mut cache = FigureCache::default();

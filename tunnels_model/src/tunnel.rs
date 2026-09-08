@@ -2105,21 +2105,28 @@ pub mod fixture {
         }
     }
 
-    /// Configure a tunnel to draw a filled figure rather than a run of
-    /// segments, spread by `index` of `of` so that no two draw the same figure
-    /// the same way.
+    /// Configure a tunnel to draw a filled figure of `library` rather than a
+    /// run of segments, spread by `index` of `of` so that no two draw the same
+    /// figure the same way.
     ///
     /// Every control a figure reads and a run of segments does not is moved off
     /// its default: which figure of the library, how much of it is painted,
     /// which of its coordinates indexes the colour ramp, and both halves of the
     /// animation split — the targets resolved into the layer and the targets
     /// that travel with it unresolved.
-    pub fn configure_figure(tunnel: &mut Tunnel, index: usize, of: usize) {
+    pub fn configure_figure(tunnel: &mut Tunnel, library: FigureLibrary, index: usize, of: usize) {
         let phase = index as f64 / of as f64;
-        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut NoopEmitter);
-        // In a figure mode these two name a shelf of the library and a figure
-        // on it, so spreading them is what makes every channel draw a
-        // different figure.
+        tunnel.handle_state_change(
+            StateChange::ShapeMode(match library {
+                FigureLibrary::Baked => ShapeMode::Sprite,
+                FigureLibrary::Generated => ShapeMode::Generated,
+            }),
+            &mut NoopEmitter,
+        );
+        // In a figure mode these three name a family of whichever library the
+        // mode draws from, a figure in it, and the second degree of freedom a
+        // generated family resolves in its own way. Spreading them is what
+        // makes every channel draw a different figure.
         tunnel.handle_state_change(
             StateChange::Segments(
                 SEGMENTS_MIN + ((SEGMENTS_MAX - SEGMENTS_MIN) as f64 * phase) as u8,
@@ -2128,6 +2135,10 @@ pub mod fixture {
         );
         tunnel.handle_state_change(
             StateChange::Blacking((f64::from(KNOB_MAX) * phase) as u8),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::MarqueeSpeed(BipolarFloat::new(-1.0 + 2.0 * phase)),
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
@@ -2411,6 +2422,95 @@ pub mod fixture {
     /// A figure's contours stroked instead of its interior filled.
     pub fn sprite_outline_snapshot() -> LayerCollection {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure of the generated library, by the family and the two numbers
+    /// that place it inside that family.
+    fn generated_id(family: ShapeFamily, arity: u32, secondary: f64) -> GeneratedId {
+        GeneratedId {
+            family,
+            arity: Arity::new(arity),
+            secondary: Secondary::new(secondary),
+        }
+    }
+
+    /// A seven-pointed star, which is the plainest figure the generated
+    /// library makes.
+    pub fn generated_star() -> GeneratedId {
+        generated_id(ShapeFamily::StarPolygon, 7, 0.0)
+    }
+
+    /// Two sets of parallel bars cut to a disc, at a small angle to each other.
+    ///
+    /// Where a bar of one set crosses a bar of the other the two cancel, and
+    /// the lens-shaped holes that leaves are the beat the figure is made of.
+    /// They are holes only under an even-odd fill; under a non-zero one the
+    /// crossings fill solid and the beat is gone. So this is the figure that
+    /// says the fill rule survived the trip out of the frame the family was
+    /// built in.
+    pub fn generated_moire() -> GeneratedId {
+        generated_id(ShapeFamily::MoireGrid, 8, 0.0)
+    }
+
+    /// A star lattice at its widest reach.
+    ///
+    /// The family that runs furthest outside the frame it is built in, and so
+    /// the one that says a generated figure is mapped at a fixed scale rather
+    /// than fitted to what it happens to reach. Fitted, it would be a small
+    /// object in the middle of the frame instead of a field the frame cuts.
+    pub fn generated_lattice() -> GeneratedId {
+        generated_id(ShapeFamily::StarLattice, 1, 1.0)
+    }
+
+    /// A tunnel that draws a generated figure.
+    ///
+    /// Saturated, so a colour knob shows up at all: the default is white.
+    fn generated_tunnel(generated: GeneratedId) -> Tunnel {
+        Tunnel {
+            shape_mode: ShapeMode::Generated,
+            generated,
+            col_sat: UnipolarFloat::ONE,
+            col_center: UnipolarFloat::new(0.55),
+            ..Default::default()
+        }
+    }
+
+    /// A generated figure in one colour, which is the path that skips the ramp
+    /// entirely and draws the tessellator's own triangles.
+    pub fn generated_flat_snapshot() -> LayerCollection {
+        snapshot(render_default(&generated_tunnel(generated_star())))
+    }
+
+    /// A figure whose contours cancel where they cross.
+    pub fn generated_even_odd_snapshot() -> LayerCollection {
+        snapshot(render_default(&generated_tunnel(generated_moire())))
+    }
+
+    /// A figure that reaches well outside the frame it was built in, which
+    /// the viewport ends rather than any clip in the geometry.
+    pub fn generated_field_snapshot() -> LayerCollection {
+        snapshot(render_default(&generated_tunnel(generated_lattice())))
+    }
+
+    /// A generated figure with a colour sweep along its angle, which is the
+    /// meshed and ramped path a baked figure takes.
+    pub fn generated_color_snapshot() -> LayerCollection {
+        let mut tunnel = generated_tunnel(generated_star());
+        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A generated figure's contours stroked instead of its interior filled.
+    pub fn generated_outline_snapshot() -> LayerCollection {
+        let mut tunnel = generated_tunnel(generated_star());
         tunnel.draw_mode = DrawMode::Outline;
         tunnel.thickness = Smoother::new(
             UnipolarFloat::new(0.05),

@@ -125,6 +125,7 @@ pub mod fixture {
     use crate::beam::Beam;
     use crate::clock::StaticClock;
     use crate::clock_bank::{ClockIdx, MAX_CLOCKS};
+    use crate::layer::FigureLibrary;
     use crate::look::Look;
     use crate::mixer::{ChannelIdx, VideoChannel};
     use crate::palette::{
@@ -233,13 +234,19 @@ pub mod fixture {
     }
 
     /// A frame of filled figures, which is the other kind of layer a beam
-    /// expands into.
+    /// expands into, drawn from both libraries.
     ///
     /// A figure carries no per-shape geometry: what travels is which figure to
     /// draw, where to put it, the colour model to resolve it against, and the
     /// animations left unresolved because they vary across it. None of that is
     /// on the path a run of segments takes, so a suite of segment frames speaks
     /// for none of it.
+    ///
+    /// The two libraries name a figure differently — an index into a table the
+    /// build fixes, or a family and the two numbers that place a figure inside
+    /// it — so channels alternate between them. A frame carrying one naming
+    /// leaves the other unexercised, and a name that arrived as another name
+    /// would draw another figure.
     pub fn figure_frame() -> ShowFrame {
         let mut mixer = Mixer::new(1);
         let n_channels = mixer.channel_count();
@@ -249,7 +256,12 @@ pub mod fixture {
             channel.video_outs.clear();
             channel.video_outs.insert(VideoChannel(i));
             if let Beam::Tunnel(tunnel) = &mut channel.beam {
-                configure_figure(tunnel, i, n_channels);
+                let library = if i.is_multiple_of(2) {
+                    FigureLibrary::Baked
+                } else {
+                    FigureLibrary::Generated
+                };
+                configure_figure(tunnel, library, i, n_channels);
                 bind_to_frame_state(
                     tunnel,
                     ColorPaletteIdx(i % PALETTE_SIZE),
