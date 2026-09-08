@@ -7,7 +7,7 @@
 //! Subscribers automatically reconnect on connection loss.
 
 use anyhow::{Context, Result};
-use log::{error, warn};
+use log::{error, info, warn};
 use socket2::{SockRef, TcpKeepalive};
 use std::io::Write;
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -134,6 +134,36 @@ fn fail_a_silent_peer(socket: &TcpStream, keepalive: Keepalive) -> std::io::Resu
 /// How long a run of skipped messages goes unreported before its count is logged.
 const SKIP_REPORT_PERIOD: Duration = Duration::from_secs(1);
 
+/// The rate of missed messages, in messages per second, that separates a
+/// subscriber dropping the occasional one from a subscriber that has stopped
+/// keeping up.
+///
+/// Below it a subscriber is still showing the stream and losing the odd
+/// message out of it, which is what this transport is for and not news. Above
+/// it, what it shows is a fraction of what was published, which is a fault
+/// worth putting in front of whoever is running the show.
+const CONCERNING_SKIP_RATE: f64 = 5.0;
+
+/// A run of messages a subscriber missed, and the stretch of time it missed
+/// them over.
+#[derive(Debug, Clone, Copy)]
+struct Skips {
+    /// How many messages were replaced before the subscriber took them.
+    count: u64,
+    /// How long the run of them covers.
+    over: Duration,
+}
+
+impl Skips {
+    /// Whether these were missed faster than [`CONCERNING_SKIP_RATE`].
+    ///
+    /// The comparison is scaled rather than divided so that a run measured
+    /// over no time at all is concerning, rather than an infinity.
+    fn is_concerning(&self) -> bool {
+        self.count as f64 > CONCERNING_SKIP_RATE * self.over.as_secs_f64()
+    }
+}
+
 /// The one message a subscriber has been given and not yet been sent.
 ///
 /// The publisher stores a message and moves on; the subscriber's sender thread
@@ -153,7 +183,8 @@ struct Slot {
     pending: Option<Arc<Vec<u8>>>,
     /// Messages replaced before the subscriber took them, since the last report.
     skipped: u64,
-    /// When the last report of skipped messages was made, if any has been.
+    /// When the run of skipped messages now being counted began, if a run is
+    /// being counted.
     reported_at: Option<Instant>,
     /// When the message now waiting was posted, if the subscriber has taken
     /// nothing since. Every take clears it, so what it measures is a
@@ -172,12 +203,14 @@ impl Mailbox {
     }
 
     /// Store `msg` as the message to send next, replacing any the subscriber
-    /// has not taken, and report how many it has missed if a report is due.
+    /// has not taken, and report what it has missed if a report is due.
     ///
     /// A subscriber that has stopped reading misses messages as fast as they
     /// are published, so they are counted and reported at most once per
-    /// `SKIP_REPORT_PERIOD` rather than logged one apiece.
-    fn post(&self, msg: Arc<Vec<u8>>, now: Instant) -> Option<u64> {
+    /// [`SKIP_REPORT_PERIOD`] rather than logged one apiece. The first skip of
+    /// a run opens the period rather than being reported on its own, so that a
+    /// report always covers a stretch of time long enough to divide by.
+    fn post(&self, msg: Arc<Vec<u8>>, now: Instant) -> Option<Skips> {
         let mut slot = self.slot.lock().unwrap();
         let replaced = slot.pending.replace(msg).is_some();
         slot.untaken_since.get_or_insert(now);
@@ -186,13 +219,15 @@ impl Mailbox {
             return None;
         }
         slot.skipped += 1;
-        match slot.reported_at {
-            Some(reported_at) if now.duration_since(reported_at) < SKIP_REPORT_PERIOD => None,
-            _ => {
-                slot.reported_at = Some(now);
-                Some(std::mem::take(&mut slot.skipped))
-            }
+        let over = now.duration_since(*slot.reported_at.get_or_insert(now));
+        if over < SKIP_REPORT_PERIOD {
+            return None;
         }
+        slot.reported_at = Some(now);
+        Some(Skips {
+            count: std::mem::take(&mut slot.skipped),
+            over,
+        })
     }
 
     /// Block until there is a message to send, and take it.
@@ -451,14 +486,19 @@ impl Publisher {
             };
             let now = Instant::now();
             for client in connected.iter() {
-                if let Some(skipped) = client.mailbox.post(Arc::clone(&msg), now) {
-                    skip_reports.push((client.peer, skipped));
+                if let Some(skips) = client.mailbox.post(Arc::clone(&msg), now) {
+                    skip_reports.push((client.peer, skips));
                 }
             }
             *spare = Some(msg);
         }
-        for (peer, skipped) in skip_reports {
-            warn!("Subscriber {peer} is behind: skipped {skipped} messages.");
+        for (peer, skips) in skip_reports {
+            let Skips { count, over } = skips;
+            if skips.is_concerning() {
+                warn!("Subscriber {peer} is behind: skipped {count} messages in {over:?}.");
+            } else {
+                info!("Subscriber {peer} is behind: skipped {count} messages in {over:?}.");
+            }
         }
     }
 }
@@ -1435,6 +1475,31 @@ mod tests {
         let mut subscriber = Subscriber::new("127.0.0.1", port, test_config());
         subscriber.stop_handle().stop();
         assert!(subscriber.recv().is_none());
+    }
+
+    /// A run of skipped messages is judged by the rate it was missed at
+    /// rather than by how many were missed.
+    ///
+    /// The count alone means nothing without the stretch of time it covers:
+    /// the same run reported over a period ten times as long is a tenth of the
+    /// fault, and a threshold read off the count would move the moment the
+    /// reporting period did.
+    #[test]
+    fn skips_are_judged_by_their_rate_rather_than_their_count() {
+        let skips = |count: u64, secs: f64| Skips {
+            count,
+            over: Duration::from_secs_f64(secs),
+        };
+        assert!(!skips(4, 1.0).is_concerning());
+        assert!(skips(6, 1.0).is_concerning());
+
+        // The same two rates, reported over ten times the period.
+        assert!(!skips(40, 10.0).is_concerning());
+        assert!(skips(60, 10.0).is_concerning());
+
+        // A run covering no time at all has no rate to take, and is treated as
+        // the fault rather than as an infinity.
+        assert!(skips(1, 0.0).is_concerning());
     }
 
     /// A message framed into a buffer a subscriber still holds gets a buffer
