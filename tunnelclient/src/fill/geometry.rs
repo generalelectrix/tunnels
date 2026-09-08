@@ -219,11 +219,12 @@ impl StrokeMesh {
 /// on the screen is what makes the granularity independent of output
 /// resolution and of how large the figure is drawn.
 ///
-/// Without this an animated thickness re-strokes every frame, and re-refines
-/// the mesh behind it, since the mesh is keyed on the stroke too. It does not
-/// make the first sweep of a knob free — every bucket is visited once whatever
-/// the step — but a periodic animation warms the set in one cycle and every
-/// later cycle is a hit.
+/// Without this an animated thickness re-strokes the outline every frame. Only
+/// the outline: an interior is not stroked and a mesh is not keyed on one, so
+/// nothing behind it is rebuilt. It does not make the first sweep of a knob
+/// free — every bucket is visited once whatever the step — but a periodic
+/// animation warms the set in one cycle, and every later cycle is a hit for as
+/// long as the set stays under [`STROKE_CAP`].
 #[derive(Copy, Clone, Debug)]
 pub struct Thickness {
     pub figure_units: f32,

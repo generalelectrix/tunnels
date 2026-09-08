@@ -96,9 +96,9 @@ impl Level {
     /// A radial animation does not reach this. It scales each point where the
     /// vertices are walked, leaving the layer's extent untouched, so a figure
     /// animated to twice its size is drawn at the density of its unanimated
-    /// size. Density follows the knob and not the animation. That is inherited
-    /// from the prototype this was ported from rather than introduced here,
-    /// and it is worth knowing before reading it as a bug.
+    /// size. Density follows the knob and not the animation, which is worth
+    /// knowing before reading it as a bug.
+    ///
     /// `finest` is the densest mesh the caller is willing to have built; a
     /// figure large enough to want more than that is drawn with it instead.
     pub fn for_screen(px_per_unit: f64, target_px: f64, finest: Self) -> Self {
@@ -142,7 +142,7 @@ pub struct MeshId {
     pub level: Level,
 }
 
-/// Meshes built so far, keyed by figure, what is being meshed, and density.
+/// Meshes built so far, keyed by figure and density.
 ///
 /// Never evicts, and nothing animated reaches the key: a figure is drawn at
 /// one of six densities and a show touches a handful of figures, so the set

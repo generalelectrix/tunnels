@@ -109,9 +109,10 @@ pub struct Show {
     #[expect(unused)]
     artnet: Option<ArtnetNodeService>,
     window: PistonWindow<Sdl2Window>,
-    /// The figure caches, which live as long as the show does: a mesh and a
-    /// colour ramp are built once and then held for every frame that draws
-    /// them.
+    /// The figure geometry and the ramp textures, which live as long as the
+    /// show does. A mesh is built once and held; a ramp is rebuilt every frame
+    /// into a texture the pool hands back once the GPU has finished reading
+    /// it.
     renderer: Renderer<Texture>,
     /// Reference instant for animating the waiting-for-frame spinner.
     start_time: Instant,
@@ -146,8 +147,10 @@ impl Show {
         // broken vsync this does work to make rendering a lot smoother.
         window.set_max_fps(120);
 
-        // Every figure mesh, built before the first frame. The set is finite
-        // and the show must never stop to build one.
+        // The figure meshes a show is likely to want, built before the first
+        // frame. The two finest densities are left out: they are reachable
+        // only when `refine_large_figures` is on, and are built per figure on
+        // first use when they are.
         let mut renderer = Renderer::default();
         renderer.precompute();
 

@@ -338,7 +338,8 @@ pub fn draw_flat<G: Graphics>(
 ///
 /// The path a figure takes when nothing varies across it: no ramp, no per-
 /// vertex pass, and the tessellator's own triangles rather than a refined
-/// mesh. Also the path an outline always takes, meshed or not.
+/// mesh. An outline reaches it the same way when its colour is flat, and needs
+/// no refined mesh even when it is not.
 ///
 /// The backend takes a bounded number of vertices per call, and a run ending
 /// mid-triangle would draw a torn one, so the cap is rounded down to a whole

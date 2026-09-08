@@ -563,10 +563,10 @@ fn saucer_line_marquee_sequence() {
     }
 }
 
-/// The golden fill images below draw these two figures, and a figure added to
-/// the library renumbers everything after it. Naming them here is what turns
-/// that into a failing test rather than a golden image quietly becoming a
-/// picture of something else.
+/// The golden fill images below draw these figures, and a figure added to the
+/// library renumbers everything after it. Naming them here is what turns that
+/// into a failing test rather than a golden image quietly becoming a picture of
+/// something else.
 #[test]
 fn the_fixtures_draw_the_figures_they_were_taken_of() {
     for (id, name) in [

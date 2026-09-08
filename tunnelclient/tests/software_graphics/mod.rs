@@ -125,9 +125,8 @@ impl RenderBuffer {
     /// pixel given its barycentric weights.
     ///
     /// Kept apart from `tri_list`'s own loop: that one decides coverage by
-    /// signed area and has 57 golden images resting on exactly which edge
-    /// pixels it claims, and none of the interpolating paths existed when
-    /// those were taken.
+    /// signed area, and the golden images rest on exactly which edge pixels it
+    /// claims.
     fn raster(&mut self, tri: &[[f32; 2]; 3], mut shade: impl FnMut([f32; 3]) -> [f32; 4]) {
         let mut tl = [f32::MAX, f32::MAX];
         let mut br = [f32::MIN, f32::MIN];

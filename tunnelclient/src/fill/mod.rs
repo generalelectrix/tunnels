@@ -4,9 +4,9 @@
 //! texture carries colour.** Where a point sits in the colour cycle is a
 //! function of its position alone, so a mesh built for a figure at a size holds
 //! for every colour that figure can take — including one changing every frame.
-//! Colour is then resolved per fragment against a thousand-texel ramp, which is
-//! what lets the sawtooth's jump land exactly where it belongs however coarse
-//! the mesh is.
+//! Colour is then resolved per fragment against a ramp texture, which is what
+//! lets the sawtooth's jump land exactly where it belongs however coarse the
+//! mesh is.
 
 mod draw;
 mod fastmath;
@@ -56,11 +56,13 @@ struct RampEntry<T> {
 
 /// The colour ramp textures, recycled once the GPU is done reading them.
 ///
-/// **Not a cache.** A ramp is 1024 evaluations — 22 µs still, 109 µs with
-/// three colour animations running the worst waveform, against an 8.3 ms
-/// frame. Rebuilding it every frame is affordable, and every frame that
-/// animates a colour has to rebuild it anyway, so remembering the answer only
-/// ever accelerated the case that was already free.
+/// **Not a cache.** A ramp is one evaluation per texel: across the cycle-wide
+/// table's 1024, 22 µs still and 109 µs with three colour animations running
+/// the worst waveform, against an 8.3 ms frame — and in proportion to that
+/// across the figure-wide table, which is four times as long. Rebuilding it
+/// every frame is affordable, and every frame that animates a colour has to
+/// rebuild it anyway, so remembering the answer only ever accelerated the case
+/// that was already free.
 ///
 /// What this exists for is the write-after-read hazard, which is a different
 /// problem and does not go away: overwriting a texture the GPU is still

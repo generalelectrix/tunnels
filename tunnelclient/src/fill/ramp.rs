@@ -81,8 +81,8 @@ impl RampSpan {
     /// Two properties make this the place to decide it. The expensive span is
     /// taken by exactly the case a cycle-wide table gets wrong — an animation
     /// whose value depends on where on the figure it is asked. And every layer
-    /// without one stays on the cycle-wide table, bit for bit as before, so a
-    /// render that moves is evidence of a fault rather than of this choice.
+    /// without one stays on the cycle-wide table, so the wider table is paid
+    /// for only where it is read.
     pub fn of(anims: &[TargetedAnimation<PreparedAnimation>]) -> Self {
         if anims.iter().any(|a| a.animation.varies_in_space()) {
             Self::Figure
