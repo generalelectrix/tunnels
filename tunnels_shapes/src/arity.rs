@@ -320,9 +320,11 @@ impl ShapeFamily {
             // The cardioid: one cusp where the nephroid has two, and the only
             // kind curation carried to twelve copies.
             Self::CycloidRosette => 0.625,
-            // A multiplier near a twelfth of the point count, the median of
-            // the curated ratios.
-            Self::ModularChords => 0.086,
+            // A multiplier near a twentieth of the point count: the median of
+            // the curated ratios among the figures carrying enough points to
+            // sit where this family's arities do, twelve of the sixteen of
+            // which are above ninety.
+            Self::ModularChords => 0.046,
             // Five corners, which holds the marks a figure carries — corners
             // times the count per corner — closest to the curated band across
             // the whole range.
