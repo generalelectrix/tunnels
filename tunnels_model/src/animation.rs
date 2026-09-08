@@ -24,6 +24,19 @@ pub enum Waveform {
     Constant,
 }
 
+impl Waveform {
+    /// Whether the value depends on the phase it is asked at.
+    ///
+    /// A constant answers one number for every phase, so a caller that would
+    /// otherwise resolve it across a coordinate can resolve it once.
+    pub fn varies_with_phase(self) -> bool {
+        match self {
+            Self::Sine | Self::Triangle | Self::Square | Self::Sawtooth | Self::Noise => true,
+            Self::Constant => false,
+        }
+    }
+}
+
 /// The animation parameters that are fixed for the duration of a frame.
 ///
 /// These are used as given. The rest of what an animation's value depends on —
@@ -358,11 +371,14 @@ impl PreparedAnimation {
     ///
     /// A periodicity of zero holds the spatial phase at zero for every
     /// waveform, noise included, so the animation answers one number for the
-    /// whole frame. A caller that would otherwise resolve it across a
+    /// whole frame; a constant waveform answers one number whatever the
+    /// periodicity. A caller that would otherwise resolve it across a
     /// coordinate can resolve it once, and one that sizes a table by how
     /// finely the answer varies needs no table at all.
     pub fn varies_in_space(&self) -> bool {
-        self.active && self.static_params.n_periods > 0
+        self.active
+            && self.static_params.n_periods > 0
+            && self.static_params.waveform.varies_with_phase()
     }
 
     /// The animation's value at a point, with amplitude applied.
@@ -470,8 +486,12 @@ mod test {
         impl EmitStateChange for Noop {
             fn emit_animation_state_change(&mut self, _: StateChange) {}
         }
-        let prepare = |n_periods: u16, size: f64| {
+        let prepare = |waveform: Waveform, n_periods: u16, size: f64| {
             let mut animation = Animation::default();
+            animation.control(
+                ControlMessage::Set(StateChange::Waveform(waveform)),
+                &mut Noop,
+            );
             animation.control(
                 ControlMessage::Set(StateChange::NPeriods(n_periods)),
                 &mut Noop,
@@ -483,14 +503,18 @@ mod test {
             animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
         };
 
-        assert!(prepare(1, 1.0).varies_in_space());
+        assert!(prepare(Waveform::Sine, 1, 1.0).varies_in_space());
         assert!(
-            !prepare(0, 1.0).varies_in_space(),
+            !prepare(Waveform::Sine, 0, 1.0).varies_in_space(),
             "no periodicity is one value everywhere"
         );
         assert!(
-            !prepare(1, 0.0).varies_in_space(),
+            !prepare(Waveform::Sine, 1, 0.0).varies_in_space(),
             "no amplitude is zero everywhere"
+        );
+        assert!(
+            !prepare(Waveform::Constant, 1, 1.0).varies_in_space(),
+            "a constant ignores the phase it is asked at, however many periods it is given"
         );
     }
 }
