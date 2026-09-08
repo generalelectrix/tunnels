@@ -67,20 +67,3 @@ pub fn build_into(
         );
     }
 }
-
-/// The knobs a ramp is built from, which are all a ramp is: two layers whose
-/// colour resolves to this key resolve to the same thousand texels.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
-pub struct RampKey([i64; 5]);
-
-impl RampKey {
-    /// Quantised to half a texel, since a change finer than that cannot alter a
-    /// single entry in the table and so cannot alter a pixel on screen.
-    pub fn of(color: &ColorField) -> Self {
-        let step = f64::from(RAMP_TEXELS) * 2.0;
-        Self(
-            [color.center, color.width, color.sat, color.val, color.level]
-                .map(|v| (v * step).round() as i64),
-        )
-    }
-}

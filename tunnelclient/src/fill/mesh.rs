@@ -29,6 +29,16 @@ const MAX_DEPTH: u32 = 24;
 /// quarter-unit edge already gives a few hundred triangles.
 const COARSEST_LEVEL: i8 = -2;
 
+/// Finest density built before the show starts.
+///
+/// This is where a figure at the default size knob lands on a 1080-line
+/// projector, so it covers the common case and everything smaller. The two
+/// finer ones are reachable — a figure's extent runs to twice the size knob,
+/// crossing into the next at about 0.59 against a default of 0.5 — but they
+/// are built on first use rather than up front, because together they are 90%
+/// of both the time and the memory of building every density.
+const EAGER_LEVEL: i8 = -5;
+
 /// Finest mesh worth keeping.
 ///
 /// Output resolution is bounded — a 1080-line projector with a figure filling
@@ -76,6 +86,13 @@ impl Level {
     ///
     /// `px_per_unit` is how many pixels one figure-space unit covers, which is
     /// the whole of what density depends on.
+    ///
+    /// A radial animation does not reach this. It scales each point where the
+    /// vertices are walked, leaving the layer's extent untouched, so a figure
+    /// animated to twice its size is drawn at the density of its unanimated
+    /// size. Density follows the knob and not the animation. That is inherited
+    /// from the prototype this was ported from rather than introduced here,
+    /// and it is worth knowing before reading it as a bug.
     pub fn for_screen(px_per_unit: f64, target_px: f64) -> Self {
         let raw = target_px / px_per_unit.max(1.0);
         let exp = raw.log2().round();
@@ -87,6 +104,11 @@ impl Level {
     /// Target edge length in figure space.
     pub fn target_edge(self) -> f32 {
         2f32.powi(i32::from(self.0))
+    }
+
+    /// The densities built before the show starts, coarsest first.
+    pub fn eager() -> impl Iterator<Item = Self> {
+        (EAGER_LEVEL..=COARSEST_LEVEL).rev().map(Level)
     }
 
     /// Pixels one figure-space unit covers at this density's nominal size.

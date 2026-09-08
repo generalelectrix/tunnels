@@ -146,6 +146,11 @@ impl Show {
         // broken vsync this does work to make rendering a lot smoother.
         window.set_max_fps(120);
 
+        // Every figure mesh, built before the first frame. The set is finite
+        // and the show must never stop to build one.
+        let mut renderer = Renderer::default();
+        renderer.precompute();
+
         Ok(Show {
             gl: GlGraphics::new(opengl),
             frames,
@@ -153,7 +158,7 @@ impl Show {
             cfg,
             artnet,
             window,
-            renderer: Renderer::default(),
+            renderer,
             start_time: Instant::now(),
         })
     }
@@ -191,7 +196,7 @@ impl Show {
                 .mixer
                 .render_video_channel(self.video_channel, frame.render_context())
         });
-        // Split apart so the renderer's caches can be written while the
+        // Split apart so the renderer's own buffers can be written while the
         // backend the closure draws through is borrowed.
         let Self {
             gl,

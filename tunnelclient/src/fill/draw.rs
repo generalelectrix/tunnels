@@ -51,7 +51,7 @@ impl PhaseField {
 /// buffer every frame is megabytes of churn.
 #[derive(Default)]
 pub struct VertexBuffers {
-    /// Shape-space positions, displaced by whatever warps the layer.
+    /// Figure-space positions, displaced by whatever warps the layer.
     positions: Vec<Point>,
     /// Where each vertex looks in the colour ramp. Already in the backend's
     /// vocabulary, since nothing between here and the sampler reads it.

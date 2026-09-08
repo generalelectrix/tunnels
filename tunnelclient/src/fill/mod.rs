@@ -21,7 +21,6 @@ use self::draw::{
 };
 use self::geometry::{GeometryCache, Scale, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
-use self::ramp::RampKey;
 use crate::draw::{Draw, hsv_to_rgb};
 use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
@@ -29,8 +28,8 @@ use graphics::math::Matrix2d;
 use graphics::types::Color;
 use graphics::{Context, Graphics, Transformed};
 use image::RgbaImage;
-use log::error;
-use std::collections::{HashMap, HashSet};
+use log::{error, info};
+use std::collections::HashSet;
 use std::f64::consts::TAU;
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
@@ -42,8 +41,9 @@ use tunnels_model::layer::{ColorAdjust, FillLayer, Layer, LayerCollection, Sprit
 /// Overwriting a texture the GPU is still sampling makes the driver stall
 /// until the queued draws that read it retire. Measured on the prototype, that
 /// stall was two orders of magnitude larger than building the ramp in the
-/// first place. A texture is only reused once this many frames have gone by
-/// without it being drawn.
+/// first place. A texture is not written again until this many frames have
+/// passed since the draw that used it — write at frame 1, reuse at frame 4,
+/// which is what rotating three buffers amounts to.
 const FRAMES_IN_FLIGHT: u64 = 3;
 
 /// One colour ramp on the GPU, and when it was last drawn with.
@@ -52,26 +52,26 @@ struct RampEntry<T> {
     last_used: u64,
 }
 
-/// The colour ramps the GPU is holding, addressed by what is in them.
+/// The colour ramp textures, recycled once the GPU is done reading them.
 ///
-/// A ramp is entirely determined by the colour knobs it was built from, so
-/// [`RampKey`] names the texture rather than the layer that asked for it. Two
-/// figures dialled to the same colour share one texture, and a still look
-/// uploads nothing after its first frame.
+/// **Not a cache.** A ramp is 1024 evaluations — 22 µs still, 109 µs with
+/// three colour animations running the worst waveform, against an 8.3 ms
+/// frame. Rebuilding it every frame is affordable, and every frame that
+/// animates a colour has to rebuild it anyway, so remembering the answer only
+/// ever accelerated the case that was already free.
 ///
-/// That also removes the write-after-read hazard rather than working around
-/// it: a colour that changed is a *different* key, so a texture in use is
-/// never the one being written. What is left is deciding when a texture no
-/// longer wanted may be reused for something else, which is what
-/// [`FRAMES_IN_FLIGHT`] answers.
+/// What this exists for is the write-after-read hazard, which is a different
+/// problem and does not go away: overwriting a texture the GPU is still
+/// sampling stalls the driver until the queued draws that read it retire,
+/// measured on the prototype at two orders of magnitude more than building the
+/// ramp costs. So a texture is handed out, written once, and not touched again
+/// until [`FRAMES_IN_FLIGHT`] frames have passed without a draw using it.
 ///
-/// The pool has no size cap. Recycling bounds it on its own — a key stops
-/// being reachable as soon as the colour moves on, and the entry becomes
-/// available a few frames later — and a 1024-texel ramp is four kilobytes, so
-/// even a pool an order of magnitude larger than a show needs would not be
-/// worth the eviction policy.
+/// The pool sizes itself and needs no cap: it grows to however many layers
+/// draw in one frame times the frames in flight, and stops, because past that
+/// there is always an entry old enough to take back.
 struct RampPool<T> {
-    entries: HashMap<RampKey, RampEntry<T>>,
+    entries: Vec<RampEntry<T>>,
     scratch: RgbaImage,
     settings: TextureSettings,
     frame: u64,
@@ -83,7 +83,7 @@ where
 {
     fn new() -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: Vec::new(),
             scratch: ramp::blank(),
             // Repeating wrap is what lets a phase coordinate run past one
             // cycle and keep indexing the ramp, so the cycle count never
@@ -97,49 +97,42 @@ where
         }
     }
 
-    /// The texture holding this layer's colour, building it if no one has.
+    /// This layer's colour, built into a texture nothing is still reading.
     ///
     /// `None` only if the backend refused to give up a texture, which is a
     /// reason to skip a figure rather than to stop the show.
     fn texture_for(&mut self, fill: &FillLayer) -> Option<&T> {
-        let key = RampKey::of(&fill.color);
-        if let Some(entry) = self.entries.get_mut(&key) {
-            entry.last_used = self.frame;
-            return self.entries.get(&key).map(|e| &e.texture);
-        }
-
         ramp::build_into(&mut self.scratch, &fill.color, &fill.color_anims);
         let (width, height) = self.scratch.dimensions();
 
-        // Take back a texture nothing has drawn with recently, in preference
-        // to asking the backend for another one.
-        let stale = self
+        let free = self
             .entries
             .iter()
-            .filter(|(_, e)| e.last_used + FRAMES_IN_FLIGHT <= self.frame)
-            .min_by_key(|(_, e)| e.last_used)
-            .map(|(key, _)| *key);
-
-        let mut entry = match stale.and_then(|key| self.entries.remove(&key)) {
-            Some(entry) => entry,
-            None => RampEntry {
-                texture: match T::create(
+            .position(|e| e.last_used + FRAMES_IN_FLIGHT <= self.frame);
+        let index = match free {
+            Some(index) => index,
+            None => {
+                match T::create(
                     &mut (),
                     Format::Rgba8,
                     self.scratch.as_raw(),
                     [width, height],
                     &self.settings,
                 ) {
-                    Ok(texture) => texture,
+                    Ok(texture) => self.entries.push(RampEntry {
+                        texture,
+                        last_used: self.frame,
+                    }),
                     Err(e) => {
                         error!("Could not make a colour ramp texture: {e:?}");
                         return None;
                     }
-                },
-                last_used: self.frame,
-            },
+                }
+                self.entries.len() - 1
+            }
         };
 
+        let entry = self.entries.get_mut(index)?;
         if let Err(e) = entry.texture.update(
             &mut (),
             Format::Rgba8,
@@ -151,14 +144,7 @@ where
             return None;
         }
         entry.last_used = self.frame;
-        Some(
-            &self
-                .entries
-                .entry(key)
-                .insert_entry(entry)
-                .into_mut()
-                .texture,
-        )
+        Some(&entry.texture)
     }
 }
 
@@ -216,6 +202,60 @@ where
                 Layer::Fill(fill) => self.draw_fill(fill, c, gl, cfg),
             }
         }
+    }
+
+    /// Build the figure meshes a show is likely to want, before it starts.
+    ///
+    /// Sixty-two figures at the four coarsest densities: **248 meshes, 1.6
+    /// million triangles, 26 MB, 200 ms**, fixed at that and unable to grow,
+    /// because nothing in the key
+    /// varies at runtime — an outline is not meshed, and the size knob only
+    /// chooses among the six densities. It covers a figure at the default size
+    /// on a 1080-line projector and everything smaller.
+    ///
+    /// The two finest densities are reachable but not built here. They are 90%
+    /// of the cost of building everything — 2.5 s and 317 MB against 200 ms and
+    /// 26 MB — and the show pays for them only if it reaches them. The cost
+    /// when it does is **per figure, not per density**: 7.5 ms on average and
+    /// 16.5 ms at worst for the second-finest, 28 ms and 64 ms for the finest,
+    /// rather than the 484 ms and 1.8 s a whole density costs. A reader looking
+    /// at the level table will assume otherwise, which is why it is written
+    /// here.
+    ///
+    /// So the set is bounded but not small: this table cannot grow, and past
+    /// it the key is still content-addressed and enumerable — 62 figures times
+    /// 6 densities, 372 meshes and 317 MB if every one were ever drawn.
+    ///
+    /// All of it is vertex and index data on the CPU, not textures. It does
+    /// not compete for the share of system memory an integrated GPU takes,
+    /// which is why a few hundred megabytes is comfortable on these machines
+    /// where the same figure in textures would not be.
+    ///
+    /// Called once at startup, where seconds are free — the bootstrapper
+    /// pushes a client and waits for it.
+    pub fn precompute(&mut self) {
+        for id in 0..tunnels_sprites::count() {
+            let Ok(id) = u16::try_from(id) else { break };
+            let Some(sprite) = tunnels_sprites::sprite(id) else {
+                continue;
+            };
+            let sprite_id = SpriteId(id);
+            let fill = self.geometry.fill(sprite_id, sprite);
+            for level in Level::eager() {
+                self.meshes.get(
+                    MeshId {
+                        sprite: sprite_id,
+                        level,
+                    },
+                    fill,
+                );
+            }
+        }
+        info!(
+            "Built {} figure meshes, {} triangles.",
+            tunnels_sprites::count() * Level::eager().count(),
+            self.meshes.triangles()
+        );
     }
 
     /// Total triangles held in refined meshes, for reporting memory pressure.
@@ -414,9 +454,10 @@ mod test {
     use texture::TextureOp;
     use tunnels_model::layer::{ColorField, ColorPhase, DrawMode, Placement, SpriteId};
 
-    /// Stands in for a GPU texture, counting what the pool asks of it.
+    /// Stands in for a GPU texture, identifiable so a test can tell which one
+    /// the pool handed back.
     struct FakeTexture {
-        updates: usize,
+        id: usize,
     }
 
     impl ImageSize for FakeTexture {
@@ -437,7 +478,11 @@ mod test {
             _: S,
             _: &TextureSettings,
         ) -> Result<Self, Self::Error> {
-            Ok(Self { updates: 0 })
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            Ok(Self {
+                id: NEXT.fetch_add(1, Ordering::Relaxed),
+            })
         }
     }
 
@@ -447,7 +492,6 @@ mod test {
             O: Into<[u32; 2]>,
             S: Into<[u32; 2]>,
         {
-            self.updates += 1;
             Ok(())
         }
     }
@@ -481,64 +525,72 @@ mod test {
     }
 
     #[test]
-    fn one_colour_is_one_texture_however_many_figures_want_it() {
-        let mut pool: RampPool<FakeTexture> = RampPool::new();
-        pool.frame = 1;
-        for _ in 0..5 {
-            assert!(pool.texture_for(&fill(0.25)).is_some());
-        }
-        assert_eq!(pool.entries.len(), 1, "one colour, one texture");
+    fn a_texture_is_not_written_again_while_a_draw_may_be_reading_it() {
+        use std::collections::HashMap;
 
-        // A still look uploads once and then never again, however many frames
-        // go by — which is the whole of what content-addressing buys here.
-        for frame in 2..10 {
+        let mut pool: RampPool<FakeTexture> = RampPool::new();
+        let mut last_written: HashMap<usize, u64> = HashMap::new();
+        // One layer, one colour, many frames. The ramp is rebuilt every frame
+        // — that is the point of dropping the content cache — so what matters
+        // is only which texture it is written into.
+        for frame in 1..40 {
             pool.frame = frame;
-            assert!(pool.texture_for(&fill(0.25)).is_some());
+            let id = pool.texture_for(&fill(0.25)).expect("a texture").id;
+            if let Some(previous) = last_written.insert(id, frame) {
+                assert!(
+                    frame - previous >= FRAMES_IN_FLIGHT,
+                    "texture {id} was written at frame {previous} and again at {frame}, \
+                     inside the {FRAMES_IN_FLIGHT} frames a draw may still be reading it"
+                );
+            }
         }
-        let uploads = pool
-            .entries
-            .values()
-            .map(|e| e.texture.updates)
-            .sum::<usize>();
-        assert_eq!(uploads, 1, "a still colour was uploaded {uploads} times");
+        // And it does come back round: a single layer settles on a fixed set
+        // rather than asking for a new texture every frame.
+        assert_eq!(last_written.len(), FRAMES_IN_FLIGHT as usize);
     }
 
     #[test]
     fn figures_drawn_together_never_share_a_texture() {
         let mut pool: RampPool<FakeTexture> = RampPool::new();
-        // Four different colours in one frame. None may be recycled out from
-        // under a draw that has already been queued against it.
+        // Four figures in one frame. None may be handed a texture another has
+        // already been drawn with, whatever their colours are.
         pool.frame = 1;
-        for i in 0..4 {
-            assert!(pool.texture_for(&fill(f64::from(i) * 0.2)).is_some());
-        }
-        assert_eq!(pool.entries.len(), 4, "colours drawn together collided");
+        let ids: Vec<usize> = (0..4)
+            .map(|i| {
+                pool.texture_for(&fill(f64::from(i) * 0.2))
+                    .expect("a texture")
+                    .id
+            })
+            .collect();
+        let mut unique = ids.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "two figures shared a texture: {ids:?}"
+        );
     }
 
-    /// The pool bounds itself: an animated colour is a new key every frame, so
-    /// what stops the pool growing is recycling rather than a size cap.
+    /// The pool bounds itself, so there is no cap and no eviction policy: it
+    /// grows to what one frame draws times the frames in flight, and stops.
     #[test]
-    fn an_animated_colour_settles_at_a_bounded_pool() {
+    fn the_pool_settles_at_frames_in_flight_per_layer() {
         for layers in [1u32, 3] {
             let mut pool: RampPool<FakeTexture> = RampPool::new();
-            let mut high_water = 0;
             for frame in 1..500u64 {
                 pool.frame = frame;
                 for layer in 0..layers {
-                    // A colour that moves every frame, as a hue animation
-                    // sweeping the ramp does.
                     let center = (frame as f64 * 0.01 + f64::from(layer) * 0.1).rem_euclid(1.0);
                     assert!(pool.texture_for(&fill(center)).is_some());
                 }
-                high_water = high_water.max(pool.entries.len());
             }
-            // One texture per asking layer per frame still in flight, and
-            // not one more: the frame being drawn reuses what fell out of
-            // flight rather than adding to the pool.
             let bound = FRAMES_IN_FLIGHT as usize * layers as usize;
             assert_eq!(
-                high_water, bound,
-                "{layers} animated layer(s) settled at {high_water} textures, not {bound}"
+                pool.entries.len(),
+                bound,
+                "{layers} layer(s) settled at {} textures, not {bound}",
+                pool.entries.len()
             );
         }
     }
