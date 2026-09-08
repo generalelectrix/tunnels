@@ -33,7 +33,9 @@ use image::RgbaImage;
 use log::{error, info};
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
-use tunnels_model::layer::{ColorAdjust, FigureId, FillLayer, Layer, LayerCollection, SpriteId};
+use tunnels_model::layer::{
+    ColorAdjust, FigureId, FillLayer, GeneratedId, Layer, LayerCollection, SpriteId,
+};
 
 /// How many frames a texture may still be read after the last draw that used
 /// it.
@@ -231,23 +233,23 @@ where
 
     /// Build the figure meshes a show is likely to want, before it starts.
     ///
-    /// Sixty-two figures at the four coarsest densities: **248 meshes, 1.6
-    /// million triangles, 26 MB, 200 ms**. It covers a figure at the default
-    /// size on a 1080-line projector and everything smaller.
+    /// Every figure both libraries hold, at the four coarsest densities: 62
+    /// baked and 339 generated, **1,604 meshes, 16 million triangles, 290 MB,
+    /// 3.5 s**. It covers a figure at the default size on a 1080-line
+    /// projector and everything smaller.
     ///
-    /// The two finest densities are reachable but not built here. They are 90%
-    /// of the cost of building everything — 2.5 s and 317 MB against 200 ms and
-    /// 26 MB — and the show pays for them only if it reaches them. The cost
-    /// when it does is **per figure, not per density**: 7.5 ms on average and
-    /// 16.5 ms at worst for the second-finest, 28 ms and 64 ms for the finest,
-    /// rather than the 484 ms and 1.8 s a whole density costs. A reader looking
-    /// at the level table will assume otherwise, which is why it is written
-    /// here.
+    /// The generated figures are 264 MB of that against the baked library's
+    /// 26 MB, on a fifth again as many figures, because a family computes its
+    /// contours to the tessellator's tolerance where a piece of artwork was
+    /// drawn with as few points as a hand needed.
     ///
-    /// So the baked meshes are bounded but not small: 62 figures times 6
-    /// densities, 372 meshes and 317 MB if every one were ever drawn. That
-    /// bound is a property of a fixed library and does not extend to a figure
-    /// generated from a knob position.
+    /// The two finest densities are reachable but not built here, and they are
+    /// most of what the caches could ever hold — 2.2 GB against this 290 MB.
+    /// A show pays for them only if it reaches them, and the cost when it does
+    /// is **per figure, not per density**: tens of milliseconds for the one
+    /// figure that grew, rather than the seconds a whole density costs. A
+    /// reader looking at the level table will assume otherwise, which is why it
+    /// is written here.
     ///
     /// All of it is vertex and index data on the CPU, not textures. It does
     /// not compete for the share of system memory an integrated GPU takes,
@@ -257,21 +259,29 @@ where
     /// Called once at startup, where seconds are free — the bootstrapper
     /// pushes a client and waits for it.
     pub fn precompute(&mut self) {
-        for id in 0..tunnels_sprites::count() {
-            let Ok(id) = u16::try_from(id) else { break };
-            let Some(sprite) = tunnels_sprites::sprite(id) else {
+        let Self {
+            figures,
+            fills,
+            meshes,
+            ..
+        } = self;
+        let baked = (0..tunnels_sprites::count())
+            .filter_map(|id| u16::try_from(id).ok())
+            .map(|id| FigureId::Baked(SpriteId(id)));
+        let generated = GeneratedId::library().map(FigureId::Generated);
+        for figure in baked.chain(generated) {
+            let Some(contours) = figures.get(figure) else {
                 continue;
             };
-            let figure = FigureId::Baked(SpriteId(id));
-            let fill = self.fills.get(figure, &sprite.figures);
+            let fill = fills.get(figure, contours);
             for level in Level::eager() {
-                self.meshes.get(MeshId { figure, level }, fill);
+                meshes.get(MeshId { figure, level }, fill);
             }
         }
         info!(
             "Built {} figure meshes, {} triangles.",
-            tunnels_sprites::count() * Level::eager().count(),
-            self.meshes.triangles()
+            meshes.len(),
+            meshes.triangles()
         );
     }
 
@@ -452,6 +462,25 @@ mod test {
     use graphics::ImageSize;
     use texture::TextureOp;
     use tunnels_model::layer::{ColorField, ColorPhase, DrawMode, Placement, SpriteId};
+
+    /// The precompute holds every figure either library names, at every
+    /// density it builds before the show — which is the whole of what these
+    /// caches are ever asked for.
+    ///
+    /// A figure left out is one the operator reaches and waits for. A figure
+    /// built that no knob names is work done for nothing. Counting the meshes
+    /// catches both, because the key is a figure and a density and the
+    /// enumeration visits each figure once.
+    #[test]
+    fn the_precompute_covers_both_libraries() {
+        let mut renderer = Renderer::<FakeTexture>::default();
+        renderer.precompute();
+        assert_eq!(
+            renderer.meshes.len(),
+            (tunnels_sprites::count() + GeneratedId::library().count()) * Level::eager().count(),
+            "the precompute does not cover both libraries at every eager density"
+        );
+    }
 
     /// Stands in for a GPU texture, identifiable so a test can tell which one
     /// the pool handed back.
