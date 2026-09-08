@@ -1124,6 +1124,50 @@ mod tests {
         );
     }
 
+    /// How long a departed subscriber gets to be noticed before the publisher
+    /// is taken to be keeping it forever.
+    const REAP_LIMIT: Duration = Duration::from_secs(10);
+
+    /// A subscriber that stops taking what it is sent is dropped.
+    ///
+    /// A subscriber that vanishes without closing — an unplugged client, a
+    /// switch that loses power — leaves behind a socket the publisher can go
+    /// on writing into until its buffers fill, and a sender thread that then
+    /// parks in a write with nothing to end it. Nothing about the connection
+    /// says the subscriber is gone; what says so is that it takes nothing it
+    /// is sent. A publisher that does not notice keeps a client, a thread and
+    /// a copy of every message published for a peer that is never coming back.
+    ///
+    /// A peer stalled on the loopback is the hard case rather than a weaker
+    /// stand-in for an unplugged one: it acknowledges everything it is sent,
+    /// so no timeout the operating system keeps will ever fail the connection.
+    #[test]
+    fn a_subscriber_that_stops_taking_what_it_is_sent_is_dropped() {
+        let (publisher, port) = test_publisher();
+        // Held open for the duration, so that the subscriber is stalled rather
+        // than closed and the connection stays healthy throughout.
+        let _stalled = stalled_subscriber(port);
+        thread::sleep(Duration::from_millis(300));
+
+        // Enough to fill the subscriber's buffers, so that its sender thread
+        // parks in a write and the messages behind it go untaken.
+        let bulk = vec![0xABu8; LARGE_MESSAGE];
+        for _ in 0..MESSAGES_TO_STALL {
+            publisher.send(&bulk);
+        }
+
+        let deadline = Instant::now() + REAP_LIMIT;
+        while Instant::now() < deadline {
+            if publisher.clients.lock().unwrap().connected.is_empty() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!(
+            "a subscriber that took nothing it was sent was still subscribed after {REAP_LIMIT:?}"
+        );
+    }
+
     /// A dropped publisher takes its threads with it.
     ///
     /// Dropping joins every thread the publisher started, so a drop that
