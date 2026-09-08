@@ -16,13 +16,13 @@ use std::collections::HashMap;
 use tunnels_model::layer::SpriteId;
 use tunnels_sprites::{FillRule, Point, Sprite};
 
-/// How finely the tessellator may deviate, in shape units.
+/// How finely the tessellator may deviate, in figure units.
 ///
 /// The contours are already flattened to this, so anything finer only refines
 /// what is already straight.
 const TOLERANCE: f32 = 0.002;
 
-/// Longest contour segment an outline is stroked from, in shape units.
+/// Longest contour segment an outline is stroked from, in figure units.
 ///
 /// A stroke's colour comes from the contour, and the ramp coordinate is
 /// interpolated between one vertex and the next — so how finely the *contour*
@@ -97,7 +97,7 @@ impl GeometryCache {
             })
             .or_insert_with(|| {
                 let options = StrokeOptions::tolerance(TOLERANCE)
-                    .with_line_width(thickness.shape_units.max(1e-4))
+                    .with_line_width(thickness.figure_units.max(1e-4))
                     .with_line_join(LineJoin::Round)
                     .with_line_cap(LineCap::Round);
                 let mut out = StrokeMesh::default();
@@ -186,7 +186,7 @@ impl StrokeMesh {
     }
 }
 
-/// The beam's thickness knob, resolved into shape space and quantised so an
+/// The beam's thickness knob, resolved into figure space and quantised so an
 /// animated thickness does not re-tessellate the outline on every frame.
 ///
 /// The step is half a pixel on screen rather than a fixed amount of shape
@@ -202,13 +202,13 @@ impl StrokeMesh {
 /// later cycle is a hit.
 #[derive(Copy, Clone, Debug)]
 pub struct Thickness {
-    pub shape_units: f32,
+    pub figure_units: f32,
 }
 
 /// How a figure's own units map onto the screen.
 #[derive(Copy, Clone, Debug)]
 pub struct Scale {
-    /// Pixels one shape-space unit covers as the figure is actually drawn.
+    /// Pixels one figure-space unit covers as the figure is actually drawn.
     pub px_per_unit: f64,
     /// Pixels it covers at the nominal size of the density it is drawn at.
     ///
@@ -224,20 +224,20 @@ const QUANTUM_PX: f64 = 0.5;
 impl Thickness {
     /// Bucket an on-screen stroke thickness against the density it is drawn at.
     pub fn bucketed(screen_px: f64, scale: Scale) -> Self {
-        let shape_units = screen_px / scale.px_per_unit.max(f64::MIN_POSITIVE);
+        let figure_units = screen_px / scale.px_per_unit.max(f64::MIN_POSITIVE);
         let quantum =
             (QUANTUM_PX / scale.nominal_px_per_unit.max(f64::MIN_POSITIVE)).max(f64::MIN_POSITIVE);
-        let buckets = (shape_units / quantum)
+        let buckets = (figure_units / quantum)
             .round()
             .clamp(0.0, f64::from(u32::MAX));
         Self {
-            shape_units: (buckets * quantum) as f32,
+            figure_units: (buckets * quantum) as f32,
         }
     }
 
     /// The key naming this thickness's geometry.
     pub fn key(self) -> u32 {
-        self.shape_units.to_bits()
+        self.figure_units.to_bits()
     }
 }
 
@@ -301,11 +301,11 @@ mod test {
         assert_eq!(a.key(), Thickness::bucketed(10.1, scale).key());
         assert_ne!(a.key(), Thickness::bucketed(10.6, scale).key());
         // The thickness used is within half a bucket of the one asked for.
-        let on_screen = f64::from(a.shape_units) * scale.px_per_unit;
+        let on_screen = f64::from(a.figure_units) * scale.px_per_unit;
         assert!((on_screen - 10.0).abs() <= 0.25, "stroked at {on_screen}px");
 
         // A figure drawn twice as large, at the same density level, gets half
-        // the thickness in shape units — the same thickness on screen.
+        // the thickness in figure units — the same thickness on screen.
         let large = Thickness::bucketed(
             10.0,
             Scale {
@@ -314,9 +314,9 @@ mod test {
             },
         );
         assert!(
-            (f64::from(large.shape_units) * 400.0 - 10.0).abs() <= 0.25,
+            (f64::from(large.figure_units) * 400.0 - 10.0).abs() <= 0.25,
             "stroked at {}px",
-            f64::from(large.shape_units) * 400.0
+            f64::from(large.figure_units) * 400.0
         );
 
         // The bucket holds still as the size knob moves within a level, which

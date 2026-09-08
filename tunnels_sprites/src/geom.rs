@@ -7,7 +7,7 @@
 //! answer it alone, so the duplication stands until then rather than being
 //! resolved by whichever landed second.
 
-/// A point in shape space: the unit box centred on the origin that every
+/// A point in figure space: the unit box centred on the origin that every
 /// figure is normalised into.
 ///
 /// Normalising is what makes a beam's size knob mean the same thing whatever

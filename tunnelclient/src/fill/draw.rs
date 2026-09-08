@@ -62,8 +62,8 @@ pub struct VertexBuffers {
 pub struct VertexWork<'a> {
     /// The coordinate indexing the ramp, and its cycle count.
     pub field: PhaseField,
-    /// The layer's own spin, in turns at the rim.
-    pub base_spin: f32,
+    /// The beam's spin knob.
+    pub spin_speed: f32,
     /// Animations displacing geometry.
     pub warps: &'a [TargetedAnimation<PreparedAnimation>],
 }
@@ -162,7 +162,7 @@ struct Needs {
 impl Needs {
     fn of(work: &VertexWork) -> Self {
         let rotates =
-            work.base_spin != 0.0 || work.warps.iter().any(|w| w.target == AnimationTarget::Spin);
+            work.spin_speed != 0.0 || work.warps.iter().any(|w| w.target == AnimationTarget::Spin);
         Self {
             rotates,
             angle: rotates || work.field.phase == ColorPhase::Angle,
@@ -192,7 +192,12 @@ impl Displacement {
     fn of(work: &VertexWork, polar: Polar, along: f32, index: usize) -> Self {
         let mut out = Self {
             radial: 1.0,
-            turn: work.base_spin * polar.radius * std::f32::consts::TAU,
+            // A tunnel integrates this knob into an angle that grows without
+            // limit; a figure reads the same knob as the winding itself,
+            // measured in turns at the rim. Winding does not wrap the way a
+            // rotation does — five turns at the rim stays five turns tighter
+            // than one — so a figure takes the amount and not a rate.
+            turn: work.spin_speed * polar.radius * std::f32::consts::TAU,
             scale_x: 1.0,
             scale_y: 1.0,
         };
@@ -423,7 +428,7 @@ fn tri_uvs(uvs: &[[f32; 2]]) -> impl Iterator<Item = [[f32; 2]; 3]> + '_ {
     uvs.as_chunks::<3>().0.iter().copied()
 }
 
-/// Apply a 2D affine matrix to a point, leaving shape space for the backend's.
+/// Apply a 2D affine matrix to a point, leaving figure space for the backend's.
 ///
 /// The return type is deliberately bare: past here the values are the
 /// backend's, in its coordinates and its layout, and losing [`Point`] is the

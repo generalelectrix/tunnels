@@ -395,7 +395,7 @@ mod tests {
             ("extent_x", fill.placement.extent_x),
             ("extent_y", fill.placement.extent_y),
             ("rot_angle", fill.placement.rot_angle),
-            ("spin", fill.spin),
+            ("spin_speed", fill.spin_speed),
             ("thickness", fill.thickness),
             ("cycles", fill.color.cycles),
             ("center", fill.color.center),

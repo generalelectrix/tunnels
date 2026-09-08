@@ -260,7 +260,7 @@ where
         // interpolation — but a colour animation moves that one colour every
         // frame, so it is only uniform when there is no animation on it either.
         let flat = fill.color_anims.is_empty() && fill.color.is_uniform();
-        let warping = fill.spin != 0.0 || !fill.warps.is_empty();
+        let warping = fill.spin_speed != 0.0 || !fill.warps.is_empty();
 
         let stroke = fill.draw_mode.draws_outline().then(|| {
             Thickness::bucketed(
@@ -314,7 +314,7 @@ where
         };
         let work = |field| VertexWork {
             field,
-            base_spin: fill.spin as f32,
+            spin_speed: fill.spin_speed as f32,
             warps: &fill.warps,
         };
 
@@ -369,7 +369,7 @@ fn flat_color(fill: &FillLayer) -> Color {
 struct Placed {
     /// Maps the figure's unit box onto the viewport.
     m: Matrix2d,
-    /// Pixels one shape-space unit covers, which is what mesh density and
+    /// Pixels one figure-space unit covers, which is what mesh density and
     /// stroke bucketing are both measured against.
     px_per_unit: f64,
 }
@@ -463,7 +463,7 @@ mod test {
                 extent_y: 0.5,
                 rot_angle: 0.,
             },
-            spin: 0.,
+            spin_speed: 0.,
             thickness: 0.,
             draw_mode: DrawMode::Fill,
             color: ColorField {

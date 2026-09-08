@@ -257,10 +257,8 @@ pub struct Hsva {
 pub struct FillLayer {
     pub sprite: SpriteId,
     pub placement: Placement,
-    /// Winding at the rim, in turns. Bounded rather than integrated: five
-    /// turns at the rim stays five turns tighter than one, so an accumulator
-    /// would spiral without bound.
-    pub spin: f64,
+    /// The beam's spin knob, as the operator set it.
+    pub spin_speed: f64,
     /// Stroke width, in the same units a segment's thickness is.
     pub thickness: f64,
     pub draw_mode: DrawMode,

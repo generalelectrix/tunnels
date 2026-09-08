@@ -325,10 +325,7 @@ impl Tunnel {
         FillLayer {
             sprite: self.sprite,
             placement,
-            // The knob a tunnel integrates into an angle is read here as the
-            // amount itself. Winding does not wrap: five turns at the rim stays
-            // five turns tighter than one, so accumulating it would spiral.
-            spin: self.spin_speed.val(),
+            spin_speed: self.spin_speed.val(),
             thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
                 .abs(),
             draw_mode: self.draw_mode,

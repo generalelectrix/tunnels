@@ -20,7 +20,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path as FsPath, PathBuf};
 
-/// How finely curves are flattened, in normalised shape units.
+/// How finely curves are flattened, in normalised figure units.
 ///
 /// A figure is two units across, so this is about a thousandth of its width —
 /// under a pixel for a figure filling a 1080-line projector, which is the only

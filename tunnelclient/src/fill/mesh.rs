@@ -19,7 +19,7 @@ use tunnels_sprites::Point;
 /// colour setting, so it costs the mesh no dependence on one.
 const CENTRE_REFINEMENT: f32 = 12.0;
 
-/// Radius, in shape space, inside which the extra refinement applies.
+/// Radius, in figure space, inside which the extra refinement applies.
 const CENTRE_RADIUS: f32 = 0.35;
 
 /// Guard against a degenerate transform asking for an unbounded mesh.
@@ -32,7 +32,7 @@ const COARSEST_LEVEL: i8 = -2;
 /// Finest mesh worth keeping.
 ///
 /// Output resolution is bounded — a 1080-line projector with a figure filling
-/// the frame puts one shape-space unit at 540 pixels — so past this the
+/// the frame puts one figure-space unit at 540 pixels — so past this the
 /// triangles are smaller than a pixel and the extra ones buy nothing.
 const FINEST_LEVEL: i8 = -7;
 
@@ -74,7 +74,7 @@ pub struct Level(i8);
 impl Level {
     /// The bucket whose triangles land nearest `target_px` on screen.
     ///
-    /// `px_per_unit` is how many pixels one shape-space unit covers, which is
+    /// `px_per_unit` is how many pixels one figure-space unit covers, which is
     /// the whole of what density depends on.
     pub fn for_screen(px_per_unit: f64, target_px: f64) -> Self {
         let raw = target_px / px_per_unit.max(1.0);
@@ -84,12 +84,12 @@ impl Level {
         Level((exp as i8).clamp(FINEST_LEVEL, COARSEST_LEVEL))
     }
 
-    /// Target edge length in shape space.
+    /// Target edge length in figure space.
     pub fn target_edge(self) -> f32 {
         2f32.powi(i32::from(self.0))
     }
 
-    /// Pixels one shape-space unit covers at this density's nominal size.
+    /// Pixels one figure-space unit covers at this density's nominal size.
     ///
     /// The density a figure actually draws at is within a factor of root two
     /// of this, since levels are powers of two. Quantities that must not move
