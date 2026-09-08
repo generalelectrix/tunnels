@@ -30,7 +30,7 @@ pub struct SpriteFamily {
 
 impl SpriteFamily {
     /// The id at this position in the family, clamped to its last figure.
-    pub fn member(&self, index: u16) -> u16 {
+    pub fn member(self, index: u16) -> u16 {
         self.first + index.min(self.len.saturating_sub(1))
     }
 }
