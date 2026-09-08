@@ -277,6 +277,46 @@ impl Tunnel {
         }
     }
 
+    /// What the render-mode control reads, which depends on the mode.
+    ///
+    /// The third of the group the segment control opens: a segment mode picks
+    /// how a segment is drawn with these buttons, a figure mode picks how much
+    /// of the figure is painted. The two settings are stored apart, so neither
+    /// is disturbed by work done in the other mode, and changing the mode
+    /// moves the buttons because the state being reported is a different
+    /// field.
+    fn render_mode_control(&self) -> RenderMode {
+        if self.shape_mode.draws_segments() {
+            self.render_mode
+        } else {
+            Self::button_for_draw_mode(self.draw_mode)
+        }
+    }
+
+    /// How much of a figure a render-mode button paints.
+    ///
+    /// A figure has no segments, so the buttons that pick how a segment is
+    /// drawn pick how much of the figure is painted instead. The two are
+    /// matched in the order their surfaces offer them, and both matches are
+    /// exhaustive, so a mode added to either without a counterpart in the
+    /// other fails to build.
+    fn draw_mode_for(button: RenderMode) -> DrawMode {
+        match button {
+            RenderMode::Arc => DrawMode::Fill,
+            RenderMode::Dot => DrawMode::Outline,
+            RenderMode::Saucer => DrawMode::Both,
+        }
+    }
+
+    /// The render-mode button that names how much of a figure is painted.
+    fn button_for_draw_mode(drawn: DrawMode) -> RenderMode {
+        match drawn {
+            DrawMode::Fill => RenderMode::Arc,
+            DrawMode::Outline => RenderMode::Dot,
+            DrawMode::Both => RenderMode::Saucer,
+        }
+    }
+
     /// Borrow an animation as a mutable reference.
     pub fn animation(&mut self, anim_num: AnimationIdx) -> &mut TargetedAnimation {
         &mut self.anims[anim_num]
@@ -637,7 +677,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
-        emitter.emit_tunnel_state_change(RenderMode(self.render_mode));
+        emitter.emit_tunnel_state_change(RenderMode(self.render_mode_control()));
         emitter.emit_tunnel_state_change(ColorPhase(self.color_phase));
         emitter.emit_tunnel_state_change(DrawMode(self.draw_mode));
         emitter.emit_tunnel_state_change(ShapeMode(self.shape_mode));
@@ -733,7 +773,16 @@ impl Tunnel {
             PositionX(v) => self.x_offset.set_target(v),
             PositionY(v) => self.y_offset.set_target(v),
             SpinSpeed(v) => self.spin_speed = v,
-            RenderMode(v) => self.render_mode = v,
+            // One group of buttons, two fields: a segment mode picks how a
+            // segment is drawn with them and a figure mode picks how much of
+            // the figure is painted.
+            RenderMode(v) => {
+                if self.shape_mode.draws_segments() {
+                    self.render_mode = v;
+                } else {
+                    self.draw_mode = Self::draw_mode_for(v);
+                }
+            }
             ColorPhase(v) => self.color_phase = v,
             DrawMode(v) => self.draw_mode = v,
             ShapeMode(v) => {
@@ -866,8 +915,10 @@ pub trait EmitStateChange {
 mod test {
     use super::*;
     use crate::clock_bank::ClockBank;
+    use crate::layer::DrawMode;
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use strum::VariantArray;
 
     /// An emitter for a test that is about what the tunnel holds rather than
     /// what it reports.
@@ -903,6 +954,22 @@ mod test {
         // other mode's values.
         assert!(heard("Segments"), "{:?}", recorder.0);
         assert!(heard("Blacking"), "{:?}", recorder.0);
+
+        // The render-mode buttons are the same story, and what they are
+        // restated as is the point: a figure mode reports the button that
+        // names its draw mode, not the one the segment mode left lit.
+        let mut recorder = Recorder::default();
+        Tunnel {
+            render_mode: RenderMode::Dot,
+            draw_mode: DrawMode::Both,
+            ..Default::default()
+        }
+        .handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut recorder);
+        assert!(
+            recorder.0.iter().any(|sc| sc == "RenderMode(Saucer)"),
+            "{:?}",
+            recorder.0
+        );
     }
 
     /// A show runs in front of an audience, so a mode with nothing to draw
@@ -953,7 +1020,19 @@ mod test {
 
         tunnel.handle_state_change(StateChange::Segments(37), &mut Silent);
         tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
+        tunnel.handle_state_change(StateChange::RenderMode(RenderMode::Saucer), &mut Silent);
         assert_eq!(tunnel.segs, 37);
+        assert_eq!(tunnel.render_mode, RenderMode::Saucer);
+        assert_eq!(
+            tunnel.draw_mode,
+            DrawMode::default(),
+            "the draw mode is untouched"
+        );
+        assert_eq!(
+            tunnel.render_mode_control(),
+            RenderMode::Saucer,
+            "a segment mode reports the render mode"
+        );
         assert_eq!(tunnel.blacking, blacking);
         assert_eq!(
             tunnel.sprite,
@@ -985,6 +1064,20 @@ mod test {
             "a figure mode reports the family"
         );
 
+        // The same three buttons, naming how much of a figure is painted.
+        tunnel.handle_state_change(StateChange::RenderMode(RenderMode::Dot), &mut Silent);
+        assert_eq!(tunnel.draw_mode, DrawMode::Outline);
+        assert_eq!(
+            tunnel.render_mode,
+            RenderMode::Saucer,
+            "the render mode is untouched"
+        );
+        assert_eq!(
+            tunnel.render_mode_control(),
+            RenderMode::Dot,
+            "a figure mode reports the draw mode as the button that names it"
+        );
+
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut Silent);
         assert_eq!(
             tunnel.segments_control(),
@@ -996,6 +1089,22 @@ mod test {
             blacking,
             "the blacking came back unchanged"
         );
+        assert_eq!(
+            tunnel.render_mode_control(),
+            RenderMode::Saucer,
+            "the render mode came back unchanged"
+        );
+    }
+
+    /// The render-mode buttons and the draw modes are matched by position, so
+    /// the first button names the first draw mode and the last names the last.
+    #[test]
+    fn the_draw_modes_line_up_with_the_buttons_that_name_them() {
+        assert_eq!(RenderMode::VARIANTS.len(), DrawMode::VARIANTS.len());
+        for (button, drawn) in RenderMode::VARIANTS.iter().zip(DrawMode::VARIANTS) {
+            assert_eq!(Tunnel::draw_mode_for(*button), *drawn);
+            assert_eq!(Tunnel::button_for_draw_mode(*drawn), *button);
+        }
     }
 
     /// The knob positions reported for a figure select that figure, so an

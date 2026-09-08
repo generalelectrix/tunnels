@@ -562,12 +562,6 @@ tunnel/mode_generated: |
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 61 }, value: 0 }
   Akai APC40: Event { mapping: Mapping { event_type: ControlChange, channel: 0, control: 20 }, value: 64 }
   TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 0, control: 20 }, value: 64 }
-  Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 62 }, value: 0 }
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 62 }, value: 0 }
-  Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 63 }, value: 0 }
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 63 }, value: 0 }
-  Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 64 }, value: 0 }
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 64 }, value: 0 }
 tunnel/mode_line: |
   Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 58 }, value: 0 }
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 58 }, value: 0 }
@@ -588,12 +582,6 @@ tunnel/mode_sprite: |
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 61 }, value: 1 }
   Akai APC40: Event { mapping: Mapping { event_type: ControlChange, channel: 0, control: 20 }, value: 64 }
   TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 0, control: 20 }, value: 64 }
-  Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 62 }, value: 0 }
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 62 }, value: 0 }
-  Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 63 }, value: 0 }
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 63 }, value: 0 }
-  Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 64 }, value: 0 }
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 64 }, value: 0 }
 tunnel/palette_0: |
   Akai APC40: Event { mapping: Mapping { event_type: NoteOn, channel: 8, control: 58 }, value: 0 }
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 8, control: 58 }, value: 0 }

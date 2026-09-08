@@ -197,15 +197,15 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 &mut send,
             );
             if !v.draws_segments() {
-                // The marquee and the render mode act on segments, and this
-                // mode draws none. A knob left where the last mode put it is
-                // reporting a setting that nothing reads.
+                // The marquee slides segments along a path and this mode draws
+                // none, so a knob left where the last mode put it would report
+                // a setting nothing reads.
                 send(event(MARQUEE_SPEED, bipolar_to_midi(BipolarFloat::ZERO)));
-                RENDER_MODE_BUTTONS.all_off(&mut send);
             }
         }
-        // No control surface carries either of these, so there is nothing to
-        // report a change to.
+        // A figure's colour phase reaches no surface at all, and how much of
+        // it is painted reaches one as a render-mode button rather than as
+        // itself.
         ColorPhase(_) | DrawMode(_) => (),
     };
 }
