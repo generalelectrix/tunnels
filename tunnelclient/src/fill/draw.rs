@@ -377,16 +377,21 @@ pub fn draw_textured<G: Graphics>(
             // Grouped by triangle here, because the seam shift is taken
             // against one corner's coordinate for the whole triangle.
             for tri in batch.triangles() {
-                let Some(reference) = verts.uvs.get(tri[0] as usize).map(|v| v[0]) else {
+                let corners = tri.map(|i| {
+                    let i = i as usize;
+                    Some((*verts.positions.get(i)?, *verts.uvs.get(i)?))
+                });
+                // A triangle naming a vertex the pass did not produce is
+                // dropped entire, as it is where the tessellator's output is
+                // resolved. Pushing the corners that do exist would shift
+                // every later vertex in the run and tear the batch into
+                // triangles nothing meshed.
+                let [Some(a), Some(b), Some(c)] = corners else {
                     continue;
                 };
-                for i in tri {
-                    let (Some(p), Some(v)) =
-                        (verts.positions.get(i as usize), verts.uvs.get(i as usize))
-                    else {
-                        continue;
-                    };
-                    pos.push(project(m, *p));
+                let reference = a.1[0];
+                for (p, v) in [a, b, c] {
+                    pos.push(project(m, p));
                     uv.push([
                         match period {
                             Some(period) => same_branch(reference, v[0], period),
