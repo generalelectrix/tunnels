@@ -206,6 +206,154 @@ impl ShapeFamily {
         }
     }
 
+    /// The arities a control offers in this family.
+    ///
+    /// A knob names one of these rather than any value in [`arity_range`],
+    /// because every figure a knob can reach is built and held: the count is
+    /// what the library costs. Sixteen of the families are short enough to be
+    /// offered whole; the nine that are not are offered the counts the curated
+    /// figures were drawn at, which is a subset and never a ceiling. Clamping
+    /// instead would put `phyllo` and `modmult` below the counts their
+    /// construction needs — a phyllotaxis under about twenty florets is a
+    /// scatter of dots rather than a coarse spiral.
+    ///
+    /// Where curation left a gap wider than its neighbours, the gap is filled
+    /// so the step between one position and the next stays a roughly constant
+    /// proportion. That is the spacing the curated counts already have, and
+    /// the reason for it is that arity is perceived as a ratio: eight bars to
+    /// ten is a visible change where forty to forty-two is not.
+    pub fn arities(self) -> &'static [Arity] {
+        macro_rules! arities {
+            ($($n:literal),* $(,)?) => {{
+                const ARITIES: &[Arity] = &[$(Arity::new($n)),*];
+                ARITIES
+            }};
+        }
+        match self {
+            Self::StarPolygon => arities![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+            Self::Rose => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            // Every lobe count to fifteen, then every other one: the curated
+            // spirographs stop at seventeen inside and outside, and two lobes
+            // apart is where a count still reads as a different figure.
+            Self::SpirographInside | Self::SpirographOutside => {
+                arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 21]
+            }
+            Self::Guilloche => arities![2, 3, 4, 5, 6, 7, 8],
+            Self::Lissajous => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            Self::MaurerRose => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            Self::Harmonograph => arities![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            Self::CycloidRosette => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            // The sixteen curated floret counts exactly. The dot radius is
+            // fitted against this count, and these are the counts it was
+            // fitted on.
+            Self::Phyllotaxis => {
+                arities![
+                    24, 30, 36, 45, 55, 60, 75, 90, 120, 150, 180, 200, 240, 260, 300, 400
+                ]
+            }
+            // The curated point counts, less four that sat beside a neighbour
+            // close enough to draw the same figure.
+            Self::ModularChords => {
+                arities![
+                    24, 30, 36, 45, 48, 56, 60, 90, 96, 120, 128, 144, 150, 180, 200, 220
+                ]
+            }
+            // The sixteen curated corner counts exactly.
+            Self::StringArt => arities![5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 18, 20, 22, 26, 30, 34],
+            Self::TwistRings => arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20],
+            Self::MoireRings => arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 19, 22, 24, 26],
+            Self::MoireGrid => {
+                arities![8, 9, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 34, 40, 48]
+            }
+            Self::MoireWeave => {
+                arities![6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 23, 26, 29, 32, 40]
+            }
+            Self::PinwheelNest => arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+            Self::StarLattice => arities![1, 2, 3, 4, 5],
+            Self::Truchet => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            Self::ConcentricRings
+            | Self::PolygonRings
+            | Self::PetalMandala
+            | Self::Slats
+            | Self::Grid
+            | Self::Frames => arities![4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        }
+    }
+
+    /// The second degree of freedom every figure of this family is drawn at.
+    ///
+    /// One position rather than a range, because the two controls a figure
+    /// mode has are spent on the family and the count within it. Which
+    /// position is a matter of taste, and the curated figures are the evidence
+    /// there is about taste: each of these is the position whose resolution
+    /// agrees with the most curated figures of its family, and where two agree
+    /// equally the tie goes to the one curation kept at the top of the arity
+    /// range. Where the position carries units — a pen depth, a reach, an
+    /// overlap — it is the median of the curated values instead.
+    ///
+    /// Nine families resolve nothing from this and take zero: `harmo`,
+    /// `phyllo`, `moire_grid`, `moire_weave`, `pinwheel_nest`, `truchet`,
+    /// `rings`, `grid` and `frames`.
+    pub fn secondary(self) -> Secondary {
+        Secondary::new(match self {
+            // A step near two fifths of the point count. Curation kept only
+            // the high steps above fifteen points and none of the low ones.
+            Self::StarPolygon => 0.79,
+            Self::Rose => 0.646,
+            // A pen depth of 1.74, against a curated median of 1.75. Depth one
+            // is the cusped hypocycloid, where a ribbon leaves the tips as
+            // detached blobs, and this is well clear of it.
+            Self::SpirographInside => 0.37,
+            // A pen depth of 1.56; the curated epicycloids run shallower than
+            // the hypocycloids, at a median of 1.50.
+            Self::SpirographOutside => 0.28,
+            // The simplest base. A guilloche's marks are the base's lobes
+            // times its copies, and the copies are what the other knob turns.
+            Self::Guilloche => 0.045,
+            // Every curated Lissajous has its second frequency below its
+            // first, and at two the coprime frequencies are 1, 3, 5, 7 and 9 —
+            // so any position above a fifth leaves that region at the bottom
+            // of the range.
+            Self::Lissajous => 0.183,
+            // A step of 53, the only one two curated roses share.
+            Self::MaurerRose => 0.35,
+            // The cardioid: one cusp where the nephroid has two, and the only
+            // kind curation carried to twelve copies.
+            Self::CycloidRosette => 0.625,
+            // A multiplier near a twelfth of the point count, the median of
+            // the curated ratios.
+            Self::ModularChords => 0.086,
+            // Five corners, which holds the marks a figure carries — corners
+            // times the count per corner — closest to the curated band across
+            // the whole range.
+            Self::StringArt => 0.214,
+            // Five sides, the only count curation carried to twenty rings.
+            Self::TwistRings => 0.178,
+            // One ring of offset: the longest beat there is, and the only
+            // offset coprime with every ring count, so it does not jump as the
+            // count crosses a factor.
+            Self::MoireRings => 0.167,
+            // A reach of 0.70, which five curated lattices carry.
+            Self::StarLattice => 0.5,
+            // Six sides. A stack of circles is already its own family, and an
+            // octagon is nearly one.
+            Self::PolygonRings => 0.35,
+            // Petals overlapping by one spacing, where each petal's rim passes
+            // through its neighbours' centres.
+            Self::PetalMandala => 0.75,
+            Self::Slats => 0.25,
+            Self::Harmonograph
+            | Self::Phyllotaxis
+            | Self::MoireGrid
+            | Self::MoireWeave
+            | Self::PinwheelNest
+            | Self::Truchet
+            | Self::ConcentricRings
+            | Self::Grid
+            | Self::Frames => 0.0,
+        })
+    }
+
     /// The parameters this family reaches from an arity and a secondary.
     pub fn resolve(self, arity: Arity, secondary: Secondary) -> ShapeParams {
         let range = self.arity_range();
