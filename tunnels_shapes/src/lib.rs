@@ -12,10 +12,12 @@
 //! where they cross, and a curve traced past its own period would erase itself
 //! entirely.
 
+pub mod arity;
 pub mod curve;
 pub mod families;
 pub mod geom;
 pub mod presets;
 
-pub use families::ShapeParams;
+pub use arity::{Arity, Secondary};
+pub use families::{ShapeFamily, ShapeParams};
 pub use geom::{Contour, Figure, FillRule, Point};

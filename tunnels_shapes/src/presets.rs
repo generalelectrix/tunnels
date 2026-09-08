@@ -28,6 +28,15 @@ impl Preset {
     }
 }
 
+/// The curated parameters belonging to one family.
+pub fn of_family(family: ShapeFamily) -> Vec<ShapeParams> {
+    all()
+        .into_iter()
+        .map(|preset| preset.params)
+        .filter(|params| params.family() == family)
+        .collect()
+}
+
 /// Every curated figure.
 pub fn all() -> Vec<Preset> {
     let mut p = Vec::new();
