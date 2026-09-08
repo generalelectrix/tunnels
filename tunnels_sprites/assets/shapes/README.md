@@ -46,5 +46,12 @@ of the frame against the unframed pair's 20–24%, and the order the directory i
 in is the one in which "how much of the frame it fills" runs monotone across all
 four.
 
+Every percentage above is the share of the unit box a figure paints, and none
+of them is stored anywhere. Re-derive one by sampling a grid of points against
+the baked contours, taking each `<path>` under its own fill rule — even-odd
+where a ring's inner loop has to cancel against its outer — and counting the
+points any path covers. Sampled at 600 by 600 that gives 0.205, 0.243, 0.754
+and 0.796 for the four four-petal rosettes, in the order they are listed.
+
 Weaves aside, every family runs low to high — more points, more spokes, more
 petals, more ink — so turning the second knob up always adds.
