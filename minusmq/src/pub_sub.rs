@@ -1315,8 +1315,39 @@ mod tests {
             );
             return;
         }
+        // Nothing was reaped inside the wait. Which of the three things that
+        // could mean is worth knowing before guessing, and the answer is only
+        // available here, so the failure states it rather than the fact of it.
+        //
+        // Whether the sender thread finished says whether the write deadline
+        // did its job: a client that is finished had its write fail on
+        // schedule and only reaping is missing. Whether the list drains once
+        // this thread stops spinning says whether the accept thread was being
+        // starved of the lock it needs. Whether it drains only after a
+        // connection arrives says the accept loop was parked in `accept`,
+        // which happens where a receive timeout does not bound one.
+        let census = |when: &str| {
+            let clients = publisher.clients.lock().unwrap();
+            let finished = clients.connected.iter().filter(|c| c.is_finished()).count();
+            format!(
+                "{when}: {} connected, {finished} finished",
+                clients.connected.len()
+            )
+        };
+        let inside_the_wait = census("inside the wait");
+        thread::sleep(Duration::from_millis(500));
+        let after_the_spin = census("500ms after the spin stopped");
+        let poke = TcpStream::connect(("127.0.0.1", port));
+        thread::sleep(Duration::from_millis(500));
+        let after_a_connection = census("500ms after a connection arrived");
         panic!(
-            "a subscriber that accepted nothing it was sent was still subscribed after {REAP_LIMIT:?}"
+            "a subscriber that accepted nothing it was sent was still subscribed after \
+             {REAP_LIMIT:?}\n  {inside_the_wait}\n  {after_the_spin}\n  {after_a_connection}\n  \
+             (the poke connected: {})\n  a finished client that outlives the spin but not a \
+             connection means the accept loop was parked in accept; one that goes as soon as the \
+             spin stops means it was starved of the clients lock; one that is never finished \
+             means the write deadline never failed a write.",
+            poke.is_ok()
         );
     }
 
