@@ -10,8 +10,9 @@ use graphics::Graphics;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
 use tunnels_lib::number::Phase;
+use tunnels_model::animation::{PreparedAnimation, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
-use tunnels_model::layer::{ColorPhase, FillAnimation};
+use tunnels_model::layer::ColorPhase;
 use tunnels_sprites::Point;
 
 /// Vertices per chunk handed to the backend. `BACK_END_MAX_VERTEX_COUNT` is
@@ -64,7 +65,7 @@ pub struct VertexWork<'a> {
     /// The layer's own spin, in turns at the rim.
     pub base_spin: f32,
     /// Animations displacing geometry.
-    pub warps: &'a [FillAnimation],
+    pub warps: &'a [TargetedAnimation<PreparedAnimation>],
 }
 
 /// Everything a frame does per vertex, in one walk of the mesh.

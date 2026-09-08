@@ -10,8 +10,9 @@
 use crate::draw::hsv_to_rgb;
 use image::{Rgba, RgbaImage};
 use tunnels_lib::number::Phase;
+use tunnels_model::animation::{PreparedAnimation, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
-use tunnels_model::layer::{ColorAdjust, ColorField, FillAnimation};
+use tunnels_model::layer::{ColorAdjust, ColorField};
 
 /// Texels across one cycle of the waveform.
 ///
@@ -31,7 +32,11 @@ pub fn blank() -> RgbaImage {
 /// vertex or per pixel. That is why an animated colour costs the same as a
 /// still one: however fast a waveform moves, the frame's work is a thousand
 /// evaluations and one texture write.
-pub fn build_into(img: &mut RgbaImage, color: &ColorField, anims: &[FillAnimation]) {
+pub fn build_into(
+    img: &mut RgbaImage,
+    color: &ColorField,
+    anims: &[TargetedAnimation<PreparedAnimation>],
+) {
     for x in 0..RAMP_TEXELS {
         let phase = Phase::new(f64::from(x) / f64::from(RAMP_TEXELS));
 

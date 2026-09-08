@@ -1,3 +1,4 @@
+use crate::animation_target::AnimationTarget;
 use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock::Ticks;
@@ -50,6 +51,18 @@ impl Default for StaticParams {
             duty_cycle: UnipolarFloat::ONE,
         }
     }
+}
+
+/// An animation and the parameter it drives.
+///
+/// Generic over the animation so that one already resolved for a frame pairs
+/// with its target the same way an unresolved one does: it is the same
+/// association either side of `prepare`, and naming it twice would make two
+/// things out of one.
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+pub struct TargetedAnimation<A = Animation> {
+    pub animation: A,
+    pub target: AnimationTarget,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

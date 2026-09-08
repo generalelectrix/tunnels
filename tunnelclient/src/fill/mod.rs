@@ -17,7 +17,7 @@ mod ramp;
 
 use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_textured, draw_tris};
 use self::geom::TriangleList;
-use self::geometry::{GeometryCache, Scale, Width};
+use self::geometry::{GeometryCache, Scale, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampKey;
 use crate::draw::{Draw, hsv_to_rgb};
@@ -219,7 +219,7 @@ where
         let warping = fill.spin != 0.0 || !fill.warps.is_empty();
 
         let stroke = fill.draw_mode.draws_outline().then(|| {
-            Width::bucketed(
+            Thickness::bucketed(
                 // The same expression a segment's stroke weight goes through,
                 // so thickness means one thing across both media.
                 fill.thickness * cfg.critical_size * cfg.thickness_scale / 2.0,
@@ -237,9 +237,9 @@ where
             if fill.draw_mode.draws_fill() {
                 draw_tris(geometry.fill(fill.sprite, sprite), color, placed.m, gl);
             }
-            if let Some(width) = stroke {
+            if let Some(thickness) = stroke {
                 draw_tris(
-                    geometry.stroke(fill.sprite, sprite, width),
+                    geometry.stroke(fill.sprite, sprite, thickness),
                     color,
                     placed.m,
                     gl,
@@ -309,10 +309,10 @@ where
         if fill.draw_mode.draws_fill() {
             piece(geometry.fill(fill.sprite, sprite), None, gl);
         }
-        if let Some(width) = stroke {
+        if let Some(thickness) = stroke {
             piece(
-                geometry.stroke(fill.sprite, sprite, width),
-                Some(width.key()),
+                geometry.stroke(fill.sprite, sprite, thickness),
+                Some(thickness.key()),
                 gl,
             );
         }

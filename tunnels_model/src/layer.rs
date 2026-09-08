@@ -3,8 +3,7 @@
 //! This is the far end of the model: everything above it describes a show,
 //! and everything here describes shapes on a screen.
 
-use crate::animation::PreparedAnimation;
-use crate::animation_target::AnimationTarget;
+use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::waveforms::{WaveformArgs, sawtooth};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -249,18 +248,6 @@ pub struct Hsva {
     pub level: f64,
 }
 
-/// An animation resolved for this frame, and the knob it drives.
-///
-/// The target is the one the operator set, not a translation of it: a figure
-/// and a beam share a control surface, so they share the vocabulary that
-/// surface speaks. What a target *means* on a figure is decided where the
-/// figure is drawn.
-#[derive(Debug, Clone, Copy)]
-pub struct FillAnimation {
-    pub target: AnimationTarget,
-    pub animation: PreparedAnimation,
-}
-
 /// Identifies one layer across frames, so its caches survive the mixer moving.
 ///
 /// The path of channel indices from the mixer root, rather than the layer's
@@ -314,9 +301,9 @@ pub struct FillLayer {
     pub draw_mode: DrawMode,
     pub color: ColorField,
     /// Animations resolved when the colour ramp is built, once per texel.
-    pub color_anims: Vec<FillAnimation>,
+    pub color_anims: Vec<TargetedAnimation<PreparedAnimation>>,
     /// Animations resolved per point of the figure, displacing it.
-    pub warps: Vec<FillAnimation>,
+    pub warps: Vec<TargetedAnimation<PreparedAnimation>>,
 }
 
 /// What a beam expands into for one frame.

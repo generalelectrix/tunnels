@@ -1,14 +1,14 @@
-use crate::animation::PreparedAnimation;
+use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
-    ColorField, ColorPhase, DrawMode, FillAnimation, FillLayer, Layer, LayerKey, MarkLayer,
-    Placement, RenderMode, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+    ColorField, ColorPhase, DrawMode, FillLayer, Layer, LayerKey, MarkLayer, Placement, RenderMode,
+    SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::waveforms::sawtooth;
 use crate::{
-    animation::Animation, animation_target::AnimationTarget, palette::ColorPaletteIdx,
-    position_bank::PositionIdx, waveforms::WaveformArgs,
+    animation_target::AnimationTarget, palette::ColorPaletteIdx, position_bank::PositionIdx,
+    waveforms::WaveformArgs,
 };
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -625,13 +625,13 @@ impl Tunnel {
 fn fill_animations(
     anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
     keep: impl Fn(AnimationTarget) -> bool,
-) -> Vec<FillAnimation> {
+) -> Vec<TargetedAnimation<PreparedAnimation>> {
     anims
         .iter()
         .filter(|(animation, target)| {
             animation.is_active() && varies_across_figure(*target) && keep(*target)
         })
-        .map(|(animation, target)| FillAnimation {
+        .map(|(animation, target)| TargetedAnimation {
             target: *target,
             animation: *animation,
         })
@@ -665,13 +665,6 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct AnimationIdx(pub usize);
 typed_index!(AnimationIdx, TargetedAnimation);
-
-/// Combination of an animation and a tunnel parameter target for that animation.
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct TargetedAnimation {
-    pub animation: Animation,
-    pub target: AnimationTarget,
-}
 
 // TODO: move some of these into associated constants
 pub const N_ANIM: usize = 4;

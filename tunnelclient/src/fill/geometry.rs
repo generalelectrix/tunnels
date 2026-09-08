@@ -24,12 +24,12 @@ const TOLERANCE: f32 = 0.002;
 
 /// Identifies one tessellated outline.
 ///
-/// Keyed on the width the outline was actually stroked at, so the key names
-/// the geometry it stands for and nothing else has to be checked.
+/// Keyed on the thickness the outline was actually stroked at, so the key
+/// names the geometry it stands for and nothing else has to be checked.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 struct StrokeId {
     sprite: SpriteId,
-    width_bits: u32,
+    thickness_bits: u32,
 }
 
 /// Triangles tessellated so far, before any refinement.
@@ -72,15 +72,15 @@ impl GeometryCache {
     }
 
     /// The figure's outline stroked at `width`, tessellated on first use.
-    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, width: Width) -> &TriangleList {
+    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &TriangleList {
         self.strokes
             .entry(StrokeId {
                 sprite: id,
-                width_bits: width.key(),
+                thickness_bits: thickness.key(),
             })
             .or_insert_with(|| {
                 let options = StrokeOptions::tolerance(TOLERANCE)
-                    .with_line_width(width.shape_units.max(1e-4))
+                    .with_line_width(thickness.shape_units.max(1e-4))
                     .with_line_join(LineJoin::Round)
                     .with_line_cap(LineCap::Round);
                 let mut out = TriangleList::default();
@@ -101,14 +101,14 @@ impl GeometryCache {
     }
 }
 
-/// A stroke width, quantised so an animated thickness does not re-tessellate
-/// the outline on every frame.
+/// The beam's thickness knob, resolved into shape space and quantised so an
+/// animated thickness does not re-tessellate the outline on every frame.
 ///
 /// The step is half a pixel on screen rather than a fixed amount of shape
-/// space. A width change moves each edge by half of it, and the client
-/// multisamples, so half a pixel of width sits under anything an edge can
-/// resolve — and measuring it on the screen is what makes the granularity
-/// independent of output resolution and of how large the figure is drawn.
+/// space. A change moves each edge by half of it, and the client multisamples,
+/// so half a pixel sits under anything an edge can resolve — and measuring it
+/// on the screen is what makes the granularity independent of output
+/// resolution and of how large the figure is drawn.
 ///
 /// Without this an animated thickness re-strokes every frame, and re-refines
 /// the mesh behind it, since the mesh is keyed on the stroke too. It does not
@@ -116,7 +116,7 @@ impl GeometryCache {
 /// the step — but a periodic animation warms the set in one cycle and every
 /// later cycle is a hit.
 #[derive(Copy, Clone, Debug)]
-pub struct Width {
+pub struct Thickness {
     pub shape_units: f32,
 }
 
@@ -133,11 +133,11 @@ pub struct Scale {
     pub nominal_px_per_unit: f64,
 }
 
-/// One bucket of stroke width, in pixels on screen.
+/// One bucket of stroke thickness, in pixels on screen.
 const QUANTUM_PX: f64 = 0.5;
 
-impl Width {
-    /// Bucket an on-screen stroke width against the density it is drawn at.
+impl Thickness {
+    /// Bucket an on-screen stroke thickness against the density it is drawn at.
     pub fn bucketed(screen_px: f64, scale: Scale) -> Self {
         let shape_units = screen_px / scale.px_per_unit.max(f64::MIN_POSITIVE);
         let quantum =
@@ -150,7 +150,7 @@ impl Width {
         }
     }
 
-    /// The key naming this width's geometry.
+    /// The key naming this thickness's geometry.
     pub fn key(self) -> u32 {
         self.shape_units.to_bits()
     }
@@ -191,23 +191,23 @@ mod test {
     use super::*;
 
     #[test]
-    fn a_width_lands_in_half_pixel_buckets_whatever_the_scale() {
+    fn a_thickness_lands_in_half_pixel_buckets_whatever_the_scale() {
         let scale = Scale {
             px_per_unit: 200.0,
             nominal_px_per_unit: 200.0,
         };
-        // Widths a tenth of a pixel apart share a bucket; half a pixel apart
+        // Thicknesses a tenth of a pixel apart share a bucket; half a pixel apart
         // do not.
-        let a = Width::bucketed(10.0, scale);
-        assert_eq!(a.key(), Width::bucketed(10.1, scale).key());
-        assert_ne!(a.key(), Width::bucketed(10.6, scale).key());
-        // The width used is within half a bucket of the width asked for.
+        let a = Thickness::bucketed(10.0, scale);
+        assert_eq!(a.key(), Thickness::bucketed(10.1, scale).key());
+        assert_ne!(a.key(), Thickness::bucketed(10.6, scale).key());
+        // The thickness used is within half a bucket of the one asked for.
         let on_screen = f64::from(a.shape_units) * scale.px_per_unit;
         assert!((on_screen - 10.0).abs() <= 0.25, "stroked at {on_screen}px");
 
         // A figure drawn twice as large, at the same density level, gets half
-        // the width in shape units — which is the same width on screen.
-        let large = Width::bucketed(
+        // the thickness in shape units — the same thickness on screen.
+        let large = Thickness::bucketed(
             10.0,
             Scale {
                 px_per_unit: 400.0,
@@ -223,8 +223,8 @@ mod test {
         // The bucket holds still as the size knob moves within a level, which
         // is the whole point: the quantum comes from the level, not the scale.
         assert_eq!(
-            Width::bucketed(10.0, scale).key(),
-            Width::bucketed(
+            Thickness::bucketed(10.0, scale).key(),
+            Thickness::bucketed(
                 10.0,
                 Scale {
                     px_per_unit: 200.4,
