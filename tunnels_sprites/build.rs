@@ -32,31 +32,26 @@ const RULE_NONZERO: u8 = 0;
 const RULE_EVENODD: u8 = 1;
 
 fn main() {
-    let assets = FsPath::new(env!("CARGO_MANIFEST_DIR")).join("assets/shapes");
+    let root = FsPath::new(env!("CARGO_MANIFEST_DIR"));
+    let assets = root.join("assets/shapes");
+    let manifest = root.join("assets/library.txt");
     println!("cargo:rerun-if-changed={}", assets.display());
+    println!("cargo:rerun-if-changed={}", manifest.display());
 
-    let mut files: Vec<PathBuf> = fs::read_dir(&assets)
-        .unwrap_or_else(|e| panic!("reading {}: {e}", assets.display()))
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "svg"))
-        .collect();
-    // Sorted by filename, because the sort order is the sprite id: the console
-    // and the client agree on which figure a number means by both deriving it
-    // from this directory in this order.
-    files.sort();
+    let families = read_manifest(&manifest);
+    check_against(&families, &assets);
 
-    let mut names = Vec::with_capacity(files.len());
+    let mut names = Vec::new();
     let mut blob = Vec::new();
     let mut sprites = Vec::new();
-    for file in &files {
-        let name = file
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_else(|| panic!("un-nameable shape file {}", file.display()));
-        let figures = load(file);
-        assert!(!figures.is_empty(), "{name} has no filled paths");
-        names.push(name.to_string());
-        sprites.push(figures);
+    for family in &families {
+        for name in &family.members {
+            let file = assets.join(format!("{name}.svg"));
+            let figures = load(&file);
+            assert!(!figures.is_empty(), "{name} has no filled paths");
+            names.push(name.clone());
+            sprites.push(figures);
+        }
     }
 
     write_u32(&mut blob, sprites.len());
@@ -89,6 +84,122 @@ fn main() {
         writeln!(table, "    {name:?},").unwrap();
     }
     writeln!(table, "];").unwrap();
+
+    writeln!(
+        table,
+        "\n/// Every family, in the order the family control offers them.\n\
+         pub const SPRITE_FAMILIES: [SpriteFamily; {}] = [",
+        families.len()
+    )
+    .unwrap();
+    let mut first = 0u16;
+    for family in &families {
+        let len = u16::try_from(family.members.len()).expect("a family of 65536 figures");
+        writeln!(
+            table,
+            "    SpriteFamily {{ name: {:?}, first: {first}, len: {len} }},",
+            family.name
+        )
+        .unwrap();
+        first += len;
+    }
+    writeln!(table, "];").unwrap();
+}
+
+/// One block of the manifest: a family and the figures under it, in order.
+struct FamilyEntry {
+    name: String,
+    members: Vec<String>,
+}
+
+/// Read the manifest that gives the library its order.
+///
+/// A bracketed line opens a family and the bare lines under it name its
+/// figures; `#` comments and blank lines are ignored. Ids are handed out by
+/// reading top to bottom, so a family is always one contiguous run of them.
+fn read_manifest(file: &FsPath) -> Vec<FamilyEntry> {
+    let text =
+        fs::read_to_string(file).unwrap_or_else(|e| panic!("reading {}: {e}", file.display()));
+    let mut families: Vec<FamilyEntry> = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            families.push(FamilyEntry {
+                name: name.to_string(),
+                members: Vec::new(),
+            });
+        } else {
+            let family = families
+                .last_mut()
+                .unwrap_or_else(|| panic!("{line} is listed before any family"));
+            family.members.push(line.to_string());
+        }
+    }
+    assert!(!families.is_empty(), "{} names no family", file.display());
+    for family in &families {
+        assert!(
+            !family.members.is_empty(),
+            "the {} family is empty",
+            family.name
+        );
+    }
+    families
+}
+
+/// Fail unless the manifest and the shape directory hold the same figures.
+///
+/// Both directions matter. A figure listed but absent would bake nothing under
+/// a name the console offers; a figure present but unlisted would be
+/// undrawable, and silently so.
+fn check_against(families: &[FamilyEntry], assets: &FsPath) {
+    let mut listed: Vec<&str> = families
+        .iter()
+        .flat_map(|f| f.members.iter().map(String::as_str))
+        .collect();
+    let mut present: Vec<String> = fs::read_dir(assets)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", assets.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "svg"))
+        .map(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_else(|| panic!("un-nameable shape file {}", p.display()))
+                .to_string()
+        })
+        .collect();
+    listed.sort_unstable();
+    present.sort_unstable();
+
+    let duplicated: Vec<&&str> = listed
+        .windows(2)
+        .filter(|w| w[0] == w[1])
+        .map(|w| &w[0])
+        .collect();
+    assert!(
+        duplicated.is_empty(),
+        "listed more than once: {duplicated:?}"
+    );
+    let missing: Vec<&&str> = listed
+        .iter()
+        .filter(|n| !present.contains(&n.to_string()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "listed but not in {}: {missing:?}",
+        assets.display()
+    );
+    let unplaced: Vec<&String> = present
+        .iter()
+        .filter(|n| !listed.contains(&n.as_str()))
+        .collect();
+    assert!(
+        unplaced.is_empty(),
+        "in {} but placed in no family: {unplaced:?}",
+        assets.display()
+    );
 }
 
 fn write_u32(out: &mut Vec<u8>, n: usize) {
@@ -148,7 +259,184 @@ fn load(file: &FsPath) -> Vec<Figure> {
             }
         }
     }
+    recentre(&mut figures);
     figures
+}
+
+/// How far off centre a figure has to be before moving it is worth a redraw.
+///
+/// A couple of flattening tolerances. Below that the offset is the artwork's
+/// own imprecision rather than a placement error, and correcting it moves the
+/// figure by well under a projected pixel.
+const CENTRE_FLOOR: f64 = 0.005;
+/// Harmonics of the outline examined when looking for a centre of rotation.
+const HARMONICS: usize = 24;
+/// The largest rotational order looked for.
+const MAX_FOLD: usize = 12;
+/// How much of the outline's angular energy a rotational order may leave
+/// unexplained and still be believed.
+///
+/// The library separates cleanly either side of this: figures that really do
+/// turn onto themselves leave under a tenth, and the nearest thing that does
+/// not — a hand, which is mirrored rather than rotational — leaves a fifth.
+const FOLD_TOLERANCE: f64 = 0.12;
+/// Outline pieces are split to at most this length before their angle is
+/// taken, so a long straight edge contributes to the wedges it crosses rather
+/// than to the one holding its midpoint.
+const OUTLINE_STEP: f64 = 0.02;
+
+/// A piece of a figure's outline: where it is, and how much of it there is.
+struct Piece {
+    mid: [f64; 2],
+    len: f64,
+}
+
+/// Sit a figure that turns onto itself on the centre it turns about.
+///
+/// Centring on the bounding box puts the centre of a figure's extent at the
+/// origin, which for a figure with a centre of rotation is not that centre —
+/// a five-pointed star's box hangs below the point it spins around, and the
+/// figure wobbles as it turns. Only odd-order figures are ever wrong this way:
+/// an even order contains the half turn, which maps the box onto itself and so
+/// pins its centre to the centre of rotation.
+///
+/// A figure with no centre to find is left alone, and so is one sitting close
+/// enough to its centre. Moving a figure can push it past the unit box, so
+/// what moves is scaled back to just fit.
+fn recentre(figures: &mut [Figure]) {
+    let Some(centre) = centre_of_rotation(figures) else {
+        return;
+    };
+    if (centre[0] * centre[0] + centre[1] * centre[1]).sqrt() < CENTRE_FLOOR {
+        return;
+    }
+    let (centre, mut reach) = ([centre[0] as f32, centre[1] as f32], 0f32);
+    for figure in figures.iter_mut() {
+        for subpath in &mut figure.subpaths {
+            for p in subpath {
+                p[0] -= centre[0];
+                p[1] -= centre[1];
+                reach = reach.max(p[0].abs()).max(p[1].abs());
+            }
+        }
+    }
+    let scale = 1.0 / reach.max(1e-6);
+    for figure in figures {
+        for subpath in &mut figure.subpaths {
+            for p in subpath {
+                p[0] *= scale;
+                p[1] *= scale;
+            }
+        }
+    }
+}
+
+/// The point a figure turns about, if it turns onto itself at all.
+///
+/// The candidate is the centroid of the outline weighted by arc length. That
+/// measure asks nothing of the winding direction or the fill rule, both of
+/// which vary across a library assembled from separate artwork, and a figure
+/// invariant under a rotation has an outline invariant under it too — so the
+/// outline's centroid is that rotation's centre exactly, not nearly.
+///
+/// Whether the figure really is invariant is then a separate question, and the
+/// answer has to be no for anything merely mirrored, or the centroid of a hand
+/// would be taken for the centre of one. It is settled by the angular Fourier
+/// content of the outline about the candidate: an order-n figure puts all of
+/// its energy on harmonics that are multiples of n, so the smallest fraction
+/// any order leaves elsewhere says how well a rotation explains the figure.
+/// The content is measured twice, weighted by arc length and by arc length
+/// times radius, and the worse reading is the one that counts — length alone
+/// cannot tell a long thin lobe from a short fat one facing the other way.
+fn centre_of_rotation(figures: &[Figure]) -> Option<[f64; 2]> {
+    let pieces = outline(figures);
+    let total: f64 = pieces.iter().map(|p| p.len).sum();
+    if total < 1e-9 {
+        return None;
+    }
+    let centre = [
+        pieces.iter().map(|p| p.mid[0] * p.len).sum::<f64>() / total,
+        pieces.iter().map(|p| p.mid[1] * p.len).sum::<f64>() / total,
+    ];
+
+    let plain = harmonics(&pieces, centre, false);
+    let radial = harmonics(&pieces, centre, true);
+    let explained = (2..=MAX_FOLD)
+        .map(|fold| unexplained(&plain, fold).max(unexplained(&radial, fold)))
+        .fold(f64::INFINITY, f64::min);
+    (explained <= FOLD_TOLERANCE).then_some(centre)
+}
+
+/// A figure's outline as pieces short enough to stand at a single angle.
+fn outline(figures: &[Figure]) -> Vec<Piece> {
+    let mut pieces = Vec::new();
+    for figure in figures {
+        for subpath in &figure.subpaths {
+            for i in 0..subpath.len() {
+                let p = subpath[i].map(f64::from);
+                let q = subpath[(i + 1) % subpath.len()].map(f64::from);
+                let len = ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2)).sqrt();
+                let splits = (len / OUTLINE_STEP).ceil().max(1.0) as usize;
+                for s in 0..splits {
+                    let t = (s as f64 + 0.5) / splits as f64;
+                    pieces.push(Piece {
+                        mid: [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t],
+                        len: len / splits as f64,
+                    });
+                }
+            }
+        }
+    }
+    pieces
+}
+
+/// How much of the outline sits at each angular harmonic about a point.
+///
+/// Normalised by the total weight, so the readings mean the same thing for a
+/// figure drawn heavy as for one drawn light.
+fn harmonics(pieces: &[Piece], centre: [f64; 2], radial: bool) -> [f64; HARMONICS + 1] {
+    let weigh = |p: &Piece| {
+        if radial {
+            let (dx, dy) = (p.mid[0] - centre[0], p.mid[1] - centre[1]);
+            p.len * (dx * dx + dy * dy).sqrt()
+        } else {
+            p.len
+        }
+    };
+    let total: f64 = pieces.iter().map(weigh).sum();
+    let mut out = [0.0; HARMONICS + 1];
+    if total < 1e-12 {
+        return out;
+    }
+    for (k, slot) in out.iter_mut().enumerate().skip(1) {
+        let (mut re, mut im) = (0.0, 0.0);
+        for piece in pieces {
+            let angle = (piece.mid[1] - centre[1]).atan2(piece.mid[0] - centre[0]) * k as f64;
+            let w = weigh(piece);
+            re += w * angle.cos();
+            im += w * angle.sin();
+        }
+        *slot = (re * re + im * im).sqrt() / total;
+    }
+    out
+}
+
+/// The share of the outline's angular energy a rotation of this order would
+/// not preserve.
+///
+/// Zero for a figure that turns onto itself at that order; a figure with no
+/// angular structure at all reads zero too, which is right — it is a ring, and
+/// every rotation preserves it.
+fn unexplained(content: &[f64; HARMONICS + 1], fold: usize) -> f64 {
+    let total: f64 = (1..=HARMONICS).map(|k| content[k] * content[k]).sum();
+    if total < 1e-12 {
+        return 0.0;
+    }
+    let off: f64 = (1..=HARMONICS)
+        .filter(|k| k % fold != 0)
+        .map(|k| content[k] * content[k])
+        .sum();
+    off / total
 }
 
 /// The longest side of the box holding every control point.

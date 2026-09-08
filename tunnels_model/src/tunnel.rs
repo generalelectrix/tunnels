@@ -17,6 +17,7 @@ use std::sync::Once;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
+use tunnels_sprites::Placement as SpritePlacement;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -70,9 +71,13 @@ pub struct Tunnel {
     draw_mode: DrawMode,
     /// Which baked figure a sprite draws.
     ///
-    /// Set by the segment control, which a figure mode routes here instead of
-    /// to `segs`. The two are independent state: neither is derived from the
-    /// other, and turning the knob in one mode leaves the other alone.
+    /// Set by the segment and blacking controls, which a figure mode routes
+    /// here instead of to `segs` and `blacking`: the first names a family of
+    /// the library, the second a figure within it. The whole selection is one
+    /// id rather than a pair, so a figure set outright is as good a state as
+    /// one arrived at through the knobs, and the position of both knobs falls
+    /// back out of the library's shape. Neither is derived from the fields the
+    /// other mode reads, so turning a knob in one mode leaves the other alone.
     sprite: SpriteId,
 }
 
@@ -139,47 +144,96 @@ impl Tunnel {
         }
     }
 
-    /// The figure a position of the segment knob names.
+    /// The family a position of the segment knob names.
     ///
     /// A figure has no segments, so the knob that sets how many marks a beam
-    /// draws picks which figure instead — the same reinterpretation `Size`
-    /// gets when it becomes a radial deformation on a figure rather than a
-    /// scale on a segment.
+    /// draws picks which shelf of the figure library is open instead — the
+    /// same reinterpretation `Size` gets when it becomes a radial deformation
+    /// on a figure rather than a scale on a segment.
     ///
     /// The knob's whole travel is used and both ends are reachable: its lowest
-    /// position lands on the first figure and its highest on the last, with
-    /// about two positions per figure between them. A mapping that indexed
-    /// directly would leave half the travel dead and put the last figure out
-    /// of reach, which is the kind of thing found on stage.
-    fn sprite_for_segments(segs: u8) -> SpriteId {
-        let Some(last) = sprite_span() else {
-            return SpriteId(0);
+    /// position lands on the first family and its highest on the last. A
+    /// mapping that indexed directly would leave most of the travel dead and
+    /// put the last family out of reach, which is the kind of thing found on
+    /// stage.
+    fn family_for_segments(segs: u8) -> u16 {
+        let Some(last) = family_span() else {
+            return 0;
         };
         let span = u32::from(SEGMENTS_MAX - SEGMENTS_MIN);
         let position = u32::from(segs.clamp(SEGMENTS_MIN, SEGMENTS_MAX) - SEGMENTS_MIN);
         // Rounded rather than truncated, so the top of the travel reaches the
-        // last figure instead of stopping one short.
-        SpriteId(((position * last + span / 2) / span) as u16)
+        // last family instead of stopping one short.
+        ((position * last + span / 2) / span) as u16
     }
 
-    /// The knob position that names a figure.
+    /// The knob position that names a family.
     ///
-    /// Every figure has a band of positions that select it; this is the middle
-    /// of that band, so a position reported to a surface selects the figure it
+    /// Every family has a band of positions that select it; this is the middle
+    /// of that band, so a position reported to a surface selects the family it
     /// came from when the operator turns the knob back to it.
-    fn segments_for_sprite(sprite: SpriteId) -> u8 {
-        let Some(last) = sprite_span() else {
+    fn segments_for_family(family: u16) -> u8 {
+        let Some(last) = family_span() else {
             return SEGMENTS_MIN;
         };
         let span = u32::from(SEGMENTS_MAX - SEGMENTS_MIN);
-        let id = u32::from(sprite.0).min(last);
-        SEGMENTS_MIN + ((id * span + last / 2) / last) as u8
+        let family = u32::from(family).min(last);
+        SEGMENTS_MIN + ((family * span + last / 2) / last) as u8
+    }
+
+    /// How far into a family a position of the blacking knob reaches.
+    ///
+    /// The knob is bipolar where the family knob is not, so its travel is read
+    /// as the unipolar span it covers: fully counter-clockwise is the first
+    /// figure of the family, fully clockwise the last, and the family's whole
+    /// length lies between. Nothing distinguishes the two halves, because a
+    /// selection has no centre for zero to mean.
+    fn selection_for_blacking(blacking: BipolarFloat, len: u16) -> u16 {
+        let Some(last) = len.checked_sub(1).filter(|l| *l > 0) else {
+            return 0;
+        };
+        let position = blacking.rescale_as_unipolar().val() * f64::from(last);
+        (position.round() as u16).min(last)
+    }
+
+    /// The knob position that names a position in a family.
+    ///
+    /// The middle of the band of positions that select it, so a position
+    /// reported to a surface selects the figure it came from.
+    fn blacking_for_selection(selection: u16, len: u16) -> BipolarFloat {
+        let Some(last) = len.checked_sub(1).filter(|l| *l > 0) else {
+            return BipolarFloat::ZERO;
+        };
+        UnipolarFloat::new(f64::from(selection.min(last)) / f64::from(last)).rescale_as_bipolar()
+    }
+
+    /// Where the figure being drawn sits in the library.
+    ///
+    /// A figure past the end of the library reads as the first one, which is
+    /// the same figure it draws.
+    fn placement(&self) -> SpritePlacement {
+        tunnels_sprites::placement(self.sprite.0).unwrap_or(SpritePlacement {
+            family: 0,
+            index: 0,
+        })
+    }
+
+    /// The figure at a position in a family, clamped to the family's length.
+    ///
+    /// A family shorter than the position asked for gives up its last figure
+    /// rather than reaching into the next one, so the two controls stay
+    /// independent: the family knob names a family and nothing else.
+    fn figure_at(family: u16, selection: u16) -> SpriteId {
+        let Some(family) = tunnels_sprites::families().get(usize::from(family)) else {
+            return SpriteId(0);
+        };
+        SpriteId(family.member(selection))
     }
 
     /// What the segment control reads, which depends on the mode.
     ///
     /// One control, two state fields: a mark mode's segment count and a figure
-    /// mode's figure are set by the same knob and stored separately, so
+    /// mode's family are set by the same knob and stored separately, so
     /// neither is disturbed by work done in the other mode. Changing the mode
     /// therefore moves the knob, because the surface reports state and the
     /// state it is now reporting is a different field. That jump is the
@@ -190,8 +244,32 @@ impl Tunnel {
         if self.shape_mode.draws_segments() {
             self.segs
         } else {
-            Self::segments_for_sprite(self.sprite)
+            Self::segments_for_family(self.placement().family)
         }
+    }
+
+    /// What the blacking control reads, which depends on the mode.
+    ///
+    /// The second half of the pair the segment control opens: a mark mode
+    /// blacks marks out with it, a figure mode picks within the family the
+    /// segment control named. Families differ in length, so moving to another
+    /// one moves this knob even though the position within the family is
+    /// carried across — a surface reporting anything else would name a figure
+    /// that is not the one being drawn.
+    fn blacking_control(&self) -> BipolarFloat {
+        if self.shape_mode.draws_segments() {
+            self.blacking
+        } else {
+            let placement = self.placement();
+            Self::blacking_for_selection(placement.index, Self::family_len(placement.family))
+        }
+    }
+
+    /// How many figures a family holds, or one if there is no such family.
+    fn family_len(family: u16) -> u16 {
+        tunnels_sprites::families()
+            .get(usize::from(family))
+            .map_or(1, |f| f.len)
     }
 
     /// Borrow an animation as a mutable reference.
@@ -567,7 +645,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat));
         emitter.emit_tunnel_state_change(PaletteSelection(self.palette_selection));
         emitter.emit_tunnel_state_change(Segments(self.segments_control()));
-        emitter.emit_tunnel_state_change(Blacking(self.blacking));
+        emitter.emit_tunnel_state_change(Blacking(self.blacking_control()));
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
@@ -637,15 +715,30 @@ impl Tunnel {
             ColorSaturation(v) => self.col_sat = v,
             PaletteSelection(v) => self.palette_selection = v,
             // One knob, two fields: a mark mode counts segments with it and a
-            // figure mode picks a figure with it.
+            // figure mode opens a family of the library with it.
             Segments(v) => {
                 if self.shape_mode.draws_segments() {
                     self.segs = v;
                 } else {
-                    self.sprite = Self::sprite_for_segments(v);
+                    let family = Self::family_for_segments(v);
+                    self.sprite = Self::figure_at(family, self.placement().index);
+                    // The position within the family carried across, but the
+                    // knob that names it did not: a shorter family puts the
+                    // same position somewhere else in the travel.
+                    emitter.emit_tunnel_state_change(Blacking(self.blacking_control()));
                 }
             }
-            Blacking(v) => self.blacking = v,
+            // The other half of that pair: a mark mode blacks marks out with
+            // it and a figure mode picks within the open family.
+            Blacking(v) => {
+                if self.shape_mode.draws_segments() {
+                    self.blacking = v;
+                } else {
+                    let family = self.placement().family;
+                    let selection = Self::selection_for_blacking(v, Self::family_len(family));
+                    self.sprite = Self::figure_at(family, selection);
+                }
+            }
             PositionX(v) => self.x_offset.set_target(v),
             PositionY(v) => self.y_offset.set_target(v),
             SpinSpeed(v) => self.spin_speed = v,
@@ -729,10 +822,10 @@ const COLOR_SPREAD_SCALE: f64 = 16.;
 const SEGMENTS_MIN: u8 = 1;
 const SEGMENTS_MAX: u8 = 128;
 
-/// The largest figure id this build carries, or `None` if there is nothing to
-/// choose between.
-fn sprite_span() -> Option<u32> {
-    match tunnels_sprites::count() {
+/// The largest family index this build carries, or `None` if there is nothing
+/// to choose between.
+fn family_span() -> Option<u32> {
+    match tunnels_sprites::families().len() {
         0 | 1 => None,
         n => Some(n as u32 - 1),
     }
@@ -802,19 +895,21 @@ mod test {
         fn emit_tunnel_state_change(&mut self, _: StateChange) {}
     }
 
+    /// An emitter that keeps what it was told, rendered.
+    #[derive(Default)]
+    struct Recorder(Vec<String>);
+    impl EmitStateChange for Recorder {
+        fn emit_tunnel_state_change(&mut self, sc: StateChange) {
+            self.0.push(format!("{sc:?}"));
+        }
+    }
+
     /// A surface blanks the controls a figure has no use for, so a mode that
     /// does use them has to hear their values again. Restating the whole
     /// tunnel is what leaves nothing dark that the new mode reads.
     #[test]
     fn changing_the_mode_restates_the_controls_a_mode_can_blank() {
-        struct Recorder(Vec<String>);
-        impl EmitStateChange for Recorder {
-            fn emit_tunnel_state_change(&mut self, sc: StateChange) {
-                self.0.push(format!("{sc:?}"));
-            }
-        }
-
-        let mut recorder = Recorder(Vec::new());
+        let mut recorder = Recorder::default();
         Tunnel::default()
             .handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut recorder);
 
@@ -822,9 +917,11 @@ mod test {
         assert!(heard("MarqueeSpeed"), "{:?}", recorder.0);
         assert!(heard("RenderMode"), "{:?}", recorder.0);
         assert!(heard("ShapeMode"), "{:?}", recorder.0);
-        // The segment control reads a different field in each mode, so a mode
-        // change has to restate it or the surface shows the other one's value.
+        // The segment and blacking controls read different fields in each
+        // mode, so a mode change has to restate them or the surface shows the
+        // other mode's values.
         assert!(heard("Segments"), "{:?}", recorder.0);
+        assert!(heard("Blacking"), "{:?}", recorder.0);
     }
 
     /// A show runs in front of an audience, so a mode with nothing to draw
@@ -861,34 +958,49 @@ mod test {
         assert!(fill.color.is_uniform(), "the default colour is one colour");
     }
 
-    /// The segment control writes the field its mode reads and leaves the
-    /// other alone, so work done in one mode survives a trip through the
-    /// other.
+    /// The segment and blacking controls write the fields their mode reads and
+    /// leave the others alone, so work done in one mode survives a trip
+    /// through the other.
     #[test]
-    fn the_segment_control_is_routed_by_the_mode() {
+    fn the_figure_controls_are_routed_by_the_mode() {
         let mut tunnel = Tunnel::default();
         assert!(
             tunnel.shape_mode.draws_segments(),
             "the default draws marks"
         );
+        let blacking = BipolarFloat::new(0.4);
 
         tunnel.handle_state_change(StateChange::Segments(37), &mut Silent);
+        tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
         assert_eq!(tunnel.segs, 37);
+        assert_eq!(tunnel.blacking, blacking);
         assert_eq!(
             tunnel.sprite,
             SpriteId::default(),
             "the figure is untouched"
         );
         assert_eq!(tunnel.segments_control(), 37, "a mark mode reports segs");
+        assert_eq!(
+            tunnel.blacking_control(),
+            blacking,
+            "a mark mode reports blacking"
+        );
 
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut Silent);
         tunnel.handle_state_change(StateChange::Segments(90), &mut Silent);
-        assert_eq!(tunnel.sprite, Tunnel::sprite_for_segments(90));
+        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ONE), &mut Silent);
+        let family = Tunnel::family_for_segments(90);
+        assert_eq!(
+            tunnel.sprite,
+            Tunnel::figure_at(family, Tunnel::family_len(family) - 1),
+            "the far end of the blacking knob is the last figure of the family"
+        );
         assert_eq!(tunnel.segs, 37, "the segment count is untouched");
+        assert_eq!(tunnel.blacking, blacking, "the blacking is untouched");
         assert_eq!(
             tunnel.segments_control(),
-            Tunnel::segments_for_sprite(tunnel.sprite),
-            "a figure mode reports the figure"
+            Tunnel::segments_for_family(family),
+            "a figure mode reports the family"
         );
 
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut Silent);
@@ -897,50 +1009,125 @@ mod test {
             37,
             "the segment count came back unchanged"
         );
+        assert_eq!(
+            tunnel.blacking_control(),
+            blacking,
+            "the blacking came back unchanged"
+        );
     }
 
-    /// The knob position reported for a figure selects that figure, so an
-    /// operator who turns the knob back to where the surface put it gets the
-    /// figure the surface named.
+    /// The knob positions reported for a figure select that figure, so an
+    /// operator who turns the knobs back to where the surface put them gets
+    /// the figure the surface named.
     #[test]
-    fn the_reported_knob_position_selects_the_figure_it_names() {
+    fn the_reported_knob_positions_select_the_figure_they_name() {
         for id in 0..tunnels_sprites::count() as u16 {
-            let sprite = SpriteId(id);
-            let segs = Tunnel::segments_for_sprite(sprite);
+            let mut tunnel = Tunnel {
+                shape_mode: ShapeMode::Sprite,
+                sprite: SpriteId(id),
+                ..Default::default()
+            };
+            let segs = tunnel.segments_control();
+            let blacking = tunnel.blacking_control();
             assert!((SEGMENTS_MIN..=SEGMENTS_MAX).contains(&segs), "figure {id}");
+
+            tunnel.sprite = SpriteId(0);
+            tunnel.handle_state_change(StateChange::Segments(segs), &mut Silent);
+            tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
             assert_eq!(
-                Tunnel::sprite_for_segments(segs),
-                sprite,
-                "the position reported for figure {id} selects another figure"
+                tunnel.sprite,
+                SpriteId(id),
+                "the positions reported for figure {id} select another figure"
             );
         }
     }
 
-    /// The segment knob's travel covers every figure and reaches both ends,
-    /// because a knob that cannot get to the last one is found on stage.
+    /// Both knobs' travel covers everything they choose between and reaches
+    /// both ends, because a knob that cannot get to the last one is found on
+    /// stage.
     #[test]
-    fn the_segment_knob_reaches_every_figure() {
-        let count = tunnels_sprites::count();
-        assert_eq!(Tunnel::sprite_for_segments(1), SpriteId(0), "the floor");
+    fn the_figure_knobs_reach_every_family_and_every_figure_in_one() {
+        let families = tunnels_sprites::families();
+        assert_eq!(Tunnel::family_for_segments(SEGMENTS_MIN), 0, "the floor");
         assert_eq!(
-            Tunnel::sprite_for_segments(128),
-            SpriteId(count as u16 - 1),
+            Tunnel::family_for_segments(SEGMENTS_MAX),
+            families.len() as u16 - 1,
             "the ceiling"
         );
-        // Every figure is selectable, and the mapping never runs backwards.
-        let mut reached: Vec<u16> = (1..=128)
-            .map(|segs| Tunnel::sprite_for_segments(segs).0)
+        let mut reached: Vec<u16> = (SEGMENTS_MIN..=SEGMENTS_MAX)
+            .map(Tunnel::family_for_segments)
             .collect();
         assert!(
             reached.windows(2).all(|w| w[0] <= w[1]),
-            "turning the knob up went back to an earlier figure"
+            "turning the knob up went back to an earlier family"
         );
         reached.dedup();
         assert_eq!(
             reached.len(),
-            count,
-            "the knob selects {} of {count} figures",
-            reached.len()
+            families.len(),
+            "the knob selects {} of {} families",
+            reached.len(),
+            families.len()
+        );
+
+        for family in families {
+            let ends = [BipolarFloat::new(-1.0), BipolarFloat::ONE]
+                .map(|v| Tunnel::selection_for_blacking(v, family.len));
+            assert_eq!(ends, [0, family.len - 1], "the {} family", family.name);
+            // Finer than any control surface's own resolution, so a figure
+            // the knob skips here is one it cannot reach at all.
+            const STEPS: u16 = 1024;
+            let mut reached: Vec<u16> = (0..=STEPS)
+                .map(|step| {
+                    let v = BipolarFloat::new(f64::from(step) * 2.0 / f64::from(STEPS) - 1.0);
+                    Tunnel::selection_for_blacking(v, family.len)
+                })
+                .collect();
+            assert!(
+                reached.windows(2).all(|w| w[0] <= w[1]),
+                "turning the knob up went back in the {} family",
+                family.name
+            );
+            reached.dedup();
+            assert_eq!(
+                reached.len(),
+                usize::from(family.len),
+                "the knob selects {} of {} figures in the {} family",
+                reached.len(),
+                family.len,
+                family.name
+            );
+        }
+    }
+
+    /// Opening another family keeps the position within it, and reports the
+    /// knob position that names where the figure now sits.
+    #[test]
+    fn changing_family_carries_the_position_within_it() {
+        let mut tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut Silent);
+        let index = tunnel.placement().index;
+        assert!(index > 0, "the middle of a family is not its first figure");
+
+        let mut recorder = Recorder::default();
+        tunnel.handle_state_change(StateChange::Segments(SEGMENTS_MAX), &mut recorder);
+        let placement = tunnel.placement();
+        assert_eq!(
+            placement.family,
+            tunnels_sprites::families().len() as u16 - 1
+        );
+        assert_eq!(
+            placement.index,
+            index.min(Tunnel::family_len(placement.family) - 1),
+            "the position within the family did not carry across"
+        );
+        assert!(
+            recorder.0.iter().any(|sc| sc.starts_with("Blacking")),
+            "the surface was not told where the selection knob now sits: {:?}",
+            recorder.0
         );
     }
 
@@ -1635,15 +1822,20 @@ pub mod fixture {
 
     /// The figures the render fixtures draw, by the id the build assigns them.
     ///
-    /// The ids come from the asset directory's sort order, so a test that
-    /// draws one should check the name it got: a figure added to the library
+    /// The ids come from the library manifest's order, so a test that draws
+    /// one should check the name it got: a figure placed into a family
     /// renumbers everything after it, and a golden image would otherwise
     /// quietly become an image of something else.
-    pub const SNOWFLAKE: SpriteId = SpriteId(44);
-    pub const BULLSEYE: SpriteId = SpriteId(9);
+    pub const SNOWFLAKE: SpriteId = SpriteId(25);
+    pub const BULLSEYE: SpriteId = SpriteId(42);
+    /// A figure that carves its six sectors with one self-intersecting contour
+    /// returning to a single shared point, rather than with a subpath each.
+    /// That shared point is where a winding rule is most easily upset by a
+    /// coordinate that has moved, which is why this one is drawn.
+    pub const PINWHEEL: SpriteId = SpriteId(2);
     /// A figure whose handle is one long straight contour passing close to the
     /// origin, which is where a stroke's colour is hardest to get right.
-    pub const UMBRELLA: SpriteId = SpriteId(55);
+    pub const UMBRELLA: SpriteId = SpriteId(57);
 
     /// A tunnel that draws a figure instead of a run of segments.
     ///
@@ -1672,6 +1864,46 @@ pub mod fixture {
         tunnel.col_width = UnipolarFloat::ONE;
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
         tunnel.color_phase = phase;
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A colour animation over a figure that already carries a colour sweep.
+    ///
+    /// The two have to be independent: the sweep repeats across the figure as
+    /// many times as the spread knob asks, and the animation runs the number of
+    /// periods *it* was set to over the whole figure, the way an animation runs
+    /// over a whole beam. An animation whose period came out as the colour's
+    /// would put three saturation lobes here instead of one, and nothing else
+    /// in the suite would see it.
+    pub fn sprite_color_animation_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
+        tunnel.anims[0].target = AnimationTarget::ColorSaturation;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::ONE)),
+            &mut NoopEmitter,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure whose sectors all meet at one point.
+    ///
+    /// Six subpath runs share a single vertex, so every one of them is decided
+    /// by the winding at that vertex. A figure built this way is the first
+    /// thing to lose a region if the points it is tessellated from are not the
+    /// points the library holds.
+    pub fn sprite_shared_vertex_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(PINWHEEL);
+        tunnel.col_sat = UnipolarFloat::ZERO;
         snapshot(render_default(&tunnel))
     }
 
