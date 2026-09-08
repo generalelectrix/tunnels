@@ -6,6 +6,7 @@
 use super::fastmath;
 use super::geometry::StrokeMesh;
 use super::mesh::RefinedMesh;
+use super::ramp::RampSpan;
 use graphics::Graphics;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
@@ -22,24 +23,42 @@ const CHUNK: usize = 1023;
 /// How far a spin animation can turn a point at the rim: a quarter turn.
 const MAX_SPIN: f32 = std::f32::consts::TAU / 4.0;
 
-/// Which coordinate of a figure a phase is read along, and how many colour
-/// cycles run across it.
+/// Which coordinate of a figure a phase is read along, how many colour cycles
+/// run across it, and what the ramp it indexes holds.
 #[derive(Copy, Clone)]
 pub struct PhaseField {
     pub phase: ColorPhase,
     pub cycles: f32,
+    pub span: RampSpan,
 }
 
 impl PhaseField {
+    /// What a figure coordinate is stretched by to index the ramp.
+    ///
+    /// This is where the cycle count lives or does not: a cycle-wide table is
+    /// indexed `cycles` times across the figure, and a figure-wide one once,
+    /// with the count moved onto the colour's own sample instead. The scale
+    /// belongs to the coordinate rather than to the mesh, so a mesh built for a
+    /// figure holds however its colour is tabulated.
+    fn ramp_scale(self) -> f32 {
+        match self.span {
+            RampSpan::Cycle => self.cycles,
+            RampSpan::Figure => 1.0,
+        }
+    }
+
     /// The period over which this phase wraps, if it wraps at all.
     ///
     /// Only angular phase does: `atan2` jumps a full turn on the far side of
-    /// the figure, which is `cycles` in scaled units. The linear and radial
-    /// coordinates are continuous, so there is nothing to unwrap and nothing
-    /// that could be mistaken for a wrap.
+    /// the figure, which is one whole traversal of the coordinate in scaled
+    /// units. The linear and radial coordinates are continuous, so there is
+    /// nothing to unwrap and nothing that could be mistaken for a wrap.
     pub fn wrap_period(self) -> Option<f32> {
-        match self.phase {
-            ColorPhase::Angle if self.cycles > 0.0 => Some(self.cycles),
+        match (self.phase, self.span) {
+            // Scaled to nothing: every vertex reads one texel and no seam can
+            // show.
+            (ColorPhase::Angle, RampSpan::Cycle) if self.cycles == 0.0 => None,
+            (ColorPhase::Angle, _) => Some(self.ramp_scale()),
             _ => None,
         }
     }
@@ -106,7 +125,7 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
                 v.y() * displacement.radial * displacement.scale_y,
             )
         });
-        out.uvs.push([along * work.field.cycles, 0.5]);
+        out.uvs.push([along * work.field.ramp_scale(), 0.5]);
     }
 }
 
@@ -144,7 +163,7 @@ pub fn stroke_vertex_pass(out: &mut VertexBuffers, mesh: &StrokeMesh, work: Vert
             x * displacement.radial * displacement.scale_x,
             y * displacement.radial * displacement.scale_y,
         ));
-        out.uvs.push([along * work.field.cycles, 0.5]);
+        out.uvs.push([along * work.field.ramp_scale(), 0.5]);
     }
 }
 
@@ -462,5 +481,43 @@ mod test {
         // A triangle legitimately spanning more than a cycle is left alone,
         // because the shift is in whole turns rather than whole cycles.
         assert_eq!(same_branch(0.0, 1.4, period), 1.4);
+    }
+
+    /// The seam `atan2` leaves has to be closed wherever the angle actually
+    /// indexes the ramp. A figure-wide table is indexed by the raw angle, so it
+    /// wraps at one turn even where the colour makes no cycles at all — which
+    /// is the setting an animation sweeping a figure of one colour runs at.
+    #[test]
+    fn the_angular_seam_closes_wherever_the_angle_is_read() {
+        let field = |cycles, span| PhaseField {
+            phase: ColorPhase::Angle,
+            cycles,
+            span,
+        };
+
+        assert_eq!(field(3.0, RampSpan::Cycle).wrap_period(), Some(3.0));
+        assert_eq!(
+            field(0.0, RampSpan::Cycle).wrap_period(),
+            None,
+            "scaled to nothing, every vertex reads one texel"
+        );
+        assert_eq!(field(3.0, RampSpan::Figure).wrap_period(), Some(1.0));
+        assert_eq!(
+            field(0.0, RampSpan::Figure).wrap_period(),
+            Some(1.0),
+            "one colour still sweeps across the figure under an animation"
+        );
+
+        // The continuous coordinates have no seam to close.
+        for phase in [ColorPhase::Radius, ColorPhase::Linear] {
+            for span in [RampSpan::Cycle, RampSpan::Figure] {
+                let field = PhaseField {
+                    phase,
+                    cycles: 3.0,
+                    span,
+                };
+                assert_eq!(field.wrap_period(), None, "{phase:?} {span:?}");
+            }
+        }
     }
 }

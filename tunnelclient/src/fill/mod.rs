@@ -21,6 +21,7 @@ use self::draw::{
 };
 use self::geometry::{GeometryCache, Scale, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
+use self::ramp::RampSpan;
 use crate::draw::{Draw, hsv_to_rgb};
 use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
@@ -50,6 +51,9 @@ const FRAMES_IN_FLIGHT: u64 = 3;
 struct RampEntry<T> {
     texture: T,
     last_used: u64,
+    /// A texture is created at a width and keeps it, so an entry can only be
+    /// taken back for a ramp of the same span.
+    texels: u32,
 }
 
 /// The colour ramp textures, recycled once the GPU is done reading them.
@@ -69,7 +73,9 @@ struct RampEntry<T> {
 ///
 /// The pool sizes itself and needs no cap: it grows to however many layers
 /// draw in one frame times the frames in flight, and stops, because past that
-/// there is always an entry old enough to take back.
+/// there is always an entry old enough to take back. A layer whose colour is
+/// animated across the figure needs a wider ramp than one whose is not, so that
+/// bound is per width; there are two.
 struct RampPool<T> {
     entries: Vec<RampEntry<T>>,
     scratch: RgbaImage,
@@ -84,7 +90,7 @@ where
     fn new() -> Self {
         Self {
             entries: Vec::new(),
-            scratch: ramp::blank(),
+            scratch: ramp::blank(RampSpan::Cycle),
             // Repeating wrap is what lets a phase coordinate run past one
             // cycle and keep indexing the ramp, so the cycle count never
             // reaches the mesh. Linear filtering puts the sawtooth's jump
@@ -101,14 +107,19 @@ where
     ///
     /// `None` only if the backend refused to give up a texture, which is a
     /// reason to skip a figure rather than to stop the show.
-    fn texture_for(&mut self, fill: &FillLayer) -> Option<&T> {
-        ramp::build_into(&mut self.scratch, &fill.color, &fill.color_anims);
+    fn texture_for(&mut self, fill: &FillLayer, span: RampSpan) -> Option<&T> {
+        // Resized only when a layer's colour starts or stops varying across the
+        // figure, which is a knob being turned rather than a per-frame cost.
+        if self.scratch.width() != span.texels() {
+            self.scratch = ramp::blank(span);
+        }
+        ramp::build_into(&mut self.scratch, span, &fill.color, &fill.color_anims);
         let (width, height) = self.scratch.dimensions();
 
         let free = self
             .entries
             .iter()
-            .position(|e| e.last_used + FRAMES_IN_FLIGHT <= self.frame);
+            .position(|e| e.texels == width && e.last_used + FRAMES_IN_FLIGHT <= self.frame);
         let index = match free {
             Some(index) => index,
             None => {
@@ -122,6 +133,7 @@ where
                     Ok(texture) => self.entries.push(RampEntry {
                         texture,
                         last_used: self.frame,
+                        texels: width,
                     }),
                     Err(e) => {
                         error!("Could not make a colour ramp texture: {e:?}");
@@ -347,10 +359,15 @@ where
 
         // A uniform figure needs no ramp; a varying one needs the texture
         // holding its colour, which the pool may already have.
+        // A colour animation that varies across the figure has to be resolved
+        // against the figure's own coordinate, not the colour cycle's, or its
+        // period comes out as the colour's rather than its own.
+        let span = RampSpan::of(&fill.color_anims);
+
         let texture = if flat {
             None
         } else {
-            match ramps.texture_for(fill) {
+            match ramps.texture_for(fill, span) {
                 Some(texture) => Some(texture),
                 None => return,
             }
@@ -359,6 +376,7 @@ where
         let field = PhaseField {
             phase: fill.color.phase,
             cycles: fill.color.cycles as f32,
+            span,
         };
         let work = |field| VertexWork {
             field,
@@ -470,7 +488,7 @@ mod test {
 
     impl ImageSize for FakeTexture {
         fn get_size(&self) -> (u32, u32) {
-            (ramp::RAMP_TEXELS, 1)
+            (RampSpan::Cycle.texels(), 1)
         }
     }
 
@@ -543,7 +561,10 @@ mod test {
         // is only which texture it is written into.
         for frame in 1..40 {
             pool.frame = frame;
-            let id = pool.texture_for(&fill(0.25)).expect("a texture").id;
+            let id = pool
+                .texture_for(&fill(0.25), RampSpan::Cycle)
+                .expect("a texture")
+                .id;
             if let Some(previous) = last_written.insert(id, frame) {
                 assert!(
                     frame - previous >= FRAMES_IN_FLIGHT,
@@ -565,7 +586,7 @@ mod test {
         pool.frame = 1;
         let ids: Vec<usize> = (0..4)
             .map(|i| {
-                pool.texture_for(&fill(f64::from(i) * 0.2))
+                pool.texture_for(&fill(f64::from(i) * 0.2), RampSpan::Cycle)
                     .expect("a texture")
                     .id
             })
@@ -590,7 +611,7 @@ mod test {
                 pool.frame = frame;
                 for layer in 0..layers {
                     let center = (frame as f64 * 0.01 + f64::from(layer) * 0.1).rem_euclid(1.0);
-                    assert!(pool.texture_for(&fill(center)).is_some());
+                    assert!(pool.texture_for(&fill(center), RampSpan::Cycle).is_some());
                 }
             }
             let bound = FRAMES_IN_FLIGHT as usize * layers as usize;

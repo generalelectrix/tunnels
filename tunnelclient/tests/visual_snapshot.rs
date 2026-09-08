@@ -605,6 +605,15 @@ fn sprite_color_phases() {
     }
 }
 
+/// A colour animation over a figure that already carries a colour sweep. The
+/// animation's period is the figure's and not the colour cycle's, so one
+/// saturation lobe runs across a figure swept three times.
+#[test]
+fn sprite_color_animation() {
+    let image = render_snapshot(&fixture::sprite_color_animation_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "sprite_color_animation.png");
+}
+
 /// Spin shears the figure: the centre pinned, the rim carrying the full turn.
 #[test]
 fn sprite_spin() {

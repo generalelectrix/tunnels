@@ -354,6 +354,17 @@ impl PreparedAnimation {
         self.active
     }
 
+    /// Whether the value depends on where along a coordinate it is asked.
+    ///
+    /// A periodicity of zero holds the spatial phase at zero for every
+    /// waveform, noise included, so the animation answers one number for the
+    /// whole frame. A caller that would otherwise resolve it across a
+    /// coordinate can resolve it once, and one that sizes a table by how
+    /// finely the answer varies needs no table at all.
+    pub fn varies_in_space(&self) -> bool {
+        self.active && self.static_params.n_periods > 0
+    }
+
     /// The animation's value at a point, with amplitude applied.
     pub fn value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
         if !self.active {
@@ -442,5 +453,44 @@ impl PreparedAnimation {
             pulse: self.static_params.pulse,
             standing: self.static_params.standing,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::clock_bank::ClockBank;
+
+    /// Whether an animation varies in space is what decides how finely a
+    /// caller has to resolve it, so the two ways of answering "not at all" —
+    /// no periodicity and no amplitude — both have to read that way.
+    #[test]
+    fn periodicity_is_what_makes_an_animation_vary_in_space() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let prepare = |n_periods: u16, size: f64| {
+            let mut animation = Animation::default();
+            animation.control(
+                ControlMessage::Set(StateChange::NPeriods(n_periods)),
+                &mut Noop,
+            );
+            animation.control(
+                ControlMessage::Set(StateChange::Size(UnipolarFloat::new(size))),
+                &mut Noop,
+            );
+            animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
+        };
+
+        assert!(prepare(1, 1.0).varies_in_space());
+        assert!(
+            !prepare(0, 1.0).varies_in_space(),
+            "no periodicity is one value everywhere"
+        );
+        assert!(
+            !prepare(1, 0.0).varies_in_space(),
+            "no amplitude is zero everywhere"
+        );
     }
 }
