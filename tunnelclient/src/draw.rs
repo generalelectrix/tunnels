@@ -1,12 +1,11 @@
 use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
 use graphics::Context;
+use graphics::math::Matrix2d;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
-use std::f64::consts::PI;
+use std::f64::consts::TAU;
 use tunnels_model::layer::{RenderMode, SegmentLayer, SegmentPath, ShapeGeometry};
-
-const TWOPI: f64 = 2.0 * PI;
 
 pub trait Draw<G: Graphics> {
     /// Given a context and gl instance, draw this entity to the screen.
@@ -58,6 +57,39 @@ impl<G: Graphics> Draw<G> for SegmentLayer {
     }
 }
 
+/// The viewport transform placing something at `x`, `y`, turned by `rot_angle`.
+///
+/// Coordinates are in unit terms, a turn is one unit of angle, and the result
+/// maps that frame onto the screen.
+///
+/// Mirroring is one decision made once: `flip_h` is `scale(-1, 1)` and `flip_v`
+/// is `scale(1, -1)`, so the sign the placement is reflected by and the axis
+/// what is drawn there is reflected about are the same pair of factors. Spelt
+/// separately they can be made to disagree, and a figure and a beam at the same
+/// knob settings would then land in different places under a mirror.
+pub(crate) fn place(x: f64, y: f64, rot_angle: f64, c: &Context, cfg: &ClientConfig) -> Matrix2d {
+    let (sx, sy) = match cfg.transformation {
+        None => (1.0, 1.0),
+        Some(Transform::Flip(TransformDirection::Horizontal)) => (-1.0, 1.0),
+        Some(Transform::Flip(TransformDirection::Vertical)) => (1.0, -1.0),
+    };
+    c.transform
+        .trans(
+            sx * x * f64::from(cfg.x_resolution) + cfg.x_center,
+            sy * y * f64::from(cfg.y_resolution) + cfg.y_center,
+        )
+        .scale(sx, sy)
+        .rot_rad(rot_angle * TAU)
+}
+
+/// The thickness knob resolved to pixels on screen.
+///
+/// Half the width it names, because the renderers this feeds take a stroke as a
+/// distance either side of the path it follows.
+pub(crate) fn thickness_px(thickness: f64, cfg: &ClientConfig) -> f64 {
+    thickness * cfg.critical_size * cfg.thickness_scale / 2.0
+}
+
 /// Everything a path renderer needs about a shape beyond its own geometry.
 struct ShapeStyle {
     color: Color,
@@ -76,29 +108,9 @@ fn draw_shape<G: Graphics>(
     cfg: &ClientConfig,
 ) {
     let color = hsv_to_rgb(shape.hue, shape.sat, shape.val, shape.level);
-    let thickness = shape.thickness * cfg.critical_size * cfg.thickness_scale / 2.0;
-    let spin_rad = shape.spin_angle * TWOPI;
-
-    let (x, y) = {
-        let (x0, y0) = match cfg.transformation {
-            None => (shape.x, shape.y),
-            Some(Transform::Flip(TransformDirection::Horizontal)) => (-shape.x, shape.y),
-            Some(Transform::Flip(TransformDirection::Vertical)) => (shape.x, -shape.y),
-        };
-        let x = x0 * f64::from(cfg.x_resolution) + cfg.x_center;
-        let y = y0 * f64::from(cfg.y_resolution) + cfg.y_center;
-        (x, y)
-    };
-
-    let transform = {
-        let t = c.transform.trans(x, y);
-        match cfg.transformation {
-            None => t,
-            Some(Transform::Flip(TransformDirection::Horizontal)) => t.flip_h(),
-            Some(Transform::Flip(TransformDirection::Vertical)) => t.flip_v(),
-        }
-    }
-    .rot_rad(shape.rot_angle * TWOPI);
+    let thickness = thickness_px(shape.thickness, cfg);
+    let spin_rad = shape.spin_angle * TAU;
+    let transform = place(shape.x, shape.y, shape.rot_angle, c, cfg);
 
     let style = ShapeStyle {
         color,
@@ -130,8 +142,8 @@ fn draw_ellipse<G: Graphics>(
         RenderMode::Arc => {
             let x_size = shape.extent_x * cfg.critical_size;
             let y_size = shape.extent_y * cfg.critical_size;
-            let start = shape.start * TWOPI;
-            let stop = start + span * TWOPI;
+            let start = shape.start * TAU;
+            let stop = start + span * TAU;
             let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
 
             if span >= 1.0 {
@@ -162,21 +174,21 @@ fn draw_ellipse<G: Graphics>(
             }
         }
         RenderMode::Dot => {
-            let mid_angle = (shape.start + span / 2.0) * TWOPI;
+            let mid_angle = (shape.start + span / 2.0) * TAU;
             let cx = shape.extent_x * cfg.critical_size * mid_angle.cos();
             let cy = shape.extent_y * cfg.critical_size * mid_angle.sin();
             let bound = rectangle::centered([cx, cy, thickness, thickness]);
             ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
         }
         RenderMode::Saucer => {
-            let mid_angle = (shape.start + span / 2.0) * TWOPI;
+            let mid_angle = (shape.start + span / 2.0) * TAU;
             let rx = shape.extent_x * cfg.critical_size;
             let ry = shape.extent_y * cfg.critical_size;
             let cx = rx * mid_angle.cos();
             let cy = ry * mid_angle.sin();
 
-            let start_rad = shape.start * TWOPI;
-            let stop_rad = start_rad + span * TWOPI;
+            let start_rad = shape.start * TAU;
+            let stop_rad = start_rad + span * TAU;
             let p1x = rx * start_rad.cos();
             let p1y = ry * start_rad.sin();
             let p2x = rx * stop_rad.cos();
@@ -336,5 +348,57 @@ fn draw_line<G: Graphics>(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use client_lib::transform::TransformDirection::{Horizontal, Vertical};
+
+    fn config(transformation: Option<Transform>) -> ClientConfig {
+        ClientConfig::new(
+            0,
+            "test".to_string(),
+            (800, 600),
+            false,
+            false,
+            transformation,
+            false,
+            false,
+        )
+    }
+
+    /// Where a point drawn in the placed frame lands on screen.
+    fn drawn_at(
+        transformation: Option<Transform>,
+        at: (f64, f64),
+        point: (f64, f64),
+    ) -> (f64, f64) {
+        let cfg = config(transformation);
+        let m = place(at.0, at.1, 0.0, &graphics::Context::new(), &cfg);
+        (
+            m[0][0] * point.0 + m[0][1] * point.1 + m[0][2],
+            m[1][0] * point.0 + m[1][1] * point.1 + m[1][2],
+        )
+    }
+
+    /// A mirror has to move the placement and the drawing by the same sign, or
+    /// a figure reflects about one axis while landing as if reflected about the
+    /// other. Both come from one pair of factors, and this is what that buys.
+    #[test]
+    fn a_mirror_reflects_a_placed_point_about_the_centre() {
+        let cfg = config(None);
+        let (at, point) = ((0.25, 0.1), (30.0, -12.0));
+        let (x, y) = drawn_at(None, at, point);
+
+        assert_eq!(
+            drawn_at(Some(Transform::Flip(Horizontal)), at, point),
+            (2.0 * cfg.x_center - x, y),
+        );
+        assert_eq!(
+            drawn_at(Some(Transform::Flip(Vertical)), at, point),
+            (x, 2.0 * cfg.y_center - y),
+        );
     }
 }

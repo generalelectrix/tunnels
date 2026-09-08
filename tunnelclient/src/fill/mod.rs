@@ -22,16 +22,14 @@ use self::draw::{
 use self::geometry::{GeometryCache, Scale, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampSpan;
-use crate::draw::{Draw, hsv_to_rgb};
+use crate::draw::{Draw, hsv_to_rgb, place, thickness_px};
 use client_lib::config::ClientConfig;
-use client_lib::transform::{Transform, TransformDirection};
 use graphics::math::Matrix2d;
 use graphics::types::Color;
 use graphics::{Context, Graphics, Transformed};
 use image::RgbaImage;
 use log::{error, info};
 use std::collections::HashSet;
-use std::f64::consts::TAU;
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
 use tunnels_model::layer::{ColorAdjust, FillLayer, Layer, LayerCollection, SpriteId};
@@ -324,9 +322,7 @@ where
 
         let stroke = fill.draw_mode.draws_outline().then(|| {
             Thickness::bucketed(
-                // The same expression a segment's stroke weight goes through,
-                // so thickness means one thing across both media.
-                fill.thickness * cfg.critical_size * cfg.thickness_scale / 2.0,
+                thickness_px(fill.thickness, cfg),
                 Scale {
                     px_per_unit: placed.px_per_unit,
                     nominal_px_per_unit: level.nominal_px_per_unit(cfg.target_px),
@@ -445,23 +441,7 @@ impl Placed {
     /// settings cover the same ground.
     fn of(fill: &FillLayer, c: &Context, cfg: &ClientConfig) -> Self {
         let p = &fill.placement;
-        let (x0, y0) = match cfg.transformation {
-            None => (p.x, p.y),
-            Some(Transform::Flip(TransformDirection::Horizontal)) => (-p.x, p.y),
-            Some(Transform::Flip(TransformDirection::Vertical)) => (p.x, -p.y),
-        };
-        let x = x0 * f64::from(cfg.x_resolution) + cfg.x_center;
-        let y = y0 * f64::from(cfg.y_resolution) + cfg.y_center;
-
-        let placed = match cfg.transformation {
-            None => c.transform.trans(x, y),
-            Some(Transform::Flip(TransformDirection::Horizontal)) => {
-                c.transform.trans(x, y).flip_h()
-            }
-            Some(Transform::Flip(TransformDirection::Vertical)) => c.transform.trans(x, y).flip_v(),
-        }
-        .rot_rad(p.rot_angle * TAU);
-
+        let placed = place(p.x, p.y, p.rot_angle, c, cfg);
         let (half_x, half_y) = (
             p.extent_x * cfg.critical_size,
             p.extent_y * cfg.critical_size,
