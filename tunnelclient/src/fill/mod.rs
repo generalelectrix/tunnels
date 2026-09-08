@@ -22,7 +22,7 @@ use self::draw::{
 use self::geometry::{FillGeometry, Scale, StrokeGeometry, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampSpan;
-use crate::draw::{Draw, hsv_to_rgb, place, thickness_px};
+use crate::draw::{draw_segments, hsv_to_rgb, place, thickness_px};
 use client_lib::config::ClientConfig;
 use graphics::math::Matrix2d;
 use graphics::types::Color;
@@ -222,7 +222,7 @@ where
         self.ramps.frame += 1;
         for layer in layers {
             match layer.as_ref() {
-                Layer::Segments(segments) => segments.draw(c, gl, cfg),
+                Layer::Segments(segments) => draw_segments(segments, c, gl, cfg),
                 Layer::Fill(fill) => self.draw_fill(fill, c, gl, cfg),
             }
         }

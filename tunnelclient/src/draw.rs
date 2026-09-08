@@ -7,11 +7,6 @@ use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::TAU;
 use tunnels_model::layer::{RenderMode, SegmentLayer, SegmentPath, ShapeGeometry};
 
-pub trait Draw<G: Graphics> {
-    /// Given a context and gl instance, draw this entity to the screen.
-    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig);
-}
-
 #[inline]
 fn color_from_rgb(r: f64, g: f64, b: f64, a: f64) -> Color {
     [r as f32, g as f32, b as f32, a as f32]
@@ -41,19 +36,23 @@ pub(crate) fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     }
 }
 
-impl<G: Graphics> Draw<G> for SegmentLayer {
-    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        for shape in &self.shapes {
-            draw_shape(
-                shape,
-                self.render_mode,
-                self.segment_path,
-                self.span,
-                c,
-                gl,
-                cfg,
-            );
-        }
+/// Draw a run of segments, each at its own placement along the layer's path.
+pub(crate) fn draw_segments<G: Graphics>(
+    layer: &SegmentLayer,
+    c: &Context,
+    gl: &mut G,
+    cfg: &ClientConfig,
+) {
+    for shape in &layer.shapes {
+        draw_shape(
+            shape,
+            layer.render_mode,
+            layer.segment_path,
+            layer.span,
+            c,
+            gl,
+            cfg,
+        );
     }
 }
 
