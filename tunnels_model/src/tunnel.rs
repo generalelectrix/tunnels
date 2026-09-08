@@ -782,15 +782,15 @@ const MARQUEE_SPEED_SCALE: f64 = 0.023;
 const SPIN_SPEED_SCALE: f64 = 0.023;
 const COLOR_SPREAD_SCALE: f64 = 16.;
 /// The segment knob's travel, which is what the control surface can send.
-const SEGMENTS_MIN: u8 = 1;
-const SEGMENTS_MAX: u8 = 128;
+pub const SEGMENTS_MIN: u8 = 1;
+pub const SEGMENTS_MAX: u8 = 128;
 /// The top of a knob's raw travel, and the position its detent sits at.
 ///
 /// A surface reports a knob in seven bits, so a position is one of 128 and the
 /// centre is not the middle of them: the detent is the last position of the
 /// lower half, leaving that half one longer than the upper.
-const KNOB_MAX: u8 = 127;
-const KNOB_CENTRE: u8 = 64;
+pub const KNOB_MAX: u8 = 127;
+pub const KNOB_CENTRE: u8 = 64;
 
 /// The largest family index this build carries, or `None` if there is nothing
 /// to choose between.

@@ -4,7 +4,7 @@ use crate::{
     beam::Beam,
     mixer::{Channel, Mixer, VideoChannel},
     show::StateChange,
-    tunnel::{StateChange as TunnelStateChange, Tunnel},
+    tunnel::{KNOB_CENTRE, StateChange as TunnelStateChange, Tunnel},
 };
 use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
@@ -54,7 +54,7 @@ pub fn noise(_: usize, i: usize, channel: &mut Channel) {
         use TunnelStateChange::*;
 
         // The knob at its detent, which takes no segments out.
-        set_tunnel_state(tunnel, Blacking(64));
+        set_tunnel_state(tunnel, Blacking(KNOB_CENTRE));
         set_tunnel_state(tunnel, Size(UnipolarFloat::new(0.5)));
         set_tunnel_state(tunnel, Thickness(UnipolarFloat::new(0.05)));
 
