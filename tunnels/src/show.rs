@@ -625,7 +625,8 @@ mod test {
                     None => {
                         failures.push(format!("{device}: no expectation"));
                     }
-                    _ => {} // match
+                    // The device emitted what the expectation says it does.
+                    Some(_) => {}
                 }
             }
 
@@ -1013,7 +1014,8 @@ mod test {
                     None => {
                         failures.push(format!("{name}: no expectation"));
                     }
-                    _ => {} // match
+                    // The mapping interpreted to what the expectation says.
+                    Some(_) => {}
                 }
             }
 

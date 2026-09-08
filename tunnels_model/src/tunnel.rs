@@ -140,8 +140,11 @@ impl Tunnel {
     /// because the detent belongs to the lower one, which is why the travel
     /// does not divide evenly.
     ///
-    /// An interval of 0 or -1 would black every segment and leave nothing to
-    /// look at, so the bottom of the positive half absorbs both.
+    /// Neither 0 nor -1 is a usable interval, and for different reasons: -1
+    /// takes out every segment, since every index is a multiple of one, and 0
+    /// has no meaning at all, because the remainder that decides whether a
+    /// segment is drawn is not defined against it. The bottom of the positive
+    /// half absorbs both, so neither reaches a render.
     fn blacking_interval(&self) -> i32 {
         let (knob, centre) = (i32::from(self.blacking), i32::from(KNOB_CENTRE));
         let scaled = if knob <= centre {
@@ -1103,8 +1106,9 @@ mod test {
         }
     }
 
-    /// No knob position blacks every segment, because a beam that draws nothing
-    /// is indistinguishable from one that is broken.
+    /// No knob position gives an interval of 0 or -1: the first is the divisor
+    /// of a remainder and cannot be zero, and the second takes out every
+    /// segment, leaving a beam indistinguishable from a broken one.
     #[test]
     fn no_knob_position_leaves_nothing_to_look_at() {
         for knob in 0..=KNOB_MAX {
