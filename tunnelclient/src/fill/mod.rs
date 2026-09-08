@@ -76,7 +76,13 @@ struct RampEntry<T> {
 /// bound is per width; there are two.
 struct RampPool<T> {
     entries: Vec<RampEntry<T>>,
-    scratch: RgbaImage,
+    /// Where a ramp is built before it is uploaded, one image per span.
+    ///
+    /// One image between them would be resized to each span in turn for as
+    /// long as two layers of different spans are both on screen, which is a
+    /// figure-wide image freed and reallocated every frame.
+    cycle_scratch: RgbaImage,
+    figure_scratch: RgbaImage,
     settings: TextureSettings,
     frame: u64,
 }
@@ -88,7 +94,8 @@ where
     fn new() -> Self {
         Self {
             entries: Vec::new(),
-            scratch: ramp::blank(RampSpan::Cycle),
+            cycle_scratch: ramp::blank(RampSpan::Cycle),
+            figure_scratch: ramp::blank(RampSpan::Figure),
             // Repeating wrap is what lets a phase coordinate run past one
             // cycle and keep indexing the ramp, so the cycle count never
             // reaches the mesh. Linear filtering puts the sawtooth's jump
@@ -106,31 +113,36 @@ where
     /// `None` only if the backend refused to give up a texture, which is a
     /// reason to skip a figure rather than to stop the show.
     fn texture_for(&mut self, fill: &FillLayer, span: RampSpan) -> Option<&T> {
-        // Resized only when a layer's colour starts or stops varying across the
-        // figure, which is a knob being turned rather than a per-frame cost.
-        if self.scratch.width() != span.texels() {
-            self.scratch = ramp::blank(span);
-        }
-        ramp::build_into(&mut self.scratch, span, &fill.color, &fill.color_anims);
-        let (width, height) = self.scratch.dimensions();
+        let Self {
+            entries,
+            cycle_scratch,
+            figure_scratch,
+            settings,
+            frame,
+        } = self;
+        let scratch = match span {
+            RampSpan::Cycle => cycle_scratch,
+            RampSpan::Figure => figure_scratch,
+        };
+        ramp::build_into(scratch, span, &fill.color, &fill.color_anims);
+        let (width, height) = scratch.dimensions();
 
-        let free = self
-            .entries
+        let free = entries
             .iter()
-            .position(|e| e.texels == width && e.last_used + FRAMES_IN_FLIGHT <= self.frame);
+            .position(|e| e.texels == width && e.last_used + FRAMES_IN_FLIGHT <= *frame);
         let index = match free {
             Some(index) => index,
             None => {
                 match T::create(
                     &mut (),
                     Format::Rgba8,
-                    self.scratch.as_raw(),
+                    scratch.as_raw(),
                     [width, height],
-                    &self.settings,
+                    settings,
                 ) {
-                    Ok(texture) => self.entries.push(RampEntry {
+                    Ok(texture) => entries.push(RampEntry {
                         texture,
-                        last_used: self.frame,
+                        last_used: *frame,
                         texels: width,
                     }),
                     Err(e) => {
@@ -138,22 +150,22 @@ where
                         return None;
                     }
                 }
-                self.entries.len() - 1
+                entries.len() - 1
             }
         };
 
-        let entry = self.entries.get_mut(index)?;
+        let entry = entries.get_mut(index)?;
         if let Err(e) = entry.texture.update(
             &mut (),
             Format::Rgba8,
-            self.scratch.as_raw(),
+            scratch.as_raw(),
             [0, 0],
             [width, height],
         ) {
             error!("Could not update a colour ramp texture: {e:?}");
             return None;
         }
-        entry.last_used = self.frame;
+        entry.last_used = *frame;
         Some(&entry.texture)
     }
 }
@@ -573,6 +585,34 @@ mod test {
             ids.len(),
             "two figures shared a texture: {ids:?}"
         );
+    }
+
+    /// Two layers at different spans draw in the same frame, one after the
+    /// other, for as long as both are on screen. Each keeps its own scratch, so
+    /// neither frees the other's.
+    #[test]
+    fn alternating_spans_do_not_reallocate_the_scratch() {
+        let mut pool: RampPool<FakeTexture> = RampPool::new();
+        let buffers = |p: &RampPool<FakeTexture>| {
+            (
+                p.cycle_scratch.as_raw().as_ptr(),
+                p.figure_scratch.as_raw().as_ptr(),
+            )
+        };
+        let before = buffers(&pool);
+        for frame in 1..20 {
+            pool.frame = frame;
+            for span in [RampSpan::Cycle, RampSpan::Figure] {
+                assert!(pool.texture_for(&fill(0.25), span).is_some());
+            }
+        }
+        assert_eq!(
+            buffers(&pool),
+            before,
+            "a scratch image was reallocated while both spans were drawing"
+        );
+        assert_eq!(pool.cycle_scratch.width(), RampSpan::Cycle.texels());
+        assert_eq!(pool.figure_scratch.width(), RampSpan::Figure.texels());
     }
 
     /// The pool bounds itself, so there is no cap and no eviction policy: it
