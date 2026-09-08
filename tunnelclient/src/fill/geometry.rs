@@ -14,7 +14,7 @@ use lyon_tessellation::{
 };
 use std::collections::HashMap;
 use tunnels_model::layer::SpriteId;
-use tunnels_shapes::{FillRule, Point, Sprite};
+use tunnels_sprites::{FillRule, Point, Sprite};
 
 /// How finely the tessellator may deviate, in shape units.
 ///
@@ -157,7 +157,7 @@ impl Width {
 }
 
 /// One `<path>` element's subpaths as a lyon path, every loop closed.
-fn path_of(figure: &tunnels_shapes::Figure) -> Path {
+fn path_of(figure: &tunnels_sprites::Figure) -> Path {
     let mut builder = Path::builder();
     for subpath in &figure.subpaths {
         let Some((first, rest)) = subpath.points().split_first() else {
@@ -238,7 +238,7 @@ mod test {
     /// A ring is two loops, and the rule between them is what makes it a ring.
     #[test]
     fn the_winding_rule_decides_whether_a_ring_has_a_hole() {
-        use tunnels_shapes::{Contour, Figure};
+        use tunnels_sprites::{Contour, Figure};
 
         let square = |half: f32| {
             Contour::new(vec![

@@ -12,7 +12,7 @@ use graphics::math::Matrix2d;
 use tunnels_lib::number::Phase;
 use tunnels_model::animation_target::AnimationTarget;
 use tunnels_model::layer::{ColorPhase, FillAnimation};
-use tunnels_shapes::Point;
+use tunnels_sprites::Point;
 
 /// Vertices per chunk handed to the backend. `BACK_END_MAX_VERTEX_COUNT` is
 /// 1023, which divides evenly into triangles.

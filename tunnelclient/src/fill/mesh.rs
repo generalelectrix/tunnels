@@ -8,7 +8,7 @@
 use super::geom::{IndexBatch, Triangle, TriangleList};
 use std::collections::HashMap;
 use tunnels_model::layer::SpriteId;
-use tunnels_shapes::Point;
+use tunnels_sprites::Point;
 
 /// How much finer triangles get as they approach the origin.
 ///

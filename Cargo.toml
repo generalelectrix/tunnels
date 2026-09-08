@@ -5,7 +5,7 @@ members = [
     "tunnels_audio",
     "tunnels",
     "tunnels_model",
-    "tunnels_shapes",
+    "tunnels_sprites",
     "tunnels_net",
     "tunnelclient",
     "tunnel-bootstrap",

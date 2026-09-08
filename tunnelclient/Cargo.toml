@@ -32,7 +32,7 @@ rust_dmx = "0.11"
 lyon_tessellation = "1"
 lyon_path = "1"
 image = "0.25"
-tunnels_shapes = { path = "../tunnels_shapes" }
+tunnels_sprites = { path = "../tunnels_sprites" }
 
 [dev-dependencies]
 image = "0.25"

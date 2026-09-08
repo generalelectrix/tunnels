@@ -194,12 +194,12 @@ where
             ramp_settings,
         } = self;
 
-        let Some(sprite) = tunnels_shapes::sprite(fill.sprite.0) else {
+        let Some(sprite) = tunnels_sprites::sprite(fill.sprite.0) else {
             if missing.insert(fill.sprite) {
                 error!(
                     "This build carries no figure {}; it has {}.",
                     fill.sprite.0,
-                    tunnels_shapes::count()
+                    tunnels_sprites::count()
                 );
             }
             return;

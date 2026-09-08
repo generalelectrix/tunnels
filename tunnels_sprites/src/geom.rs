@@ -1,4 +1,11 @@
 //! The coordinate system every baked figure is expressed in.
+//!
+//! The crate holding the procedurally generated figures defines its own
+//! equivalents of these types for the same coordinate system. Which of the two
+//! survives, or whether both give way to a shared one, is a question for
+//! whoever brings the generated and baked halves together — neither side can
+//! answer it alone, so the duplication stands until then rather than being
+//! resolved by whichever landed second.
 
 /// A point in shape space: the unit box centred on the origin that every
 /// figure is normalised into.

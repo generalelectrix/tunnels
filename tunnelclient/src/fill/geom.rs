@@ -1,10 +1,10 @@
 //! Triangles, and the two ways a list of them gets walked.
 //!
 //! Figures arrive as contours and leave as triangles, so this is where the
-//! renderer's own geometry vocabulary lives. `tunnels_shapes` has no triangles
+//! renderer's own geometry vocabulary lives. `tunnels_sprites` has no triangles
 //! in it — it ships loops and leaves the winding rule to whoever fills them.
 
-use tunnels_shapes::Point;
+use tunnels_sprites::Point;
 
 /// Three points bounding a filled region.
 #[derive(Copy, Clone, Debug, PartialEq)]

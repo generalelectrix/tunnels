@@ -573,7 +573,7 @@ fn the_fixtures_draw_the_figures_they_were_taken_of() {
         (fixture::SNOWFLAKE, "db_snowflake"),
         (fixture::BULLSEYE, "db_bullseye"),
     ] {
-        let sprite = tunnels_shapes::sprite(id.0)
+        let sprite = tunnels_sprites::sprite(id.0)
             .unwrap_or_else(|| panic!("this build carries no figure {}", id.0));
         assert_eq!(sprite.name, name, "figure {} is not {name}", id.0);
     }

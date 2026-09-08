@@ -5934,7 +5934,7 @@ dependencies = [
  "tunnels_lib",
  "tunnels_model",
  "tunnels_net",
- "tunnels_shapes",
+ "tunnels_sprites",
  "zero_configure",
 ]
 
@@ -6016,7 +6016,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tunnels_shapes"
+name = "tunnels_sprites"
 version = "0.1.0"
 dependencies = [
  "lyon_path",
