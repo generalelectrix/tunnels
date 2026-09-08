@@ -77,13 +77,10 @@ const STROKE_CAP: usize = 256;
 
 /// Figure interiors tessellated so far, before any refinement.
 ///
-/// Never emptied: an interior does not depend on how densely it will be drawn,
-/// so a figure has one however the knobs move. For the baked half that bounds
-/// it — the key runs over a library the build ships. A generated figure is a
-/// point of its family's arity and secondary ranges, which run to hundreds of
-/// positions, so sweeping a knob names a new figure at every one and each is
-/// tessellated and kept. Whether that needs a ceiling of its own is a
-/// measurement rather than a guess, and the outlines are what measured first.
+/// Never emptied, and never needs to be: an interior does not depend on how
+/// densely it will be drawn, so a figure has exactly one however the knobs
+/// move, and the knobs reach a table. 401 interiors is the whole of it — every
+/// figure the build ships and every figure the generated library names.
 #[derive(Default)]
 pub struct FillGeometry(HashMap<FigureId, TriangleList>);
 

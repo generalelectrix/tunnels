@@ -147,22 +147,23 @@ pub struct MeshId {
 /// Nothing evicts, and nothing animated reaches the key: a mesh built for a
 /// figure at a density holds while the colour on it changes every frame.
 ///
-/// **How far the set can grow depends on which library a figure comes from,
-/// and only one of the two is bounded.** The baked library is a fixed table,
-/// so its share cannot exceed the figures the build carries times the six
-/// densities, and a show touching a handful of them converges within seconds.
-/// A generated figure is one point of its family's arity and secondary ranges,
-/// which run to hundreds of positions: sweeping a knob across one names a
-/// different figure at every position, and each is meshed here and kept. One
-/// sweep of every family's arity, at a single density, is 16 million triangles
-/// and 263 MB.
+/// **The set is bounded, because both libraries are tables.** Each names a
+/// fixed list of figures, so the key runs over those figures times the six
+/// densities and no further: 62 baked and 339 generated, 2,406 meshes, **2.2
+/// GB** if every one of them were ever drawn.
 ///
-/// Bounding the generated share would not be free, because the two costs are
-/// coupled: a figure dropped is a figure tessellated again, and the families
-/// holding the most triangles are the ones that cost the most to build. A
-/// bound trades memory for latency on exactly the figures whose latency is
-/// already worst. That is why the size of the set is stated here rather than
-/// capped.
+/// Bounded is not small, and where the two libraries sit in that number is
+/// worth knowing: the baked share is 317 MB of it and the generated share is
+/// the other 1.9 GB, because a generated figure carries an order of magnitude
+/// more triangles than a piece of artwork does. Most of that is the two finest
+/// densities, which only a figure drawn larger than the size knob's default
+/// reaches; the four coarser ones come to 290 MB between them.
+///
+/// Nothing is evicted, and no cap is wanted, because a figure dropped is a
+/// figure tessellated again and the families holding the most triangles are
+/// the ones that cost the most to build. A bound on top of the table would
+/// trade memory for latency on exactly the figures whose latency is already
+/// worst.
 #[derive(Default)]
 pub struct MeshLibrary {
     built: HashMap<MeshId, RefinedMesh>,
@@ -179,6 +180,11 @@ impl MeshLibrary {
     /// Total triangles held, for reporting memory pressure.
     pub fn triangles(&self) -> usize {
         self.built.values().map(RefinedMesh::triangle_count).sum()
+    }
+
+    /// How many meshes are held, against the table that bounds them.
+    pub fn len(&self) -> usize {
+        self.built.len()
     }
 }
 

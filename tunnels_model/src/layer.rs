@@ -153,6 +153,24 @@ pub struct GeneratedId {
     pub secondary: Secondary,
 }
 
+impl GeneratedId {
+    /// Every figure the generated library holds.
+    ///
+    /// Each family's offered arities at the one secondary that family is drawn
+    /// at, which is the same set the two figure knobs address. Naming it is
+    /// what lets a client build the whole of it before a show rather than
+    /// tessellating each figure the first time an operator lands on it.
+    pub fn library() -> impl Iterator<Item = Self> {
+        ShapeFamily::ALL.into_iter().flat_map(|family| {
+            family.arities().iter().map(move |&arity| Self {
+                family,
+                arity,
+                secondary: family.secondary(),
+            })
+        })
+    }
+}
+
 impl Default for GeneratedId {
     /// The first figure of the first family, which is what a beam draws before
     /// any knob has named another.

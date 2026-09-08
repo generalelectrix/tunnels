@@ -13,9 +13,12 @@ use tunnels_sprites::{Contour, Figure, FillRule, Point};
 /// The contours behind the figures drawn so far.
 ///
 /// A baked figure's contours come out of the binary. A generated figure's are
-/// built the first time it is drawn and kept, because a figure is asked for its
-/// contours once for its interior and again for every thickness its outline is
-/// stroked at.
+/// computed and kept, because a figure is asked for its contours once for its
+/// interior and again for every thickness its outline is stroked at.
+///
+/// What is kept is bounded, because the generated library is a table: a family
+/// offers a fixed list of arities and one secondary, so 339 sets of contours
+/// is the whole of what this can come to hold.
 #[derive(Default)]
 pub struct FigureCache {
     generated: HashMap<GeneratedId, Figure>,
