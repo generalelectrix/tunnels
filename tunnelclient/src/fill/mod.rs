@@ -19,7 +19,7 @@ use self::draw::{
     PhaseField, VertexBuffers, VertexWork, draw_flat, draw_list_flat, draw_list_textured,
     draw_points, draw_textured,
 };
-use self::geometry::{GeometryCache, Scale, Thickness};
+use self::geometry::{FillGeometry, Scale, StrokeGeometry, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampSpan;
 use crate::draw::{Draw, hsv_to_rgb, place, thickness_px};
@@ -163,7 +163,8 @@ where
 /// Generic over the texture type so the GL client and the golden-image tests
 /// share one draw path rather than each having its own.
 pub struct Renderer<T> {
-    geometry: GeometryCache,
+    fills: FillGeometry,
+    outlines: StrokeGeometry,
     meshes: MeshLibrary,
     ramps: RampPool<T>,
     /// Scratch for the per-vertex pass, reused across every layer and every
@@ -181,7 +182,8 @@ where
 {
     fn default() -> Self {
         Self {
-            geometry: GeometryCache::default(),
+            fills: FillGeometry::default(),
+            outlines: StrokeGeometry::default(),
             meshes: MeshLibrary::default(),
             ramps: RampPool::new(),
             verts: VertexBuffers::default(),
@@ -250,7 +252,7 @@ where
                 continue;
             };
             let sprite_id = SpriteId(id);
-            let fill = self.geometry.fill(sprite_id, sprite);
+            let fill = self.fills.get(sprite_id, sprite);
             for level in Level::eager() {
                 self.meshes.get(
                     MeshId {
@@ -281,7 +283,8 @@ where
         cfg: &ClientConfig,
     ) {
         let Self {
-            geometry,
+            fills,
+            outlines,
             meshes,
             ramps,
             verts,
@@ -330,25 +333,21 @@ where
             )
         });
 
+        let interior = fill
+            .draw_mode
+            .draws_fill()
+            .then(|| fills.get(fill.sprite, sprite));
+        let outline = stroke.map(|thickness| outlines.get(fill.sprite, sprite, thickness));
+
         // Nothing varies across the figure and nothing displaces it, so it
         // draws straight from the tessellator's own triangles.
         if flat && !warping {
             let color = flat_color(fill);
-            if fill.draw_mode.draws_fill() {
-                draw_points(
-                    geometry.fill(fill.sprite, sprite).points(),
-                    color,
-                    placed.m,
-                    gl,
-                );
+            if let Some(interior) = interior {
+                draw_points(interior.points(), color, placed.m, gl);
             }
-            if let Some(thickness) = stroke {
-                draw_points(
-                    geometry.stroke(fill.sprite, sprite, thickness).points(),
-                    color,
-                    placed.m,
-                    gl,
-                );
+            if let Some(outline) = outline {
+                draw_points(outline.points(), color, placed.m, gl);
             }
             return;
         }
@@ -380,13 +379,13 @@ where
             warps: &fill.warps,
         };
 
-        if fill.draw_mode.draws_fill() {
+        if let Some(interior) = interior {
             let mesh = meshes.get(
                 MeshId {
                     sprite: fill.sprite,
                     level,
                 },
-                geometry.fill(fill.sprite, sprite),
+                interior,
             );
             // Phase comes from the undeformed position, so a colour pattern
             // stays glued to the figure while a warp moves it rather than
@@ -402,11 +401,10 @@ where
             }
         }
 
-        if let Some(thickness) = stroke {
+        if let Some(outline) = outline {
             // An outline is never meshed. Its colour comes from the contour, so
             // nothing varies across a ribbon that a finer mesh could resolve,
             // and the tessellator's own triangles are drawn as they come.
-            let outline = geometry.stroke(fill.sprite, sprite, thickness);
             if outline.is_empty() {
                 return;
             }

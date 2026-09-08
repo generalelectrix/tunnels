@@ -63,27 +63,18 @@ struct StrokeId {
 /// 8.3 ms frame — and only the outlines a frame actually draws.
 const STROKE_CAP: usize = 256;
 
-/// Triangles tessellated so far, before any refinement.
+/// Figure interiors tessellated so far, before any refinement.
 ///
-/// Two maps rather than one because the work differs: a figure's interior does
-/// not depend on how densely it will be drawn, while its outline depends on
-/// how wide the stroke is.
-///
-/// Their growth laws differ with them, and only one is bounded by its key.
-/// A figure has one interior, so the fills converge on the library and stop.
-/// Thickness is a knob and an animation target, so an outline's key moves
-/// while the show runs and the strokes would grow without limit; they are
-/// capped at [`STROKE_CAP`] instead.
+/// Bounded by its own key and so never emptied: an interior does not depend on
+/// how densely it will be drawn, so a figure has one however the knobs move,
+/// and this converges on the library the build ships.
 #[derive(Default)]
-pub struct GeometryCache {
-    fills: HashMap<SpriteId, TriangleList>,
-    strokes: HashMap<StrokeId, StrokeMesh>,
-}
+pub struct FillGeometry(HashMap<SpriteId, TriangleList>);
 
-impl GeometryCache {
+impl FillGeometry {
     /// The figure's interior, tessellated on first use.
-    pub fn fill(&mut self, id: SpriteId, sprite: &Sprite) -> &TriangleList {
-        self.fills.entry(id).or_insert_with(|| {
+    pub fn get(&mut self, id: SpriteId, sprite: &Sprite) -> &TriangleList {
+        self.0.entry(id).or_insert_with(|| {
             let mut out = TriangleList::default();
             for figure in &sprite.figures {
                 let rule = match figure.rule {
@@ -107,17 +98,29 @@ impl GeometryCache {
             out
         })
     }
+}
 
+/// Outlines tessellated so far, before any refinement.
+///
+/// Kept apart from the interiors because the work differs — an outline depends
+/// on how wide the stroke is — and so does the growth law that follows from
+/// that. Thickness is a knob and an animation target, so this key moves while
+/// the show runs and the map would grow without limit; it is capped at
+/// [`STROKE_CAP`] instead.
+#[derive(Default)]
+pub struct StrokeGeometry(HashMap<StrokeId, StrokeMesh>);
+
+impl StrokeGeometry {
     /// The figure's outline stroked at `thickness`, tessellated on first use.
-    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &StrokeMesh {
+    pub fn get(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &StrokeMesh {
         let key = StrokeId {
             sprite: id,
             thickness_bits: thickness.key(),
         };
-        if self.strokes.len() >= STROKE_CAP && !self.strokes.contains_key(&key) {
-            self.strokes.clear();
+        if self.0.len() >= STROKE_CAP && !self.0.contains_key(&key) {
+            self.0.clear();
         }
-        self.strokes.entry(key).or_insert_with(|| {
+        self.0.entry(key).or_insert_with(|| {
             let options = StrokeOptions::tolerance(TOLERANCE)
                 .with_line_width(thickness.figure_units.max(1e-4))
                 .with_line_join(LineJoin::Round)
@@ -391,14 +394,14 @@ mod test {
             nominal_px_per_unit: 200.0,
         };
 
-        let mut cache = GeometryCache::default();
+        let mut outlines = StrokeGeometry::default();
         for step in 0..4 * STROKE_CAP {
             let thickness = Thickness::bucketed(step as f64 * 0.5, scale);
-            cache.stroke(SpriteId(0), &sprite, thickness);
+            outlines.get(SpriteId(0), &sprite, thickness);
             assert!(
-                cache.strokes.len() <= STROKE_CAP,
+                outlines.0.len() <= STROKE_CAP,
                 "{} outlines held after {step} distinct thicknesses",
-                cache.strokes.len()
+                outlines.0.len()
             );
         }
     }
@@ -435,9 +438,9 @@ mod test {
                 .sum()
         };
 
-        let mut cache = GeometryCache::default();
-        let hollow = area(cache.fill(SpriteId(0), &ring(FillRule::EvenOdd)));
-        let solid = area(cache.fill(SpriteId(1), &ring(FillRule::NonZero)));
+        let mut interiors = FillGeometry::default();
+        let hollow = area(interiors.get(SpriteId(0), &ring(FillRule::EvenOdd)));
+        let solid = area(interiors.get(SpriteId(1), &ring(FillRule::NonZero)));
 
         // The outer square is 4 units of area, the inner 1.
         assert!((solid - 4.0).abs() < 0.01, "nonzero filled {solid}, not 4");
