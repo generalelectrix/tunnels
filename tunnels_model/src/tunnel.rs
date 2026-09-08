@@ -1,5 +1,7 @@
 use crate::animation::PreparedAnimation;
-use crate::layer::{Layer, PathShape, RenderMode, ShapeGeometry};
+use crate::layer::{
+    ColorPhase, DrawMode, Layer, RenderMode, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::waveforms::sawtooth;
@@ -7,8 +9,10 @@ use crate::{
     animation::Animation, animation_target::AnimationTarget, palette::ColorPaletteIdx,
     position_bank::PositionIdx, waveforms::WaveformArgs,
 };
+use log::error;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
+use std::sync::Once;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
@@ -54,7 +58,19 @@ pub struct Tunnel {
     y_offset: Smoother<f64>,
     anims: [TargetedAnimation; N_ANIM],
     render_mode: RenderMode,
-    path_shape: PathShape,
+    shape_mode: ShapeMode,
+    /// Which coordinate of a figure indexes the color ramp.
+    ///
+    /// Held at its default: no control writes to it.
+    color_phase: ColorPhase,
+    /// How much of a figure is painted.
+    ///
+    /// Held at its default: no control writes to it.
+    draw_mode: DrawMode,
+    /// Which baked figure a sprite draws.
+    ///
+    /// Held at its default: no control writes to it.
+    sprite: SpriteId,
 }
 
 impl Default for Tunnel {
@@ -93,7 +109,10 @@ impl Default for Tunnel {
             y_offset: Smoother::new(0.0, Self::MOVE_SMOOTH_TIME, SmoothMode::Linear),
             anims: Default::default(),
             render_mode: RenderMode::default(),
-            path_shape: PathShape::default(),
+            shape_mode: ShapeMode::default(),
+            color_phase: ColorPhase::default(),
+            draw_mode: DrawMode::default(),
+            sprite: SpriteId::default(),
         }
     }
 }
@@ -163,7 +182,17 @@ impl Tunnel {
     }
 
     /// Render the current state of the tunnel.
+    ///
+    /// A mode that fills an area rather than drawing a run of segments has no
+    /// geometry yet, so it draws nothing and says so once. A show holding one
+    /// is a show missing a beam, not a show that stops.
     pub fn render(&self, level_scale: UnipolarFloat, as_mask: bool, ctx: RenderContext) -> Layer {
+        let Some(segment_path) = self.shape_mode.segment_path() else {
+            static REPORTED: Once = Once::new();
+            REPORTED.call_once(|| error!("Filled figures have no geometry yet."));
+            return Layer::new(self.render_mode, self.shape_mode, 0., Vec::new());
+        };
+
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
         let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
             self.segs + 1
@@ -264,8 +293,8 @@ impl Tunnel {
             let y_center = y_offset + y_adjust;
 
             // compute path geometry parameters
-            let (extent_x, extent_y) = match self.path_shape {
-                PathShape::Ellipse => {
+            let (extent_x, extent_y) = match segment_path {
+                SegmentPath::Ellipse => {
                     let rx = ((self.size.val()
                         * (MAX_ASPECT_RATIO
                             * (self.aspect_ratio.val().val() + aspect_ratio_adjust))
@@ -275,7 +304,7 @@ impl Tunnel {
                     let ry = (self.size.val().val() - thickness_allowance + size_adjust).abs();
                     (rx, ry)
                 }
-                PathShape::Line => {
+                SegmentPath::Line => {
                     // size controls line half-length
                     let half_length =
                         (self.size.val().val() - thickness_allowance + size_adjust).abs();
@@ -345,7 +374,7 @@ impl Tunnel {
             };
             arcs.push(arc);
         }
-        Layer::new(self.render_mode, self.path_shape, marquee_interval, arcs)
+        Layer::new(self.render_mode, self.shape_mode, marquee_interval, arcs)
     }
 
     /// Emit the current value of all controllable tunnel state.
@@ -367,7 +396,10 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
         emitter.emit_tunnel_state_change(RenderMode(self.render_mode));
-        emitter.emit_tunnel_state_change(PathShape(self.path_shape));
+        emitter.emit_tunnel_state_change(ColorPhase(self.color_phase));
+        emitter.emit_tunnel_state_change(DrawMode(self.draw_mode));
+        emitter.emit_tunnel_state_change(Sprite(self.sprite));
+        emitter.emit_tunnel_state_change(ShapeMode(self.shape_mode));
     }
 
     /// Handle a control event.
@@ -435,7 +467,17 @@ impl Tunnel {
             PositionY(v) => self.y_offset.set_target(v),
             SpinSpeed(v) => self.spin_speed = v,
             RenderMode(v) => self.render_mode = v,
-            PathShape(v) => self.path_shape = v,
+            ColorPhase(v) => self.color_phase = v,
+            DrawMode(v) => self.draw_mode = v,
+            Sprite(v) => self.sprite = v,
+            ShapeMode(v) => {
+                self.shape_mode = v;
+                // Which controls apply depends on the mode, and a surface
+                // blanks the ones that do not. Restating the whole tunnel
+                // leaves nothing dark that the new mode reads.
+                self.emit_state(emitter);
+                return;
+            }
         };
         emitter.emit_tunnel_state_change(sc);
     }
@@ -499,7 +541,10 @@ pub enum StateChange {
     PositionY(f64),
     SpinSpeed(BipolarFloat),
     RenderMode(RenderMode),
-    PathShape(PathShape),
+    ShapeMode(ShapeMode),
+    ColorPhase(ColorPhase),
+    DrawMode(DrawMode),
+    Sprite(SpriteId),
 }
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -520,11 +565,67 @@ pub trait EmitStateChange {
     fn emit_tunnel_state_change(&mut self, sc: StateChange);
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+
+    /// A surface blanks the controls a figure has no use for, so a mode that
+    /// does use them has to hear their values again. Restating the whole
+    /// tunnel is what leaves nothing dark that the new mode reads.
+    #[test]
+    fn changing_the_mode_restates_the_controls_a_mode_can_blank() {
+        struct Recorder(Vec<String>);
+        impl EmitStateChange for Recorder {
+            fn emit_tunnel_state_change(&mut self, sc: StateChange) {
+                self.0.push(format!("{sc:?}"));
+            }
+        }
+
+        let mut recorder = Recorder(Vec::new());
+        Tunnel::default()
+            .handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut recorder);
+
+        let heard = |name: &str| recorder.0.iter().any(|sc| sc.starts_with(name));
+        assert!(heard("MarqueeSpeed"), "{:?}", recorder.0);
+        assert!(heard("RenderMode"), "{:?}", recorder.0);
+        assert!(heard("ShapeMode"), "{:?}", recorder.0);
+    }
+
+    /// A show runs in front of an audience, so a mode with nothing to draw
+    /// draws nothing rather than stopping the frame.
+    #[test]
+    fn a_figure_mode_draws_nothing_without_panicking() {
+        for shape_mode in [ShapeMode::Generated, ShapeMode::Sprite] {
+            let tunnel = Tunnel {
+                shape_mode,
+                ..Default::default()
+            };
+            let layer = tunnel.render(
+                UnipolarFloat::ONE,
+                false,
+                RenderContext {
+                    clocks: &ClockBank::default().as_static(),
+                    palette: &ColorPalette::default(),
+                    positions: &PositionBank::default(),
+                    audio_envelope: UnipolarFloat::ZERO,
+                },
+            );
+            assert!(
+                layer.is_empty(),
+                "{shape_mode:?} has no segments to contribute"
+            );
+        }
+    }
+}
+
 pub mod fixture {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::layer::{Layer, LayerCollection, PathShape, RenderMode};
+    use crate::layer::{Layer, LayerCollection, RenderMode, ShapeMode};
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
     use crate::animation::{
@@ -801,7 +902,7 @@ pub mod fixture {
     /// Render a line-path tunnel in arc mode for snapshot testing.
     pub fn default_tunnel_line_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
-            path_shape: PathShape::Line,
+            shape_mode: ShapeMode::Line,
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
@@ -813,7 +914,7 @@ pub mod fixture {
     pub fn default_tunnel_line_dot_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
-            path_shape: PathShape::Line,
+            shape_mode: ShapeMode::Line,
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
@@ -825,7 +926,7 @@ pub mod fixture {
     pub fn saucer_line_few_thin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
-            path_shape: PathShape::Line,
+            shape_mode: ShapeMode::Line,
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
@@ -840,7 +941,7 @@ pub mod fixture {
     /// Render an arc tunnel on a line path with spin animation.
     pub fn arc_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
-            path_shape: PathShape::Line,
+            shape_mode: ShapeMode::Line,
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
@@ -861,7 +962,7 @@ pub mod fixture {
     pub fn saucer_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
-            path_shape: PathShape::Line,
+            shape_mode: ShapeMode::Line,
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
@@ -883,7 +984,7 @@ pub mod fixture {
     fn line_aspect_ratio_anim_tunnel(render_mode: RenderMode) -> Tunnel {
         let mut tunnel = Tunnel {
             render_mode,
-            path_shape: PathShape::Line,
+            shape_mode: ShapeMode::Line,
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
@@ -926,7 +1027,7 @@ pub mod fixture {
     pub fn saucer_line_marquee_sequence() -> Vec<LayerCollection> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
-            path_shape: PathShape::Line,
+            shape_mode: ShapeMode::Line,
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Segments(16), &mut NoopEmitter);
@@ -1013,6 +1114,16 @@ pub mod fixture {
         AnimationTarget::Spin,
     ];
 
+    /// Every shape mode whose segments a renderer draws, in the order channels
+    /// are handed them.
+    ///
+    /// Unlike `TARGETS` and `WAVEFORMS` the length is written out rather than
+    /// taken from the enum: a mode that fills an area rather than drawing
+    /// segments contributes no geometry, and a channel spending its slot on
+    /// one would leave a fixture whose whole point is that every channel draws
+    /// something different with a channel that draws nothing.
+    const SEGMENT_SHAPE_MODES: [ShapeMode; 2] = [ShapeMode::Ellipse, ShapeMode::Line];
+
     /// Every waveform an animation can be shaped by, in the order slots are
     /// handed them.
     ///
@@ -1033,7 +1144,7 @@ pub mod fixture {
     ///
     /// `index` of `of` separates one such tunnel from another, so that no two
     /// tunnels configured this way draw the same shapes and so that a mixerful
-    /// of them draws every render mode, every path shape, every animation
+    /// of them draws every render mode, every shape mode, every animation
     /// target and every waveform at least once.
     pub fn configure_max_variation(tunnel: &mut Tunnel, index: usize, of: usize, segments: u8) {
         let phase = index as f64 / of as f64;
@@ -1072,7 +1183,7 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
-            StateChange::PathShape(PathShape::VARIANTS[index % PathShape::VARIANTS.len()]),
+            StateChange::ShapeMode(SEGMENT_SHAPE_MODES[index % SEGMENT_SHAPE_MODES.len()]),
             &mut NoopEmitter,
         );
 

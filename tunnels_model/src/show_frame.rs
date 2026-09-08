@@ -398,7 +398,7 @@ mod tests {
                 e.render_mode, a.render_mode,
                 "{label}: layer {i} render mode"
             );
-            assert_eq!(e.path_shape, a.path_shape, "{label}: layer {i} path shape");
+            assert_eq!(e.shape_mode, a.shape_mode, "{label}: layer {i} shape mode");
             assert_eq!(
                 e.span.to_bits(),
                 a.span.to_bits(),
