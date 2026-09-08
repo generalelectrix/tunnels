@@ -153,7 +153,7 @@ pub struct MeshId {
 /// GB** if every one of them were ever drawn.
 ///
 /// Bounded is not small, and where the two libraries sit in that number is
-/// worth knowing: the baked share is 317 MB of it and the generated share is
+/// worth knowing: the baked share is 316 MB of it and the generated share is
 /// the other 1.9 GB, because a generated figure carries an order of magnitude
 /// more triangles than a piece of artwork does. Most of that is the two finest
 /// densities, which only a figure drawn larger than the size knob's default
