@@ -573,6 +573,7 @@ fn the_fixtures_draw_the_figures_they_were_taken_of() {
         (fixture::SNOWFLAKE, "db_snowflake"),
         (fixture::BULLSEYE, "db_bullseye"),
         (fixture::UMBRELLA, "db_umbrella"),
+        (fixture::PINWHEEL, "db_six_pointed_pinwheel_star"),
     ] {
         let sprite = tunnels_sprites::sprite(id.0)
             .unwrap_or_else(|| panic!("this build carries no figure {}", id.0));
@@ -603,6 +604,14 @@ fn sprite_color_phases() {
         let image = render_snapshot(&fixture::sprite_color_snapshot(phase), &test_config());
         compare_fill_to_fixture(&image, name);
     }
+}
+
+/// A figure whose six sectors are carved by one contour meeting itself at a
+/// single shared vertex, which is the case a moved coordinate destroys.
+#[test]
+fn sprite_shared_vertex() {
+    let image = render_snapshot(&fixture::sprite_shared_vertex_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "sprite_shared_vertex.png");
 }
 
 /// A colour animation over a figure that already carries a colour sweep. The

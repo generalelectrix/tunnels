@@ -247,6 +247,14 @@ fn path_of(figure: &tunnels_sprites::Figure) -> Path {
 }
 
 /// As `path_of`, with no segment longer than `max`.
+///
+/// A figure's own points are handed over unaltered, and only the points
+/// invented between them are computed. `prev + (p - prev) * t` at `t == 1` is
+/// an identity in algebra and not in floating point, so computing the endpoint
+/// too would move it by an ulp — and a point moved by an ulp is a point that no
+/// longer coincides with the others meeting it. Where several subpaths return
+/// to one shared vertex, that is the difference between a winding rule seeing
+/// one point and seeing a cluster of nearly-identical ones.
 fn path_of_capped(figure: &tunnels_sprites::Figure, max: f32) -> Path {
     let mut builder = Path::builder();
     for subpath in &figure.subpaths {
@@ -257,13 +265,14 @@ fn path_of_capped(figure: &tunnels_sprites::Figure, max: f32) -> Path {
         let mut prev = *first;
         for p in rest.iter().chain(std::iter::once(first)) {
             let steps = (prev.distance(*p) / max).ceil().max(1.0) as u32;
-            for i in 1..=steps {
+            for i in 1..steps {
                 let t = i as f32 / steps as f32;
                 builder.line_to(point(
                     prev.x() + (p.x() - prev.x()) * t,
                     prev.y() + (p.y() - prev.y()) * t,
                 ));
             }
+            builder.line_to(point(p.x(), p.y()));
             prev = *p;
         }
         builder.end(true);
