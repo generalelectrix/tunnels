@@ -101,6 +101,11 @@ fn gcd(a: u32, b: u32) -> u32 {
 
 impl ShapeFamily {
     /// Every family, in the order the enum declares them.
+    ///
+    /// A new family has to be added here as well as to the enum. The compiler
+    /// catches a family missing from `name`, `resolve` and `ShapeParams::family`,
+    /// which are exhaustive matches, but not one missing from this list;
+    /// `every_family_is_reachable` is what catches that.
     pub const ALL: [ShapeFamily; 25] = [
         Self::StarPolygon,
         Self::Rose,

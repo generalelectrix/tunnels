@@ -23,6 +23,17 @@ pub struct MaurerRose {
     /// Petal count of the rose being walked.
     pub petals: u32,
     /// Angle advanced per step, in degrees.
+    ///
+    /// A step sharing a factor with 360 closes the walk early and then repeats
+    /// it: the figure is laid down `360 / gcd(step, 360)` points at a time, as
+    /// many times over as the factor. An even number of repeats cancels the
+    /// figure entirely under an even-odd fill.
+    ///
+    /// One curated figure does this. `maurer_2_39` has `gcd(39, 360) = 3`, so
+    /// its walk closes after 120 points and 361 are emitted — the ribbon is laid
+    /// down three times, and survives only because three is odd. It is
+    /// reproduced as judged; the arity control is held to coprime steps so it
+    /// cannot reach the same ground by accident.
     pub step_degrees: u32,
     /// Width of the ribbon the walk is drawn as.
     pub width: f64,
