@@ -6,7 +6,7 @@ use graphics::Context;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::PI;
-use tunnels_model::layer::{Layer, PathShape, RenderMode, ShapeGeometry};
+use tunnels_model::layer::{Layer, RenderMode, ShapeGeometry, ShapeMode};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -72,7 +72,7 @@ impl<G: Graphics> Draw<G> for Layer {
             draw_shape(
                 shape,
                 self.render_mode,
-                self.path_shape,
+                self.shape_mode,
                 self.span,
                 c,
                 gl,
@@ -93,7 +93,7 @@ struct ShapeStyle {
 fn draw_shape<G: Graphics>(
     shape: &ShapeGeometry,
     render_mode: RenderMode,
-    path_shape: PathShape,
+    shape_mode: ShapeMode,
     span: f64,
     c: &Context,
     gl: &mut G,
@@ -130,9 +130,12 @@ fn draw_shape<G: Graphics>(
         spin_rad,
         transform,
     };
-    match path_shape {
-        PathShape::Ellipse => draw_ellipse(shape, render_mode, span, &style, gl, cfg),
-        PathShape::Line => draw_line(shape, render_mode, span, &style, gl, cfg),
+    match shape_mode {
+        ShapeMode::Ellipse => draw_ellipse(shape, render_mode, span, &style, gl, cfg),
+        ShapeMode::Line => draw_line(shape, render_mode, span, &style, gl, cfg),
+        // A figure is an area rather than a run of segments, and has no
+        // geometry yet for a layer to carry.
+        ShapeMode::Generated | ShapeMode::Sprite => (),
     }
 }
 

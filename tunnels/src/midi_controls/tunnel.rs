@@ -43,8 +43,10 @@ const RENDER_MODE_ARC: Mapping = note_on(0, 62);
 const RENDER_MODE_DOT: Mapping = note_on(0, 63);
 const RENDER_MODE_SAUCER: Mapping = note_on(0, 64);
 
-const PATH_SHAPE_ELLIPSE: Mapping = note_on(0, 58);
-const PATH_SHAPE_LINE: Mapping = note_on(0, 59);
+const SHAPE_MODE_ELLIPSE: Mapping = note_on(0, 58);
+const SHAPE_MODE_LINE: Mapping = note_on(0, 59);
+const SHAPE_MODE_GENERATED: Mapping = note_on(0, 60);
+const SHAPE_MODE_SPRITE: Mapping = note_on(0, 61);
 
 // TouchOSC XY position pad.
 const POSITION_X: Mapping = cc(8, 1);
@@ -63,10 +65,12 @@ lazy_static! {
         off: 0,
         on: 1,
     };
-    static ref PATH_SHAPE_BUTTONS: RadioButtons = RadioButtons {
+    static ref SHAPE_MODE_BUTTONS: RadioButtons = RadioButtons {
         mappings: vec!(
-            PATH_SHAPE_ELLIPSE,
-            PATH_SHAPE_LINE,
+            SHAPE_MODE_ELLIPSE,
+            SHAPE_MODE_LINE,
+            SHAPE_MODE_GENERATED,
+            SHAPE_MODE_SPRITE,
         ),
         off: 0,
         on: 1,
@@ -113,8 +117,10 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         RENDER_MODE_ARC => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Arc))),
         RENDER_MODE_DOT => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Dot))),
         RENDER_MODE_SAUCER => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Saucer))),
-        PATH_SHAPE_ELLIPSE => Tunnel(Set(PathShape(tunnels_model::layer::PathShape::Ellipse))),
-        PATH_SHAPE_LINE => Tunnel(Set(PathShape(tunnels_model::layer::PathShape::Line))),
+        SHAPE_MODE_ELLIPSE => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Ellipse))),
+        SHAPE_MODE_LINE => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Line))),
+        SHAPE_MODE_GENERATED => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Generated))),
+        SHAPE_MODE_SPRITE => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Sprite))),
         m if m.event_type == crate::midi::EventType::NoteOn
             && m.channel == 8
             && m.control >= (PALETTE_SELECT_CONTROL_OFFSET - 1) as u8
@@ -179,15 +185,26 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 send,
             );
         }
-        PathShape(v) => {
-            use tunnels_model::layer::PathShape::*;
-            PATH_SHAPE_BUTTONS.select(
+        ShapeMode(v) => {
+            use tunnels_model::layer::ShapeMode::*;
+            SHAPE_MODE_BUTTONS.select(
                 match v {
-                    Ellipse => PATH_SHAPE_ELLIPSE,
-                    Line => PATH_SHAPE_LINE,
+                    Ellipse => SHAPE_MODE_ELLIPSE,
+                    Line => SHAPE_MODE_LINE,
+                    Generated => SHAPE_MODE_GENERATED,
+                    Sprite => SHAPE_MODE_SPRITE,
                 },
-                send,
+                &mut send,
             );
+            if !v.draws_segments() {
+                // The marquee and the render mode act on segments, and this
+                // mode draws none. A knob left where the last mode put it is
+                // reporting a setting that nothing reads.
+                send(event(MARQUEE_SPEED, bipolar_to_midi(BipolarFloat::ZERO)));
+                RENDER_MODE_BUTTONS.all_off(&mut send);
+            }
         }
+        // No control writes to a figure's own state yet.
+        ColorPhase(_) | DrawMode(_) | Sprite(_) => (),
     };
 }
