@@ -33,6 +33,29 @@ pub struct ClientConfig {
     pub artnet_node: bool,
     /// Log at debug level?
     pub log_level_debug: bool,
+    /// Let a figure larger than the startup mesh table anticipated be given a
+    /// mesh matched to its size, built the first time it is drawn.
+    ///
+    /// Off, a figure that wants more density than the table holds is drawn
+    /// with the finest mesh the table does hold, and nothing is ever built
+    /// during a show. On, the two finer densities become available and are
+    /// built per figure on first use — a pause of about 7 ms typically and 17
+    /// at worst for the first, 28 and 64 for the second.
+    ///
+    /// It defaults off because the question it answers is whether the extra
+    /// density is visible at all, and that is a judgement to make by eye
+    /// rather than from the triangle count.
+    ///
+    /// Where the knobs cross those thresholds, at 1920x1200 — `critical_size`
+    /// is the smaller dimension, so 1200:
+    ///
+    /// - the default size of 0.5 sits inside the table, as it does at 1080;
+    /// - **size 0.528** is where a figure first wants more, with aspect ratio
+    ///   at its own default;
+    /// - the second threshold needs an extent of 1.056, which the size knob
+    ///   cannot reach alone since it stops at 1.0 — it takes aspect ratio
+    ///   above 0.528 as well.
+    pub refine_large_figures: bool,
     /// How many pixels a filled figure's mesh triangles should span on screen.
     ///
     /// Triangle count goes as the inverse square of this, so it is the
@@ -79,6 +102,7 @@ impl ClientConfig {
             transformation,
             artnet_node,
             log_level_debug,
+            refine_large_figures: false,
             target_px: DEFAULT_TARGET_PX,
         }
     }
@@ -131,6 +155,9 @@ impl ClientConfig {
         if let Some(target_px) = cfg["target_px"].as_f64() {
             config.target_px = target_px;
         }
+        // Absent means off, which is what a config written before figures
+        // existed should mean.
+        config.refine_large_figures = cfg["refine_large_figures"].as_bool().unwrap_or(false);
         Ok(config)
     }
 }

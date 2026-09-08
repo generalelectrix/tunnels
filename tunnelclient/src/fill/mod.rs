@@ -294,7 +294,15 @@ where
             // Scaled to nothing. Nothing to draw, and no density to draw it at.
             return;
         }
-        let level = Level::for_screen(placed.px_per_unit, cfg.target_px);
+        let level = Level::for_screen(
+            placed.px_per_unit,
+            cfg.target_px,
+            if cfg.refine_large_figures {
+                Level::FINEST
+            } else {
+                Level::IN_TABLE
+            },
+        );
 
         // A figure with one colour everywhere needs no ramp and no
         // interpolation — but a colour animation moves that one colour every

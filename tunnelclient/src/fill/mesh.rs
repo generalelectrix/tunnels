@@ -82,6 +82,12 @@ impl RefinedMesh {
 pub struct Level(i8);
 
 impl Level {
+    /// The finest density the startup table holds.
+    pub const IN_TABLE: Self = Self(EAGER_LEVEL);
+
+    /// The finest density there is.
+    pub const FINEST: Self = Self(FINEST_LEVEL);
+
     /// The bucket whose triangles land nearest `target_px` on screen.
     ///
     /// `px_per_unit` is how many pixels one figure-space unit covers, which is
@@ -93,12 +99,14 @@ impl Level {
     /// size. Density follows the knob and not the animation. That is inherited
     /// from the prototype this was ported from rather than introduced here,
     /// and it is worth knowing before reading it as a bug.
-    pub fn for_screen(px_per_unit: f64, target_px: f64) -> Self {
+    /// `finest` is the densest mesh the caller is willing to have built; a
+    /// figure large enough to want more than that is drawn with it instead.
+    pub fn for_screen(px_per_unit: f64, target_px: f64, finest: Self) -> Self {
         let raw = target_px / px_per_unit.max(1.0);
         let exp = raw.log2().round();
         // `as i8` on a NaN or an enormous value saturates rather than wrapping,
         // and the clamp then puts it on a real level.
-        Level((exp as i8).clamp(FINEST_LEVEL, COARSEST_LEVEL))
+        Level((exp as i8).clamp(finest.0, COARSEST_LEVEL))
     }
 
     /// Target edge length in figure space.
@@ -223,18 +231,32 @@ mod test {
         // Densities are powers of two, so scales a factor of two apart land on
         // adjacent levels and scales within a factor of root two land on one.
         let target = 14.0;
-        let coarse = Level::for_screen(100.0, target);
-        assert_eq!(coarse, Level::for_screen(120.0, target), "same bucket");
+        let finest = Level::FINEST;
+        let coarse = Level::for_screen(100.0, target, finest);
+        assert_eq!(
+            coarse,
+            Level::for_screen(120.0, target, finest),
+            "same bucket"
+        );
         assert!(
-            Level::for_screen(400.0, target) < coarse,
+            Level::for_screen(400.0, target, finest) < coarse,
             "a bigger figure gets a finer mesh"
         );
         // Both ends clamp rather than running away.
         assert_eq!(
-            Level::for_screen(1e9, target),
-            Level::for_screen(1e12, target)
+            Level::for_screen(1e9, target, finest),
+            Level::for_screen(1e12, target, finest)
         );
-        assert_eq!(Level::for_screen(0.0, target), Level(COARSEST_LEVEL));
+        assert_eq!(
+            Level::for_screen(0.0, target, finest),
+            Level(COARSEST_LEVEL)
+        );
+        // And a caller that will not have finer meshes built gets the finest
+        // it is willing to hold, however large the figure is.
+        assert_eq!(
+            Level::for_screen(1e9, target, Level::IN_TABLE),
+            Level::IN_TABLE
+        );
     }
 
     #[test]
