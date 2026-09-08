@@ -1,0 +1,23 @@
+# The Python generator's output per preset: a digest of the path data, or
+# the circles it wrote as arcs. Rebuild with `cargo test regenerate_manifest
+# -- --ignored`.
+star_7_3	poly	451190ee1e0e2eb9e65c6e0ed8cd572d
+star_8_3	poly	4deee5da7daf407183e95f5dac3a9fd0
+star_9_4	poly	8bf7ef7fd959df027b2252dfbc64642f
+star_10_3	poly	538c873ee453cc953a2e483788a95f77
+star_11_3	poly	21ab29ed6ccfc94fbc088e0ceeeee57a
+star_11_4	poly	372be42171b3f2114bf57857063b2fd0
+star_11_5	poly	b4da76cb78ab370854cfffc44d0d8694
+star_12_5	poly	237773225a6563b9306c4f6d41cc3640
+star_13_3	poly	c1ad877aaeaab5747ebca34710b07337
+star_13_4	poly	ab48ff4d436f217211480c38a7ef966d
+star_13_5	poly	e1a82281a60d05ba7651a3e6ff567f05
+star_13_6	poly	28e075171a9c3b2fe677ce6a4099a357
+star_14_3	poly	604f4b6bc1c4785495962af2a007cc53
+star_14_5	poly	c3403bbfa867004fd231693e21270e9f
+star_15_4	poly	4d088d1234161b5d0d3e0b62bdbb152a
+star_16_5	poly	2ad4b9cd0cff284abaad172b47b314d8
+star_16_7	poly	b96c1316ef1cca237c928bd04d15b25c
+star_17_5	poly	b374f6c4d9748d6b4037d31983567436
+star_17_7	poly	63d2bd58576b6071a5ca5ccd7f98f8fe
+star_19_8	poly	9c5aef3487172a1100dd3885000db196
