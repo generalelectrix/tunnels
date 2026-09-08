@@ -125,6 +125,7 @@ pub mod fixture {
     use crate::beam::Beam;
     use crate::clock::StaticClock;
     use crate::clock_bank::{ClockIdx, MAX_CLOCKS};
+    use crate::layer::FigureLibrary;
     use crate::look::Look;
     use crate::mixer::{ChannelIdx, VideoChannel};
     use crate::palette::{
@@ -133,7 +134,7 @@ pub mod fixture {
     };
     use crate::position_bank::{Position, PositionIdx};
     use crate::tunnel::Tunnel;
-    use crate::tunnel::fixture::{bind_to_frame_state, configure_max_variation};
+    use crate::tunnel::fixture::{bind_to_frame_state, configure_figure, configure_max_variation};
     use std::time::Duration;
 
     use super::*;
@@ -171,6 +172,10 @@ pub mod fixture {
             NamedFrame {
                 name: "nested looks",
                 frame: nested_look_frame(),
+            },
+            NamedFrame {
+                name: "figures",
+                frame: figure_frame(),
             },
         ]
     }
@@ -215,6 +220,40 @@ pub mod fixture {
             }
             if let Beam::Tunnel(tunnel) = &mut channel.beam {
                 stress_tunnel(tunnel, i, n_channels);
+            }
+        }
+        mixer.update_state(ADVANCE, audio_envelope());
+
+        ShowFrame {
+            mixer,
+            clocks: clocks(),
+            palette: palette(),
+            positions: positions(),
+            audio_envelope: audio_envelope(),
+        }
+    }
+
+    /// A frame of figures rather than runs of marks, from both libraries.
+    ///
+    /// A figure travels as its name and nothing else, and the two libraries
+    /// name one differently: an index into a table that the build fixes, or a
+    /// family and the two numbers that place a figure inside it. A frame
+    /// carrying neither kind leaves both namings unexercised, and a name that
+    /// arrived as another name would draw another figure.
+    pub fn figure_frame() -> ShowFrame {
+        let mut mixer = Mixer::new(1);
+        for (i, channel) in mixer.channels().enumerate() {
+            channel.level = UnipolarFloat::ONE;
+            channel.mask = i == 1;
+            channel.video_outs.clear();
+            channel.video_outs.insert(VideoChannel(i));
+            if let Beam::Tunnel(tunnel) = &mut channel.beam {
+                let library = if i.is_multiple_of(2) {
+                    FigureLibrary::Baked
+                } else {
+                    FigureLibrary::Generated
+                };
+                configure_figure(tunnel, library, i);
             }
         }
         mixer.update_state(ADVANCE, audio_envelope());

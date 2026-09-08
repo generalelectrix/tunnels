@@ -663,6 +663,111 @@ fn sprite_outline() {
     compare_fill_to_fixture(&image, "sprite_outline.png");
 }
 
+/// The golden images below draw these three generated figures. A figure is a
+/// family and two numbers, and what those numbers reach is the arity model's
+/// business — so naming here what each of them selects is what turns a change
+/// to that model into a failing test rather than a golden image quietly
+/// becoming a picture of something else.
+///
+/// What is named is the selection: the count a family is built around and the
+/// choice its secondary makes. The widths and angles that follow from those
+/// are the arity model's own, and a change to one shows up as a golden that
+/// has moved rather than as a figure that is no longer the same figure.
+#[test]
+fn the_generated_fixtures_select_the_figures_they_were_taken_of() {
+    use tunnels_shapes::ShapeParams;
+    use tunnels_shapes::families::MoireKind;
+    use tunnels_shapes::geom::{CENTER, EXTENT};
+
+    let figure = |id: tunnels_model::layer::GeneratedId| id.family.resolve(id.arity, id.secondary);
+
+    match figure(fixture::generated_star()) {
+        ShapeParams::StarPolygon(p) => assert_eq!(
+            (p.points, p.step),
+            (7, 3),
+            "the star fixture selects another star"
+        ),
+        other => panic!("the star fixture is no longer a star polygon: {other:?}"),
+    }
+
+    match figure(fixture::generated_moire()) {
+        ShapeParams::MoireBars(p) => assert_eq!(
+            (p.kind, p.bars),
+            (MoireKind::Grid, 8),
+            "the moire fixture selects another pair of bar sets"
+        ),
+        other => panic!("the moire fixture is no longer a pair of bar sets: {other:?}"),
+    }
+
+    let lattice = fixture::generated_lattice();
+    match figure(lattice) {
+        ShapeParams::StarLattice(p) => assert_eq!(
+            (p.tiles, p.reach),
+            (1, 0.85),
+            "the lattice fixture selects another lattice"
+        ),
+        other => panic!("the lattice fixture is no longer a star lattice: {other:?}"),
+    }
+
+    // The lattice is the figure the fixed map is read against, so how far it
+    // runs outside its own frame is part of what its golden shows.
+    let reach = figure(lattice)
+        .generate()
+        .contours
+        .iter()
+        .flat_map(|c| c.points())
+        .fold(0.0f64, |acc, p| {
+            acc.max((p.x - CENTER).abs()).max((p.y - CENTER).abs())
+        });
+    assert!(
+        reach > EXTENT,
+        "the lattice reaches {reach}, which no longer runs outside its own frame"
+    );
+}
+
+/// A generated figure in one colour, which is the path that skips the ramp
+/// entirely and draws the tessellator's own triangles.
+#[test]
+fn generated_flat() {
+    let image = render_snapshot(&fixture::generated_flat_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "generated_flat.png");
+}
+
+/// Two sets of parallel bars at a small angle to each other. Every crossing is
+/// a lens-shaped hole, which is what an even-odd fill makes of two contours
+/// overlapping — under a non-zero rule the crossings would fill solid and the
+/// beat the figure is made of would be gone.
+#[test]
+fn generated_even_odd() {
+    let image = render_snapshot(&fixture::generated_even_odd_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "generated_even_odd.png");
+}
+
+/// A figure that runs well outside the frame it was built in, drawn at one
+/// fixed scale and cut by the viewport rather than by anything in the
+/// geometry. Fitted to its own reach instead, it would be a small object in
+/// the middle of the frame.
+#[test]
+fn generated_field() {
+    let image = render_snapshot(&fixture::generated_field_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "generated_field.png");
+}
+
+/// A colour sweep across a generated figure, which is the meshed and ramped
+/// path rather than the flat one.
+#[test]
+fn generated_color() {
+    let image = render_snapshot(&fixture::generated_color_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "generated_color.png");
+}
+
+/// A generated figure's contours stroked instead of its interior filled.
+#[test]
+fn generated_outline() {
+    let image = render_snapshot(&fixture::generated_outline_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "generated_outline.png");
+}
+
 /// The rasteriser's per-vertex colour paths, which no golden image reaches
 /// yet: a figure's colour is resolved against the ramp, and a second colour
 /// axis — the thing per-vertex tint carries — has no control on it.

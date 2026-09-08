@@ -1453,6 +1453,30 @@ pub mod fixture {
         vec![Arc::new(layer)]
     }
 
+    /// Configure a tunnel to draw a figure of one library or the other.
+    ///
+    /// Spread by `index`, so a mixer of these carries a range of figures
+    /// rather than the same one eight times: a baked figure walks the library
+    /// by id, and a generated one walks the families, taking a different arity
+    /// and a different secondary in each.
+    pub fn configure_figure(tunnel: &mut Tunnel, library: FigureLibrary, index: usize) {
+        match library {
+            FigureLibrary::Baked => {
+                tunnel.shape_mode = ShapeMode::Sprite;
+                tunnel.sprite = SpriteId((index % tunnels_sprites::count().max(1)) as u16);
+            }
+            FigureLibrary::Generated => {
+                tunnel.shape_mode = ShapeMode::Generated;
+                let family = ShapeFamily::ALL[index % ShapeFamily::ALL.len()];
+                tunnel.generated = GeneratedId {
+                    family,
+                    arity: ArityRun::of(family).member(index as u16),
+                    secondary: Secondary::new(index as f64 / 8.0),
+                };
+            }
+        }
+    }
+
     /// Configure a tunnel for stress testing.
     ///
     /// `marquee_speed` is parameterized because the stress test varies it
@@ -2215,6 +2239,95 @@ pub mod fixture {
     /// A figure's contours stroked instead of its interior filled.
     pub fn sprite_outline_snapshot() -> LayerCollection {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure of the generated library, by the family and the two numbers
+    /// that place it inside that family.
+    fn generated_id(family: ShapeFamily, arity: u32, secondary: f64) -> GeneratedId {
+        GeneratedId {
+            family,
+            arity: Arity::new(arity),
+            secondary: Secondary::new(secondary),
+        }
+    }
+
+    /// A seven-pointed star, which is the plainest figure the generated
+    /// library makes.
+    pub fn generated_star() -> GeneratedId {
+        generated_id(ShapeFamily::StarPolygon, 7, 0.0)
+    }
+
+    /// Two sets of parallel bars cut to a disc, at a small angle to each other.
+    ///
+    /// Where a bar of one set crosses a bar of the other the two cancel, and
+    /// the lens-shaped holes that leaves are the beat the figure is made of.
+    /// They are holes only under an even-odd fill; under a non-zero one the
+    /// crossings fill solid and the beat is gone. So this is the figure that
+    /// says the fill rule survived the trip out of the frame the family was
+    /// built in.
+    pub fn generated_moire() -> GeneratedId {
+        generated_id(ShapeFamily::MoireGrid, 8, 0.0)
+    }
+
+    /// A star lattice at its widest reach.
+    ///
+    /// The family that runs furthest outside the frame it is built in, and so
+    /// the one that says a generated figure is mapped at a fixed scale rather
+    /// than fitted to what it happens to reach. Fitted, it would be a small
+    /// object in the middle of the frame instead of a field the frame cuts.
+    pub fn generated_lattice() -> GeneratedId {
+        generated_id(ShapeFamily::StarLattice, 1, 1.0)
+    }
+
+    /// A tunnel that draws a generated figure.
+    ///
+    /// Saturated, so a colour knob shows up at all: the default is white.
+    fn generated_tunnel(generated: GeneratedId) -> Tunnel {
+        Tunnel {
+            shape_mode: ShapeMode::Generated,
+            generated,
+            col_sat: UnipolarFloat::ONE,
+            col_center: UnipolarFloat::new(0.55),
+            ..Default::default()
+        }
+    }
+
+    /// A generated figure in one colour, which is the path that skips the ramp
+    /// entirely and draws the tessellator's own triangles.
+    pub fn generated_flat_snapshot() -> LayerCollection {
+        snapshot(render_default(&generated_tunnel(generated_star())))
+    }
+
+    /// A figure whose contours cancel where they cross.
+    pub fn generated_even_odd_snapshot() -> LayerCollection {
+        snapshot(render_default(&generated_tunnel(generated_moire())))
+    }
+
+    /// A figure that reaches well outside the frame it was built in, which
+    /// the viewport ends rather than any clip in the geometry.
+    pub fn generated_field_snapshot() -> LayerCollection {
+        snapshot(render_default(&generated_tunnel(generated_lattice())))
+    }
+
+    /// A generated figure with a colour sweep along its angle, which is the
+    /// meshed and ramped path a baked figure takes.
+    pub fn generated_color_snapshot() -> LayerCollection {
+        let mut tunnel = generated_tunnel(generated_star());
+        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A generated figure's contours stroked instead of its interior filled.
+    pub fn generated_outline_snapshot() -> LayerCollection {
+        let mut tunnel = generated_tunnel(generated_star());
         tunnel.draw_mode = DrawMode::Outline;
         tunnel.thickness = Smoother::new(
             UnipolarFloat::new(0.05),
