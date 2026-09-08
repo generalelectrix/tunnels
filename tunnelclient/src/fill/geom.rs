@@ -92,17 +92,9 @@ impl TriangleList {
             .map(|&[a, b, c]| Triangle::new(a, b, c))
     }
 
-    /// Runs of whole triangles, each within `max_vertices`.
-    ///
-    /// The backend takes a bounded number of vertices per call, and a run that
-    /// ended mid-triangle would draw a torn one. Rounding the cap down to a
-    /// multiple of three is this type's problem rather than every caller's.
-    pub fn batches(&self, max_vertices: usize) -> impl Iterator<Item = &[Point]> {
-        self.0.chunks((max_vertices / 3 * 3).max(3))
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    /// Every vertex in order, three to a triangle.
+    pub fn points(&self) -> &[Point] {
+        &self.0
     }
 }
 
@@ -158,23 +150,17 @@ mod test {
     }
 
     #[test]
-    fn a_list_batches_without_tearing_a_triangle() {
+    fn a_list_reads_back_as_the_triangles_that_went_in() {
         let mut list = TriangleList::default();
         for i in 0..10 {
             let p = Point::new(i as f32, 0.0);
             list.push(Triangle::new(p, p, p));
         }
         assert_eq!(list.triangles().count(), 10);
-
-        // A cap that is not a multiple of three is rounded down, so no batch
-        // ever ends part way through a triangle.
-        let batches: Vec<usize> = list.batches(8).map(<[Point]>::len).collect();
-        assert_eq!(batches, vec![6, 6, 6, 6, 6], "30 points in runs of six");
-        assert!(
-            batches.iter().all(|n| n % 3 == 0),
-            "a batch ended mid-triangle"
-        );
-        // A cap below one triangle still yields whole triangles.
-        assert!(list.batches(1).all(|b| b.len() == 3));
+        // The flat form and the grouped one are the same vertices in the same
+        // order, which is what lets a draw take either.
+        assert_eq!(list.points().len(), 30);
+        let flattened: Vec<Point> = list.triangles().flat_map(|t| t.points()).collect();
+        assert_eq!(flattened, list.points());
     }
 }

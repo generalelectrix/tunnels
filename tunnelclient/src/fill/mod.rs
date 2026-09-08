@@ -15,8 +15,10 @@ mod geometry;
 mod mesh;
 mod ramp;
 
-use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_textured, draw_tris};
-use self::geom::TriangleList;
+use self::draw::{
+    PhaseField, VertexBuffers, VertexWork, draw_flat, draw_list_flat, draw_list_textured,
+    draw_points, draw_textured,
+};
 use self::geometry::{GeometryCache, Scale, Thickness};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampKey;
@@ -277,11 +279,16 @@ where
         if flat && !warping {
             let color = flat_color(fill);
             if fill.draw_mode.draws_fill() {
-                draw_tris(geometry.fill(fill.sprite, sprite), color, placed.m, gl);
+                draw_points(
+                    geometry.fill(fill.sprite, sprite).points(),
+                    color,
+                    placed.m,
+                    gl,
+                );
             }
             if let Some(thickness) = stroke {
-                draw_tris(
-                    geometry.stroke(fill.sprite, sprite, thickness),
+                draw_points(
+                    geometry.stroke(fill.sprite, sprite, thickness).points(),
                     color,
                     placed.m,
                     gl,
@@ -305,46 +312,49 @@ where
             phase: fill.color.phase,
             cycles: fill.color.cycles as f32,
         };
-        let mut piece = |source: &TriangleList, stroke: Option<u32>, gl: &mut G| {
+        let work = |field| VertexWork {
+            field,
+            base_spin: fill.spin as f32,
+            warps: &fill.warps,
+        };
+
+        if fill.draw_mode.draws_fill() {
             let mesh = meshes.get(
                 MeshId {
                     sprite: fill.sprite,
-                    stroke,
                     level,
                 },
-                source,
+                geometry.fill(fill.sprite, sprite),
             );
             // Phase comes from the undeformed position, so a colour pattern
             // stays glued to the figure while a warp moves it rather than
             // sliding across it. One walk of the mesh produces displaced
             // positions and ramp coordinates together, because both want the
             // same polar coordinates for a point.
-            draw::vertex_pass(
-                verts,
-                mesh,
-                VertexWork {
-                    field,
-                    base_spin: fill.spin as f32,
-                    warps: &fill.warps,
-                },
-            );
+            draw::vertex_pass(verts, mesh, work(field));
             match texture {
                 Some(texture) => {
                     draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
                 }
                 None => draw_flat(mesh, verts, flat_color(fill), placed.m, gl),
             }
-        };
-
-        if fill.draw_mode.draws_fill() {
-            piece(geometry.fill(fill.sprite, sprite), None, gl);
         }
+
         if let Some(thickness) = stroke {
-            piece(
-                geometry.stroke(fill.sprite, sprite, thickness),
-                Some(thickness.key()),
-                gl,
-            );
+            // An outline is never meshed. Its colour comes from the contour, so
+            // nothing varies across a ribbon that a finer mesh could resolve,
+            // and the tessellator's own triangles are drawn as they come.
+            let outline = geometry.stroke(fill.sprite, sprite, thickness);
+            if outline.is_empty() {
+                return;
+            }
+            draw::stroke_vertex_pass(verts, outline, work(field));
+            match texture {
+                Some(texture) => {
+                    draw_list_textured(verts, field.wrap_period(), texture, placed.m, gl);
+                }
+                None => draw_list_flat(verts, flat_color(fill), placed.m, gl),
+            }
         }
     }
 }

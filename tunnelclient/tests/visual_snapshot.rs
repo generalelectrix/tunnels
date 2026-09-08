@@ -572,6 +572,7 @@ fn the_fixtures_draw_the_figures_they_were_taken_of() {
     for (id, name) in [
         (fixture::SNOWFLAKE, "db_snowflake"),
         (fixture::BULLSEYE, "db_bullseye"),
+        (fixture::UMBRELLA, "db_umbrella"),
     ] {
         let sprite = tunnels_sprites::sprite(id.0)
             .unwrap_or_else(|| panic!("this build carries no figure {}", id.0));
@@ -625,6 +626,15 @@ fn sprite_radial_animation() {
 fn sprite_masked_stack() {
     let image = render_snapshot(&fixture::sprite_masked_stack_snapshot(), &test_config());
     compare_fill_to_fixture(&image, "sprite_masked_stack.png");
+}
+
+/// A stroked outline takes its colour from the contour it follows, not from
+/// where each offset vertex landed, so the colour is constant across the
+/// ribbon's width and a long straight stroke does not band along its length.
+#[test]
+fn sprite_outline_color() {
+    let image = render_snapshot(&fixture::sprite_outline_color_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "sprite_outline_color.png");
 }
 
 /// Outline mode strokes the contours the build ships instead of filling them,

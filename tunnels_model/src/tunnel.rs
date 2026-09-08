@@ -1477,6 +1477,9 @@ pub mod fixture {
     /// quietly become an image of something else.
     pub const SNOWFLAKE: SpriteId = SpriteId(44);
     pub const BULLSEYE: SpriteId = SpriteId(9);
+    /// A figure whose handle is one long straight contour passing close to the
+    /// origin, which is where a stroke's colour is hardest to get right.
+    pub const UMBRELLA: SpriteId = SpriteId(55);
 
     /// A tunnel that draws a figure instead of a run of segments.
     ///
@@ -1560,6 +1563,27 @@ pub mod fixture {
             Arc::new(render_default(&lit)),
             Arc::new(render_masked(&mask)),
         ]
+    }
+
+    /// A stroked outline carrying a colour sweep.
+    ///
+    /// The umbrella's handle is a single straight contour running close to the
+    /// origin, where angular phase moves fastest — so if a stroke's colour
+    /// were taken from where its vertices landed rather than from the contour,
+    /// this is the figure it would show on.
+    pub fn sprite_outline_color_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(UMBRELLA);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.col_width = UnipolarFloat::ONE;
+        // The most cycles the knob can ask for, which is where a stroke
+        // sampled too coarsely along its length would band first.
+        tunnel.col_spread = UnipolarFloat::ONE;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        snapshot(render_default(&tunnel))
     }
 
     /// A figure's contours stroked instead of its interior filled.

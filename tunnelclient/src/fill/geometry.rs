@@ -22,6 +22,23 @@ use tunnels_sprites::{FillRule, Point, Sprite};
 /// what is already straight.
 const TOLERANCE: f32 = 0.002;
 
+/// Longest contour segment an outline is stroked from, in shape units.
+///
+/// A stroke's colour comes from the contour, and the ramp coordinate is
+/// interpolated between one vertex and the next — so how finely the *contour*
+/// is sampled is what decides whether the colour along a stroke is smooth.
+/// Flattening only samples curves; a straight edge is one segment however long
+/// it is, and a figure crossed by a single straight line would otherwise take
+/// one colour along its whole length.
+///
+/// Splitting the contour is where that is fixed, rather than by meshing the
+/// ribbon: the ribbon's colour does not vary across its width, so refining it
+/// adds triangles that all resolve to the same answer. Measured at the
+/// spread knob's maximum, on the two figures with the longest straight edges,
+/// 0.05 already renders indistinguishably from a refined mesh; this is half
+/// of that.
+const STROKE_SEGMENT: f32 = 0.025;
+
 /// Identifies one tessellated outline.
 ///
 /// Keyed on the thickness the outline was actually stroked at, so the key
@@ -40,7 +57,7 @@ struct StrokeId {
 #[derive(Default)]
 pub struct GeometryCache {
     fills: HashMap<SpriteId, TriangleList>,
-    strokes: HashMap<StrokeId, TriangleList>,
+    strokes: HashMap<StrokeId, StrokeMesh>,
 }
 
 impl GeometryCache {
@@ -71,8 +88,8 @@ impl GeometryCache {
         })
     }
 
-    /// The figure's outline stroked at `width`, tessellated on first use.
-    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &TriangleList {
+    /// The figure's outline stroked at `thickness`, tessellated on first use.
+    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &StrokeMesh {
         self.strokes
             .entry(StrokeId {
                 sprite: id,
@@ -83,21 +100,89 @@ impl GeometryCache {
                     .with_line_width(thickness.shape_units.max(1e-4))
                     .with_line_join(LineJoin::Round)
                     .with_line_cap(LineCap::Round);
-                let mut out = TriangleList::default();
+                let mut out = StrokeMesh::default();
                 for figure in &sprite.figures {
-                    let mut buffers: VertexBuffers<Point, u32> = VertexBuffers::new();
-                    let mut builder = BuffersBuilder::new(&mut buffers, |v: StrokeVertex| {
-                        Point::from_array(v.position().to_array())
-                    });
+                    let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
+                    let mut builder =
+                        BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
+                            position: Point::from_array(v.position().to_array()),
+                            // Where on the contour this vertex was offset
+                            // from, which is what colours it.
+                            on_path: Point::from_array(v.position_on_path().to_array()),
+                        });
                     if StrokeTessellator::new()
-                        .tessellate_path(&path_of(figure), &options, &mut builder)
+                        .tessellate_path(
+                            &path_of_capped(figure, STROKE_SEGMENT),
+                            &options,
+                            &mut builder,
+                        )
                         .is_ok()
                     {
-                        expand(&buffers, &mut out);
+                        out.extend(&buffers);
                     }
                 }
                 out
             })
+    }
+}
+
+/// A stroked vertex: where it is, and where on the contour it came from.
+#[derive(Copy, Clone)]
+struct StrokeVertexPair {
+    position: Point,
+    on_path: Point,
+}
+
+/// A stroked outline, as a flat triangle list carrying its contour points.
+///
+/// A ribbon takes its colour from where it sits **on the contour**, not from
+/// where each offset vertex happens to land. That is what a stroke is: one
+/// mark at one place on the figure, so its colour is constant across its
+/// width by definition.
+///
+/// It is also why a stroke needs no refinement. Refinement exists so that
+/// phase varies little enough across a triangle for the ramp lookup to
+/// interpolate it; across a ribbon's width phase does not vary at all, so
+/// there is nothing for a finer mesh to resolve.
+#[derive(Default)]
+pub struct StrokeMesh {
+    positions: Vec<Point>,
+    on_path: Vec<Point>,
+}
+
+impl StrokeMesh {
+    /// Take the tessellator's indexed output as whole triangles.
+    ///
+    /// A triangle naming a vertex that is not there is dropped entire; lyon
+    /// emits none, but dropping the odd vertex instead would shift every later
+    /// one and scramble the rest of the outline.
+    fn extend(&mut self, buffers: &VertexBuffers<StrokeVertexPair, u32>) {
+        for tri in buffers.indices.as_chunks::<3>().0 {
+            let corners = tri.map(|i| buffers.vertices.get(i as usize).copied());
+            if let [Some(a), Some(b), Some(c)] = corners {
+                for v in [a, b, c] {
+                    self.positions.push(v.position);
+                    self.on_path.push(v.on_path);
+                }
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
+    /// Every vertex in order, three to a triangle.
+    pub fn points(&self) -> &[Point] {
+        &self.positions
+    }
+
+    /// Each vertex, paired with the contour point that colours it.
+    pub fn vertices(&self) -> impl Iterator<Item = (Point, Point)> + '_ {
+        self.positions
+            .iter()
+            .copied()
+            .zip(self.on_path.iter().copied())
     }
 }
 
@@ -158,14 +243,28 @@ impl Thickness {
 
 /// One `<path>` element's subpaths as a lyon path, every loop closed.
 fn path_of(figure: &tunnels_sprites::Figure) -> Path {
+    path_of_capped(figure, f32::MAX)
+}
+
+/// As `path_of`, with no segment longer than `max`.
+fn path_of_capped(figure: &tunnels_sprites::Figure, max: f32) -> Path {
     let mut builder = Path::builder();
     for subpath in &figure.subpaths {
         let Some((first, rest)) = subpath.points().split_first() else {
             continue;
         };
         builder.begin(point(first.x(), first.y()));
-        for p in rest {
-            builder.line_to(point(p.x(), p.y()));
+        let mut prev = *first;
+        for p in rest.iter().chain(std::iter::once(first)) {
+            let steps = (prev.distance(*p) / max).ceil().max(1.0) as u32;
+            for i in 1..=steps {
+                let t = i as f32 / steps as f32;
+                builder.line_to(point(
+                    prev.x() + (p.x() - prev.x()) * t,
+                    prev.y() + (p.y() - prev.y()) * t,
+                ));
+            }
+            prev = *p;
         }
         builder.end(true);
     }

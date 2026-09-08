@@ -101,23 +101,24 @@ impl Level {
 }
 
 /// Identifies one cached mesh.
+///
+/// Only a figure's interior is meshed. An outline takes its colour from the
+/// contour rather than from where its vertices land, so nothing varies across
+/// a ribbon for a mesh to carry — which is also what keeps the animated term
+/// out of this key.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct MeshId {
     pub sprite: SpriteId,
-    /// `None` for the figure's fill, or the stroke's width bucket for its
-    /// outline.
-    pub stroke: Option<u32>,
     pub level: Level,
 }
 
 /// Meshes built so far, keyed by figure, what is being meshed, and density.
 ///
-/// Never evicts. A show touches a handful of figures at a handful of sizes, so
-/// the set converges quickly and nothing rebuilds mid-show; building every
+/// Never evicts, and nothing animated reaches the key: a figure is drawn at
+/// one of six densities and a show touches a handful of figures, so the set
+/// converges within seconds and nothing rebuilds mid-show. Building every
 /// level of every figure up front would instead cost millions of triangles for
-/// meshes that are never drawn. An animated thickness weakens that premise —
-/// it walks the stroke buckets — which is what [`Level`]-scaled bucketing in
-/// the stroke key exists to bound.
+/// meshes that are never drawn.
 #[derive(Default)]
 pub struct MeshLibrary {
     built: HashMap<MeshId, RefinedMesh>,

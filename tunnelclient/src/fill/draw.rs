@@ -4,7 +4,7 @@
 //! software rasteriser the golden images are taken through.
 
 use super::fastmath;
-use super::geom::TriangleList;
+use super::geometry::StrokeMesh;
 use super::mesh::RefinedMesh;
 use graphics::Graphics;
 use graphics::draw_state::DrawState;
@@ -80,37 +80,124 @@ pub struct VertexWork<'a> {
 /// *before* displacement, so a colour pattern stays glued to the figure while a
 /// warp moves it rather than sliding across it.
 pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork) {
-    let VertexWork {
-        field,
-        base_spin,
-        warps,
-    } = work;
-
+    let needs = Needs::of(&work);
     out.positions.clear();
     out.uvs.clear();
 
-    // An angle costs an `atan2` and a radius a square root, so decide once
-    // whether anything actually asks for them.
-    let rotates = base_spin != 0.0 || warps.iter().any(|w| w.target == AnimationTarget::Spin);
-    let needs_angle = rotates || field.phase == ColorPhase::Angle;
-    let needs_radius = rotates
-        || field.phase == ColorPhase::Radius
-        || warps.iter().any(|w| {
-            matches!(
-                w.target,
-                AnimationTarget::Size | AnimationTarget::AspectRatio
+    for (i, v) in mesh.verts.iter().enumerate() {
+        let polar = Polar::of(*v, needs.angle, needs.radius);
+        let along = polar.phase(*v, work.field.phase);
+        let displacement = Displacement::of(&work, polar, along, i);
+
+        out.positions.push(if needs.rotates {
+            // The figure's own points, moved in polar terms because a spin is
+            // a rotation about the same centre the phase is measured from.
+            let angle = polar.angle + displacement.turn;
+            let radius = polar.radius * displacement.radial;
+            Point::new(
+                radius * angle.cos() * displacement.scale_x,
+                radius * angle.sin() * displacement.scale_y,
+            )
+        } else {
+            // Without rotation the angle never changes, so scaling the radius
+            // is scaling x and y — no round trip through polar coordinates.
+            Point::new(
+                v.x() * displacement.radial * displacement.scale_x,
+                v.y() * displacement.radial * displacement.scale_y,
             )
         });
+        out.uvs.push([along * work.field.cycles, 0.5]);
+    }
+}
 
-    for (i, v) in mesh.verts.iter().enumerate() {
-        let polar = Polar::of(*v, needs_angle, needs_radius);
-        let along = polar.phase(*v, field.phase);
+/// As `vertex_pass`, for an outline.
+///
+/// Differs in one thing, and it is the whole of what makes a stroke cheap:
+/// **phase comes from the contour point a vertex was offset from, not from
+/// where the vertex landed.** A ribbon is one mark at one place on the figure,
+/// so both its edges take the same colour, and there is no variation across
+/// its width for a refinement to resolve.
+///
+/// The displacement is worked out from the contour point too, so a warp moves
+/// the ribbon as a unit rather than shearing its two edges apart. It is then
+/// applied to the vertex where it actually is — as a rotation and a scale
+/// about the origin, which is the same transform the fill reaches through
+/// polar coordinates, without a second arctangent per vertex.
+pub fn stroke_vertex_pass(out: &mut VertexBuffers, mesh: &StrokeMesh, work: VertexWork) {
+    let needs = Needs::of(&work);
+    out.positions.clear();
+    out.uvs.clear();
 
-        let mut radial = 1.0f32;
-        let mut turn = base_spin * polar.radius * std::f32::consts::TAU;
-        let (mut scale_x, mut scale_y) = (1.0f32, 1.0f32);
-        for warp in warps {
-            let value = warp.animation.value(Phase::new(f64::from(along)), i) as f32;
+    for (i, (position, on_path)) in mesh.vertices().enumerate() {
+        let polar = Polar::of(on_path, needs.angle, needs.radius);
+        let along = polar.phase(on_path, work.field.phase);
+        let displacement = Displacement::of(&work, polar, along, i);
+
+        let (x, y) = (position.x(), position.y());
+        let (x, y) = if needs.rotates {
+            let (sin, cos) = displacement.turn.sin_cos();
+            (x * cos - y * sin, x * sin + y * cos)
+        } else {
+            (x, y)
+        };
+        out.positions.push(Point::new(
+            x * displacement.radial * displacement.scale_x,
+            y * displacement.radial * displacement.scale_y,
+        ));
+        out.uvs.push([along * work.field.cycles, 0.5]);
+    }
+}
+
+/// Which coordinates a frame's work actually asks for.
+///
+/// An angle costs an arctangent and a radius a square root, so this is decided
+/// once for a layer rather than per point.
+#[derive(Copy, Clone)]
+struct Needs {
+    angle: bool,
+    radius: bool,
+    rotates: bool,
+}
+
+impl Needs {
+    fn of(work: &VertexWork) -> Self {
+        let rotates =
+            work.base_spin != 0.0 || work.warps.iter().any(|w| w.target == AnimationTarget::Spin);
+        Self {
+            rotates,
+            angle: rotates || work.field.phase == ColorPhase::Angle,
+            radius: rotates
+                || work.field.phase == ColorPhase::Radius
+                || work.warps.iter().any(|w| {
+                    matches!(
+                        w.target,
+                        AnimationTarget::Size | AnimationTarget::AspectRatio
+                    )
+                }),
+        }
+    }
+}
+
+/// What a point's warps work out to: a scale about the origin, a turn, and a
+/// squash.
+#[derive(Copy, Clone)]
+struct Displacement {
+    radial: f32,
+    turn: f32,
+    scale_x: f32,
+    scale_y: f32,
+}
+
+impl Displacement {
+    fn of(work: &VertexWork, polar: Polar, along: f32, index: usize) -> Self {
+        let mut out = Self {
+            radial: 1.0,
+            turn: work.base_spin * polar.radius * std::f32::consts::TAU,
+            scale_x: 1.0,
+            scale_y: 1.0,
+        };
+        for warp in work.warps {
+            let value = warp.animation.value(Phase::new(f64::from(along)), index) as f32;
             // Where a target means something different on a figure than on a
             // run of marks, this is where it is reinterpreted. `Size` scales a
             // segment; here it scales each point's distance from the centre,
@@ -120,32 +207,19 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
             // same intent arrives as a shear growing with radius.
             match warp.target {
                 // Multiplicative, so the deformation is proportional.
-                AnimationTarget::Size => radial *= 1.0 + value,
-                AnimationTarget::Spin => turn += value * MAX_SPIN,
+                AnimationTarget::Size => out.radial *= 1.0 + value,
+                AnimationTarget::Spin => out.turn += value * MAX_SPIN,
                 AnimationTarget::AspectRatio => {
-                    scale_x *= 1.0 + value;
-                    scale_y *= 1.0 - value;
+                    out.scale_x *= 1.0 + value;
+                    out.scale_y *= 1.0 - value;
                 }
                 _ => {}
             }
         }
-        // A negative radius would turn the figure inside out through the origin
-        // rather than collapsing it.
-        let radial = radial.max(0.0);
-        out.positions.push(if rotates {
-            let angle = polar.angle + turn;
-            let radius = polar.radius * radial;
-            Point::new(
-                radius * angle.cos() * scale_x,
-                radius * angle.sin() * scale_y,
-            )
-        } else {
-            // Without rotation the angle never changes, so scaling the radius
-            // is scaling x and y — no round trip through polar coordinates.
-            Point::new(v.x() * radial * scale_x, v.y() * radial * scale_y)
-        });
-
-        out.uvs.push([along * field.cycles, 0.5]);
+        // A negative radius would turn the figure inside out through the
+        // origin rather than collapsing it.
+        out.radial = out.radial.max(0.0);
+        out
     }
 }
 
@@ -229,17 +303,23 @@ pub fn draw_flat<G: Graphics>(
     });
 }
 
-/// Draw a triangle list in one flat colour, with no refinement.
+/// Draw a flat run of triangles in one colour.
 ///
 /// The path a figure takes when nothing varies across it: no ramp, no per-
-/// vertex pass, and the tessellator's own triangles rather than a refined mesh.
-pub fn draw_tris<G: Graphics>(tris: &TriangleList, color: [f32; 4], m: Matrix2d, gl: &mut G) {
-    if tris.is_empty() {
+/// vertex pass, and the tessellator's own triangles rather than a refined
+/// mesh. Also the path an outline always takes, meshed or not.
+///
+/// The backend takes a bounded number of vertices per call, and a run ending
+/// mid-triangle would draw a torn one, so the cap is rounded down to a whole
+/// number of triangles here rather than at each call site.
+pub fn draw_points<G: Graphics>(points: &[Point], color: [f32; 4], m: Matrix2d, gl: &mut G) {
+    if points.is_empty() {
         return;
     }
-    let mut pos = Vec::with_capacity(CHUNK);
+    let stride = CHUNK / 3 * 3;
+    let mut pos = Vec::with_capacity(stride);
     gl.tri_list(&DrawState::default(), &color, |f| {
-        for batch in tris.batches(CHUNK) {
+        for batch in points.chunks(stride) {
             pos.clear();
             pos.extend(batch.iter().map(|v| project(m, *v)));
             f(&pos);
@@ -294,6 +374,53 @@ pub fn draw_textured<G: Graphics>(
             f(&pos, &uv);
         }
     });
+}
+
+/// Draw the vertex pass's own output in one colour.
+pub fn draw_list_flat<G: Graphics>(
+    verts: &VertexBuffers,
+    color: [f32; 4],
+    m: Matrix2d,
+    gl: &mut G,
+) {
+    draw_points(&verts.positions, color, m, gl);
+}
+
+/// Draw a flat vertex list against the ramp texture.
+pub fn draw_list_textured<G: Graphics>(
+    verts: &VertexBuffers,
+    period: Option<f32>,
+    texture: &G::Texture,
+    m: Matrix2d,
+    gl: &mut G,
+) {
+    let stride = CHUNK / 3 * 3;
+    let mut pos = Vec::with_capacity(stride);
+    let mut uv = Vec::with_capacity(stride);
+    gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
+        for (batch, uvs) in verts.positions.chunks(stride).zip(verts.uvs.chunks(stride)) {
+            pos.clear();
+            uv.clear();
+            for (tri, tri_uv) in batch.as_chunks::<3>().0.iter().zip(tri_uvs(uvs)) {
+                let reference = tri_uv[0][0];
+                for (p, v) in tri.iter().zip(tri_uv) {
+                    pos.push(project(m, *p));
+                    uv.push([
+                        match period {
+                            Some(period) => same_branch(reference, v[0], period),
+                            None => v[0],
+                        },
+                        v[1],
+                    ]);
+                }
+            }
+            f(&pos, &uv);
+        }
+    });
+}
+
+fn tri_uvs(uvs: &[[f32; 2]]) -> impl Iterator<Item = [[f32; 2]; 3]> + '_ {
+    uvs.as_chunks::<3>().0.iter().copied()
 }
 
 /// Apply a 2D affine matrix to a point, leaving shape space for the backend's.
