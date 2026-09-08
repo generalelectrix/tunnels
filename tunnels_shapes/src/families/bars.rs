@@ -121,8 +121,11 @@ fn square(origin: f64, size: f64) -> Contour {
     .collect()
 }
 
-/// The same square walked the other way, so it cuts rather than fills under a
-/// non-zero rule as well as under even-odd.
+/// The same square walked the other way, so it cuts under a non-zero rule as
+/// well as under even-odd.
+///
+/// The reversal is inert under even-odd, where the square is already a hole by
+/// being enclosed twice.
 fn square_reversed(origin: f64, size: f64) -> Contour {
     [
         (origin, origin),
