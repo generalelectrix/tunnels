@@ -78,6 +78,7 @@ pub struct VertexBuffers {
 }
 
 /// Everything the per-vertex pass reads.
+#[derive(Copy, Clone)]
 pub struct VertexWork<'a> {
     /// The coordinate indexing the ramp, and its cycle count.
     pub field: PhaseField,

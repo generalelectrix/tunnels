@@ -357,7 +357,7 @@ where
             cycles: fill.color.cycles as f32,
             span,
         };
-        let work = |field| VertexWork {
+        let work = VertexWork {
             field,
             spin_speed: fill.spin_speed as f32,
             warps: &fill.warps,
@@ -388,7 +388,7 @@ where
             // sliding across it. One walk of the mesh produces displaced
             // positions and ramp coordinates together, because both want the
             // same polar coordinates for a point.
-            draw::vertex_pass(verts, mesh, work(field));
+            draw::vertex_pass(verts, mesh, work);
             match texture {
                 Some(texture) => {
                     draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
@@ -404,7 +404,7 @@ where
             if outline.is_empty() {
                 return;
             }
-            draw::stroke_vertex_pass(verts, outline, work(field));
+            draw::stroke_vertex_pass(verts, outline, work);
             match texture {
                 Some(texture) => {
                     draw_list_textured(verts, field.wrap_period(), texture, placed.m, gl);
