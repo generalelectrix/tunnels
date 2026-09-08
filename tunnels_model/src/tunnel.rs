@@ -17,7 +17,7 @@ use std::sync::Once;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
-use tunnels_sprites::{Placement as SpritePlacement, SpriteFamily};
+use tunnels_sprites::{Slot, SpriteFamily};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -227,8 +227,8 @@ impl Tunnel {
     ///
     /// A figure past the end of the library reads as the first one, which is
     /// the same figure it draws.
-    fn placement(&self) -> SpritePlacement {
-        tunnels_sprites::placement(self.sprite.0).unwrap_or(SpritePlacement {
+    fn slot(&self) -> Slot {
+        tunnels_sprites::slot(self.sprite.0).unwrap_or(Slot {
             family: 0,
             index: 0,
         })
@@ -248,7 +248,7 @@ impl Tunnel {
         if self.shape_mode.draws_segments() {
             self.segs
         } else {
-            Self::segments_for_family(self.placement().family)
+            Self::segments_for_family(self.slot().family)
         }
     }
 
@@ -264,9 +264,9 @@ impl Tunnel {
         if self.shape_mode.draws_segments() {
             self.blacking
         } else {
-            let placement = self.placement();
-            match tunnels_sprites::family(placement.family) {
-                Some(family) => Self::blacking_for_selection(placement.index, family),
+            let slot = self.slot();
+            match tunnels_sprites::family(slot.family) {
+                Some(family) => Self::blacking_for_selection(slot.index, family),
                 // A library with no families offers nothing to select between,
                 // so the knob has nothing to report but its detent.
                 None => KNOB_CENTRE,
@@ -699,7 +699,7 @@ impl Tunnel {
                 if self.shape_mode.draws_segments() {
                     self.segs = v;
                 } else {
-                    let index = self.placement().index;
+                    let index = self.slot().index;
                     if let Some(family) = tunnels_sprites::family(Self::family_for_segments(v)) {
                         // A family shorter than the position asked for gives up
                         // its last figure rather than reaching into the next
@@ -717,7 +717,7 @@ impl Tunnel {
             Blacking(v) => {
                 if self.shape_mode.draws_segments() {
                     self.blacking = v;
-                } else if let Some(family) = tunnels_sprites::family(self.placement().family) {
+                } else if let Some(family) = tunnels_sprites::family(self.slot().family) {
                     self.sprite = SpriteId(family.member(Self::selection_for_blacking(v, family)));
                 }
             }
@@ -1129,19 +1129,16 @@ mod test {
             ..Default::default()
         };
         tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut Silent);
-        let index = tunnel.placement().index;
+        let index = tunnel.slot().index;
         assert!(index > 0, "the middle of a family is not its first figure");
 
         let mut recorder = Recorder::default();
         tunnel.handle_state_change(StateChange::Segments(SEGMENTS_MAX), &mut recorder);
-        let placement = tunnel.placement();
+        let slot = tunnel.slot();
+        assert_eq!(slot.family, tunnels_sprites::families().len() as u16 - 1);
+        let family = tunnels_sprites::family(slot.family).expect("the last family");
         assert_eq!(
-            placement.family,
-            tunnels_sprites::families().len() as u16 - 1
-        );
-        let family = tunnels_sprites::family(placement.family).expect("the last family");
-        assert_eq!(
-            placement.index,
+            slot.index,
             index.min(family.len - 1),
             "the position within the family did not carry across"
         );

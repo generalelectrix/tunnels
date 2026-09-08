@@ -35,9 +35,9 @@ impl SpriteFamily {
     }
 }
 
-/// Where a figure sits in the library.
+/// Where a figure sits in the library: which shelf, and how far along it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Placement {
+pub struct Slot {
     /// Index into the family table.
     pub family: u16,
     /// How far into that family the figure sits.
@@ -106,11 +106,11 @@ pub fn family(index: u16) -> Option<SpriteFamily> {
 }
 
 /// Which family a figure belongs to, and how far into it the figure sits.
-pub fn placement(id: u16) -> Option<Placement> {
+pub fn slot(id: u16) -> Option<Slot> {
     SPRITE_FAMILIES
         .iter()
         .position(|f| id >= f.first && id < f.first + f.len)
-        .map(|family| Placement {
+        .map(|family| Slot {
             family: family as u16,
             index: id - SPRITE_FAMILIES[family].first,
         })
@@ -433,14 +433,10 @@ mod test {
         assert_eq!(usize::from(next), count(), "the families miss figures");
 
         for id in 0..count() as u16 {
-            let placement = placement(id).unwrap_or_else(|| panic!("figure {id} has no family"));
-            let family = families()[usize::from(placement.family)];
-            assert_eq!(family.member(placement.index), id, "figure {id} round trip");
+            let slot = slot(id).unwrap_or_else(|| panic!("figure {id} has no family"));
+            let family = families()[usize::from(slot.family)];
+            assert_eq!(family.member(slot.index), id, "figure {id} round trip");
         }
-        assert_eq!(
-            placement(count() as u16),
-            None,
-            "past the end of the library"
-        );
+        assert_eq!(slot(count() as u16), None, "past the end of the library");
     }
 }
