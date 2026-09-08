@@ -1017,6 +1017,16 @@ mod test {
                 }
             }
 
+            // The other direction. An expectation that nothing produces is a
+            // dead entry, and a dead entry reads exactly like a control
+            // somebody deleted by accident — which is the change this file
+            // exists to catch.
+            for name in expected.keys() {
+                if !results.contains_key(name) {
+                    failures.push(format!("{name}: an expectation nothing produces"));
+                }
+            }
+
             if !failures.is_empty() {
                 panic!(
                     "{} midi emit regression failures:\n{}",

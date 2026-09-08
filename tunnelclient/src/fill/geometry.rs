@@ -54,6 +54,19 @@ struct StrokeId {
 /// Two maps rather than one because the work differs: a figure's interior does
 /// not depend on how densely it will be drawn, while its outline depends on
 /// how wide the stroke is.
+///
+/// What a figure costs here is decided by how much of it crosses itself and
+/// not by how many points it carries, because a crossing is a vertex that has
+/// to be found and finding them is the work. Most figures are a few
+/// milliseconds whether they were baked or built from a family, so a figure
+/// computed while the show runs is not on its own the expensive case — which
+/// is the opposite of what that description suggests.
+///
+/// Dense chords under an even-odd rule are the expensive case. A modular chord
+/// figure rises smoothly with its chord count, to 42 ms at the top of its
+/// range. A Maurer rose is worst at the *bottom* of its range, at 155 ms for
+/// two petals, where a large step drives 360 chords through a small figure —
+/// the end of a range nobody checks, because cost is looked for at the top.
 #[derive(Default)]
 pub struct GeometryCache {
     fills: HashMap<FigureId, TriangleList>,

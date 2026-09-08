@@ -153,7 +153,16 @@ pub struct MeshId {
 /// densities, and a show touching a handful of them converges within seconds.
 /// A generated figure is one point of its family's arity and secondary ranges,
 /// which run to hundreds of positions: sweeping a knob across one names a
-/// different figure at every position, and each is meshed here and kept.
+/// different figure at every position, and each is meshed here and kept. One
+/// sweep of every family's arity, at a single density, is 16 million triangles
+/// and 263 MB.
+///
+/// Bounding the generated share would not be free, because the two costs are
+/// coupled: a figure dropped is a figure tessellated again, and the families
+/// holding the most triangles are the ones that cost the most to build. A
+/// bound trades memory for latency on exactly the figures whose latency is
+/// already worst. That is why the size of the set is stated here rather than
+/// capped.
 #[derive(Default)]
 pub struct MeshLibrary {
     built: HashMap<MeshId, RefinedMesh>,
