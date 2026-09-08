@@ -321,7 +321,12 @@ where
         // interpolation — but a colour animation moves that one colour every
         // frame, so it is only uniform when there is no animation on it either.
         let flat = fill.color_anims.is_empty() && fill.color.is_uniform();
+        let color = flat_color(fill);
         let warping = fill.spin_speed != 0.0 || !fill.warps.is_empty();
+        // A colour animation that varies across the figure has to be resolved
+        // against the figure's own coordinate, not the colour cycle's, or its
+        // period comes out as the colour's rather than its own.
+        let span = RampSpan::of(&fill.color_anims);
 
         let stroke = fill.draw_mode.draws_outline().then(|| {
             Thickness::bucketed(
@@ -332,33 +337,13 @@ where
                 },
             )
         });
-
         let interior = fill
             .draw_mode
             .draws_fill()
             .then(|| fills.get(fill.sprite, sprite));
         let outline = stroke.map(|thickness| outlines.get(fill.sprite, sprite, thickness));
-
-        // Nothing varies across the figure and nothing displaces it, so it
-        // draws straight from the tessellator's own triangles.
-        if flat && !warping {
-            let color = flat_color(fill);
-            if let Some(interior) = interior {
-                draw_points(interior.points(), color, placed.m, gl);
-            }
-            if let Some(outline) = outline {
-                draw_points(outline.points(), color, placed.m, gl);
-            }
-            return;
-        }
-
         // A uniform figure needs no ramp; a varying one needs the texture
         // holding its colour, which the pool may already have.
-        // A colour animation that varies across the figure has to be resolved
-        // against the figure's own coordinate, not the colour cycle's, or its
-        // period comes out as the colour's rather than its own.
-        let span = RampSpan::of(&fill.color_anims);
-
         let texture = if flat {
             None
         } else {
@@ -367,7 +352,6 @@ where
                 None => return,
             }
         };
-
         let field = PhaseField {
             phase: fill.color.phase,
             cycles: fill.color.cycles as f32,
@@ -378,6 +362,18 @@ where
             spin_speed: fill.spin_speed as f32,
             warps: &fill.warps,
         };
+
+        // Nothing varies across the figure and nothing displaces it, so it
+        // draws straight from the tessellator's own triangles.
+        if flat && !warping {
+            if let Some(interior) = interior {
+                draw_points(interior.points(), color, placed.m, gl);
+            }
+            if let Some(outline) = outline {
+                draw_points(outline.points(), color, placed.m, gl);
+            }
+            return;
+        }
 
         if let Some(interior) = interior {
             let mesh = meshes.get(
@@ -397,7 +393,7 @@ where
                 Some(texture) => {
                     draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
                 }
-                None => draw_flat(mesh, verts, flat_color(fill), placed.m, gl),
+                None => draw_flat(mesh, verts, color, placed.m, gl),
             }
         }
 
@@ -413,7 +409,7 @@ where
                 Some(texture) => {
                     draw_list_textured(verts, field.wrap_period(), texture, placed.m, gl);
                 }
-                None => draw_list_flat(verts, flat_color(fill), placed.m, gl),
+                None => draw_list_flat(verts, color, placed.m, gl),
             }
         }
     }
