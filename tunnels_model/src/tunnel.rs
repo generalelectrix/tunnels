@@ -341,14 +341,8 @@ impl Tunnel {
         // costs is mostly deciding which clock drives it, where that clock is,
         // where its smoother has got to and what the amplitude works out to —
         // none of which depends on where in the figure the question is asked.
-        let anims: [(PreparedAnimation, AnimationTarget); N_ANIM] = std::array::from_fn(|i| {
-            (
-                self.anims[i]
-                    .animation
-                    .prepare(ctx.clocks, ctx.audio_envelope),
-                self.anims[i].target,
-            )
-        });
+        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] =
+            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio_envelope));
 
         match self.shape_mode {
             ShapeMode::Ellipse => Layer::Segments(self.render_segments(
@@ -422,7 +416,7 @@ impl Tunnel {
         level_scale: UnipolarFloat,
         as_mask: bool,
         ctx: RenderContext,
-        anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
+        anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     ) -> FillLayer {
         let ((x_offset, y_offset), base_hue) = self.placement_and_hue(ctx);
 
@@ -431,8 +425,8 @@ impl Tunnel {
         let uniform = |target: AnimationTarget| -> f64 {
             anims
                 .iter()
-                .filter(|(_, t)| *t == target)
-                .map(|(a, _)| a.value(Phase::ZERO, 0))
+                .filter(|a| a.target == target)
+                .map(|a| a.animation.value(Phase::ZERO, 0))
                 .sum()
         };
 
@@ -495,7 +489,7 @@ impl Tunnel {
         level_scale: UnipolarFloat,
         as_mask: bool,
         ctx: RenderContext,
-        anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
+        anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     ) -> SegmentLayer {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
         let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
@@ -537,11 +531,11 @@ impl Tunnel {
             let mut marquee_angle_adjust = 0.;
             let mut spin_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
-            for (animation, target) in anims {
-                let anim_value = animation.value(rel_angle, seg_num as usize);
+            for anim in anims {
+                let anim_value = anim.animation.value(rel_angle, seg_num as usize);
 
                 use AnimationTarget::*;
-                match target {
+                match anim.target {
                     Rotation => rot_angle_adjust += anim_value,
                     MarqueeRotation => marquee_angle_adjust += anim_value,
                     Thickness => thickness_adjust += anim_value,
@@ -761,18 +755,13 @@ impl Tunnel {
 /// other. An animation contributing nothing is dropped rather than asked for a
 /// zero tens of thousands of times.
 fn fill_animations(
-    anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
+    anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     keep: impl Fn(AnimationTarget) -> bool,
 ) -> Vec<TargetedAnimation<PreparedAnimation>> {
     anims
         .iter()
-        .filter(|(animation, target)| {
-            animation.is_active() && varies_across_figure(*target) && keep(*target)
-        })
-        .map(|(animation, target)| TargetedAnimation {
-            target: *target,
-            animation: *animation,
-        })
+        .filter(|a| a.animation.is_active() && varies_across_figure(a.target) && keep(a.target))
+        .cloned()
         .collect()
 }
 

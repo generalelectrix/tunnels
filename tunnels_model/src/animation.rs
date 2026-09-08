@@ -78,6 +78,20 @@ pub struct TargetedAnimation<A = Animation> {
     pub target: AnimationTarget,
 }
 
+impl TargetedAnimation {
+    /// Resolve everything that is fixed for a frame, keeping the target.
+    pub fn prepare(
+        &self,
+        external_clocks: &impl ClockStore,
+        audio_envelope: UnipolarFloat,
+    ) -> TargetedAnimation<PreparedAnimation> {
+        TargetedAnimation {
+            animation: self.animation.prepare(external_clocks, audio_envelope),
+            target: self.target,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Animation {
     static_params: StaticParams,
