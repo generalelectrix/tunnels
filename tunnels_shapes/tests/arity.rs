@@ -69,13 +69,17 @@ fn nothing_the_controls_reach_cancels_itself() {
             ShapeParams::StarPolygon(p) => {
                 assert_eq!(gcd(p.step, p.points), 1, "{at}: the walk retraces itself");
             }
-            // One petal is a circle through the origin.
+            // One petal is a circle through the origin, and a frequency not in
+            // lowest terms is traced more than once.
             ShapeParams::Rose(p) => {
                 assert_ne!(p.petals, p.divisor, "{at}: the rose is a circle");
+                assert_eq!(gcd(p.petals, p.divisor), 1, "{at}: the rose is retraced");
             }
-            // Equal frequencies trace an ellipse.
+            // Equal frequencies trace an ellipse, and frequencies sharing a
+            // factor close early and trace the figure again.
             ShapeParams::Lissajous(p) => {
                 assert_ne!(p.a, p.b, "{at}: the figure is an ellipse");
+                assert_eq!(gcd(p.a, p.b), 1, "{at}: the figure is retraced");
             }
             // A multiplier that is its own inverse draws every chord twice.
             ShapeParams::ModularChords(p) => {
@@ -94,6 +98,14 @@ fn nothing_the_controls_reach_cancels_itself() {
                     1,
                     "{at}: the walk closes after {} points",
                     360 / gcd(p.step_degrees, 360)
+                );
+            }
+            // A ring of one stack landing on a ring of the other cancels the pair.
+            ShapeParams::MoireRings(p) => {
+                assert_eq!(
+                    gcd(p.rings, p.rings + p.offset),
+                    1,
+                    "{at}: a ring of each stack lands on the same radius"
                 );
             }
             // Blade counts sharing a factor make one figure describable by a

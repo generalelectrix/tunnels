@@ -3,7 +3,13 @@
 /// Half the width of the square a figure occupies, and the coordinate of its centre.
 pub const CENTER: f64 = 500.0;
 
-/// The width of the square a figure occupies.
+/// The width of the square a figure is built around.
+///
+/// Most figures stay inside it, but nothing enforces that and three families do
+/// not: a star lattice is a field cut out of a tiling and runs most of a frame
+/// past the edge, while a truchet tiling and a phyllotaxis overhang it by the
+/// half-width of a mark at the border. Whoever draws a figure decides whether to
+/// clip it.
 pub const EXTENT: f64 = 1000.0;
 
 /// A point in the square from `(0, 0)` to `(EXTENT, EXTENT)`.
