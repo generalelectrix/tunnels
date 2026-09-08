@@ -61,6 +61,10 @@ impl PolygonRings {
             .iter()
             .enumerate()
             .map(|(i, &radius)| {
+                // Alternating the walk direction cuts holes under a non-zero
+                // fill. Under even-odd it is inert — the nesting alone gives the
+                // alternating bands — and it survives because reversing the
+                // points is what the figure's coordinates are.
                 let ring = Contour::new(ring_points(self.sides as usize, radius, -FRAC_PI_2));
                 if i % 2 == 0 { ring } else { ring.reversed() }
             })
