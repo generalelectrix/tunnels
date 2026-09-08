@@ -55,6 +55,14 @@ pub struct ClientConfig {
     /// - the second threshold needs an extent of 1.056, which the size knob
     ///   cannot reach alone since it stops at 1.0 — it takes aspect ratio
     ///   above 0.528 as well.
+    ///
+    /// Those two lists line up in a way worth knowing before turning this on:
+    /// **the threshold that is easy to reach is the one that costs nothing,
+    /// and the one that costs enough to see is off the casual path.** A nudge
+    /// of the size knob crosses the first, and pays two frames at worst. The
+    /// second takes two knobs deliberately, and pays about eight — a
+    /// fifteenth of a second, which is visible. So the risk is not a knob
+    /// brushed past by accident.
     pub refine_large_figures: bool,
     /// How many pixels a filled figure's mesh triangles should span on screen.
     ///
