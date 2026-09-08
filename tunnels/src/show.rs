@@ -408,7 +408,7 @@ mod test {
     use std::sync::{Arc, mpsc::channel};
 
     use tunnels_lib::number::UnipolarFloat;
-    use tunnels_model::layer::{Layer, MarkLayer, ShapeGeometry};
+    use tunnels_model::layer::{Layer, SegmentLayer, ShapeGeometry};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
@@ -445,7 +445,7 @@ mod test {
     /// Returns the segment layers, which is everything the test mode draws:
     /// a figure carries no per-segment geometry to compare and the stress
     /// beams are all tunnels.
-    fn check_render(show: &Show, unique_beam_count: usize) -> Vec<MarkLayer> {
+    fn check_render(show: &Show, unique_beam_count: usize) -> Vec<SegmentLayer> {
         let clocks = show.state.clocks.as_static();
         let ctx = RenderContext {
             clocks: &clocks,
@@ -462,10 +462,10 @@ mod test {
             assert_eq!(0, chan.len());
         }
 
-        let mut layers: Vec<MarkLayer> = first_channel
+        let mut layers: Vec<SegmentLayer> = first_channel
             .iter()
             .map(|layer| match layer.as_ref() {
-                Layer::Marks(marks) => marks.clone(),
+                Layer::Segments(segments) => segments.clone(),
                 Layer::Fill(_) => panic!("the stress test mode draws no figures"),
             })
             .collect();
@@ -475,7 +475,7 @@ mod test {
             }
         }
 
-        let mut distinct: Vec<&MarkLayer> = Vec::new();
+        let mut distinct: Vec<&SegmentLayer> = Vec::new();
         for layer in &layers {
             if !distinct.contains(&layer) {
                 distinct.push(layer);

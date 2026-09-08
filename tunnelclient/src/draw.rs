@@ -4,7 +4,7 @@ use graphics::Context;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::PI;
-use tunnels_model::layer::{MarkLayer, RenderMode, SegmentPath, ShapeGeometry};
+use tunnels_model::layer::{RenderMode, SegmentLayer, SegmentPath, ShapeGeometry};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -42,7 +42,7 @@ pub(crate) fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     }
 }
 
-impl<G: Graphics> Draw<G> for MarkLayer {
+impl<G: Graphics> Draw<G> for SegmentLayer {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         for shape in &self.shapes {
             draw_shape(

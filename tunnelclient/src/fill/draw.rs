@@ -133,7 +133,7 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
 ///
 /// Differs in one thing, and it is the whole of what makes a stroke cheap:
 /// **phase comes from the contour point a vertex was offset from, not from
-/// where the vertex landed.** A ribbon is one mark at one place on the figure,
+/// where the vertex landed.** A ribbon is one segment at one place on the figure,
 /// so both its edges take the same colour, and there is no variation across
 /// its width for a refinement to resolve.
 ///
@@ -223,10 +223,10 @@ impl Displacement {
         for warp in work.warps {
             let value = warp.animation.value(Phase::new(f64::from(along)), index) as f32;
             // Where a target means something different on a figure than on a
-            // run of marks, this is where it is reinterpreted. `Size` scales a
+            // run of segments, this is where it is reinterpreted. `Size` scales a
             // segment; here it scales each point's distance from the centre,
             // so run along the angle it deforms a disc into petals and along
-            // the radius it pinches one into rings. `Spin` turns a mark about
+            // the radius it pinches one into rings. `Spin` turns a segment about
             // its own centroid; a point has no orientation to turn, so the
             // same intent arrives as a shear growing with radius.
             match warp.target {

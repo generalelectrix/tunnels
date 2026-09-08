@@ -8,7 +8,7 @@ use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::fill::Renderer;
 use tunnels_model::layer::{
-    ColorPhase, Layer, LayerCollection, MarkLayer, RenderMode, SegmentPath, ShapeGeometry,
+    ColorPhase, Layer, LayerCollection, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry,
 };
 use tunnels_model::tunnel::fixture;
 
@@ -155,7 +155,7 @@ fn assert_images_match_with_limit(
 /// Wrap shapes in a layer drawn with the default render mode and path shape,
 /// every segment spanning `span` turns.
 fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
-    Layer::Marks(MarkLayer::new(
+    Layer::Segments(SegmentLayer::new(
         RenderMode::default(),
         SegmentPath::Ellipse,
         span,
@@ -449,7 +449,7 @@ fn snapshot_from_groups(
     groups
         .into_iter()
         .map(|(span, shapes)| {
-            Arc::new(Layer::Marks(MarkLayer::new(
+            Arc::new(Layer::Segments(SegmentLayer::new(
                 render_mode,
                 SegmentPath::Line,
                 span,

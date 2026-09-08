@@ -137,7 +137,7 @@ struct StrokeVertexPair {
 ///
 /// A ribbon takes its colour from where it sits **on the contour**, not from
 /// where each offset vertex happens to land. That is what a stroke is: one
-/// mark at one place on the figure, so its colour is constant across its
+/// segment at one place on the figure, so its colour is constant across its
 /// width by definition.
 ///
 /// It is also why a stroke needs no refinement. Refinement exists so that

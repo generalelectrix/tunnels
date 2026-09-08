@@ -53,7 +53,7 @@ pub fn noise(_: usize, i: usize, channel: &mut Channel) {
     if let Beam::Tunnel(ref mut tunnel) = channel.beam {
         use TunnelStateChange::*;
 
-        // The knob at its detent, which takes no marks out.
+        // The knob at its detent, which takes no segments out.
         set_tunnel_state(tunnel, Blacking(64));
         set_tunnel_state(tunnel, Size(UnipolarFloat::new(0.5)));
         set_tunnel_state(tunnel, Thickness(UnipolarFloat::new(0.05)));

@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(expected.len(), actual.len(), "{label}: layer count");
         for (i, (e, a)) in expected.iter().zip(actual).enumerate() {
             match (e.as_ref(), a.as_ref()) {
-                (Layer::Marks(e), Layer::Marks(a)) => {
+                (Layer::Segments(e), Layer::Segments(a)) => {
                     assert_eq!(
                         e.render_mode, a.render_mode,
                         "{label}: layer {i} render mode"

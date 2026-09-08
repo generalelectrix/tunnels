@@ -1,6 +1,6 @@
 use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
-    ColorField, ColorPhase, DrawMode, FillLayer, Layer, MarkLayer, Placement, RenderMode,
+    ColorField, ColorPhase, DrawMode, FillLayer, Layer, Placement, RenderMode, SegmentLayer,
     SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
@@ -51,7 +51,7 @@ pub struct Tunnel {
     /// surface sends.
     ///
     /// A knob position and not a value: it has no units and no domain until a
-    /// mode reads it, which is what lets one knob mean an interval to a mark
+    /// mode reads it, which is what lets one knob mean an interval to a segment
     /// mode and a figure to a figure mode without either having to round-trip
     /// through a number that means something else. The default takes out every
     /// other chicklet.
@@ -132,15 +132,15 @@ impl Default for Tunnel {
 impl Tunnel {
     const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
     const GEOM_SMOOTH_TIME: Duration = Duration::from_millis(100);
-    /// How often a mark is taken out, on [-16, 16].
+    /// how often a segment is taken out, on [-16, 16].
     ///
-    /// A positive interval keeps every nth mark and a negative one drops
+    /// A positive interval keeps every nth segment and a negative one drops
     /// every nth, so the knob sweeps from mostly dark through solid and out
     /// the other side. Its two halves are read against different spans
     /// because the detent belongs to the lower one, which is why the travel
     /// does not divide evenly.
     ///
-    /// An interval of 0 or -1 would black every mark and leave nothing to
+    /// An interval of 0 or -1 would black every segment and leave nothing to
     /// look at, so the bottom of the positive half absorbs both.
     fn blacking_interval(&self) -> i32 {
         let (knob, centre) = (i32::from(self.blacking), i32::from(KNOB_CENTRE));
@@ -159,7 +159,7 @@ impl Tunnel {
 
     /// The family a position of the segment knob names.
     ///
-    /// A figure has no segments, so the knob that sets how many marks a beam
+    /// A figure has no segments, so the knob that sets how many segments a beam
     /// draws picks which shelf of the figure library is open instead — the
     /// same reinterpretation `Size` gets when it becomes a radial deformation
     /// on a figure rather than a scale on a segment.
@@ -198,7 +198,7 @@ impl Tunnel {
     ///
     /// The knob's whole travel is spread over the family, one end on its first
     /// figure and the other on its last. Nothing distinguishes the halves of
-    /// the travel, unlike the interval the same knob names in a mark mode: a
+    /// the travel, unlike the interval the same knob names in a segment mode: a
     /// selection has no centre for a detent to mean.
     fn selection_for_blacking(blacking: u8, len: u16) -> u16 {
         let Some(last) = len.checked_sub(1).filter(|l| *l > 0) else {
@@ -248,7 +248,7 @@ impl Tunnel {
 
     /// What the segment control reads, which depends on the mode.
     ///
-    /// One control, two state fields: a mark mode's segment count and a figure
+    /// One control, two state fields: a segment mode's segment count and a figure
     /// mode's family are set by the same knob and stored separately, so
     /// neither is disturbed by work done in the other mode. Changing the mode
     /// therefore moves the knob, because the surface reports state and the
@@ -266,8 +266,8 @@ impl Tunnel {
 
     /// What the blacking control reads, which depends on the mode.
     ///
-    /// The second half of the pair the segment control opens: a mark mode
-    /// blacks marks out with it, a figure mode picks within the family the
+    /// The second half of the pair the segment control opens: a segment mode
+    /// blacks segments out with it, a figure mode picks within the family the
     /// segment control named. Families differ in length, so moving to another
     /// one moves this knob even though the position within the family is
     /// carried across — a surface reporting anything else would name a figure
@@ -353,14 +353,14 @@ impl Tunnel {
         });
 
         match self.shape_mode {
-            ShapeMode::Ellipse => Layer::Marks(self.render_marks(
+            ShapeMode::Ellipse => Layer::Segments(self.render_segments(
                 SegmentPath::Ellipse,
                 level_scale,
                 as_mask,
                 ctx,
                 &anims,
             )),
-            ShapeMode::Line => Layer::Marks(self.render_marks(
+            ShapeMode::Line => Layer::Segments(self.render_segments(
                 SegmentPath::Line,
                 level_scale,
                 as_mask,
@@ -373,7 +373,7 @@ impl Tunnel {
                 REPORTED.call_once(|| error!("Generated figures have no geometry yet."));
                 // Empty, so it is dropped before it reaches a renderer. The
                 // segment path is arbitrary: nothing is drawn along it.
-                Layer::Marks(MarkLayer::new(
+                Layer::Segments(SegmentLayer::new(
                     self.render_mode,
                     SegmentPath::Ellipse,
                     0.,
@@ -487,14 +487,14 @@ impl Tunnel {
     }
 
     /// Render this tunnel as a run of segments along a path.
-    fn render_marks(
+    fn render_segments(
         &self,
         segment_path: SegmentPath,
         level_scale: UnipolarFloat,
         as_mask: bool,
         ctx: RenderContext,
         anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
-    ) -> MarkLayer {
+    ) -> SegmentLayer {
         // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
         let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
             self.segs + 1
@@ -644,7 +644,7 @@ impl Tunnel {
             };
             arcs.push(arc);
         }
-        MarkLayer::new(self.render_mode, segment_path, marquee_interval, arcs)
+        SegmentLayer::new(self.render_mode, segment_path, marquee_interval, arcs)
     }
 
     /// Emit the current value of all controllable tunnel state.
@@ -730,7 +730,7 @@ impl Tunnel {
             ColorSpread(v) => self.col_spread = v,
             ColorSaturation(v) => self.col_sat = v,
             PaletteSelection(v) => self.palette_selection = v,
-            // One knob, two fields: a mark mode counts segments with it and a
+            // One knob, two fields: a segment mode counts segments with it and a
             // figure mode opens a family of the library with it.
             Segments(v) => {
                 if self.shape_mode.draws_segments() {
@@ -744,7 +744,7 @@ impl Tunnel {
                     emitter.emit_tunnel_state_change(Blacking(self.blacking_control()));
                 }
             }
-            // The other half of that pair: a mark mode blacks marks out with
+            // The other half of that pair: a segment mode blacks segments out with
             // it and a figure mode picks within the open family.
             Blacking(v) => {
                 if self.shape_mode.draws_segments() {
@@ -802,7 +802,7 @@ fn fill_animations(
 /// A figure is one shape rather than a run of them, so a target that means the
 /// same thing everywhere on it is resolved into a single number before the
 /// layer is built and never has to reach the points. A marquee is the one that
-/// is simply dead: it slides marks along a path, and a figure has no marks.
+/// is simply dead: it slides segments along a path, and a figure has no segments.
 fn varies_across_figure(target: AnimationTarget) -> bool {
     use AnimationTarget::*;
     match target {
@@ -991,7 +991,7 @@ mod test {
         let mut tunnel = Tunnel::default();
         assert!(
             tunnel.shape_mode.draws_segments(),
-            "the default draws marks"
+            "the default draws segments"
         );
         let blacking = 89;
 
@@ -1004,11 +1004,11 @@ mod test {
             SpriteId::default(),
             "the figure is untouched"
         );
-        assert_eq!(tunnel.segments_control(), 37, "a mark mode reports segs");
+        assert_eq!(tunnel.segments_control(), 37, "a segment mode reports segs");
         assert_eq!(
             tunnel.blacking_control(),
             blacking,
-            "a mark mode reports blacking"
+            "a segment mode reports blacking"
         );
 
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut Silent);
@@ -1123,7 +1123,7 @@ mod test {
     /// The interval is a ratio of the knob's position to the span its half of
     /// the travel covers, truncated. Stated here as that ratio, in floating
     /// point, against the integer arithmetic that computes it — the two agree
-    /// for all 128 positions, and an interval is a count of marks, so a
+    /// for all 128 positions, and an interval is a count of segments, so a
     /// position that landed a step either side of the ratio would black the
     /// wrong ones.
     #[test]
@@ -1155,7 +1155,7 @@ mod test {
         }
     }
 
-    /// No knob position blacks every mark, because a beam that draws nothing
+    /// No knob position blacks every segment, because a beam that draws nothing
     /// is indistinguishable from one that is broken.
     #[test]
     fn no_knob_position_leaves_nothing_to_look_at() {

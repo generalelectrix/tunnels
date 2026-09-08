@@ -133,7 +133,7 @@ pub struct ShapeGeometry {
 /// is what makes a layer the unit a renderer can dispatch on once instead of
 /// per shape.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct MarkLayer {
+pub struct SegmentLayer {
     pub render_mode: RenderMode,
     pub segment_path: SegmentPath,
     /// The angular width every segment in this layer spans, in turns.
@@ -145,7 +145,7 @@ pub struct MarkLayer {
     pub shapes: Vec<ShapeGeometry>,
 }
 
-impl MarkLayer {
+impl SegmentLayer {
     pub fn new(
         render_mode: RenderMode,
         segment_path: SegmentPath,
@@ -273,7 +273,7 @@ pub struct FillLayer {
 #[derive(Debug, Clone)]
 pub enum Layer {
     /// A run of segments along a path.
-    Marks(MarkLayer),
+    Segments(SegmentLayer),
     /// A filled figure.
     Fill(FillLayer),
 }
@@ -283,7 +283,7 @@ impl Layer {
     /// reaches a renderer.
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::Marks(l) => l.shapes.is_empty(),
+            Self::Segments(l) => l.shapes.is_empty(),
             // A figure is one shape and is always there; whether the build
             // carries the sprite it names is the renderer's question.
             Self::Fill(_) => false,

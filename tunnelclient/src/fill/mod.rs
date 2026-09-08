@@ -210,7 +210,7 @@ where
         self.ramps.frame += 1;
         for layer in layers {
             match layer.as_ref() {
-                Layer::Marks(marks) => marks.draw(c, gl, cfg),
+                Layer::Segments(segments) => segments.draw(c, gl, cfg),
                 Layer::Fill(fill) => self.draw_fill(fill, c, gl, cfg),
             }
         }
