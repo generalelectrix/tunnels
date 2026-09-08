@@ -1,6 +1,6 @@
 use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
-    ColorField, ColorPhase, DrawMode, FillLayer, Layer, LayerKey, MarkLayer, Placement, RenderMode,
+    ColorField, ColorPhase, DrawMode, FillLayer, Layer, MarkLayer, Placement, RenderMode,
     SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
@@ -187,13 +187,7 @@ impl Tunnel {
     /// A generated figure has no geometry yet, so it draws nothing and says so
     /// once. A show holding one is a show missing a beam, not a show that
     /// stops.
-    pub fn render(
-        &self,
-        level_scale: UnipolarFloat,
-        as_mask: bool,
-        ctx: RenderContext,
-        key: LayerKey,
-    ) -> Layer {
+    pub fn render(&self, level_scale: UnipolarFloat, as_mask: bool, ctx: RenderContext) -> Layer {
         // Resolve each animation's frame-constant state once. What an animation
         // costs is mostly deciding which clock drives it, where that clock is,
         // where its smoother has got to and what the amplitude works out to —
@@ -222,9 +216,7 @@ impl Tunnel {
                 ctx,
                 &anims,
             )),
-            ShapeMode::Sprite => {
-                Layer::Fill(self.render_fill(key, level_scale, as_mask, ctx, &anims))
-            }
+            ShapeMode::Sprite => Layer::Fill(self.render_fill(level_scale, as_mask, ctx, &anims)),
             ShapeMode::Generated => {
                 static REPORTED: Once = Once::new();
                 REPORTED.call_once(|| error!("Generated figures have no geometry yet."));
@@ -278,7 +270,6 @@ impl Tunnel {
     /// figure's own geometry is.
     fn render_fill(
         &self,
-        key: LayerKey,
         level_scale: UnipolarFloat,
         as_mask: bool,
         ctx: RenderContext,
@@ -332,7 +323,6 @@ impl Tunnel {
         };
 
         FillLayer {
-            key,
             sprite: self.sprite,
             placement,
             // The knob a tunnel integrates into an angle is read here as the
@@ -809,7 +799,6 @@ mod test {
                 positions: &PositionBank::default(),
                 audio_envelope: UnipolarFloat::ZERO,
             },
-            LayerKey::default(),
         ) else {
             panic!("a sprite renders a figure, not segments");
         };
@@ -831,7 +820,6 @@ mod test {
                 positions: &PositionBank::default(),
                 audio_envelope: UnipolarFloat::ZERO,
             },
-            LayerKey::default(),
         )
     }
 }
@@ -877,7 +865,6 @@ pub mod fixture {
 
                 audio_envelope: UnipolarFloat::ZERO,
             },
-            LayerKey::default(),
         )
     }
 
@@ -1274,7 +1261,6 @@ pub mod fixture {
 
                     audio_envelope: UnipolarFloat::ZERO,
                 },
-                LayerKey::default(),
             );
             snapshots.push(vec![Arc::new(arcs)]);
             for _ in 0..frames_per_snapshot {
@@ -1306,7 +1292,6 @@ pub mod fixture {
 
                 audio_envelope: UnipolarFloat::ZERO,
             },
-            LayerKey::default(),
         );
         vec![Arc::new(arcs)]
     }
@@ -1599,7 +1584,6 @@ pub mod fixture {
                 positions: &PositionBank::default(),
                 audio_envelope: UnipolarFloat::ZERO,
             },
-            LayerKey::default(),
         )
     }
 }

@@ -68,8 +68,9 @@ pub fn build_into(
     }
 }
 
-/// The knobs a ramp is built from, so it can be rebuilt only when they move.
-#[derive(PartialEq, Clone, Copy)]
+/// The knobs a ramp is built from, which are all a ramp is: two layers whose
+/// colour resolves to this key resolve to the same thousand texels.
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 pub struct RampKey([i64; 5]);
 
 impl RampKey {

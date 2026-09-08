@@ -32,84 +32,131 @@ use std::collections::{HashMap, HashSet};
 use std::f64::consts::TAU;
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
-use tunnels_model::layer::{ColorAdjust, FillLayer, Layer, LayerCollection, LayerKey, SpriteId};
+use tunnels_model::layer::{ColorAdjust, FillLayer, Layer, LayerCollection, SpriteId};
 
-/// How many textures a layer rotates through when its ramp changes.
+/// How many frames a texture may still be read after the last draw that used
+/// it.
 ///
-/// Overwriting a texture the GPU is still sampling makes the driver stall until
-/// the queued draws that read it retire. Measured on the prototype, that stall
-/// was two orders of magnitude larger than building the ramp in the first
-/// place. Rotating means a texture is only rewritten once the frames that used
-/// it are long done.
-const RAMP_BUFFERS: usize = 3;
+/// Overwriting a texture the GPU is still sampling makes the driver stall
+/// until the queued draws that read it retire. Measured on the prototype, that
+/// stall was two orders of magnitude larger than building the ramp in the
+/// first place. A texture is only reused once this many frames have gone by
+/// without it being drawn.
+const FRAMES_IN_FLIGHT: u64 = 3;
 
-/// A layer's ramp textures and per-frame scratch space.
-struct LayerRuntime<T> {
-    key: Option<RampKey>,
-    textures: Vec<T>,
-    current: usize,
-    scratch: RgbaImage,
-    verts: VertexBuffers,
+/// One colour ramp on the GPU, and when it was last drawn with.
+struct RampEntry<T> {
+    texture: T,
+    last_used: u64,
 }
 
-impl<T> LayerRuntime<T>
+/// The colour ramps the GPU is holding, addressed by what is in them.
+///
+/// A ramp is entirely determined by the colour knobs it was built from, so
+/// [`RampKey`] names the texture rather than the layer that asked for it. Two
+/// figures dialled to the same colour share one texture, and a still look
+/// uploads nothing after its first frame.
+///
+/// That also removes the write-after-read hazard rather than working around
+/// it: a colour that changed is a *different* key, so a texture in use is
+/// never the one being written. What is left is deciding when a texture no
+/// longer wanted may be reused for something else, which is what
+/// [`FRAMES_IN_FLIGHT`] answers.
+///
+/// The pool has no size cap. Recycling bounds it on its own — a key stops
+/// being reachable as soon as the colour moves on, and the entry becomes
+/// available a few frames later — and a 1024-texel ramp is four kilobytes, so
+/// even a pool an order of magnitude larger than a show needs would not be
+/// worth the eviction policy.
+struct RampPool<T> {
+    entries: HashMap<RampKey, RampEntry<T>>,
+    scratch: RgbaImage,
+    settings: TextureSettings,
+    frame: u64,
+}
+
+impl<T> RampPool<T>
 where
     T: CreateTexture<()> + UpdateTexture<()>,
 {
-    fn new(settings: &TextureSettings) -> Option<Self> {
-        let scratch = ramp::blank();
-        let (width, height) = scratch.dimensions();
-        let mut textures = Vec::with_capacity(RAMP_BUFFERS);
-        for _ in 0..RAMP_BUFFERS {
-            match T::create(
-                &mut (),
-                Format::Rgba8,
-                scratch.as_raw(),
-                [width, height],
-                settings,
-            ) {
-                Ok(texture) => textures.push(texture),
-                Err(e) => {
-                    error!("Could not make a colour ramp texture: {e:?}");
-                    return None;
-                }
-            }
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            scratch: ramp::blank(),
+            // Repeating wrap is what lets a phase coordinate run past one
+            // cycle and keep indexing the ramp, so the cycle count never
+            // reaches the mesh. Linear filtering puts the sawtooth's jump
+            // inside one texel.
+            settings: TextureSettings::new()
+                .filter(Filter::Linear)
+                .wrap_u(Wrap::Repeat)
+                .wrap_v(Wrap::Repeat),
+            frame: 0,
         }
-        Some(Self {
-            key: None,
-            textures,
-            current: 0,
-            scratch,
-            verts: VertexBuffers::default(),
-        })
     }
 
-    /// Rebuild the ramp if it moved, and leave the texture to sample current.
+    /// The texture holding this layer's colour, building it if no one has.
     ///
-    /// A live colour animation moves it every frame, which is affordable
-    /// precisely because a rebuild is a thousand evaluations and a write to a
-    /// texture nothing is still reading.
-    fn refresh(&mut self, fill: &FillLayer) {
+    /// `None` only if the backend refused to give up a texture, which is a
+    /// reason to skip a figure rather than to stop the show.
+    fn texture_for(&mut self, fill: &FillLayer) -> Option<&T> {
         let key = RampKey::of(&fill.color);
-        let animated = !fill.color_anims.is_empty();
-        if !animated && self.key == Some(key) {
-            return;
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.last_used = self.frame;
+            return self.entries.get(&key).map(|e| &e.texture);
         }
+
         ramp::build_into(&mut self.scratch, &fill.color, &fill.color_anims);
-        self.current = (self.current + 1) % self.textures.len();
         let (width, height) = self.scratch.dimensions();
-        if let Some(texture) = self.textures.get_mut(self.current)
-            && let Err(e) = texture.update(
-                &mut (),
-                Format::Rgba8,
-                self.scratch.as_raw(),
-                [0, 0],
-                [width, height],
-            )
-        {
+
+        // Take back a texture nothing has drawn with recently, in preference
+        // to asking the backend for another one.
+        let stale = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.last_used + FRAMES_IN_FLIGHT <= self.frame)
+            .min_by_key(|(_, e)| e.last_used)
+            .map(|(key, _)| *key);
+
+        let mut entry = match stale.and_then(|key| self.entries.remove(&key)) {
+            Some(entry) => entry,
+            None => RampEntry {
+                texture: match T::create(
+                    &mut (),
+                    Format::Rgba8,
+                    self.scratch.as_raw(),
+                    [width, height],
+                    &self.settings,
+                ) {
+                    Ok(texture) => texture,
+                    Err(e) => {
+                        error!("Could not make a colour ramp texture: {e:?}");
+                        return None;
+                    }
+                },
+                last_used: self.frame,
+            },
+        };
+
+        if let Err(e) = entry.texture.update(
+            &mut (),
+            Format::Rgba8,
+            self.scratch.as_raw(),
+            [0, 0],
+            [width, height],
+        ) {
             error!("Could not update a colour ramp texture: {e:?}");
+            return None;
         }
-        self.key = Some(key);
+        entry.last_used = self.frame;
+        Some(
+            &self
+                .entries
+                .entry(key)
+                .insert_entry(entry)
+                .into_mut()
+                .texture,
+        )
     }
 }
 
@@ -120,33 +167,27 @@ where
 pub struct Renderer<T> {
     geometry: GeometryCache,
     meshes: MeshLibrary,
-    /// Keyed by the mixer path rather than by position in the output, because
-    /// a channel at level zero is not expanded and every later position shifts
-    /// when it comes up.
-    ///
-    /// Never evicts, on the same premise the mesh library rests on: a show
-    /// touches a handful of channels and the set converges within seconds.
-    layers: HashMap<LayerKey, LayerRuntime<T>>,
+    ramps: RampPool<T>,
+    /// Scratch for the per-vertex pass, reused across every layer and every
+    /// frame. Layers draw one after another and none of this outlives the
+    /// draw that fills it, so one buffer serves all of them.
+    verts: VertexBuffers,
     /// Figures asked for that this build does not carry, so each is reported
     /// once rather than every frame.
     missing: HashSet<SpriteId>,
-    ramp_settings: TextureSettings,
 }
 
-impl<T> Default for Renderer<T> {
+impl<T> Default for Renderer<T>
+where
+    T: CreateTexture<()> + UpdateTexture<()>,
+{
     fn default() -> Self {
         Self {
             geometry: GeometryCache::default(),
             meshes: MeshLibrary::default(),
-            layers: HashMap::new(),
+            ramps: RampPool::new(),
+            verts: VertexBuffers::default(),
             missing: HashSet::new(),
-            // Repeating wrap is what lets a phase coordinate run past one cycle
-            // and keep indexing the ramp, so the cycle count never reaches the
-            // mesh. Linear filtering puts the sawtooth's jump inside one texel.
-            ramp_settings: TextureSettings::new()
-                .filter(Filter::Linear)
-                .wrap_u(Wrap::Repeat)
-                .wrap_v(Wrap::Repeat),
         }
     }
 }
@@ -166,6 +207,7 @@ where
         gl: &mut G,
         cfg: &ClientConfig,
     ) {
+        self.ramps.frame += 1;
         for layer in layers {
             match layer.as_ref() {
                 Layer::Marks(marks) => marks.draw(c, gl, cfg),
@@ -189,9 +231,9 @@ where
         let Self {
             geometry,
             meshes,
-            layers,
+            ramps,
+            verts,
             missing,
-            ramp_settings,
         } = self;
 
         let Some(sprite) = tunnels_sprites::sprite(fill.sprite.0) else {
@@ -248,28 +290,15 @@ where
             return;
         }
 
-        let runtime = match layers.entry(fill.key) {
-            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::hash_map::Entry::Vacant(e) => {
-                let Some(runtime) = LayerRuntime::new(ramp_settings) else {
-                    return;
-                };
-                e.insert(runtime)
+        // A uniform figure needs no ramp; a varying one needs the texture
+        // holding its colour, which the pool may already have.
+        let texture = if flat {
+            None
+        } else {
+            match ramps.texture_for(fill) {
+                Some(texture) => Some(texture),
+                None => return,
             }
-        };
-        if !flat {
-            runtime.refresh(fill);
-        }
-        // Split the runtime into disjoint pieces: the texture is read while the
-        // vertex buffers are written.
-        let LayerRuntime {
-            textures,
-            current,
-            verts,
-            ..
-        } = runtime;
-        let Some(texture) = textures.get(*current) else {
-            return;
         };
 
         let field = PhaseField {
@@ -299,10 +328,11 @@ where
                     warps: &fill.warps,
                 },
             );
-            if flat {
-                draw_flat(mesh, verts, flat_color(fill), placed.m, gl);
-            } else {
-                draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
+            match texture {
+                Some(texture) => {
+                    draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
+                }
+                None => draw_flat(mesh, verts, flat_color(fill), placed.m, gl),
             }
         };
 
@@ -363,6 +393,143 @@ impl Placed {
         Self {
             m: placed.scale(half_x, half_y),
             px_per_unit: half_x.abs().max(half_y.abs()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use graphics::ImageSize;
+    use texture::TextureOp;
+    use tunnels_model::layer::{ColorField, ColorPhase, DrawMode, Placement, SpriteId};
+
+    /// Stands in for a GPU texture, counting what the pool asks of it.
+    struct FakeTexture {
+        updates: usize,
+    }
+
+    impl ImageSize for FakeTexture {
+        fn get_size(&self) -> (u32, u32) {
+            (ramp::RAMP_TEXELS, 1)
+        }
+    }
+
+    impl TextureOp<()> for FakeTexture {
+        type Error = ();
+    }
+
+    impl CreateTexture<()> for FakeTexture {
+        fn create<S: Into<[u32; 2]>>(
+            _: &mut (),
+            _: Format,
+            _: &[u8],
+            _: S,
+            _: &TextureSettings,
+        ) -> Result<Self, Self::Error> {
+            Ok(Self { updates: 0 })
+        }
+    }
+
+    impl UpdateTexture<()> for FakeTexture {
+        fn update<O, S>(&mut self, _: &mut (), _: Format, _: &[u8], _: O, _: S) -> Result<(), ()>
+        where
+            O: Into<[u32; 2]>,
+            S: Into<[u32; 2]>,
+        {
+            self.updates += 1;
+            Ok(())
+        }
+    }
+
+    /// A figure whose colour is decided by `center` and nothing else.
+    fn fill(center: f64) -> FillLayer {
+        FillLayer {
+            sprite: SpriteId(0),
+            placement: Placement {
+                x: 0.,
+                y: 0.,
+                extent_x: 0.5,
+                extent_y: 0.5,
+                rot_angle: 0.,
+            },
+            spin: 0.,
+            thickness: 0.,
+            draw_mode: DrawMode::Fill,
+            color: ColorField {
+                phase: ColorPhase::Angle,
+                cycles: 3.,
+                center,
+                width: 1.,
+                sat: 1.,
+                val: 1.,
+                level: 1.,
+            },
+            color_anims: Vec::new(),
+            warps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn one_colour_is_one_texture_however_many_figures_want_it() {
+        let mut pool: RampPool<FakeTexture> = RampPool::new();
+        pool.frame = 1;
+        for _ in 0..5 {
+            assert!(pool.texture_for(&fill(0.25)).is_some());
+        }
+        assert_eq!(pool.entries.len(), 1, "one colour, one texture");
+
+        // A still look uploads once and then never again, however many frames
+        // go by — which is the whole of what content-addressing buys here.
+        for frame in 2..10 {
+            pool.frame = frame;
+            assert!(pool.texture_for(&fill(0.25)).is_some());
+        }
+        let uploads = pool
+            .entries
+            .values()
+            .map(|e| e.texture.updates)
+            .sum::<usize>();
+        assert_eq!(uploads, 1, "a still colour was uploaded {uploads} times");
+    }
+
+    #[test]
+    fn figures_drawn_together_never_share_a_texture() {
+        let mut pool: RampPool<FakeTexture> = RampPool::new();
+        // Four different colours in one frame. None may be recycled out from
+        // under a draw that has already been queued against it.
+        pool.frame = 1;
+        for i in 0..4 {
+            assert!(pool.texture_for(&fill(f64::from(i) * 0.2)).is_some());
+        }
+        assert_eq!(pool.entries.len(), 4, "colours drawn together collided");
+    }
+
+    /// The pool bounds itself: an animated colour is a new key every frame, so
+    /// what stops the pool growing is recycling rather than a size cap.
+    #[test]
+    fn an_animated_colour_settles_at_a_bounded_pool() {
+        for layers in [1u32, 3] {
+            let mut pool: RampPool<FakeTexture> = RampPool::new();
+            let mut high_water = 0;
+            for frame in 1..500u64 {
+                pool.frame = frame;
+                for layer in 0..layers {
+                    // A colour that moves every frame, as a hue animation
+                    // sweeping the ramp does.
+                    let center = (frame as f64 * 0.01 + f64::from(layer) * 0.1).rem_euclid(1.0);
+                    assert!(pool.texture_for(&fill(center)).is_some());
+                }
+                high_water = high_water.max(pool.entries.len());
+            }
+            // One texture per asking layer per frame still in flight, and
+            // not one more: the frame being drawn reuses what fell out of
+            // flight rather than adding to the pool.
+            let bound = FRAMES_IN_FLIGHT as usize * layers as usize;
+            assert_eq!(
+                high_water, bound,
+                "{layers} animated layer(s) settled at {high_water} textures, not {bound}"
+            );
         }
     }
 }

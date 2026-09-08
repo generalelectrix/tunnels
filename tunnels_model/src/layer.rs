@@ -248,40 +248,6 @@ pub struct Hsva {
     pub level: f64,
 }
 
-/// Identifies one layer across frames, so its caches survive the mixer moving.
-///
-/// The path of channel indices from the mixer root, rather than the layer's
-/// position in the output: `Mixer::render_video_channel` skips channels at
-/// level zero, so bringing one up shifts every later index and would hand
-/// every fill after it another layer's ramp for a frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct LayerKey {
-    path: [u16; Self::MAX_DEPTH],
-    len: u8,
-}
-
-impl LayerKey {
-    /// How deep the path is followed.
-    ///
-    /// Looks may nest far deeper than this. Past it the key stops recording,
-    /// so two figures under the same eight-deep prefix share a cache — the
-    /// stale-ramp flash this exists to prevent, at a nesting depth no show
-    /// reaches, rather than an unbounded key on a per-frame path.
-    const MAX_DEPTH: usize = 8;
-
-    /// Descend into a channel, returning the key for what is inside it.
-    pub fn child(mut self, channel: usize) -> Self {
-        if let (Some(slot), Ok(channel)) = (
-            self.path.get_mut(usize::from(self.len)),
-            u16::try_from(channel),
-        ) {
-            *slot = channel;
-            self.len += 1;
-        }
-        self
-    }
-}
-
 /// A figure drawn as an area rather than as a run of segments.
 ///
 /// Carries no geometry: the figure itself is baked into the build and the
@@ -289,7 +255,6 @@ impl LayerKey {
 /// it.
 #[derive(Debug, Clone)]
 pub struct FillLayer {
-    pub key: LayerKey,
     pub sprite: SpriteId,
     pub placement: Placement,
     /// Winding at the rim, in turns. Bounded rather than integrated: five

@@ -449,7 +449,6 @@ mod tests {
                     }
                 }
                 (Layer::Fill(e), Layer::Fill(a)) => {
-                    assert_eq!(e.key, a.key, "{label}: layer {i} key");
                     assert_eq!(e.sprite, a.sprite, "{label}: layer {i} sprite");
                     assert_eq!(e.draw_mode, a.draw_mode, "{label}: layer {i} draw mode");
                     assert_eq!(
