@@ -15,7 +15,15 @@ pub const STEPS: usize = 900;
 pub struct Rose {
     /// Numerator of the angular frequency; sets the petal count.
     pub petals: u32,
-    /// Denominator of the angular frequency; how many turns the petals take to close.
+    /// Denominator of the angular frequency; how many turns the petals take to
+    /// close.
+    ///
+    /// The period below is the one for a frequency already in lowest terms, so a
+    /// divisor sharing a factor with the petal count sends the curve round its
+    /// own figure more than once — `Rose::new(4, 2, w)` traces the two-petal
+    /// rose twice, and an even-odd fill cancels it to nothing. Every curated
+    /// rose is coprime, so no preset stands on this; the arity control excludes
+    /// it so nothing reached live can either.
     pub divisor: u32,
     /// Width of the ribbon the curve is drawn as.
     pub width: f64,

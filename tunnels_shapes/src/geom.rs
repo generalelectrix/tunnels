@@ -5,11 +5,16 @@ pub const CENTER: f64 = 500.0;
 
 /// The width of the square a figure is built around.
 ///
-/// Most figures stay inside it, but nothing enforces that and three families do
-/// not: a star lattice is a field cut out of a tiling and runs most of a frame
-/// past the edge, while a truchet tiling and a phyllotaxis overhang it by the
-/// half-width of a mark at the border. Whoever draws a figure decides whether to
-/// clip it.
+/// It is not a bound. Nothing here clips, and three families reach outside it:
+/// every star lattice does, by up to 860 units, because it is a field cut out of
+/// a tiling rather than an object standing in the middle of one, and truchet
+/// tilings and phyllotaxes overhang by the half-width of a mark at the border.
+/// The figures these were ported from were clipped by the SVG viewBox that
+/// carried them, and contours carry no viewBox.
+///
+/// **Whoever draws a figure has to decide about clipping**, and the decision is
+/// not the same for the three: clipping a star lattice is what makes it a field,
+/// while clipping a truchet tiling shaves its border marks in half.
 pub const EXTENT: f64 = 1000.0;
 
 /// A point in the square from `(0, 0)` to `(EXTENT, EXTENT)`.
