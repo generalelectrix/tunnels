@@ -51,13 +51,49 @@ impl ShapeMode {
         }
     }
 
+    /// The library this mode's figure comes from, or `None` if it draws
+    /// segments instead of filling an area.
+    ///
+    /// The other half of the pair [`ShapeMode::segment_path`] opens: a mode
+    /// either distributes marks along a path or names a figure in a library,
+    /// and which of the two it does decides what every geometry control means.
+    pub fn figure_library(self) -> Option<FigureLibrary> {
+        match self {
+            Self::Ellipse | Self::Line => None,
+            Self::Sprite => Some(FigureLibrary::Baked),
+            Self::Generated => Some(FigureLibrary::Generated),
+        }
+    }
+
     /// Whether this mode draws a run of segments.
     ///
-    /// The controls that act on segments -- the marquee and the render mode
-    /// -- mean nothing to a mode that draws none.
+    /// The render mode acts on segments, and means nothing to a mode that
+    /// draws none.
     pub fn draws_segments(self) -> bool {
         self.segment_path().is_some()
     }
+
+    /// Whether the marquee knob names anything in this mode.
+    ///
+    /// It turns a run of marks around a beam, which a mode drawing none has
+    /// nothing to do with — except a generated figure, which has a second
+    /// degree of freedom and no other free knob to reach it with.
+    pub fn reads_marquee_knob(self) -> bool {
+        self.draws_segments() || matches!(self, Self::Generated)
+    }
+}
+
+/// Where a figure mode's figures come from.
+///
+/// The two libraries are shaped alike for a control to walk — a list of
+/// families, each a run of figures — which is what lets one pair of knobs
+/// address either.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum FigureLibrary {
+    /// Figures baked into the build from artwork.
+    Baked,
+    /// Figures built from a family and the two numbers that place one in it.
+    Generated,
 }
 
 /// The curve a run of segments is distributed along.
