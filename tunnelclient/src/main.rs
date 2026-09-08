@@ -10,11 +10,14 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let first_arg = env::args().nth(1).expect(
-        "First argument must be 'monitor' to run a local monitor (config via stdin), \
+        "First argument must be 'licenses' to print the figure attribution, \
+        'monitor' to run a local monitor (config via stdin), \
         or the integer virtual video channel to listen to.",
     );
 
-    if first_arg == "monitor" {
+    if first_arg == "licenses" {
+        print_licenses();
+    } else if first_arg == "monitor" {
         let cfg: ClientConfig = match read_config(std::io::stdin()) {
             Ok(cfg) => cfg,
             Err(e) => {
@@ -49,6 +52,23 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Print where the baked figures came from and the terms they carry.
+///
+/// The figures are derived from a font under the SIL Open Font License and
+/// from a Wikimedia drawing under CC BY-SA, both of which require their notice
+/// and licence to travel with what is distributed. This binary is what gets
+/// distributed — the bootstrapper pushes it to a machine during a show — so
+/// the notice is compiled into it and this is how it is read back out.
+fn print_licenses() {
+    println!("{}", tunnels_shapes::ATTRIBUTION);
+    println!("{}", tunnels_shapes::OPEN_FONT_LICENSE);
+    println!(
+        "Per-figure sources and licences, for all {} figures:\n{}",
+        tunnels_shapes::count(),
+        tunnels_shapes::CREDITS
+    );
 }
 
 /// Read a client configuration from a stream that carries one and then ends.
