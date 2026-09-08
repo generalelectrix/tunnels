@@ -1291,6 +1291,32 @@ mod test {
         );
     }
 
+    /// What a client builds before the show and what the knobs can ask for are
+    /// the same set, which is the whole point of naming it.
+    ///
+    /// A figure missing from the enumeration is one the operator reaches and
+    /// waits for; a figure in it that no knob names is work done for nothing.
+    #[test]
+    fn the_library_is_exactly_what_the_knobs_reach() {
+        let mut tunnel = Tunnel::default();
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Generated), &mut Silent);
+
+        let mut reachable = std::collections::HashSet::new();
+        for family in SEGMENTS_MIN..=SEGMENTS_MAX {
+            tunnel.handle_state_change(StateChange::Segments(family), &mut Silent);
+            for figure in 0..=KNOB_MAX {
+                tunnel.handle_state_change(StateChange::Blacking(figure), &mut Silent);
+                reachable.insert(tunnel.generated);
+            }
+        }
+
+        let enumerated: std::collections::HashSet<_> = GeneratedId::library().collect();
+        assert_eq!(
+            enumerated, reachable,
+            "the enumerated library and the reachable figures differ"
+        );
+    }
+
     /// Every knob position gives the interval it names, over the whole travel.
     ///
     /// The interval is a ratio of the knob's position to the span its half of
