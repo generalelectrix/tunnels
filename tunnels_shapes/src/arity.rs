@@ -187,7 +187,7 @@ impl ShapeFamily {
                 ShapeParams::StarPolygon(StarPolygon::new(n, star_step(n, secondary)))
             }
             Self::Rose => {
-                let divisor = secondary.pick(&divisors_excluding(n)).unwrap_or(1);
+                let divisor = secondary.pick(&rose_divisors(n)).unwrap_or(1);
                 ShapeParams::Rose(Rose::new(n, divisor, taper(arity, &range, 22.0, 15.0)))
             }
             Self::SpirographInside => {
@@ -258,7 +258,7 @@ impl ShapeFamily {
             }
             Self::MoireRings => ShapeParams::MoireRings(MoireRings::new(
                 n,
-                secondary.pick_in(1..=3),
+                secondary.pick(&ring_offsets(n)).unwrap_or(1),
                 taper(arity, &range, 20.0, 9.0),
             )),
             Self::MoireGrid => ShapeParams::MoireBars(MoireBars::new(
@@ -322,16 +322,26 @@ fn star_step(points: u32, secondary: Secondary) -> u32 {
     secondary.pick(&steps).unwrap_or(2)
 }
 
-/// Divisors a rose may carry, excluding the one that makes it a circle.
-fn divisors_excluding(petals: u32) -> Vec<u32> {
-    (1..=8).filter(|&d| d != petals).collect()
+/// Divisors a rose may carry.
+///
+/// The period is computed for a frequency in lowest terms, so a divisor sharing
+/// a factor with the petal count sends the curve round its own figure more than
+/// once — an even number of times cancels it entirely. A divisor equal to the
+/// petal count is a circle through the origin, which the coprimality rule
+/// already excludes for every count above one.
+fn rose_divisors(petals: u32) -> Vec<u32> {
+    (1..=8)
+        .filter(|&d| d != petals && gcd(d, petals) == 1)
+        .collect()
 }
 
 /// Frequencies the other axis of a Lissajous figure may carry.
 ///
-/// Equal frequencies trace an ellipse, which a ring of marks already makes.
+/// Equal frequencies trace an ellipse, which a ring of marks already makes. A
+/// frequency sharing a factor with the first closes the figure before the full
+/// turn is out and traces it again, which an even number of times cancels.
 fn lissajous_partners(a: u32) -> Vec<u32> {
-    (1..=9).filter(|&b| b != a).collect()
+    (1..=9).filter(|&b| b != a && gcd(a, b) == 1).collect()
 }
 
 /// A quarter turn is avoided: where `a` is even and `b` odd it traces the figure
@@ -365,6 +375,15 @@ const GUILLOCHE_BASES: &[(u32, u32, u32)] = &[
     (16, 7, 10),
     (17, 6, 12),
 ];
+
+/// Offsets a second ring stack may be pitched at.
+///
+/// The stacks divide the same radius, so an offset sharing a factor with the
+/// first count puts a ring of one stack exactly on a ring of the other, and the
+/// pair cancels.
+fn ring_offsets(rings: u32) -> Vec<u32> {
+    (1..=3).filter(|&offset| gcd(rings, offset) == 1).collect()
+}
 
 const CYCLOID_KINDS: [CycloidKind; 4] = [
     CycloidKind::Astroid,
