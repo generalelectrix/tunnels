@@ -49,11 +49,31 @@ struct StrokeId {
     thickness_bits: u32,
 }
 
+/// Outlines held before the map is emptied and refilled.
+///
+/// A stroke mesh measures 7,800 vertices on the average figure and 18,800 on
+/// the largest, at sixteen bytes a vertex, so this is a ceiling of about 30 MB
+/// typically and 75 MB if every entry were the largest figure in the library.
+///
+/// Emptying it rather than evicting from it is what the growth law asks for.
+/// A thickness animation sweeps the buckets in order and comes back round, so
+/// the entry least recently used is also the one about to be wanted again, and
+/// any recency policy would evict exactly wrong. Refilling costs one
+/// tessellation per outline drawn — 121 µs on the average figure against an
+/// 8.3 ms frame — and only the outlines a frame actually draws.
+const STROKE_CAP: usize = 256;
+
 /// Triangles tessellated so far, before any refinement.
 ///
 /// Two maps rather than one because the work differs: a figure's interior does
 /// not depend on how densely it will be drawn, while its outline depends on
 /// how wide the stroke is.
+///
+/// Their growth laws differ with them, and only one is bounded by its key.
+/// A figure has one interior, so the fills converge on the library and stop.
+/// Thickness is a knob and an animation target, so an outline's key moves
+/// while the show runs and the strokes would grow without limit; they are
+/// capped at [`STROKE_CAP`] instead.
 #[derive(Default)]
 pub struct GeometryCache {
     fills: HashMap<SpriteId, TriangleList>,
@@ -90,39 +110,41 @@ impl GeometryCache {
 
     /// The figure's outline stroked at `thickness`, tessellated on first use.
     pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &StrokeMesh {
-        self.strokes
-            .entry(StrokeId {
-                sprite: id,
-                thickness_bits: thickness.key(),
-            })
-            .or_insert_with(|| {
-                let options = StrokeOptions::tolerance(TOLERANCE)
-                    .with_line_width(thickness.figure_units.max(1e-4))
-                    .with_line_join(LineJoin::Round)
-                    .with_line_cap(LineCap::Round);
-                let mut out = StrokeMesh::default();
-                for figure in &sprite.figures {
-                    let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
-                    let mut builder =
-                        BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
-                            position: Point::from_array(v.position().to_array()),
-                            // Where on the contour this vertex was offset
-                            // from, which is what colours it.
-                            on_path: Point::from_array(v.position_on_path().to_array()),
-                        });
-                    if StrokeTessellator::new()
-                        .tessellate_path(
-                            &path_of_capped(figure, STROKE_SEGMENT),
-                            &options,
-                            &mut builder,
-                        )
-                        .is_ok()
-                    {
-                        out.extend(&buffers);
-                    }
+        let key = StrokeId {
+            sprite: id,
+            thickness_bits: thickness.key(),
+        };
+        if self.strokes.len() >= STROKE_CAP && !self.strokes.contains_key(&key) {
+            self.strokes.clear();
+        }
+        self.strokes.entry(key).or_insert_with(|| {
+            let options = StrokeOptions::tolerance(TOLERANCE)
+                .with_line_width(thickness.figure_units.max(1e-4))
+                .with_line_join(LineJoin::Round)
+                .with_line_cap(LineCap::Round);
+            let mut out = StrokeMesh::default();
+            for figure in &sprite.figures {
+                let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
+                let mut builder =
+                    BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
+                        position: Point::from_array(v.position().to_array()),
+                        // Where on the contour this vertex was offset
+                        // from, which is what colours it.
+                        on_path: Point::from_array(v.position_on_path().to_array()),
+                    });
+                if StrokeTessellator::new()
+                    .tessellate_path(
+                        &path_of_capped(figure, STROKE_SEGMENT),
+                        &options,
+                        &mut builder,
+                    )
+                    .is_ok()
+                {
+                    out.extend(&buffers);
                 }
-                out
-            })
+            }
+            out
+        })
     }
 }
 
@@ -341,6 +363,44 @@ mod test {
             )
             .key()
         );
+    }
+
+    /// Thickness is animated, so its bucket moves every frame and the map has
+    /// to have a ceiling. A sweep of the knob is what puts it there.
+    #[test]
+    fn a_swept_thickness_does_not_grow_the_outline_map_without_limit() {
+        use tunnels_sprites::{Contour, Figure};
+
+        let sprite = Sprite {
+            name: "square",
+            figures: vec![Figure {
+                rule: FillRule::NonZero,
+                subpaths: vec![
+                    Contour::new(vec![
+                        Point::new(-1.0, -1.0),
+                        Point::new(1.0, -1.0),
+                        Point::new(1.0, 1.0),
+                        Point::new(-1.0, 1.0),
+                    ])
+                    .expect("four corners is a loop"),
+                ],
+            }],
+        };
+        let scale = Scale {
+            px_per_unit: 200.0,
+            nominal_px_per_unit: 200.0,
+        };
+
+        let mut cache = GeometryCache::default();
+        for step in 0..4 * STROKE_CAP {
+            let thickness = Thickness::bucketed(step as f64 * 0.5, scale);
+            cache.stroke(SpriteId(0), &sprite, thickness);
+            assert!(
+                cache.strokes.len() <= STROKE_CAP,
+                "{} outlines held after {step} distinct thicknesses",
+                cache.strokes.len()
+            );
+        }
     }
 
     /// A ring is two loops, and the rule between them is what makes it a ring.
