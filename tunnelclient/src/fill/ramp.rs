@@ -134,7 +134,18 @@ pub fn build_into(
                 AnimationTarget::Color => adjust.center += value * 0.5,
                 AnimationTarget::ColorSpread => adjust.width += value,
                 AnimationTarget::ColorSaturation => adjust.sat += value,
-                _ => {}
+                // The rest never arrive. A ramp holds colour, and the model
+                // sends a layer only its colour animations here; everything
+                // that moves geometry travels with the layer instead and is
+                // answered once per point of the figure.
+                AnimationTarget::Rotation
+                | AnimationTarget::Thickness
+                | AnimationTarget::Size
+                | AnimationTarget::AspectRatio
+                | AnimationTarget::MarqueeRotation
+                | AnimationTarget::PositionX
+                | AnimationTarget::PositionY
+                | AnimationTarget::Spin => {}
             }
         }
 
