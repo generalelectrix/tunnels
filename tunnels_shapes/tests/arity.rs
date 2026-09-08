@@ -233,3 +233,77 @@ fn every_family_is_reachable() {
         );
     }
 }
+
+/// The library table, checked against the ranges the families justify.
+///
+/// Writing the arities out is what lets curation choose them, and the cost of
+/// that is a list that can disagree with the range it is drawn from — a family
+/// whose range is later narrowed, or a digit typed wrong. Nothing else notices:
+/// `resolve` clamps, so an arity outside the range would quietly draw the
+/// figure at the boundary under the wrong name.
+#[test]
+fn every_offered_arity_is_one_the_family_admits() {
+    /// The most positions one knob is asked to select between.
+    const CAP: usize = 16;
+
+    let mut total = 0;
+    for family in ShapeFamily::ALL {
+        let range = family.arity_range();
+        let arities = family.arities();
+        total += arities.len();
+
+        assert!(
+            !arities.is_empty() && arities.len() <= CAP,
+            "{} offers {} arities, which is not between one and {CAP}",
+            family.name(),
+            arities.len()
+        );
+        for arity in arities {
+            assert!(
+                range.contains(&arity.get()),
+                "{} offers arity {}, which is outside {range:?}",
+                family.name(),
+                arity.get()
+            );
+        }
+        assert!(
+            arities.windows(2).all(|pair| pair[0] < pair[1]),
+            "{}'s arities are not in ascending order: {arities:?}",
+            family.name()
+        );
+    }
+    assert_eq!(total, 339, "the generated library is a different size");
+}
+
+/// The families whose second control resolves into nothing, named rather than
+/// discovered, so that a family gaining a degree of freedom has to say so here.
+#[test]
+fn only_the_families_without_a_second_freedom_ignore_the_secondary() {
+    const WITHOUT: [ShapeFamily; 9] = [
+        ShapeFamily::Harmonograph,
+        ShapeFamily::Phyllotaxis,
+        ShapeFamily::MoireGrid,
+        ShapeFamily::MoireWeave,
+        ShapeFamily::PinwheelNest,
+        ShapeFamily::Truchet,
+        ShapeFamily::ConcentricRings,
+        ShapeFamily::Grid,
+        ShapeFamily::Frames,
+    ];
+
+    for family in ShapeFamily::ALL {
+        let unmoved = family.arities().iter().all(|&arity| {
+            let pinned = family.resolve(arity, family.secondary());
+            SECONDARIES
+                .iter()
+                .all(|&s| family.resolve(arity, Secondary::new(s)) == pinned)
+        });
+        assert_eq!(
+            unmoved,
+            WITHOUT.contains(&family),
+            "{} {} its secondary",
+            family.name(),
+            if unmoved { "ignores" } else { "resolves" }
+        );
+    }
+}
