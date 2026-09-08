@@ -68,19 +68,10 @@ impl ShapeMode {
 
     /// Whether this mode draws a run of segments.
     ///
-    /// The render mode acts on segments, and means nothing to a mode that
-    /// draws none.
+    /// The controls that act on segments — the marquee and the render mode —
+    /// mean nothing to a mode that draws none.
     pub fn draws_segments(self) -> bool {
         self.segment_path().is_some()
-    }
-
-    /// Whether the marquee knob names anything in this mode.
-    ///
-    /// It turns a run of marks around a beam, which a mode drawing none has
-    /// nothing to do with — except a generated figure, which has a second
-    /// degree of freedom and no other free knob to reach it with.
-    pub fn reads_marquee_knob(self) -> bool {
-        self.draws_segments() || matches!(self, Self::Generated)
     }
 }
 
@@ -163,14 +154,14 @@ pub struct GeneratedId {
 }
 
 impl Default for GeneratedId {
-    /// The first family at the bottom of its range, which is the figure a beam
-    /// draws before any knob has named another.
+    /// The first figure of the first family, which is what a beam draws before
+    /// any knob has named another.
     fn default() -> Self {
         let family = ShapeFamily::ALL[0];
         Self {
             family,
-            arity: Arity::new(*family.arity_range().start()),
-            secondary: Secondary::new(0.0),
+            arity: family.arities().first().copied().unwrap_or(Arity::new(0)),
+            secondary: family.secondary(),
         }
     }
 }

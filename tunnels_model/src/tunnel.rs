@@ -201,7 +201,7 @@ impl Tunnel {
                         index: generated_family(self.generated.family),
                     },
                     figures: Run {
-                        len: run.len,
+                        len: run.len(),
                         index: run.index_of(self.generated.arity),
                     },
                 }
@@ -231,8 +231,11 @@ impl Tunnel {
                     .get(usize::from(place.families.index))
                     .copied()
                     .unwrap_or(ShapeFamily::ALL[0]);
-                self.generated.family = family;
-                self.generated.arity = ArityRun::of(family).member(place.figures.index);
+                self.generated = GeneratedId {
+                    family,
+                    arity: ArityRun::of(family).member(place.figures.index),
+                    secondary: family.secondary(),
+                };
             }
         }
     }
@@ -266,18 +269,6 @@ impl Tunnel {
         match self.shelf() {
             None => self.blacking,
             Some(place) => KnobTravel::FULL.position(place.figures),
-        }
-    }
-
-    /// What the marquee control reads, which depends on the mode.
-    ///
-    /// The third of the controls a figure mode reinterprets: a family reached
-    /// by the other two still has a degree of freedom left, and this is the
-    /// knob that is otherwise standing at a setting nothing reads.
-    fn marquee_control(&self) -> BipolarFloat {
-        match self.shape_mode.figure_library() {
-            Some(FigureLibrary::Generated) => knob_at(self.generated.secondary),
-            _ => self.marquee_speed,
         }
     }
 
@@ -624,7 +615,7 @@ impl Tunnel {
     /// Emit the current value of all controllable tunnel state.
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
         use StateChange::*;
-        emitter.emit_tunnel_state_change(MarqueeSpeed(self.marquee_control()));
+        emitter.emit_tunnel_state_change(MarqueeSpeed(self.marquee_speed));
         emitter.emit_tunnel_state_change(RotationSpeed(self.rot_speed));
         emitter.emit_tunnel_state_change(Thickness(self.thickness.target()));
         emitter.emit_tunnel_state_change(Size(self.size.target()));
@@ -694,16 +685,7 @@ impl Tunnel {
     fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use StateChange::*;
         match sc {
-            // One knob, two fields: a mark mode turns its marquee with it and
-            // a generated figure reaches its family's other degree of freedom.
-            // A baked figure has neither, and writing the marquee speed from a
-            // knob that names nothing would change a mark mode's setting from
-            // a mode that has no marquee.
-            MarqueeSpeed(v) => match self.shape_mode.figure_library() {
-                None => self.marquee_speed = v,
-                Some(FigureLibrary::Generated) => self.generated.secondary = secondary_at(v),
-                Some(FigureLibrary::Baked) => (),
-            },
+            MarqueeSpeed(v) => self.marquee_speed = v,
             RotationSpeed(v) => self.rot_speed = v,
             Thickness(v) => self.thickness.set_target(v),
             Size(v) => self.size.set_target(v),
@@ -816,21 +798,6 @@ fn generated_family(family: ShapeFamily) -> u16 {
         .unwrap_or(0) as u16
 }
 
-/// The secondary position a knob stands at.
-///
-/// Read across the whole travel rather than either side of the detent: a
-/// family's second degree of freedom has no centre for a detent to mean, which
-/// is the same reason the halves of the blacking knob are not distinguished
-/// when it names a figure.
-fn secondary_at(knob: BipolarFloat) -> Secondary {
-    Secondary::new((knob.val() + 1.0) / 2.0)
-}
-
-/// Where the knob stands for a secondary position.
-fn knob_at(secondary: Secondary) -> BipolarFloat {
-    BipolarFloat::new(secondary.get() * 2.0 - 1.0)
-}
-
 /// A run of things a knob selects between, and which of them is selected.
 ///
 /// The two travel together because neither answers anything alone: a position
@@ -865,35 +832,36 @@ struct Shelf {
 /// answer to the same two questions is what lets one pair of knobs walk
 /// either.
 #[derive(Copy, Clone, Debug)]
-struct ArityRun {
-    first: u32,
-    len: u16,
-}
+struct ArityRun(&'static [Arity]);
 
 impl ArityRun {
     fn of(family: ShapeFamily) -> Self {
-        let range = family.arity_range();
-        Self {
-            first: *range.start(),
-            len: (range.end() - range.start() + 1) as u16,
-        }
+        Self(family.arities())
+    }
+
+    fn len(self) -> u16 {
+        self.0.len() as u16
     }
 
     /// The arity at this position in the run, clamped to its last.
     fn member(self, index: u16) -> Arity {
-        Arity::new(self.first + u32::from(index.min(self.last())))
+        self.0
+            .get(usize::from(index).min(self.0.len().saturating_sub(1)))
+            .copied()
+            // A family offers at least one arity, and `resolve` clamps into
+            // the family's range, so a run that held none would draw its floor.
+            .unwrap_or(Arity::new(0))
     }
 
     /// How far into the run an arity sits.
+    ///
+    /// An arity the run does not hold is reported at the last position below
+    /// it, so a figure reached some other way still puts the knob somewhere
+    /// the operator can turn away from.
     fn index_of(self, arity: Arity) -> u16 {
-        arity
-            .get()
-            .saturating_sub(self.first)
-            .min(u32::from(self.last())) as u16
-    }
-
-    fn last(self) -> u16 {
-        self.len.saturating_sub(1)
+        self.0
+            .partition_point(|&offered| offered <= arity)
+            .saturating_sub(1) as u16
     }
 }
 
@@ -1155,18 +1123,19 @@ mod test {
             );
         }
 
-        // Only a generated figure reads the marquee knob; a baked one leaves
-        // the marquee speed where a segment mode had it.
+        // The marquee knob is the one control a figure mode does not
+        // reinterpret: it turns a mark mode's marquee and nothing else, so it
+        // writes the same field whichever mode heard it.
         assert_eq!(
-            tunnel.marquee_speed, marquee,
-            "the marquee speed was not written by a figure mode"
+            tunnel.marquee_speed,
+            BipolarFloat::ONE,
+            "the marquee speed reads its own knob in every mode"
         );
         assert_eq!(
             tunnel.generated.secondary,
-            Secondary::new(1.0),
-            "the top of the marquee knob is the top of the secondary travel"
+            tunnel.generated.family.secondary(),
+            "the marquee knob moved the generated figure"
         );
-        assert_eq!(tunnel.marquee_control(), BipolarFloat::ONE);
 
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut Silent);
         assert_eq!(
@@ -1178,11 +1147,6 @@ mod test {
             tunnel.blacking_control(),
             blacking,
             "the blacking came back unchanged"
-        );
-        assert_eq!(
-            tunnel.marquee_control(),
-            marquee,
-            "the marquee speed came back unchanged"
         );
     }
 
@@ -1215,10 +1179,9 @@ mod test {
     /// Both knobs' travel covers what they choose between and reaches both
     /// ends, because a knob that cannot get to the last one is found on stage.
     ///
-    /// A knob sends 128 positions, so it reaches every one of a shorter list
-    /// and steps evenly through a longer one. Every family of figures is
-    /// shorter; an arity range can be longer, and a count is a quantity rather
-    /// than a list, so stepping through one loses nothing a list would lose.
+    /// A knob sends 128 positions and every list it selects between is shorter
+    /// than that, so each position of each list has a band of the travel to
+    /// itself and none of them is out of reach.
     #[test]
     fn the_figure_knobs_reach_every_family_and_every_figure_in_one() {
         /// Every position a knob's travel selects, in the order it selects
@@ -1271,16 +1234,61 @@ mod test {
         let baked = tunnels_sprites::families()
             .iter()
             .map(|family| (family.name.to_string(), family.len));
-        let generated = ShapeFamily::ALL.iter().map(|family| {
-            let range = family.arity_range();
-            (
-                family.name().to_string(),
-                (range.end() - range.start() + 1) as u16,
-            )
-        });
+        let generated = ShapeFamily::ALL
+            .iter()
+            .map(|family| (family.name().to_string(), family.arities().len() as u16));
         for (name, len) in baked.chain(generated) {
             reached(KnobTravel::FULL, len, &format!("the {name} family"));
         }
+    }
+
+    /// The figures two knobs can name, which is the whole of what a render
+    /// cache keyed on a figure can be asked to hold.
+    ///
+    /// A generated figure was reached by three knobs across continuous ranges,
+    /// so the set was the product of them and no cache holding one entry per
+    /// figure could converge. Walking every position of every control here is
+    /// what states the set as a number instead of as a growth law.
+    #[test]
+    fn the_figure_knobs_name_only_figures_the_library_holds() {
+        let mut tunnel = Tunnel::default();
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Generated), &mut Silent);
+
+        let mut named = std::collections::HashSet::new();
+        for family in SEGMENTS_MIN..=SEGMENTS_MAX {
+            tunnel.handle_state_change(StateChange::Segments(family), &mut Silent);
+            for figure in 0..=KNOB_MAX {
+                tunnel.handle_state_change(StateChange::Blacking(figure), &mut Silent);
+                for marquee in [-1.0, 0.0, 1.0] {
+                    tunnel.handle_state_change(
+                        StateChange::MarqueeSpeed(BipolarFloat::new(marquee)),
+                        &mut Silent,
+                    );
+                    let id = tunnel.generated;
+                    assert!(
+                        id.family.arities().contains(&id.arity),
+                        "the knobs named {} at arity {}, which the library does not hold",
+                        id.family.name(),
+                        id.arity.get()
+                    );
+                    assert_eq!(
+                        id.secondary,
+                        id.family.secondary(),
+                        "the knobs moved {} off its pinned secondary",
+                        id.family.name()
+                    );
+                    named.insert(id);
+                }
+            }
+        }
+        assert_eq!(
+            named.len(),
+            ShapeFamily::ALL
+                .iter()
+                .map(|family| family.arities().len())
+                .sum::<usize>(),
+            "the knobs do not reach every figure the library holds"
+        );
     }
 
     /// Every knob position gives the interval it names, over the whole travel.
