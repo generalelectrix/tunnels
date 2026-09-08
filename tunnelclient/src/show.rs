@@ -3,13 +3,13 @@ use anyhow::{Context as _, Result, anyhow};
 use client_lib::config::ClientConfig;
 use graphics::{CircleArc, Context, clear};
 use log::{error, info};
-use opengl_graphics::{GlGraphics, OpenGL};
+use opengl_graphics::{GlGraphics, OpenGL, Texture};
 use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use tunnelclient::draw::Draw;
+use tunnelclient::fill::Renderer;
 use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
 use tunnels_net::{FrameSubscriber, SubscriberStop};
@@ -109,6 +109,10 @@ pub struct Show {
     #[expect(unused)]
     artnet: Option<ArtnetNodeService>,
     window: PistonWindow<Sdl2Window>,
+    /// The figure caches, which live as long as the show does: a mesh and a
+    /// colour ramp are built once and then held for every frame that draws
+    /// them.
+    renderer: Renderer<Texture>,
     /// Reference instant for animating the waiting-for-frame spinner.
     start_time: Instant,
 }
@@ -149,6 +153,7 @@ impl Show {
             cfg,
             artnet,
             window,
+            renderer: Renderer::default(),
             start_time: Instant::now(),
         })
     }
@@ -186,11 +191,20 @@ impl Show {
                 .mixer
                 .render_video_channel(self.video_channel, frame.render_context())
         });
-        self.gl.draw(args.viewport(), |c, gl| {
+        // Split apart so the renderer's caches can be written while the
+        // backend the closure draws through is borrowed.
+        let Self {
+            gl,
+            cfg,
+            renderer,
+            start_time,
+            ..
+        } = self;
+        gl.draw(args.viewport(), |c, gl| {
             clear([0.0, 0.0, 0.0, 1.0], gl);
             match &layers {
-                Some(layers) => layers.draw(&c, gl, &self.cfg),
-                None => draw_waiting_spinner(&c, gl, &self.cfg, self.start_time.elapsed()),
+                Some(layers) => renderer.draw(layers, &c, gl, cfg),
+                None => draw_waiting_spinner(&c, gl, cfg, start_time.elapsed()),
             }
         });
     }

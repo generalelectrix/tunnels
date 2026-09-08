@@ -4,9 +4,11 @@
 //! and everything here describes shapes on a screen.
 
 use crate::animation::PreparedAnimation;
+use crate::waveforms::{WaveformArgs, sawtooth};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use strum::VariantArray;
+use tunnels_lib::number::{Phase, UnipolarFloat};
 
 /// Controls how a shape is rendered.
 #[derive(
@@ -91,6 +93,16 @@ pub enum DrawMode {
     Outline,
     /// The interior with its contours stroked over it.
     Both,
+}
+
+impl DrawMode {
+    pub fn draws_fill(self) -> bool {
+        matches!(self, Self::Fill | Self::Both)
+    }
+
+    pub fn draws_outline(self) -> bool {
+        matches!(self, Self::Outline | Self::Both)
+    }
 }
 
 /// Identifies one figure baked into the build.
@@ -183,10 +195,57 @@ impl ColorField {
     /// Whether every point of the figure resolves to the same colour.
     ///
     /// A uniform figure needs no ramp and no interpolation, which is also the
-    /// state a mask is in.
+    /// state a mask is in. An animation on the colour can still move that one
+    /// colour over time, so this is not on its own a reason to skip the ramp.
     pub fn is_uniform(&self) -> bool {
         self.width == 0.0 || self.cycles == 0.0
     }
+
+    /// The colour at a point of one cycle.
+    ///
+    /// This is a tunnel's own hue expression with the cycle count taken out:
+    /// the count multiplies the coordinate rather than the table, so one cycle
+    /// is all a table has to hold and a figure's colour reads the same as a
+    /// beam's at the same knob settings.
+    pub fn sample(&self, phase: Phase, adjust: ColorAdjust) -> Hsva {
+        let hue = Phase::new(
+            (self.center + adjust.center)
+                + 0.5
+                    * (self.width + adjust.width)
+                    * sawtooth(&WaveformArgs {
+                        phase_spatial: phase,
+                        phase_temporal: Phase::ZERO,
+                        smoothing: UnipolarFloat::ZERO,
+                        duty_cycle: UnipolarFloat::ONE,
+                        pulse: false,
+                        standing: false,
+                    }),
+        );
+        Hsva {
+            hue: hue.val(),
+            sat: UnipolarFloat::new(self.sat + adjust.sat).val(),
+            val: self.val,
+            level: self.level,
+        }
+    }
+}
+
+/// What animations add to a colour before it is resolved.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ColorAdjust {
+    pub center: f64,
+    pub width: f64,
+    pub sat: f64,
+}
+
+/// A resolved colour, and the level it is drawn at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hsva {
+    pub hue: f64,
+    pub sat: f64,
+    pub val: f64,
+    /// Alpha, carrying the channel's own level.
+    pub level: f64,
 }
 
 /// What an animation drives on a figure, and the animation resolved for this
@@ -283,7 +342,10 @@ pub struct FillLayer {
     pub thickness: f64,
     pub draw_mode: DrawMode,
     pub color: ColorField,
-    pub anims: Vec<FillAnimation>,
+    /// Animations resolved when the colour ramp is built, once per texel.
+    pub color_anims: Vec<FillAnimation>,
+    /// Animations resolved per point of the figure, displacing it.
+    pub warps: Vec<FillAnimation>,
 }
 
 /// What a beam expands into for one frame.

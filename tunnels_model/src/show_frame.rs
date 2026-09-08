@@ -457,9 +457,14 @@ mod tests {
                         "{label}: layer {i} colour phase"
                     );
                     assert_eq!(
-                        e.anims.len(),
-                        a.anims.len(),
-                        "{label}: layer {i} animation count"
+                        e.color_anims.len(),
+                        a.color_anims.len(),
+                        "{label}: layer {i} colour animation count"
+                    );
+                    assert_eq!(
+                        e.warps.len(),
+                        a.warps.len(),
+                        "{label}: layer {i} warp count"
                     );
                     for ((name, ev), (_, av)) in fill_fields(e).iter().zip(fill_fields(a)) {
                         assert_eq!(

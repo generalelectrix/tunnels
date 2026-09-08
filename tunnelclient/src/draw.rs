@@ -1,42 +1,16 @@
-use std::sync::Arc;
-
 use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
 use graphics::Context;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
-use log::error;
 use std::f64::consts::PI;
-use std::sync::Once;
-use tunnels_model::layer::{Layer, MarkLayer, RenderMode, SegmentPath, ShapeGeometry};
+use tunnels_model::layer::{MarkLayer, RenderMode, SegmentPath, ShapeGeometry};
 
 const TWOPI: f64 = 2.0 * PI;
 
 pub trait Draw<G: Graphics> {
     /// Given a context and gl instance, draw this entity to the screen.
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig);
-}
-
-impl<T, G> Draw<G> for Vec<T>
-where
-    G: Graphics,
-    T: Draw<G>,
-{
-    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        for e in self {
-            e.draw(c, gl, cfg);
-        }
-    }
-}
-
-impl<T, G> Draw<G> for Arc<T>
-where
-    G: Graphics,
-    T: Draw<G>,
-{
-    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        (**self).draw(c, gl, cfg);
-    }
 }
 
 #[inline]
@@ -46,7 +20,7 @@ fn color_from_rgb(r: f64, g: f64, b: f64, a: f64) -> Color {
 
 /// Convert HSV to a Piston RGB color.
 #[inline]
-fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
+pub(crate) fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
     if sat == 0.0 {
         color_from_rgb(val, val, val, alpha)
     } else {
@@ -64,20 +38,6 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
             3 => color_from_rgb(var_1, var_2, val, alpha),
             4 => color_from_rgb(var_3, var_1, val, alpha),
             _ => color_from_rgb(val, var_1, var_2, alpha),
-        }
-    }
-}
-
-impl<G: Graphics> Draw<G> for Layer {
-    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
-        match self {
-            Self::Marks(layer) => layer.draw(c, gl, cfg),
-            Self::Fill(_) => {
-                // A channel renders every frame and the status display is the
-                // only log sink, so a stub on this path reports once.
-                static REPORTED: Once = Once::new();
-                REPORTED.call_once(|| error!("This client cannot draw figures yet."));
-            }
         }
     }
 }

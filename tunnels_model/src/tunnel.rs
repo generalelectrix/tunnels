@@ -343,16 +343,8 @@ impl Tunnel {
                 .abs(),
             draw_mode: self.draw_mode,
             color,
-            anims: anims
-                .iter()
-                .filter(|(a, _)| a.is_active())
-                .filter_map(|(animation, target)| {
-                    Some(FillAnimation {
-                        target: fill_target(*target)?,
-                        animation: *animation,
-                    })
-                })
-                .collect(),
+            color_anims: fill_animations(anims, FillTarget::is_color),
+            warps: fill_animations(anims, |target| !target.is_color()),
         }
     }
 
@@ -621,6 +613,30 @@ impl Tunnel {
         };
         emitter.emit_tunnel_state_change(sc);
     }
+}
+
+/// The animations driving one half of a figure, resolved for this frame.
+///
+/// Split in the model rather than in the renderer because the two halves are
+/// answered in different places — the colour ones once per ramp texel, the rest
+/// once per point of the figure — and neither wants to walk past the other.
+/// An animation contributing nothing is dropped rather than asked for a zero
+/// tens of thousands of times.
+fn fill_animations(
+    anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
+    keep: impl Fn(FillTarget) -> bool,
+) -> Vec<FillAnimation> {
+    anims
+        .iter()
+        .filter(|(animation, _)| animation.is_active())
+        .filter_map(|(animation, target)| {
+            let target = fill_target(*target)?;
+            keep(target).then_some(FillAnimation {
+                target,
+                animation: *animation,
+            })
+        })
+        .collect()
 }
 
 /// What an animation target means on a figure, or `None` where it means
@@ -1480,5 +1496,124 @@ pub mod fixture {
                 );
             }
         }
+    }
+
+    /// The figures the render fixtures draw, by the id the build assigns them.
+    ///
+    /// The ids come from the asset directory's sort order, so a test that
+    /// draws one should check the name it got: a figure added to the library
+    /// renumbers everything after it, and a golden image would otherwise
+    /// quietly become an image of something else.
+    pub const SNOWFLAKE: SpriteId = SpriteId(44);
+    pub const BULLSEYE: SpriteId = SpriteId(9);
+
+    /// A tunnel that draws a figure instead of a run of segments.
+    ///
+    /// Saturated, so a colour knob shows up at all: the default is white.
+    fn sprite_tunnel(sprite: SpriteId) -> Tunnel {
+        Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            sprite,
+            col_sat: UnipolarFloat::ONE,
+            col_center: UnipolarFloat::new(0.55),
+            ..Default::default()
+        }
+    }
+
+    /// A figure in one colour, which is the path that skips the ramp entirely.
+    pub fn sprite_flat_snapshot() -> LayerCollection {
+        snapshot(render_default(&sprite_tunnel(SNOWFLAKE)))
+    }
+
+    /// A figure with a colour sweep along one of its coordinates.
+    ///
+    /// Three cycles rather than one, so the ramp's wrap and the seam where
+    /// angular phase jumps are both in the picture.
+    pub fn sprite_color_snapshot(phase: ColorPhase) -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
+        tunnel.color_phase = phase;
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure sheared by the spin knob: centre pinned, rim carrying the turn.
+    pub fn sprite_spin_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.spin_speed = BipolarFloat::new(0.25);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure deformed by a radial animation running around its angle,
+    /// which is what turns an outline into petals.
+    pub fn sprite_radial_animation_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(BULLSEYE);
+        // Small enough that the deformation stays inside the frame: a golden
+        // clipped by the viewport hides whatever it clipped.
+        tunnel.size = Smoother::new(
+            UnipolarFloat::new(0.3),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        tunnel.anims[0].target = AnimationTarget::Size;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(6)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.4))),
+            &mut NoopEmitter,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A masked figure stacked over a lit one, which intersects their
+    /// apertures the way stacking gobos does.
+    pub fn sprite_masked_stack_snapshot() -> LayerCollection {
+        let mut lit = sprite_tunnel(SNOWFLAKE);
+        lit.col_width = UnipolarFloat::ONE;
+        lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
+
+        let mut mask = sprite_tunnel(BULLSEYE);
+        mask.size = Smoother::new(
+            UnipolarFloat::new(0.35),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+
+        vec![
+            Arc::new(render_default(&lit)),
+            Arc::new(render_masked(&mask)),
+        ]
+    }
+
+    /// A figure's contours stroked instead of its interior filled.
+    pub fn sprite_outline_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    fn render_masked(tunnel: &Tunnel) -> Layer {
+        tunnel.render(
+            UnipolarFloat::ONE,
+            true,
+            RenderContext {
+                clocks: &ClockBank::default().as_static(),
+                palette: &ColorPalette::default(),
+                positions: &PositionBank::default(),
+                audio_envelope: UnipolarFloat::ZERO,
+            },
+            LayerKey::default(),
+        )
     }
 }

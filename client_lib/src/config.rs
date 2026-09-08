@@ -33,7 +33,22 @@ pub struct ClientConfig {
     pub artnet_node: bool,
     /// Log at debug level?
     pub log_level_debug: bool,
+    /// How many pixels a filled figure's mesh triangles should span on screen.
+    ///
+    /// Triangle count goes as the inverse square of this, so it is the
+    /// strongest lever there is on what a figure costs per frame — and the one
+    /// a slow projector machine has.
+    pub target_px: f64,
 }
+
+/// Default for [`ClientConfig::target_px`].
+///
+/// A figure's mesh carries phase, not colour: colour is resolved per fragment
+/// against the ramp. Phase is smooth, so the mesh only has to be fine enough
+/// that a straight line approximates an arctangent or a square root over one
+/// triangle, which is a far weaker requirement than approximating a hue sweep
+/// would be.
+pub const DEFAULT_TARGET_PX: f64 = 14.0;
 
 impl ClientConfig {
     #[allow(clippy::too_many_arguments)]
@@ -64,6 +79,7 @@ impl ClientConfig {
             transformation,
             artnet_node,
             log_level_debug,
+            target_px: DEFAULT_TARGET_PX,
         }
     }
 
@@ -98,7 +114,7 @@ impl ClientConfig {
             None
         };
 
-        Ok(ClientConfig::new(
+        let mut config = ClientConfig::new(
             video_channel,
             host,
             (x_resolution, y_resolution),
@@ -109,7 +125,13 @@ impl ClientConfig {
             // clients could serve one still loads.
             cfg["artnet_node"].as_bool().unwrap_or(false),
             flag("log_level_debug", "Bad log level flag.")?,
-        ))
+        );
+        // An absent key leaves the default, so a config written before figures
+        // existed still loads. A machine too slow for them turns this up.
+        if let Some(target_px) = cfg["target_px"].as_f64() {
+            config.target_px = target_px;
+        }
+        Ok(config)
     }
 }
 

@@ -29,6 +29,10 @@ tunnels_net = { path = "../tunnels_net" }
 client_lib = { path = "../client_lib" }
 zero_configure = { path = "../zero_configure" }
 rust_dmx = "0.11"
+lyon_tessellation = "1"
+lyon_path = "1"
+image = "0.25"
+tunnels_shapes = { path = "../tunnels_shapes" }
 
 [dev-dependencies]
 image = "0.25"
