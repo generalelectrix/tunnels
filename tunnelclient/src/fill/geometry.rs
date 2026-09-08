@@ -5,6 +5,7 @@
 //! band and a disc. Resolving that is this module's job, and doing it here
 //! means the stroke gets the same loops for free.
 
+use super::geom::{Triangle, TriangleList};
 use lyon_path::Path;
 use lyon_path::math::point;
 use lyon_tessellation::{
@@ -13,7 +14,7 @@ use lyon_tessellation::{
 };
 use std::collections::HashMap;
 use tunnels_model::layer::SpriteId;
-use tunnels_shapes::{FillRule, Sprite};
+use tunnels_shapes::{FillRule, Point, Sprite};
 
 /// How finely the tessellator may deviate, in shape units.
 ///
@@ -38,24 +39,25 @@ struct StrokeId {
 /// how wide the stroke is.
 #[derive(Default)]
 pub struct GeometryCache {
-    fills: HashMap<SpriteId, Vec<[f32; 2]>>,
-    strokes: HashMap<StrokeId, Vec<[f32; 2]>>,
+    fills: HashMap<SpriteId, TriangleList>,
+    strokes: HashMap<StrokeId, TriangleList>,
 }
 
 impl GeometryCache {
     /// The figure's interior, tessellated on first use.
-    pub fn fill(&mut self, id: SpriteId, sprite: &Sprite) -> &[[f32; 2]] {
+    pub fn fill(&mut self, id: SpriteId, sprite: &Sprite) -> &TriangleList {
         self.fills.entry(id).or_insert_with(|| {
-            let mut out = Vec::new();
+            let mut out = TriangleList::default();
             for figure in &sprite.figures {
                 let rule = match figure.rule {
                     FillRule::NonZero => LyonFillRule::NonZero,
                     FillRule::EvenOdd => LyonFillRule::EvenOdd,
                 };
                 let options = FillOptions::tolerance(TOLERANCE).with_fill_rule(rule);
-                let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
-                let mut builder =
-                    BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array());
+                let mut buffers: VertexBuffers<Point, u32> = VertexBuffers::new();
+                let mut builder = BuffersBuilder::new(&mut buffers, |v: FillVertex| {
+                    Point::from_array(v.position().to_array())
+                });
                 // A figure that will not tessellate contributes nothing rather
                 // than stopping the frame.
                 if FillTessellator::new()
@@ -70,7 +72,7 @@ impl GeometryCache {
     }
 
     /// The figure's outline stroked at `width`, tessellated on first use.
-    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, width: Width) -> &[[f32; 2]] {
+    pub fn stroke(&mut self, id: SpriteId, sprite: &Sprite, width: Width) -> &TriangleList {
         self.strokes
             .entry(StrokeId {
                 sprite: id,
@@ -81,11 +83,11 @@ impl GeometryCache {
                     .with_line_width(width.shape_units.max(1e-4))
                     .with_line_join(LineJoin::Round)
                     .with_line_cap(LineCap::Round);
-                let mut out = Vec::new();
+                let mut out = TriangleList::default();
                 for figure in &sprite.figures {
-                    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+                    let mut buffers: VertexBuffers<Point, u32> = VertexBuffers::new();
                     let mut builder = BuffersBuilder::new(&mut buffers, |v: StrokeVertex| {
-                        v.position().to_array()
+                        Point::from_array(v.position().to_array())
                     });
                     if StrokeTessellator::new()
                         .tessellate_path(&path_of(figure), &options, &mut builder)
@@ -158,26 +160,30 @@ impl Width {
 fn path_of(figure: &tunnels_shapes::Figure) -> Path {
     let mut builder = Path::builder();
     for subpath in &figure.subpaths {
-        let Some((first, rest)) = subpath.split_first() else {
+        let Some((first, rest)) = subpath.points().split_first() else {
             continue;
         };
-        builder.begin(point(first[0], first[1]));
+        builder.begin(point(first.x(), first.y()));
         for p in rest {
-            builder.line_to(point(p[0], p[1]));
+            builder.line_to(point(p.x(), p.y()));
         }
         builder.end(true);
     }
     builder.build()
 }
 
-/// Flatten indexed vertices into the flat triangle list `tri_list` wants.
-fn expand(buffers: &VertexBuffers<[f32; 2], u32>, out: &mut Vec<[f32; 2]>) {
-    out.extend(
-        buffers
-            .indices
-            .iter()
-            .filter_map(|&i| buffers.vertices.get(i as usize).copied()),
-    );
+/// Resolve the tessellator's indexed output into whole triangles.
+///
+/// A triangle naming a vertex that is not there is dropped entire. Lyon does
+/// not emit one, but dropping the odd point instead would shift every later
+/// vertex by one and scramble the rest of the figure.
+fn expand(buffers: &VertexBuffers<Point, u32>, out: &mut TriangleList) {
+    for tri in buffers.indices.as_chunks::<3>().0 {
+        let corners = tri.map(|i| buffers.vertices.get(i as usize).copied());
+        if let [Some(a), Some(b), Some(c)] = corners {
+            out.push(Triangle::new(a, b, c));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -232,9 +238,17 @@ mod test {
     /// A ring is two loops, and the rule between them is what makes it a ring.
     #[test]
     fn the_winding_rule_decides_whether_a_ring_has_a_hole() {
-        use tunnels_shapes::Figure;
+        use tunnels_shapes::{Contour, Figure};
 
-        let square = |half: f32| vec![[-half, -half], [half, -half], [half, half], [-half, half]];
+        let square = |half: f32| {
+            Contour::new(vec![
+                Point::new(-half, -half),
+                Point::new(half, -half),
+                Point::new(half, half),
+                Point::new(-half, half),
+            ])
+            .expect("four corners is a loop")
+        };
         let ring = |rule| Sprite {
             name: "ring",
             figures: vec![Figure {
@@ -243,13 +257,12 @@ mod test {
             }],
         };
 
-        let area = |tris: &[[f32; 2]]| -> f32 {
-            tris.chunks(3)
-                .map(|t| match t {
-                    [a, b, c] => {
-                        ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])).abs() / 2.0
-                    }
-                    _ => 0.0,
+        let area = |tris: &TriangleList| -> f32 {
+            tris.triangles()
+                .map(|t| {
+                    let [a, b, c] = t.points();
+                    ((b.x() - a.x()) * (c.y() - a.y()) - (c.x() - a.x()) * (b.y() - a.y())).abs()
+                        / 2.0
                 })
                 .sum()
         };

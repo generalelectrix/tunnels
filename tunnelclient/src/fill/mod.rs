@@ -10,11 +10,13 @@
 
 mod draw;
 mod fastmath;
+mod geom;
 mod geometry;
 mod mesh;
 mod ramp;
 
 use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_textured, draw_tris};
+use self::geom::TriangleList;
 use self::geometry::{GeometryCache, Scale, Width};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampKey;
@@ -274,7 +276,7 @@ where
             phase: fill.color.phase,
             cycles: fill.color.cycles as f32,
         };
-        let mut piece = |source: &[[f32; 2]], stroke: Option<u32>, gl: &mut G| {
+        let mut piece = |source: &TriangleList, stroke: Option<u32>, gl: &mut G| {
             let mesh = meshes.get(
                 MeshId {
                     sprite: fill.sprite,
@@ -298,17 +300,9 @@ where
                 },
             );
             if flat {
-                draw_flat(mesh, &verts.positions, flat_color(fill), placed.m, gl);
+                draw_flat(mesh, verts, flat_color(fill), placed.m, gl);
             } else {
-                draw_textured(
-                    mesh,
-                    &verts.positions,
-                    &verts.uvs,
-                    field.wrap_period(),
-                    texture,
-                    placed.m,
-                    gl,
-                );
+                draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
             }
         };
 

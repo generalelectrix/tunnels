@@ -5,8 +5,10 @@
 //! cached across frames while the colour on it changes freely — including
 //! waveforms driven by a clock, which change every frame.
 
+use super::geom::{IndexBatch, Triangle, TriangleList};
 use std::collections::HashMap;
 use tunnels_model::layer::SpriteId;
+use tunnels_shapes::Point;
 
 /// How much finer triangles get as they approach the origin.
 ///
@@ -40,8 +42,8 @@ const FINEST_LEVEL: i8 = -7;
 /// triangle list repeats each shared vertex about six times, and each repeat
 /// would be another transcendental evaluated for an answer already known.
 pub struct RefinedMesh {
-    pub verts: Vec<[f32; 2]>,
-    pub indices: Vec<u32>,
+    pub verts: Vec<Point>,
+    indices: Vec<u32>,
 }
 
 impl RefinedMesh {
@@ -51,6 +53,13 @@ impl RefinedMesh {
 
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty()
+    }
+
+    /// Runs of whole triangles, each within `max_vertices`.
+    pub fn batches(&self, max_vertices: usize) -> impl Iterator<Item = IndexBatch<'_>> {
+        self.indices
+            .chunks((max_vertices / 3 * 3).max(3))
+            .map(IndexBatch::new)
     }
 }
 
@@ -116,7 +125,7 @@ pub struct MeshLibrary {
 
 impl MeshLibrary {
     /// The mesh for this id, building it on first use.
-    pub fn get(&mut self, id: MeshId, source: &[[f32; 2]]) -> &RefinedMesh {
+    pub fn get(&mut self, id: MeshId, source: &TriangleList) -> &RefinedMesh {
         self.built
             .entry(id)
             .or_insert_with(|| refine(source, id.level.target_edge()))
@@ -135,23 +144,20 @@ impl MeshLibrary {
 /// which is a function of position alone, so it is built once per figure and
 /// density and then holds for every colour a layer can take — including one
 /// changing every frame.
-fn refine(tris: &[[f32; 2]], target: f32) -> RefinedMesh {
+fn refine(tris: &TriangleList, target: f32) -> RefinedMesh {
     let mut flat = Vec::new();
-    for tri in tris.chunks(3) {
-        if let [a, b, c] = tri {
-            bisect([*a, *b, *c], target, 0, &mut flat);
-        }
+    for tri in tris.triangles() {
+        bisect(tri, target, 0, &mut flat);
     }
 
     // Midpoints are computed as (a + b) / 2 from both triangles sharing an
     // edge, and float addition is commutative, so the two agree bit for bit and
     // this dedup finds them.
     let mut seen: HashMap<(u32, u32), u32> = HashMap::new();
-    let mut verts: Vec<[f32; 2]> = Vec::new();
+    let mut verts: Vec<Point> = Vec::new();
     let mut indices = Vec::with_capacity(flat.len());
     for v in flat {
-        let key = (v[0].to_bits(), v[1].to_bits());
-        let idx = *seen.entry(key).or_insert_with(|| {
+        let idx = *seen.entry(v.bits()).or_insert_with(|| {
             verts.push(v);
             (verts.len() - 1) as u32
         });
@@ -160,29 +166,14 @@ fn refine(tris: &[[f32; 2]], target: f32) -> RefinedMesh {
     RefinedMesh { verts, indices }
 }
 
-/// Bisect the longest edge until every edge is short enough.
+/// Halve a triangle repeatedly until no edge is longer than the limit.
 ///
-/// Splitting only the longest edge refines a long thin triangle along its
-/// length rather than shattering it in both directions, which matters because a
-/// fill tessellator emits plenty of them.
-fn bisect(tri: [[f32; 2]; 3], target: f32, depth: u32, out: &mut Vec<[f32; 2]>) {
-    let dist = |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
-    let lengths = [
-        dist(tri[0], tri[1]),
-        dist(tri[1], tri[2]),
-        dist(tri[2], tri[0]),
-    ];
-    let cut = (0..3).fold(
-        0,
-        |best, i| if lengths[i] > lengths[best] { i } else { best },
-    );
-
+/// The limit tightens near the origin, where angular phase varies fastest, so
+/// a triangle's own position decides how finely it is cut.
+fn bisect(tri: Triangle, target: f32, depth: u32, out: &mut Vec<Point>) {
     // Triangles near the origin get a tighter limit, since angular phase varies
     // fastest there.
-    let nearest = tri
-        .iter()
-        .map(|v| (v[0] * v[0] + v[1] * v[1]).sqrt())
-        .fold(f32::MAX, f32::min);
+    let nearest = tri.nearest_radius();
     let limit = if nearest < CENTRE_RADIUS {
         let t = (nearest / CENTRE_RADIUS).clamp(0.0, 1.0);
         target * (1.0 / CENTRE_REFINEMENT).mul_add(1.0 - t, t)
@@ -190,19 +181,14 @@ fn bisect(tri: [[f32; 2]; 3], target: f32, depth: u32, out: &mut Vec<[f32; 2]>) 
         target
     };
 
-    if depth >= MAX_DEPTH || lengths[cut] <= limit {
-        out.extend_from_slice(&tri);
+    if depth >= MAX_DEPTH || tri.longest_edge() <= limit {
+        out.extend_from_slice(&tri.points());
         return;
     }
 
-    let (i, j, k) = match cut {
-        0 => (0, 1, 2),
-        1 => (1, 2, 0),
-        _ => (2, 0, 1),
-    };
-    let mid = [(tri[i][0] + tri[j][0]) / 2.0, (tri[i][1] + tri[j][1]) / 2.0];
-    bisect([tri[i], mid, tri[k]], target, depth + 1, out);
-    bisect([mid, tri[j], tri[k]], target, depth + 1, out);
+    for half in tri.split_longest() {
+        bisect(half, target, depth + 1, out);
+    }
 }
 
 #[cfg(test)]
@@ -232,18 +218,25 @@ mod test {
     fn refining_shares_vertices_and_bounds_edge_length() {
         // One large triangle, refined well past its own size.
         let target = 0.25;
-        let mesh = refine(&[[-1.0, -1.0], [1.0, -1.0], [0.0, 1.0]], target);
+        let mut source = TriangleList::default();
+        source.push(Triangle::new(
+            Point::new(-1.0, -1.0),
+            Point::new(1.0, -1.0),
+            Point::new(0.0, 1.0),
+        ));
+        let mesh = refine(&source, target);
         assert!(mesh.triangle_count() > 1, "nothing was refined");
 
         let mut worst: f32 = 0.0;
-        for tri in mesh.indices.chunks(3) {
-            let [a, b, c] = [
-                mesh.verts[tri[0] as usize],
-                mesh.verts[tri[1] as usize],
-                mesh.verts[tri[2] as usize],
-            ];
-            for (p, q) in [(a, b), (b, c), (c, a)] {
-                worst = worst.max(((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt());
+        // A cap past the whole mesh gives one batch, which is every triangle.
+        for tri in mesh.batches(usize::MAX).flat_map(IndexBatch::triangles) {
+            let corners = tri.map(|i| mesh.verts[i as usize]);
+            for (p, q) in [
+                (corners[0], corners[1]),
+                (corners[1], corners[2]),
+                (corners[2], corners[0]),
+            ] {
+                worst = worst.max(p.distance(q));
             }
         }
         assert!(worst <= target, "an edge spans {worst}, over {target}");
@@ -251,10 +244,10 @@ mod test {
         // Sharing is the point: a flat list would carry three vertices per
         // triangle and every interior one is used by more than one triangle.
         assert!(
-            mesh.verts.len() < mesh.indices.len(),
-            "{} vertices for {} indices — nothing was shared",
+            mesh.verts.len() < mesh.triangle_count() * 3,
+            "{} vertices for {} triangles — nothing was shared",
             mesh.verts.len(),
-            mesh.indices.len()
+            mesh.triangle_count()
         );
     }
 }

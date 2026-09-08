@@ -4,12 +4,14 @@
 //! software rasteriser the golden images are taken through.
 
 use super::fastmath;
+use super::geom::TriangleList;
 use super::mesh::RefinedMesh;
 use graphics::Graphics;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
 use tunnels_lib::number::Phase;
 use tunnels_model::layer::{ColorPhase, FillAnimation, FillTarget};
+use tunnels_shapes::Point;
 
 /// Vertices per chunk handed to the backend. `BACK_END_MAX_VERTEX_COUNT` is
 /// 1023, which divides evenly into triangles.
@@ -47,9 +49,11 @@ impl PhaseField {
 /// buffer every frame is megabytes of churn.
 #[derive(Default)]
 pub struct VertexBuffers {
-    pub positions: Vec<[f32; 2]>,
-    pub uvs: Vec<[f32; 2]>,
-    pub tints: Vec<[f32; 4]>,
+    /// Shape-space positions, displaced by whatever warps the layer.
+    positions: Vec<Point>,
+    /// Where each vertex looks in the colour ramp. Already in the backend's
+    /// vocabulary, since nothing between here and the sampler reads it.
+    uvs: Vec<[f32; 2]>,
 }
 
 /// Everything the per-vertex pass reads.
@@ -82,7 +86,6 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
 
     out.positions.clear();
     out.uvs.clear();
-    out.tints.clear();
 
     // An angle costs an `atan2` and a radius a square root, so decide once
     // whether anything actually asks for them.
@@ -121,14 +124,14 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
         out.positions.push(if rotates {
             let angle = polar.angle + turn;
             let radius = polar.radius * radial;
-            [
+            Point::new(
                 radius * angle.cos() * scale_x,
                 radius * angle.sin() * scale_y,
-            ]
+            )
         } else {
             // Without rotation the angle never changes, so scaling the radius
             // is scaling x and y — no round trip through polar coordinates.
-            [v[0] * radial * scale_x, v[1] * radial * scale_y]
+            Point::new(v.x() * radial * scale_x, v.y() * radial * scale_y)
         });
 
         out.uvs.push([along * field.cycles, 0.5]);
@@ -144,15 +147,11 @@ struct Polar {
 
 impl Polar {
     #[inline]
-    fn of(v: [f32; 2], angle: bool, radius: bool) -> Self {
+    fn of(v: Point, angle: bool, radius: bool) -> Self {
         Self {
-            radius: if radius {
-                (v[0] * v[0] + v[1] * v[1]).sqrt()
-            } else {
-                0.0
-            },
+            radius: if radius { v.radius() } else { 0.0 },
             angle: if angle {
-                fastmath::atan2(v[1], v[0])
+                fastmath::atan2(v.y(), v.x())
             } else {
                 0.0
             },
@@ -161,11 +160,11 @@ impl Polar {
 
     /// Unit phase along one coordinate, reusing what has already been computed.
     #[inline]
-    fn phase(self, v: [f32; 2], phase: ColorPhase) -> f32 {
+    fn phase(self, v: Point, phase: ColorPhase) -> f32 {
         match phase {
             ColorPhase::Angle => self.angle / std::f32::consts::TAU + 0.5,
             ColorPhase::Radius => self.radius / std::f32::consts::SQRT_2,
-            ColorPhase::Linear => (v[1] + 1.0) / 2.0,
+            ColorPhase::Linear => (v.y() + 1.0) / 2.0,
         }
     }
 }
@@ -194,7 +193,7 @@ fn same_branch(reference: f32, u: f32, period: f32) -> f32 {
 /// vertices.
 pub fn draw_flat<G: Graphics>(
     mesh: &RefinedMesh,
-    positions: &[[f32; 2]],
+    verts: &VertexBuffers,
     color: [f32; 4],
     m: Matrix2d,
     gl: &mut G,
@@ -202,35 +201,36 @@ pub fn draw_flat<G: Graphics>(
     if mesh.is_empty() {
         return;
     }
-    let stride = CHUNK / 3 * 3;
-    let mut pos = Vec::with_capacity(stride);
+    let mut pos = Vec::with_capacity(CHUNK);
     gl.tri_list(&DrawState::default(), &color, |f| {
-        for chunk in mesh.indices.chunks(stride) {
+        for batch in mesh.batches(CHUNK) {
             pos.clear();
+            // A flat colour interpolates nothing, so the grouping into
+            // triangles carries no meaning here.
             pos.extend(
-                chunk
+                batch
+                    .indices()
                     .iter()
-                    .filter_map(|&i| positions.get(i as usize).map(|v| project(m, *v))),
+                    .filter_map(|&i| verts.positions.get(i as usize).map(|v| project(m, *v))),
             );
             f(&pos);
         }
     });
 }
 
-/// Draw a raw triangle list in one flat colour, with no refinement.
+/// Draw a triangle list in one flat colour, with no refinement.
 ///
 /// The path a figure takes when nothing varies across it: no ramp, no per-
 /// vertex pass, and the tessellator's own triangles rather than a refined mesh.
-pub fn draw_tris<G: Graphics>(tris: &[[f32; 2]], color: [f32; 4], m: Matrix2d, gl: &mut G) {
+pub fn draw_tris<G: Graphics>(tris: &TriangleList, color: [f32; 4], m: Matrix2d, gl: &mut G) {
     if tris.is_empty() {
         return;
     }
-    let stride = CHUNK / 3 * 3;
-    let mut pos = Vec::with_capacity(stride);
+    let mut pos = Vec::with_capacity(CHUNK);
     gl.tri_list(&DrawState::default(), &color, |f| {
-        for chunk in tris.chunks(stride) {
+        for batch in tris.batches(CHUNK) {
             pos.clear();
-            pos.extend(chunk.iter().map(|v| project(m, *v)));
+            pos.extend(batch.iter().map(|v| project(m, *v)));
             f(&pos);
         }
     });
@@ -242,8 +242,7 @@ pub fn draw_tris<G: Graphics>(tris: &[[f32; 2]], color: [f32; 4], m: Matrix2d, g
 /// exactly where it belongs however coarse the mesh is.
 pub fn draw_textured<G: Graphics>(
     mesh: &RefinedMesh,
-    positions: &[[f32; 2]],
-    uvs: &[[f32; 2]],
+    verts: &VertexBuffers,
     period: Option<f32>,
     texture: &G::Texture,
     m: Matrix2d,
@@ -252,28 +251,29 @@ pub fn draw_textured<G: Graphics>(
     if mesh.is_empty() {
         return;
     }
-    let stride = CHUNK / 3 * 3;
-    let mut pos = Vec::with_capacity(stride);
-    let mut uv = Vec::with_capacity(stride);
+    let mut pos = Vec::with_capacity(CHUNK);
+    let mut uv = Vec::with_capacity(CHUNK);
 
     gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
-        for chunk in mesh.indices.chunks(stride) {
+        for batch in mesh.batches(CHUNK) {
             pos.clear();
             uv.clear();
-            for tri in chunk.chunks(3) {
-                let Some(reference) = tri.first().and_then(|&i| uvs.get(i as usize)) else {
+            // Grouped by triangle here, because the seam shift is taken
+            // against one corner's coordinate for the whole triangle.
+            for tri in batch.triangles() {
+                let Some(reference) = verts.uvs.get(tri[0] as usize).map(|v| v[0]) else {
                     continue;
                 };
-                let reference = reference[0];
-                for &i in tri {
-                    let (Some(p), Some(v)) = (positions.get(i as usize), uvs.get(i as usize))
+                for i in tri {
+                    let (Some(p), Some(v)) =
+                        (verts.positions.get(i as usize), verts.uvs.get(i as usize))
                     else {
                         continue;
                     };
                     pos.push(project(m, *p));
                     uv.push([
                         match period {
-                            Some(p) => same_branch(reference, v[0], p),
+                            Some(period) => same_branch(reference, v[0], period),
                             None => v[0],
                         },
                         v[1],
@@ -285,13 +285,16 @@ pub fn draw_textured<G: Graphics>(
     });
 }
 
-/// Apply a 2D affine matrix to a vertex.
+/// Apply a 2D affine matrix to a point, leaving shape space for the backend's.
 ///
-/// Piston's backends take pre-transformed vertices when `tri_list` is called
-/// directly, so this is the vertex shader a fixed pipeline does not have.
+/// The return type is deliberately bare: past here the values are the
+/// backend's, in its coordinates and its layout, and losing [`Point`] is the
+/// signal that they are no longer ours to reason about. Piston takes
+/// pre-transformed vertices, so this is the vertex shader a fixed pipeline
+/// does not have.
 #[inline]
-fn project(m: Matrix2d, v: [f32; 2]) -> [f32; 2] {
-    let (x, y) = (f64::from(v[0]), f64::from(v[1]));
+fn project(m: Matrix2d, v: Point) -> [f32; 2] {
+    let (x, y) = (f64::from(v.x()), f64::from(v.y()));
     [
         (m[0][0] * x + m[0][1] * y + m[0][2]) as f32,
         (m[1][0] * x + m[1][1] * y + m[1][2]) as f32,

@@ -10,6 +10,10 @@
 //! loop that an even-odd fill subtracts from each other. Whoever fills them
 //! decides that; this crate only says where the loops are.
 
+pub mod geom;
+
+pub use geom::{Contour, Point};
+
 use std::sync::LazyLock;
 
 include!(concat!(env!("OUT_DIR"), "/sprite_names.rs"));
@@ -33,7 +37,7 @@ pub enum FillRule {
 #[derive(Debug)]
 pub struct Figure {
     pub rule: FillRule,
-    pub subpaths: Vec<Vec<[f32; 2]>>,
+    pub subpaths: Vec<Contour>,
 }
 
 /// A drawable figure, normalised into a unit box centred on the origin.
@@ -88,12 +92,12 @@ impl<'a> Reader<'a> {
         Some(self.take(1)?[0])
     }
 
-    fn point(&mut self) -> Option<[f32; 2]> {
+    fn point(&mut self) -> Option<Point> {
         let bytes = self.take(8)?;
-        Some([
+        Some(Point::new(
             f32::from_le_bytes(bytes[..4].try_into().ok()?),
             f32::from_le_bytes(bytes[4..].try_into().ok()?),
-        ])
+        ))
     }
 }
 
@@ -131,7 +135,11 @@ fn read_figures(r: &mut Reader) -> Option<Vec<Figure>> {
             for _ in 0..n_points {
                 points.push(r.point()?);
             }
-            subpaths.push(points);
+            // A loop too short to enclose anything is dropped rather than
+            // carried; `build.rs` already writes none, so this never fires.
+            if let Some(contour) = Contour::new(points) {
+                subpaths.push(contour);
+            }
         }
         figures.push(Figure { rule, subpaths });
     }
@@ -148,10 +156,10 @@ mod test {
         assert!(count() > 0, "no figures were baked");
 
         for (id, sprite) in all().iter().enumerate() {
-            let points: Vec<[f32; 2]> = sprite
+            let points: Vec<Point> = sprite
                 .figures
                 .iter()
-                .flat_map(|f| f.subpaths.iter().flatten().copied())
+                .flat_map(|f| f.subpaths.iter().flat_map(|c| c.points()).copied())
                 .collect();
             assert!(
                 !points.is_empty(),
@@ -162,9 +170,9 @@ mod test {
             let mut min = [f32::MAX; 2];
             let mut max = [f32::MIN; 2];
             for p in &points {
-                for axis in 0..2 {
-                    min[axis] = min[axis].min(p[axis]);
-                    max[axis] = max[axis].max(p[axis]);
+                for (axis, v) in p.to_array().into_iter().enumerate() {
+                    min[axis] = min[axis].min(v);
+                    max[axis] = max[axis].max(v);
                 }
             }
             for axis in 0..2 {
