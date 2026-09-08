@@ -222,6 +222,13 @@ fn every_coordinate_is_finite() {
 
 /// A digest of the Python's output for every preset, so the port stays checked
 /// against it once the generator's SVGs are no longer to hand.
+///
+/// This is a gate only because every polyline family reproduces the Python's
+/// path data byte for byte: a digest can say "identical" and nothing else. A
+/// family that ever lands within tolerance rather than exact has no digest that
+/// can hold it, and would need a fixture carrying its points — so a family
+/// moving from the `exact` column to the `within` column in the report above is
+/// a signal to change the fixture, not to widen anything.
 const MANIFEST: &str = include_str!("fixtures/python_digest.tsv");
 
 #[test]

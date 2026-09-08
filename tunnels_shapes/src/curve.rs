@@ -19,6 +19,13 @@ pub const FIT_RADIUS: f64 = 470.0;
 pub const FLATTEN_TOLERANCE: f64 = 0.1;
 
 /// Which way round a circle is walked.
+///
+/// Direction decides a winding number and nothing else, so under an even-odd
+/// fill this makes no difference to what a figure encloses — parity counts
+/// crossings, not their sign. It is carried because the figures were built to
+/// cut holes under a non-zero rule as well, and because the coordinate sequence
+/// is what it is. Do not read a `Negative` circle as evidence that some figure
+/// needs a non-zero fill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Winding {
     /// Increasing angle.
