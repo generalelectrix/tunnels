@@ -764,23 +764,9 @@ fn fill_animations(
 ) -> Vec<TargetedAnimation<PreparedAnimation>> {
     anims
         .iter()
-        .filter(|a| a.animation.is_active() && varies_across_figure(a.target) && keep(a.target))
+        .filter(|a| a.animation.is_active() && a.target.varies_across_figure() && keep(a.target))
         .cloned()
         .collect()
-}
-
-/// Whether this target varies from point to point across a figure.
-///
-/// A figure is one shape rather than a run of them, so a target that means the
-/// same thing everywhere on it is resolved into a single number before the
-/// layer is built and never has to reach the points. A marquee is the one that
-/// is simply dead: it slides segments along a path, and a figure has no segments.
-fn varies_across_figure(target: AnimationTarget) -> bool {
-    use AnimationTarget::*;
-    match target {
-        Size | AspectRatio | Spin | Color | ColorSpread | ColorSaturation => true,
-        Rotation | Thickness | PositionX | PositionY | MarqueeRotation => false,
-    }
 }
 
 /// Scale speeds with a quadratic curve.
