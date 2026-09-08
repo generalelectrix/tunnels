@@ -133,7 +133,7 @@ pub mod fixture {
     };
     use crate::position_bank::{Position, PositionIdx};
     use crate::tunnel::Tunnel;
-    use crate::tunnel::fixture::{bind_to_frame_state, configure_max_variation};
+    use crate::tunnel::fixture::{bind_to_frame_state, configure_figure, configure_max_variation};
     use std::time::Duration;
 
     use super::*;
@@ -171,6 +171,10 @@ pub mod fixture {
             NamedFrame {
                 name: "nested looks",
                 frame: nested_look_frame(),
+            },
+            NamedFrame {
+                name: "figures",
+                frame: figure_frame(),
             },
         ]
     }
@@ -215,6 +219,43 @@ pub mod fixture {
             }
             if let Beam::Tunnel(tunnel) = &mut channel.beam {
                 stress_tunnel(tunnel, i, n_channels);
+            }
+        }
+        mixer.update_state(ADVANCE, audio_envelope());
+
+        ShowFrame {
+            mixer,
+            clocks: clocks(),
+            palette: palette(),
+            positions: positions(),
+            audio_envelope: audio_envelope(),
+        }
+    }
+
+    /// A frame of filled figures, which is the other kind of layer a beam
+    /// expands into.
+    ///
+    /// A figure carries no per-shape geometry: what travels is which figure to
+    /// draw, where to put it, the colour model to resolve it against, and the
+    /// animations left unresolved because they vary across it. None of that is
+    /// on the path a run of segments takes, so a suite of segment frames speaks
+    /// for none of it.
+    pub fn figure_frame() -> ShowFrame {
+        let mut mixer = Mixer::new(1);
+        let n_channels = mixer.channel_count();
+        for (i, channel) in mixer.channels().enumerate() {
+            channel.level = UnipolarFloat::new(0.25 + 0.75 * (i as f64 / n_channels as f64));
+            channel.mask = i == 2;
+            channel.video_outs.clear();
+            channel.video_outs.insert(VideoChannel(i));
+            if let Beam::Tunnel(tunnel) = &mut channel.beam {
+                configure_figure(tunnel, i, n_channels);
+                bind_to_frame_state(
+                    tunnel,
+                    ColorPaletteIdx(i % PALETTE_SIZE),
+                    PositionIdx(i % POSITION_COUNT),
+                    ClockIdx(i % MAX_CLOCKS),
+                );
             }
         }
         mixer.update_state(ADVANCE, audio_envelope());
@@ -406,15 +447,39 @@ mod tests {
         ]
     }
 
+    /// How many layers of each kind a comparison walked.
+    ///
+    /// A beam expands into one kind or the other, and the two are compared by
+    /// different code, so a suite of frames that reaches only one kind leaves
+    /// the other's comparison standing unrun.
+    #[derive(Default)]
+    struct LayersCompared {
+        segments: usize,
+        fills: usize,
+    }
+
+    impl LayersCompared {
+        fn add(&mut self, other: Self) {
+            self.segments += other.segments;
+            self.fills += other.fills;
+        }
+    }
+
     /// Panic unless two renders of a video channel agree bit for bit.
     ///
     /// The render is deterministic and the payload lossless, so every float is
     /// compared as its raw bits: a tolerance here would hide real drift.
-    fn assert_identical(label: &str, expected: &LayerCollection, actual: &LayerCollection) {
+    fn assert_identical(
+        label: &str,
+        expected: &LayerCollection,
+        actual: &LayerCollection,
+    ) -> LayersCompared {
+        let mut compared = LayersCompared::default();
         assert_eq!(expected.len(), actual.len(), "{label}: layer count");
         for (i, (e, a)) in expected.iter().zip(actual).enumerate() {
             match (e.as_ref(), a.as_ref()) {
                 (Layer::Segments(e), Layer::Segments(a)) => {
+                    compared.segments += 1;
                     assert_eq!(
                         e.render_mode, a.render_mode,
                         "{label}: layer {i} render mode"
@@ -449,6 +514,7 @@ mod tests {
                     }
                 }
                 (Layer::Fill(e), Layer::Fill(a)) => {
+                    compared.fills += 1;
                     assert_eq!(e.sprite, a.sprite, "{label}: layer {i} sprite");
                     assert_eq!(e.draw_mode, a.draw_mode, "{label}: layer {i} draw mode");
                     assert_eq!(
@@ -476,6 +542,7 @@ mod tests {
                 _ => panic!("{label}: layer {i} is a different kind of layer"),
             }
         }
+        compared
     }
 
     /// Panic unless two values print identically, naming the first line on
@@ -511,6 +578,7 @@ mod tests {
     #[test]
     fn a_round_tripped_frame_is_unchanged() {
         let mut encoder = FrameEncoder::default();
+        let mut compared = LayersCompared::default();
         for NamedFrame { name, frame } in fixture::all() {
             let wire = encoded(&mut encoder, &frame);
             println!("{name}: {} bytes on the wire", wire.len());
@@ -526,13 +594,17 @@ mod tests {
                 let actual = decoded
                     .mixer
                     .render_video_channel(video_channel, decoded.render_context());
-                assert_identical(
+                compared.add(assert_identical(
                     &format!("{name}, video channel {channel}"),
                     &expected,
                     &actual,
-                );
+                ));
             }
         }
+        // A kind of layer no fixture produces is a kind of layer this test
+        // says nothing about, however many frames it walks.
+        assert!(compared.segments > 0, "no fixture drew a run of segments");
+        assert!(compared.fills > 0, "no fixture drew a filled figure");
     }
 
     /// The same frame, named by reference rather than owned.

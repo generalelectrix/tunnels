@@ -68,7 +68,9 @@ pub enum SegmentPath {
 }
 
 /// Which coordinate of a figure indexes the color ramp.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash, VariantArray,
+)]
 pub enum ColorPhase {
     /// The angle about the figure's center (default).
     #[default]
@@ -84,7 +86,9 @@ pub enum ColorPhase {
 }
 
 /// How much of a figure is painted.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash, VariantArray,
+)]
 pub enum DrawMode {
     /// The interior only (default).
     #[default]

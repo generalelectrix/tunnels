@@ -1223,7 +1223,7 @@ pub mod fixture {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::layer::{Layer, LayerCollection, RenderMode, ShapeMode};
+    use crate::layer::{ColorPhase, DrawMode, Layer, LayerCollection, RenderMode, ShapeMode};
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
     use crate::animation::{
@@ -1712,15 +1712,26 @@ pub mod fixture {
         AnimationTarget::Spin,
     ];
 
-    /// Every shape mode whose segments a renderer draws, in the order channels
-    /// are handed them.
+    /// Every shape mode that distributes segments along a path, in the order
+    /// channels are handed them.
     ///
     /// Unlike `TARGETS` and `WAVEFORMS` the length is written out rather than
-    /// taken from the enum: a mode that fills an area rather than drawing
-    /// segments contributes no geometry, and a channel spending its slot on
-    /// one would leave a fixture whose whole point is that every channel draws
-    /// something different with a channel that draws nothing.
+    /// taken from the enum: the modes that fill an area instead are configured
+    /// by `configure_figure`, which reads a different half of the controls.
     const SEGMENT_SHAPE_MODES: [ShapeMode; 2] = [ShapeMode::Ellipse, ShapeMode::Line];
+
+    /// Every way of painting a figure, in the order channels are handed them.
+    ///
+    /// Written out rather than taken from `DrawMode::VARIANTS` for the same
+    /// reason as `TARGETS`, and its length taken from the enum for the same
+    /// reason.
+    const DRAW_MODES: [DrawMode; DrawMode::VARIANTS.len()] =
+        [DrawMode::Fill, DrawMode::Outline, DrawMode::Both];
+
+    /// Every coordinate of a figure that can index its colour ramp, in the
+    /// order channels are handed them.
+    const COLOR_PHASES: [ColorPhase; ColorPhase::VARIANTS.len()] =
+        [ColorPhase::Angle, ColorPhase::Radius, ColorPhase::Linear];
 
     /// Every waveform an animation can be shaped by, in the order slots are
     /// handed them.
@@ -1782,6 +1793,73 @@ pub mod fixture {
         );
         tunnel.handle_state_change(
             StateChange::ShapeMode(SEGMENT_SHAPE_MODES[index % SEGMENT_SHAPE_MODES.len()]),
+            &mut NoopEmitter,
+        );
+
+        for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+            configure_varied_animation(anim, index * N_ANIM + i);
+        }
+    }
+
+    /// Configure a tunnel to draw a filled figure rather than a run of
+    /// segments, spread by `index` of `of` so that no two draw the same figure
+    /// the same way.
+    ///
+    /// Every control a figure reads and a run of segments does not is moved off
+    /// its default: which figure of the library, how much of it is painted,
+    /// which of its coordinates indexes the colour ramp, and both halves of the
+    /// animation split — the targets resolved into the layer and the targets
+    /// that travel with it unresolved.
+    pub fn configure_figure(tunnel: &mut Tunnel, index: usize, of: usize) {
+        let phase = index as f64 / of as f64;
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut NoopEmitter);
+        // In a figure mode these two name a shelf of the library and a figure
+        // on it, so spreading them is what makes every channel draw a
+        // different figure.
+        tunnel.handle_state_change(
+            StateChange::Segments(
+                SEGMENTS_MIN + ((SEGMENTS_MAX - SEGMENTS_MIN) as f64 * phase) as u8,
+            ),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::Blacking((f64::from(KNOB_MAX) * phase) as u8),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::DrawMode(DRAW_MODES[index % DRAW_MODES.len()]),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorPhase(COLOR_PHASES[index % COLOR_PHASES.len()]),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorSpread(UnipolarFloat::ONE),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorWidth(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorSaturation(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        // Thin enough that an outline reads as a contour rather than as a
+        // second fill.
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(0.05)),
+            &mut NoopEmitter,
+        );
+        // The rotation and spin angles are integrated from these speeds and sit
+        // at exactly zero until the speeds do not, so both stay away from it.
+        tunnel.handle_state_change(
+            StateChange::RotationSpeed(BipolarFloat::new(0.25 + 0.5 * phase)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::SpinSpeed(BipolarFloat::new(-1.0 + 0.5 * phase)),
             &mut NoopEmitter,
         );
 
