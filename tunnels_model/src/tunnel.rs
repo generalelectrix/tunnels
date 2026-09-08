@@ -68,6 +68,12 @@ pub struct Tunnel {
     ///
     /// Held at its default: no control writes to it.
     draw_mode: DrawMode,
+    /// Which baked figure a sprite draws.
+    ///
+    /// Set by the segment control, which a figure mode routes here instead of
+    /// to `segs`. The two are independent state: neither is derived from the
+    /// other, and turning the knob in one mode leaves the other alone.
+    sprite: SpriteId,
 }
 
 impl Default for Tunnel {
@@ -109,6 +115,7 @@ impl Default for Tunnel {
             shape_mode: ShapeMode::default(),
             color_phase: ColorPhase::default(),
             draw_mode: DrawMode::default(),
+            sprite: SpriteId::default(),
         }
     }
 }
@@ -132,7 +139,7 @@ impl Tunnel {
         }
     }
 
-    /// Which baked figure the segment count selects.
+    /// The figure a position of the segment knob names.
     ///
     /// A figure has no segments, so the knob that sets how many marks a beam
     /// draws picks which figure instead — the same reinterpretation `Size`
@@ -144,15 +151,47 @@ impl Tunnel {
     /// about two positions per figure between them. A mapping that indexed
     /// directly would leave half the travel dead and put the last figure out
     /// of reach, which is the kind of thing found on stage.
-    pub fn sprite_for_segments(segs: u8) -> SpriteId {
-        let Some(last) = tunnels_sprites::count().checked_sub(1) else {
+    fn sprite_for_segments(segs: u8) -> SpriteId {
+        let Some(last) = sprite_span() else {
             return SpriteId(0);
         };
         let span = u32::from(SEGMENTS_MAX - SEGMENTS_MIN);
         let position = u32::from(segs.clamp(SEGMENTS_MIN, SEGMENTS_MAX) - SEGMENTS_MIN);
         // Rounded rather than truncated, so the top of the travel reaches the
         // last figure instead of stopping one short.
-        SpriteId(((position * last as u32 + span / 2) / span) as u16)
+        SpriteId(((position * last + span / 2) / span) as u16)
+    }
+
+    /// The knob position that names a figure.
+    ///
+    /// Every figure has a band of positions that select it; this is the middle
+    /// of that band, so a position reported to a surface selects the figure it
+    /// came from when the operator turns the knob back to it.
+    fn segments_for_sprite(sprite: SpriteId) -> u8 {
+        let Some(last) = sprite_span() else {
+            return SEGMENTS_MIN;
+        };
+        let span = u32::from(SEGMENTS_MAX - SEGMENTS_MIN);
+        let id = u32::from(sprite.0).min(last);
+        SEGMENTS_MIN + ((id * span + last / 2) / last) as u8
+    }
+
+    /// What the segment control reads, which depends on the mode.
+    ///
+    /// One control, two state fields: a mark mode's segment count and a figure
+    /// mode's figure are set by the same knob and stored separately, so
+    /// neither is disturbed by work done in the other mode. Changing the mode
+    /// therefore moves the knob, because the surface reports state and the
+    /// state it is now reporting is a different field. That jump is the
+    /// intended behaviour and not a round trip to be stabilized: the two
+    /// mappings are unrelated, and the alternative is a surface that lies
+    /// about which figure is drawn.
+    fn segments_control(&self) -> u8 {
+        if self.shape_mode.draws_segments() {
+            self.segs
+        } else {
+            Self::segments_for_sprite(self.sprite)
+        }
     }
 
     /// Borrow an animation as a mutable reference.
@@ -341,7 +380,7 @@ impl Tunnel {
         };
 
         FillLayer {
-            sprite: Self::sprite_for_segments(self.segs),
+            sprite: self.sprite,
             placement,
             spin_speed: self.spin_speed.val(),
             thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
@@ -527,7 +566,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(ColorSpread(self.col_spread));
         emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat));
         emitter.emit_tunnel_state_change(PaletteSelection(self.palette_selection));
-        emitter.emit_tunnel_state_change(Segments(self.segs));
+        emitter.emit_tunnel_state_change(Segments(self.segments_control()));
         emitter.emit_tunnel_state_change(Blacking(self.blacking));
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
@@ -597,7 +636,15 @@ impl Tunnel {
             ColorSpread(v) => self.col_spread = v,
             ColorSaturation(v) => self.col_sat = v,
             PaletteSelection(v) => self.palette_selection = v,
-            Segments(v) => self.segs = v,
+            // One knob, two fields: a mark mode counts segments with it and a
+            // figure mode picks a figure with it.
+            Segments(v) => {
+                if self.shape_mode.draws_segments() {
+                    self.segs = v;
+                } else {
+                    self.sprite = Self::sprite_for_segments(v);
+                }
+            }
             Blacking(v) => self.blacking = v,
             PositionX(v) => self.x_offset.set_target(v),
             PositionY(v) => self.y_offset.set_target(v),
@@ -681,6 +728,15 @@ const COLOR_SPREAD_SCALE: f64 = 16.;
 /// The segment knob's travel, which is what the control surface can send.
 const SEGMENTS_MIN: u8 = 1;
 const SEGMENTS_MAX: u8 = 128;
+
+/// The largest figure id this build carries, or `None` if there is nothing to
+/// choose between.
+fn sprite_span() -> Option<u32> {
+    match tunnels_sprites::count() {
+        0 | 1 => None,
+        n => Some(n as u32 - 1),
+    }
+}
 /// X nudge increment
 const X_NUDGE: f64 = 0.025;
 /// Y nudge increment
@@ -739,6 +795,13 @@ mod test {
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
 
+    /// An emitter for a test that is about what the tunnel holds rather than
+    /// what it reports.
+    struct Silent;
+    impl EmitStateChange for Silent {
+        fn emit_tunnel_state_change(&mut self, _: StateChange) {}
+    }
+
     /// A surface blanks the controls a figure has no use for, so a mode that
     /// does use them has to hear their values again. Restating the whole
     /// tunnel is what leaves nothing dark that the new mode reads.
@@ -759,6 +822,9 @@ mod test {
         assert!(heard("MarqueeSpeed"), "{:?}", recorder.0);
         assert!(heard("RenderMode"), "{:?}", recorder.0);
         assert!(heard("ShapeMode"), "{:?}", recorder.0);
+        // The segment control reads a different field in each mode, so a mode
+        // change has to restate it or the surface shows the other one's value.
+        assert!(heard("Segments"), "{:?}", recorder.0);
     }
 
     /// A show runs in front of an audience, so a mode with nothing to draw
@@ -781,22 +847,73 @@ mod test {
     fn a_sprite_renders_a_placed_figure() {
         let tunnel = Tunnel {
             shape_mode: ShapeMode::Sprite,
-            segs: 1,
+            sprite: SpriteId(7),
             ..Default::default()
         };
         let Layer::Fill(fill) = render_fixture(&tunnel) else {
             panic!("a sprite renders a figure, not segments");
         };
-        assert_eq!(
-            fill.sprite,
-            SpriteId(0),
-            "the knob's floor is the first figure"
-        );
+        assert_eq!(fill.sprite, SpriteId(7));
         // The default half-extents are the ellipse formula's, so a figure and
         // a tunnel at the same knob settings cover the same ground.
         assert_eq!(fill.placement.extent_x, 0.5);
         assert_eq!(fill.placement.extent_y, 0.5);
         assert!(fill.color.is_uniform(), "the default colour is one colour");
+    }
+
+    /// The segment control writes the field its mode reads and leaves the
+    /// other alone, so work done in one mode survives a trip through the
+    /// other.
+    #[test]
+    fn the_segment_control_is_routed_by_the_mode() {
+        let mut tunnel = Tunnel::default();
+        assert!(
+            tunnel.shape_mode.draws_segments(),
+            "the default draws marks"
+        );
+
+        tunnel.handle_state_change(StateChange::Segments(37), &mut Silent);
+        assert_eq!(tunnel.segs, 37);
+        assert_eq!(
+            tunnel.sprite,
+            SpriteId::default(),
+            "the figure is untouched"
+        );
+        assert_eq!(tunnel.segments_control(), 37, "a mark mode reports segs");
+
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut Silent);
+        tunnel.handle_state_change(StateChange::Segments(90), &mut Silent);
+        assert_eq!(tunnel.sprite, Tunnel::sprite_for_segments(90));
+        assert_eq!(tunnel.segs, 37, "the segment count is untouched");
+        assert_eq!(
+            tunnel.segments_control(),
+            Tunnel::segments_for_sprite(tunnel.sprite),
+            "a figure mode reports the figure"
+        );
+
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut Silent);
+        assert_eq!(
+            tunnel.segments_control(),
+            37,
+            "the segment count came back unchanged"
+        );
+    }
+
+    /// The knob position reported for a figure selects that figure, so an
+    /// operator who turns the knob back to where the surface put it gets the
+    /// figure the surface named.
+    #[test]
+    fn the_reported_knob_position_selects_the_figure_it_names() {
+        for id in 0..tunnels_sprites::count() as u16 {
+            let sprite = SpriteId(id);
+            let segs = Tunnel::segments_for_sprite(sprite);
+            assert!((SEGMENTS_MIN..=SEGMENTS_MAX).contains(&segs), "figure {id}");
+            assert_eq!(
+                Tunnel::sprite_for_segments(segs),
+                sprite,
+                "the position reported for figure {id} selects another figure"
+            );
+        }
     }
 
     /// The segment knob's travel covers every figure and reaches both ends,
@@ -1522,19 +1639,19 @@ pub mod fixture {
     /// draws one should check the name it got: a figure added to the library
     /// renumbers everything after it, and a golden image would otherwise
     /// quietly become an image of something else.
-    pub const SNOWFLAKE: u8 = 93;
-    pub const BULLSEYE: u8 = 20;
+    pub const SNOWFLAKE: SpriteId = SpriteId(44);
+    pub const BULLSEYE: SpriteId = SpriteId(9);
     /// A figure whose handle is one long straight contour passing close to the
     /// origin, which is where a stroke's colour is hardest to get right.
-    pub const UMBRELLA: u8 = 116;
+    pub const UMBRELLA: SpriteId = SpriteId(55);
 
     /// A tunnel that draws a figure instead of a run of segments.
     ///
     /// Saturated, so a colour knob shows up at all: the default is white.
-    fn sprite_tunnel(segs: u8) -> Tunnel {
+    fn sprite_tunnel(sprite: SpriteId) -> Tunnel {
         Tunnel {
             shape_mode: ShapeMode::Sprite,
-            segs,
+            sprite,
             col_sat: UnipolarFloat::ONE,
             col_center: UnipolarFloat::new(0.55),
             ..Default::default()
