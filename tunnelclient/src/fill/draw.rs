@@ -231,7 +231,20 @@ impl Displacement {
                     out.scale_x *= 1.0 + value;
                     out.scale_y *= 1.0 - value;
                 }
-                _ => {}
+                // The rest never arrive. A colour target is answered once per
+                // ramp texel instead, and a target that means the same thing
+                // everywhere on a figure is resolved into a single number and
+                // folded into the layer before it is built — into the
+                // placement, into the thickness, or, for a marquee, into
+                // nothing, a figure having no segments to slide along a path.
+                AnimationTarget::Color
+                | AnimationTarget::ColorSpread
+                | AnimationTarget::ColorSaturation
+                | AnimationTarget::Rotation
+                | AnimationTarget::Thickness
+                | AnimationTarget::PositionX
+                | AnimationTarget::PositionY
+                | AnimationTarget::MarqueeRotation => {}
             }
         }
         // A negative radius would turn the figure inside out through the
