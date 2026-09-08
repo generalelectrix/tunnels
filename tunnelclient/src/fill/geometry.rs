@@ -92,7 +92,9 @@ impl FillGeometry {
                     .tessellate_path(&path_of(figure), &options, &mut builder)
                     .is_ok()
                 {
-                    expand(&buffers, &mut out);
+                    for [a, b, c] in triangles(&buffers) {
+                        out.push(Triangle::new(a, b, c));
+                    }
                 }
             }
             out
@@ -176,20 +178,12 @@ pub struct StrokeMesh {
 }
 
 impl StrokeMesh {
-    /// Take the tessellator's indexed output as whole triangles.
-    ///
-    /// A triangle naming a vertex that is not there is dropped entire; lyon
-    /// emits none, but dropping the odd vertex instead would shift every later
-    /// one and scramble the rest of the outline.
+    /// Take the tessellator's indexed output, splitting each vertex into the
+    /// two runs.
     fn extend(&mut self, buffers: &VertexBuffers<StrokeVertexPair, u32>) {
-        for tri in buffers.indices.as_chunks::<3>().0 {
-            let corners = tri.map(|i| buffers.vertices.get(i as usize).copied());
-            if let [Some(a), Some(b), Some(c)] = corners {
-                for v in [a, b, c] {
-                    self.positions.push(v.position);
-                    self.on_path.push(v.on_path);
-                }
-            }
+        for vertex in triangles(buffers).flatten() {
+            self.positions.push(vertex.position);
+            self.on_path.push(vertex.on_path);
         }
     }
 
@@ -315,13 +309,13 @@ fn path_of_capped(figure: &tunnels_sprites::Figure, max: f32) -> Path {
 /// A triangle naming a vertex that is not there is dropped entire. Lyon does
 /// not emit one, but dropping the odd point instead would shift every later
 /// vertex by one and scramble the rest of the figure.
-fn expand(buffers: &VertexBuffers<Point, u32>, out: &mut TriangleList) {
-    for tri in buffers.indices.as_chunks::<3>().0 {
-        let corners = tri.map(|i| buffers.vertices.get(i as usize).copied());
-        if let [Some(a), Some(b), Some(c)] = corners {
-            out.push(Triangle::new(a, b, c));
+fn triangles<V: Copy>(buffers: &VertexBuffers<V, u32>) -> impl Iterator<Item = [V; 3]> + '_ {
+    buffers.indices.as_chunks::<3>().0.iter().filter_map(|tri| {
+        match tri.map(|i| buffers.vertices.get(i as usize).copied()) {
+            [Some(a), Some(b), Some(c)] => Some([a, b, c]),
+            _ => None,
         }
-    }
+    })
 }
 
 #[cfg(test)]
