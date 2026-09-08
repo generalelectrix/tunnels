@@ -196,11 +196,13 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 },
                 &mut send,
             );
-            if !v.draws_segments() {
-                // The marquee and the render mode act on segments, and this
-                // mode draws none. A knob left where the last mode put it is
-                // reporting a setting that nothing reads.
+            if !v.reads_marquee_knob() {
+                // A knob left where the last mode put it is reporting a
+                // setting that nothing reads.
                 send(event(MARQUEE_SPEED, bipolar_to_midi(BipolarFloat::ZERO)));
+            }
+            if !v.draws_segments() {
+                // The render mode acts on segments, and this mode draws none.
                 RENDER_MODE_BUTTONS.all_off(&mut send);
             }
         }
