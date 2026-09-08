@@ -447,4 +447,57 @@ mod test {
             flat.val
         );
     }
+
+    /// A figure reaches a render client as its name and nothing else, so the
+    /// name has to arrive as it left.
+    ///
+    /// A generated name is a family and two numbers rather than an index, and
+    /// one of the two is a position read back through the constructor that
+    /// bounds it — written as two halves that have to agree. A name that
+    /// decoded to another name would draw another figure, and the encoding
+    /// carries no schema that would notice.
+    #[test]
+    fn a_figure_name_arrives_as_it_left() {
+        for id in [
+            FigureId::Baked(SpriteId(0)),
+            FigureId::Baked(SpriteId(37)),
+            FigureId::Generated(GeneratedId::default()),
+            FigureId::Generated(GeneratedId {
+                family: ShapeFamily::Truchet,
+                arity: Arity::new(11),
+                secondary: Secondary::new(0.375),
+            }),
+            FigureId::Generated(GeneratedId {
+                family: ShapeFamily::StarLattice,
+                arity: Arity::new(1),
+                secondary: Secondary::new(1.0),
+            }),
+        ] {
+            let bytes = postcard::to_allocvec(&id).expect("a figure name encodes");
+            let back: FigureId = postcard::from_bytes(&bytes).expect("a figure name decodes");
+            assert_eq!(back, id, "{id:?} came back as {back:?}");
+        }
+    }
+
+    /// A position off the wire is bounded like any other.
+    ///
+    /// The encoding carries no schema, so what arrives is whatever bytes
+    /// arrived, and a family resolves its second degree of freedom against a
+    /// position between zero and one. Bytes naming anything else are brought
+    /// back into that range rather than reaching a generator.
+    #[test]
+    fn a_position_from_the_wire_is_still_a_position() {
+        for (bytes, expected) in [
+            (4.5f64, Secondary::new(1.0)),
+            (-2.0, Secondary::new(0.0)),
+            (f64::NAN, Secondary::new(0.0)),
+        ] {
+            let encoded = postcard::to_allocvec(&bytes).expect("a float encodes");
+            let position: Secondary = postcard::from_bytes(&encoded).expect("a position decodes");
+            assert_eq!(
+                position, expected,
+                "{bytes} came off the wire as {position:?}"
+            );
+        }
+    }
 }
