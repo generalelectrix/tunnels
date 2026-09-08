@@ -205,6 +205,6 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
             }
         }
         // No control writes to a figure's own state yet.
-        ColorPhase(_) | DrawMode(_) | Sprite(_) => (),
+        ColorPhase(_) | DrawMode(_) => (),
     };
 }

@@ -6001,6 +6001,7 @@ dependencies = [
  "serde",
  "strum",
  "tunnels_lib",
+ "tunnels_sprites",
 ]
 
 [[package]]

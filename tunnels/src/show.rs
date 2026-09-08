@@ -641,7 +641,7 @@ mod test {
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
         use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-        use tunnels_model::layer::{ColorPhase, DrawMode, RenderMode, ShapeMode, SpriteId};
+        use tunnels_model::layer::{ColorPhase, DrawMode, RenderMode, ShapeMode};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);
@@ -684,7 +684,6 @@ mod test {
             t("tunnel/phase_linear", T::ColorPhase(ColorPhase::Linear));
             t("tunnel/draw_fill", T::DrawMode(DrawMode::Fill));
             t("tunnel/draw_outline", T::DrawMode(DrawMode::Outline));
-            t("tunnel/sprite", T::Sprite(SpriteId(7)));
         }
 
         // Animation state changes.

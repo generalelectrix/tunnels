@@ -10,7 +10,7 @@ use tunnelclient::fill::Renderer;
 use tunnels_model::layer::{
     ColorPhase, Layer, LayerCollection, MarkLayer, RenderMode, SegmentPath, ShapeGeometry,
 };
-use tunnels_model::tunnel::fixture;
+use tunnels_model::tunnel::{Tunnel, fixture};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -569,14 +569,21 @@ fn saucer_line_marquee_sequence() {
 /// picture of something else.
 #[test]
 fn the_fixtures_draw_the_figures_they_were_taken_of() {
-    for (id, name) in [
+    for (segs, name) in [
         (fixture::SNOWFLAKE, "db_snowflake"),
         (fixture::BULLSEYE, "db_bullseye"),
         (fixture::UMBRELLA, "db_umbrella"),
     ] {
+        // Through the same mapping the render uses, so a change to either the
+        // library or the knob's arithmetic fails here.
+        let id = Tunnel::sprite_for_segments(segs);
         let sprite = tunnels_sprites::sprite(id.0)
             .unwrap_or_else(|| panic!("this build carries no figure {}", id.0));
-        assert_eq!(sprite.name, name, "figure {} is not {name}", id.0);
+        assert_eq!(
+            sprite.name, name,
+            "segment knob {segs} selects figure {} which is not {name}",
+            id.0
+        );
     }
 }
 
