@@ -1,10 +1,25 @@
 //! The parameters of the figures that survived curation.
 //!
 //! Each preset carries the name it was judged under, so a preset and the verdict
-//! on it can be matched up. Names are not unique descriptions of parameters: the
-//! library was swept twice, and where the second sweep reached parameters the
+//! on it can be matched up.
+//!
+//! Names are not unique descriptions of parameters. The library was swept twice:
+//! the first sweep named figures by the count they carried, the second by the
+//! parameters that produced them, and where the second reached parameters the
 //! first had already written, the figure kept the earlier name and gained a
-//! second one, so a handful of presets are the same figure under two names.
+//! second one. These pairs are therefore the same figure under two names, and
+//! are aliases rather than a mistake — both are kept so every judged name is
+//! accounted for:
+//!
+//! | early name | later name |
+//! |---|---|
+//! | `spiro_hypo_{5,7,9,11}` | `spiro_hypo_{10_4_6,14_5_8,9_4_7,11_4_8}` |
+//! | `spiro_epi_{5,7,12,9}` | `spiro_epi_{10_4_6,7_3_5,12_5_7,9_2_5}` |
+//! | `guilloche_{4,5,6,7}` | `guilloche_{9_4_7_4,14_5_8_5,12_5_7_6,10_4_6_7}` |
+//! | `twistring_{5,6,8,12}` | `twistring_{5_13,6_14,8_14,12_12}` |
+//! | `phyllo_{90,150,240,400}` | `phyllo_{90_34,150_27,240_22,400_17}` |
+//! | `moire_rings_{10,16,22}` | `moire_rings_{10_1,16_2,22_2}` |
+//! | `starlattice_{2,3,4}` | `starlattice_{2_70,3_70,4_70}` |
 //!
 //! Families that were rejected entire are absent — a family earns its place only
 //! if it makes an interior a ring of marks cannot.
