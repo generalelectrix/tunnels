@@ -630,6 +630,16 @@ mod test {
                 }
             }
 
+            // An expectation the run produced nothing for is never reached by
+            // the loop above, which walks results and looks each one up. So a
+            // device dropped from the list leaves its recording behind forever,
+            // unverified, and nothing fails.
+            for device in expected.keys() {
+                if !results.contains_key(device) {
+                    failures.push(format!("{device}: an expectation nothing produces"));
+                }
+            }
+
             if !failures.is_empty() {
                 panic!(
                     "{} midi interpret regression failures:\n{}",
@@ -1016,6 +1026,16 @@ mod test {
                     }
                     // The mapping interpreted to what the expectation says.
                     Some(_) => {}
+                }
+            }
+
+            // An expectation the run produced nothing for is never reached by
+            // the loop above, which walks results and looks each one up. So a
+            // state change deleted from the model leaves its recording behind
+            // forever, unverified, and nothing fails.
+            for name in expected.keys() {
+                if !results.contains_key(name) {
+                    failures.push(format!("{name}: an expectation nothing produces"));
                 }
             }
 
