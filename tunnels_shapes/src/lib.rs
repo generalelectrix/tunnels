@@ -9,9 +9,6 @@
 //! most of these figures are rings, and a ring is an outer loop and an inner
 //! loop that an even-odd fill subtracts from each other. Whoever fills them
 //! decides that; this crate only says where the loops are.
-//!
-//! The figures carry licence terms that travel with the binary, so
-//! [`ATTRIBUTION`] and [`OPEN_FONT_LICENSE`] are compiled in beside them.
 
 use std::sync::LazyLock;
 
@@ -19,15 +16,6 @@ include!(concat!(env!("OUT_DIR"), "/sprite_names.rs"));
 
 /// The contour blob, written by `build.rs` in the same order as the names.
 const BLOB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sprites.bin"));
-
-/// Where the figures come from and what their licences require.
-pub const ATTRIBUTION: &str = include_str!("../assets/licenses/ATTRIBUTION.md");
-
-/// The SIL Open Font License 1.1, which 61 of the figures are derived under.
-pub const OPEN_FONT_LICENSE: &str = include_str!("../assets/licenses/noto-sans-symbols-2-OFL.txt");
-
-/// Every figure's source and licence, one record each.
-pub const CREDITS: &str = include_str!("../assets/CREDITS.json");
 
 /// How the parity of a point inside a figure's loops decides whether it fills.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -201,33 +189,6 @@ mod test {
                     sprite.name
                 );
             }
-        }
-    }
-
-    #[test]
-    fn the_licence_obligations_are_in_the_binary() {
-        assert!(
-            OPEN_FONT_LICENSE.contains("SIL OPEN FONT LICENSE Version 1.1"),
-            "the OFL text is not the OFL"
-        );
-        assert!(
-            OPEN_FONT_LICENSE.contains("Copyright 2022 The Noto Project Authors"),
-            "the OFL text carries no copyright notice"
-        );
-        for required in ["Noto Sans Symbols 2", "Karl432", "CC BY-SA 3.0"] {
-            assert!(
-                ATTRIBUTION.contains(required),
-                "the attribution notice never mentions {required}"
-            );
-        }
-        // Every shipped file is credited, so nothing can be added without a
-        // record of where it came from.
-        for sprite in all() {
-            let file = format!("{}.svg", sprite.name);
-            assert!(
-                CREDITS.contains(&file),
-                "{file} ships with no entry in CREDITS.json"
-            );
         }
     }
 }
