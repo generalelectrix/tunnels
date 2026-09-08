@@ -550,8 +550,11 @@ fn accept_loop(
     // does, is what lets this loop reap between connections and notice a
     // publisher on its way out without being sent anything to wake it.
     if let Err(e) = listener.set_nonblocking(true) {
-        error!("Failed to poll for subscribers, so none will be reaped: {e}");
-        return;
+        // Every other socket option here warns and carries on, and this one
+        // has more reason to: a loop that gives up accepts nobody, which is a
+        // show with no clients, while a loop that waits on the listener still
+        // accepts and still reaps — just only when somebody connects.
+        warn!("Failed to poll for subscribers, so none will be reaped until one connects: {e}");
     }
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
