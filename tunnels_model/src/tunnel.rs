@@ -6,7 +6,9 @@ use crate::layer::{
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{
-    animation_target::AnimationTarget, palette::ColorPaletteIdx, position_bank::PositionIdx,
+    animation_target::AnimationTarget,
+    palette::ColorPaletteIdx,
+    position_bank::{Position, PositionIdx},
 };
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -380,14 +382,16 @@ impl Tunnel {
     /// Both may be pinned to a bank shared across beams instead of to the
     /// beam's own knobs, so both are resolved the same way for either kind of
     /// layer.
-    fn placement_and_hue(&self, ctx: RenderContext) -> ((f64, f64), f64) {
+    fn placement_and_hue(&self, ctx: RenderContext) -> (Position, f64) {
         let offset = if let Some(position_idx) = self.position_selection {
             // TODO: if the position index is out of range, should we fall back
             // to something besides zero?
-            let position = ctx.positions.get(position_idx).unwrap_or_default();
-            (position.x, position.y)
+            ctx.positions.get(position_idx).unwrap_or_default()
         } else {
-            (self.x_offset.val(), self.y_offset.val())
+            Position {
+                x: self.x_offset.val(),
+                y: self.y_offset.val(),
+            }
         };
 
         let base_hue = if let Some(palette_idx) = self.palette_selection {
@@ -418,7 +422,7 @@ impl Tunnel {
         ctx: RenderContext,
         anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     ) -> FillLayer {
-        let ((x_offset, y_offset), base_hue) = self.placement_and_hue(ctx);
+        let (offset, base_hue) = self.placement_and_hue(ctx);
 
         // A figure has no segment index and no angle around a ring, so a
         // uniform target is asked for its value at the start of its cycle.
@@ -431,8 +435,8 @@ impl Tunnel {
         };
 
         let placement = Placement {
-            x: x_offset + uniform(AnimationTarget::PositionX),
-            y: y_offset + uniform(AnimationTarget::PositionY),
+            x: offset.x + uniform(AnimationTarget::PositionX),
+            y: offset.y + uniform(AnimationTarget::PositionY),
             // The tunnel's ellipse formula, onto the figure's two half-extents.
             // A size animation is not folded in here: on a figure it deforms
             // the outline point by point rather than scaling the whole of it.
@@ -503,7 +507,7 @@ impl Tunnel {
 
         let marquee_interval = 1.0 / segs as f64;
 
-        let ((x_offset, y_offset), base_hue) = self.placement_and_hue(ctx);
+        let (offset, base_hue) = self.placement_and_hue(ctx);
         let color_field = self.color_field(base_hue, level_scale, as_mask);
 
         // Iterate over each segment ID and skip the segments that are blacked.
@@ -556,8 +560,8 @@ impl Tunnel {
             let thickness_allowance = self.thickness.val() * THICKNESS_SCALE / 2.;
 
             // geometry calculations
-            let x_center = x_offset + x_adjust;
-            let y_center = y_offset + y_adjust;
+            let x_center = offset.x + x_adjust;
+            let y_center = offset.y + y_adjust;
 
             // compute path geometry parameters
             let (extent_x, extent_y) = match segment_path {
