@@ -316,7 +316,7 @@ pub trait EmitStateChange {
 ///
 /// Holds no reference to the animation it came from, so a render can prepare
 /// its animations once and then walk a figure without borrowing anything.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PreparedAnimation {
     static_params: StaticParams,
     /// Where the driving clock has got to.
@@ -333,6 +333,14 @@ pub struct PreparedAnimation {
 }
 
 impl PreparedAnimation {
+    /// Whether this animation contributes anything.
+    ///
+    /// A zero-size animation answers zero everywhere, so a caller that would
+    /// otherwise ask it once per point can drop it instead.
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
     /// The animation's value at a point, with amplitude applied.
     pub fn value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
         if !self.active {

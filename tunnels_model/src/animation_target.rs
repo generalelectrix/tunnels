@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 
 /// Tunnel parameters that can be targeted by animations.
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, Default, VariantArray)]
+#[derive(
+    Copy, Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq, Hash, VariantArray,
+)]
 pub enum AnimationTarget {
     Rotation,
     Thickness,

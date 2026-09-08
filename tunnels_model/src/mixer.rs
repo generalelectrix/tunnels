@@ -1,4 +1,4 @@
-use crate::layer::{Layer, LayerCollection};
+use crate::layer::{Layer, LayerCollection, LayerKey};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
@@ -70,12 +70,21 @@ impl Mixer {
         // One buffer, reused across channels: a channel's layers are drained
         // into Arcs before the next channel renders into it.
         let mut rendered = Vec::new();
-        for channel in &self.channels {
+        // Indexed over every channel, not over the ones that draw: a channel
+        // at level zero is skipped, and a key that renumbered when one came up
+        // would hand every later layer another one's caches.
+        for (index, channel) in self.channels.iter().enumerate() {
             if !channel.video_outs.contains(&video_channel) {
                 continue;
             }
             rendered.clear();
-            channel.render(UnipolarFloat::ONE, false, ctx, &mut rendered);
+            channel.render(
+                UnipolarFloat::ONE,
+                false,
+                ctx,
+                LayerKey::default().child(index),
+                &mut rendered,
+            );
             for layer in rendered.drain(..) {
                 if layer.is_empty() {
                     continue;
@@ -202,6 +211,7 @@ impl Channel {
         level_scale: UnipolarFloat,
         mask: bool,
         ctx: RenderContext,
+        key: LayerKey,
         out: &mut Vec<Layer>,
     ) {
         let mut level: UnipolarFloat = if self.bump {
@@ -214,7 +224,7 @@ impl Channel {
         if level == 0. {
             return;
         }
-        self.beam.render(level, self.mask || mask, ctx, out);
+        self.beam.render(level, self.mask || mask, ctx, key, out);
     }
 }
 

@@ -408,7 +408,7 @@ mod test {
     use std::sync::{Arc, mpsc::channel};
 
     use tunnels_lib::number::UnipolarFloat;
-    use tunnels_model::layer::{Layer, LayerCollection, ShapeGeometry};
+    use tunnels_model::layer::{Layer, MarkLayer, ShapeGeometry};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
@@ -441,7 +441,11 @@ mod test {
     }
 
     /// Render the state of the show with some assertions on structure.
-    fn check_render(show: &Show, unique_beam_count: usize) -> LayerCollection {
+    ///
+    /// Returns the segment layers, which is everything the test mode draws:
+    /// a figure carries no per-segment geometry to compare and the stress
+    /// beams are all tunnels.
+    fn check_render(show: &Show, unique_beam_count: usize) -> Vec<MarkLayer> {
         let clocks = show.state.clocks.as_static();
         let ctx = RenderContext {
             clocks: &clocks,
@@ -451,27 +455,34 @@ mod test {
         };
 
         // Channel 0 should contain data, but none of the others.
-        let mut first_channel = show.state.mixer.render_video_channel(VideoChannel(0), ctx);
+        let first_channel = show.state.mixer.render_video_channel(VideoChannel(0), ctx);
         assert!(!first_channel.is_empty());
         for i in 1..Mixer::N_VIDEO_CHANNELS {
             let chan = show.state.mixer.render_video_channel(VideoChannel(i), ctx);
             assert_eq!(0, chan.len());
         }
 
-        for beam in first_channel.iter_mut() {
-            for seg in Arc::get_mut(beam).unwrap().shapes.iter_mut() {
+        let mut layers: Vec<MarkLayer> = first_channel
+            .iter()
+            .map(|layer| match layer.as_ref() {
+                Layer::Marks(marks) => marks.clone(),
+                Layer::Fill(_) => panic!("the stress test mode draws no figures"),
+            })
+            .collect();
+        for layer in &mut layers {
+            for seg in &mut layer.shapes {
                 trunc_arc_segment(seg);
             }
         }
 
-        let mut distinct: Vec<&Arc<Layer>> = Vec::new();
-        for layer in first_channel.iter() {
-            if !distinct.iter().any(|seen| ***seen == **layer) {
+        let mut distinct: Vec<&MarkLayer> = Vec::new();
+        for layer in &layers {
+            if !distinct.contains(&layer) {
                 distinct.push(layer);
             }
         }
         assert_eq!(distinct.len(), unique_beam_count);
-        first_channel
+        layers
     }
 
     /// Truncate the values in an arc segment to a reasonable precision.

@@ -1,6 +1,7 @@
 use crate::animation::PreparedAnimation;
 use crate::layer::{
-    ColorPhase, DrawMode, Layer, RenderMode, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+    ColorField, ColorPhase, DrawMode, FillAnimation, FillLayer, FillTarget, Layer, LayerKey,
+    MarkLayer, Placement, RenderMode, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
@@ -183,29 +184,69 @@ impl Tunnel {
 
     /// Render the current state of the tunnel.
     ///
-    /// A mode that fills an area rather than drawing a run of segments has no
-    /// geometry yet, so it draws nothing and says so once. A show holding one
-    /// is a show missing a beam, not a show that stops.
-    pub fn render(&self, level_scale: UnipolarFloat, as_mask: bool, ctx: RenderContext) -> Layer {
-        let Some(segment_path) = self.shape_mode.segment_path() else {
-            static REPORTED: Once = Once::new();
-            REPORTED.call_once(|| error!("Filled figures have no geometry yet."));
-            return Layer::new(self.render_mode, self.shape_mode, 0., Vec::new());
-        };
+    /// A generated figure has no geometry yet, so it draws nothing and says so
+    /// once. A show holding one is a show missing a beam, not a show that
+    /// stops.
+    pub fn render(
+        &self,
+        level_scale: UnipolarFloat,
+        as_mask: bool,
+        ctx: RenderContext,
+        key: LayerKey,
+    ) -> Layer {
+        // Resolve each animation's frame-constant state once. What an animation
+        // costs is mostly deciding which clock drives it, where that clock is,
+        // where its smoother has got to and what the amplitude works out to —
+        // none of which depends on where in the figure the question is asked.
+        let anims: [(PreparedAnimation, AnimationTarget); N_ANIM] = std::array::from_fn(|i| {
+            (
+                self.anims[i]
+                    .animation
+                    .prepare(ctx.clocks, ctx.audio_envelope),
+                self.anims[i].target,
+            )
+        });
 
-        // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
-        let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
-            self.segs + 1
-        } else {
-            self.segs
-        };
-        let blacking = self.blacking_integer();
+        match self.shape_mode {
+            ShapeMode::Ellipse => Layer::Marks(self.render_marks(
+                SegmentPath::Ellipse,
+                level_scale,
+                as_mask,
+                ctx,
+                &anims,
+            )),
+            ShapeMode::Line => Layer::Marks(self.render_marks(
+                SegmentPath::Line,
+                level_scale,
+                as_mask,
+                ctx,
+                &anims,
+            )),
+            ShapeMode::Sprite => {
+                Layer::Fill(self.render_fill(key, level_scale, as_mask, ctx, &anims))
+            }
+            ShapeMode::Generated => {
+                static REPORTED: Once = Once::new();
+                REPORTED.call_once(|| error!("Generated figures have no geometry yet."));
+                // Empty, so it is dropped before it reaches a renderer. The
+                // segment path is arbitrary: nothing is drawn along it.
+                Layer::Marks(MarkLayer::new(
+                    self.render_mode,
+                    SegmentPath::Ellipse,
+                    0.,
+                    Vec::new(),
+                ))
+            }
+        }
+    }
 
-        let mut arcs = Vec::new();
-
-        let marquee_interval = 1.0 / segs as f64;
-
-        let (x_offset, y_offset) = if let Some(position_idx) = self.position_selection {
+    /// The centre of the figure this frame, and the hue its colour starts from.
+    ///
+    /// Both may be pinned to a bank shared across beams instead of to the
+    /// beam's own knobs, so both are resolved the same way for either kind of
+    /// layer.
+    fn placement_and_hue(&self, ctx: RenderContext) -> ((f64, f64), f64) {
+        let offset = if let Some(position_idx) = self.position_selection {
             // TODO: if the position index is out of range, should we fall back
             // to something besides zero?
             let position = ctx.positions.get(position_idx).unwrap_or_default();
@@ -225,19 +266,118 @@ impl Tunnel {
         } else {
             self.col_center.val()
         };
+        (offset, base_hue)
+    }
 
-        // Resolve each animation's frame-constant state once. What an animation
-        // costs is mostly deciding which clock drives it, where that clock is,
-        // where its smoother has got to and what the amplitude works out to —
-        // none of which depends on the segment asking.
-        let anims: [(PreparedAnimation, AnimationTarget); N_ANIM] = std::array::from_fn(|i| {
-            (
-                self.anims[i]
-                    .animation
-                    .prepare(ctx.clocks, ctx.audio_envelope),
-                self.anims[i].target,
-            )
-        });
+    /// Render this tunnel as a filled figure.
+    ///
+    /// A figure is one shape rather than a run of them, so a target that means
+    /// the same thing everywhere on it — rotation, thickness, position — is
+    /// resolved here into a single number. What is left is the targets that
+    /// vary from point to point, which travel with the layer to wherever the
+    /// figure's own geometry is.
+    fn render_fill(
+        &self,
+        key: LayerKey,
+        level_scale: UnipolarFloat,
+        as_mask: bool,
+        ctx: RenderContext,
+        anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
+    ) -> FillLayer {
+        let ((x_offset, y_offset), base_hue) = self.placement_and_hue(ctx);
+
+        // A figure has no segment index and no angle around a ring, so a
+        // uniform target is asked for its value at the start of its cycle.
+        let uniform = |target: AnimationTarget| -> f64 {
+            anims
+                .iter()
+                .filter(|(_, t)| *t == target)
+                .map(|(a, _)| a.value(Phase::ZERO, 0))
+                .sum()
+        };
+
+        let placement = Placement {
+            x: x_offset + uniform(AnimationTarget::PositionX),
+            y: y_offset + uniform(AnimationTarget::PositionY),
+            // The tunnel's ellipse formula, onto the figure's two half-extents.
+            // A size animation is not folded in here: on a figure it deforms
+            // the outline point by point rather than scaling the whole of it.
+            extent_x: self.size.val().val() * MAX_ASPECT_RATIO * self.aspect_ratio.val().val(),
+            extent_y: self.size.val().val(),
+            rot_angle: (self.curr_rot_angle + uniform(AnimationTarget::Rotation)).val(),
+        };
+
+        let color = if as_mask {
+            // Opaque black, punching a hole in everything already drawn — the
+            // same value a masked segment carries.
+            ColorField {
+                phase: self.color_phase,
+                cycles: 0.,
+                center: 0.,
+                width: 0.,
+                sat: 0.,
+                val: 0.,
+                level: 1.0,
+            }
+        } else {
+            ColorField {
+                phase: self.color_phase,
+                cycles: (COLOR_SPREAD_SCALE * self.col_spread.val()).floor(),
+                center: base_hue,
+                width: self.col_width.val(),
+                sat: self.col_sat.val(),
+                val: 1.0,
+                level: level_scale.val(),
+            }
+        };
+
+        FillLayer {
+            key,
+            sprite: self.sprite,
+            placement,
+            // The knob a tunnel integrates into an angle is read here as the
+            // amount itself. Winding does not wrap: five turns at the rim stays
+            // five turns tighter than one, so accumulating it would spiral.
+            spin: self.spin_speed.val(),
+            thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
+                .abs(),
+            draw_mode: self.draw_mode,
+            color,
+            anims: anims
+                .iter()
+                .filter(|(a, _)| a.is_active())
+                .filter_map(|(animation, target)| {
+                    Some(FillAnimation {
+                        target: fill_target(*target)?,
+                        animation: *animation,
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    /// Render this tunnel as a run of segments along a path.
+    fn render_marks(
+        &self,
+        segment_path: SegmentPath,
+        level_scale: UnipolarFloat,
+        as_mask: bool,
+        ctx: RenderContext,
+        anims: &[(PreparedAnimation, AnimationTarget); N_ANIM],
+    ) -> MarkLayer {
+        // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
+        let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
+            self.segs + 1
+        } else {
+            self.segs
+        };
+        let blacking = self.blacking_integer();
+
+        let mut arcs = Vec::new();
+
+        let marquee_interval = 1.0 / segs as f64;
+
+        let ((x_offset, y_offset), base_hue) = self.placement_and_hue(ctx);
 
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
@@ -264,7 +404,7 @@ impl Tunnel {
             let mut marquee_angle_adjust = 0.;
             let mut spin_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
-            for (animation, target) in &anims {
+            for (animation, target) in anims {
                 let anim_value = animation.value(rel_angle, seg_num as usize);
 
                 use AnimationTarget::*;
@@ -374,7 +514,7 @@ impl Tunnel {
             };
             arcs.push(arc);
         }
-        Layer::new(self.render_mode, self.shape_mode, marquee_interval, arcs)
+        MarkLayer::new(self.render_mode, segment_path, marquee_interval, arcs)
     }
 
     /// Emit the current value of all controllable tunnel state.
@@ -480,6 +620,26 @@ impl Tunnel {
             }
         };
         emitter.emit_tunnel_state_change(sc);
+    }
+}
+
+/// What an animation target means on a figure, or `None` where it means
+/// nothing that varies across one.
+///
+/// The targets left out are resolved before the layer is built: a rotation, a
+/// thickness or a position offset is one number for the whole figure. A
+/// marquee is the exception that is simply dead — it slides marks along a
+/// path, and a figure has no marks.
+fn fill_target(target: AnimationTarget) -> Option<FillTarget> {
+    use AnimationTarget::*;
+    match target {
+        Size => Some(FillTarget::Radial),
+        AspectRatio => Some(FillTarget::AspectRatio),
+        Spin => Some(FillTarget::Spin),
+        Color => Some(FillTarget::Hue),
+        ColorSpread => Some(FillTarget::ColorWidth),
+        ColorSaturation => Some(FillTarget::Saturation),
+        Rotation | Thickness | PositionX | PositionY | MarqueeRotation => None,
     }
 }
 
@@ -597,27 +757,80 @@ mod test {
     /// A show runs in front of an audience, so a mode with nothing to draw
     /// draws nothing rather than stopping the frame.
     #[test]
-    fn a_figure_mode_draws_nothing_without_panicking() {
-        for shape_mode in [ShapeMode::Generated, ShapeMode::Sprite] {
-            let tunnel = Tunnel {
-                shape_mode,
-                ..Default::default()
-            };
-            let layer = tunnel.render(
-                UnipolarFloat::ONE,
-                false,
-                RenderContext {
-                    clocks: &ClockBank::default().as_static(),
-                    palette: &ColorPalette::default(),
-                    positions: &PositionBank::default(),
-                    audio_envelope: UnipolarFloat::ZERO,
-                },
-            );
-            assert!(
-                layer.is_empty(),
-                "{shape_mode:?} has no segments to contribute"
-            );
-        }
+    fn a_generated_figure_draws_nothing_without_panicking() {
+        let tunnel = Tunnel {
+            shape_mode: ShapeMode::Generated,
+            ..Default::default()
+        };
+        assert!(
+            render_fixture(&tunnel).is_empty(),
+            "a generated figure has nothing to contribute yet"
+        );
+    }
+
+    /// A sprite's layer says where to draw a figure and how, and carries no
+    /// geometry: the figure itself is baked into the client.
+    #[test]
+    fn a_sprite_renders_a_placed_figure() {
+        let tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            sprite: SpriteId(7),
+            ..Default::default()
+        };
+        let Layer::Fill(fill) = render_fixture(&tunnel) else {
+            panic!("a sprite renders a figure, not segments");
+        };
+        assert_eq!(fill.sprite, SpriteId(7));
+        // The default half-extents are the ellipse formula's, so a figure and
+        // a tunnel at the same knob settings cover the same ground.
+        assert_eq!(fill.placement.extent_x, 0.5);
+        assert_eq!(fill.placement.extent_y, 0.5);
+        assert!(fill.color.is_uniform(), "the default colour is one colour");
+    }
+
+    /// A masked figure paints opaque black, punching a hole in what is under
+    /// it — the same value a masked segment carries.
+    #[test]
+    fn a_masked_figure_is_opaque_black() {
+        let tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            col_width: UnipolarFloat::ONE,
+            col_spread: UnipolarFloat::ONE,
+            ..Default::default()
+        };
+        let Layer::Fill(fill) = tunnel.render(
+            UnipolarFloat::ONE,
+            true,
+            RenderContext {
+                clocks: &ClockBank::default().as_static(),
+                palette: &ColorPalette::default(),
+                positions: &PositionBank::default(),
+                audio_envelope: UnipolarFloat::ZERO,
+            },
+            LayerKey::default(),
+        ) else {
+            panic!("a sprite renders a figure, not segments");
+        };
+        assert_eq!(fill.color.val, 0.0);
+        assert_eq!(fill.color.level, 1.0);
+        assert!(
+            fill.color.is_uniform(),
+            "a mask is one colour however the colour knobs are set"
+        );
+    }
+
+    fn render_fixture(tunnel: &Tunnel) -> Layer {
+        tunnel.render(
+            UnipolarFloat::ONE,
+            false,
+            RenderContext {
+                clocks: &ClockBank::default().as_static(),
+                palette: &ColorPalette::default(),
+                positions: &PositionBank::default(),
+                audio_envelope: UnipolarFloat::ZERO,
+            },
+            LayerKey::default(),
+        )
     }
 }
 
@@ -662,6 +875,7 @@ pub mod fixture {
 
                 audio_envelope: UnipolarFloat::ZERO,
             },
+            LayerKey::default(),
         )
     }
 
@@ -1058,6 +1272,7 @@ pub mod fixture {
 
                     audio_envelope: UnipolarFloat::ZERO,
                 },
+                LayerKey::default(),
             );
             snapshots.push(vec![Arc::new(arcs)]);
             for _ in 0..frames_per_snapshot {
@@ -1089,6 +1304,7 @@ pub mod fixture {
 
                 audio_envelope: UnipolarFloat::ZERO,
             },
+            LayerKey::default(),
         );
         vec![Arc::new(arcs)]
     }

@@ -347,7 +347,7 @@ mod tests {
     use super::fixture::NamedFrame;
     use super::*;
     use crate::beam::Beam;
-    use crate::layer::{LayerCollection, ShapeGeometry};
+    use crate::layer::{FillLayer, Layer, LayerCollection, ShapeGeometry};
     use crate::look::{Look, MAX_NESTING_DEPTH};
     use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
     use crate::tunnel::Tunnel;
@@ -387,6 +387,25 @@ mod tests {
         ]
     }
 
+    /// Every float of a figure, under the name a failure should report.
+    fn fill_fields(fill: &FillLayer) -> [(&'static str, f64); 13] {
+        [
+            ("x", fill.placement.x),
+            ("y", fill.placement.y),
+            ("extent_x", fill.placement.extent_x),
+            ("extent_y", fill.placement.extent_y),
+            ("rot_angle", fill.placement.rot_angle),
+            ("spin", fill.spin),
+            ("thickness", fill.thickness),
+            ("cycles", fill.color.cycles),
+            ("center", fill.color.center),
+            ("width", fill.color.width),
+            ("sat", fill.color.sat),
+            ("val", fill.color.val),
+            ("level", fill.color.level),
+        ]
+    }
+
     /// Panic unless two renders of a video channel agree bit for bit.
     ///
     /// The render is deterministic and the payload lossless, so every float is
@@ -394,32 +413,63 @@ mod tests {
     fn assert_identical(label: &str, expected: &LayerCollection, actual: &LayerCollection) {
         assert_eq!(expected.len(), actual.len(), "{label}: layer count");
         for (i, (e, a)) in expected.iter().zip(actual).enumerate() {
-            assert_eq!(
-                e.render_mode, a.render_mode,
-                "{label}: layer {i} render mode"
-            );
-            assert_eq!(e.shape_mode, a.shape_mode, "{label}: layer {i} shape mode");
-            assert_eq!(
-                e.span.to_bits(),
-                a.span.to_bits(),
-                "{label}: layer {i} span"
-            );
-            assert_eq!(
-                e.shapes.len(),
-                a.shapes.len(),
-                "{label}: layer {i} shape count"
-            );
-            for (j, (expected_shape, actual_shape)) in e.shapes.iter().zip(&a.shapes).enumerate() {
-                for ((name, ev), (_, av)) in shape_fields(expected_shape)
-                    .iter()
-                    .zip(shape_fields(actual_shape))
-                {
+            match (e.as_ref(), a.as_ref()) {
+                (Layer::Marks(e), Layer::Marks(a)) => {
                     assert_eq!(
-                        ev.to_bits(),
-                        av.to_bits(),
-                        "{label}: layer {i} shape {j} {name}: {ev} != {av}"
+                        e.render_mode, a.render_mode,
+                        "{label}: layer {i} render mode"
                     );
+                    assert_eq!(
+                        e.segment_path, a.segment_path,
+                        "{label}: layer {i} segment path"
+                    );
+                    assert_eq!(
+                        e.span.to_bits(),
+                        a.span.to_bits(),
+                        "{label}: layer {i} span"
+                    );
+                    assert_eq!(
+                        e.shapes.len(),
+                        a.shapes.len(),
+                        "{label}: layer {i} shape count"
+                    );
+                    for (j, (expected_shape, actual_shape)) in
+                        e.shapes.iter().zip(&a.shapes).enumerate()
+                    {
+                        for ((name, ev), (_, av)) in shape_fields(expected_shape)
+                            .iter()
+                            .zip(shape_fields(actual_shape))
+                        {
+                            assert_eq!(
+                                ev.to_bits(),
+                                av.to_bits(),
+                                "{label}: layer {i} shape {j} {name}: {ev} != {av}"
+                            );
+                        }
+                    }
                 }
+                (Layer::Fill(e), Layer::Fill(a)) => {
+                    assert_eq!(e.key, a.key, "{label}: layer {i} key");
+                    assert_eq!(e.sprite, a.sprite, "{label}: layer {i} sprite");
+                    assert_eq!(e.draw_mode, a.draw_mode, "{label}: layer {i} draw mode");
+                    assert_eq!(
+                        e.color.phase, a.color.phase,
+                        "{label}: layer {i} colour phase"
+                    );
+                    assert_eq!(
+                        e.anims.len(),
+                        a.anims.len(),
+                        "{label}: layer {i} animation count"
+                    );
+                    for ((name, ev), (_, av)) in fill_fields(e).iter().zip(fill_fields(a)) {
+                        assert_eq!(
+                            ev.to_bits(),
+                            av.to_bits(),
+                            "{label}: layer {i} {name}: {ev} != {av}"
+                        );
+                    }
+                }
+                _ => panic!("{label}: layer {i} is a different kind of layer"),
             }
         }
     }

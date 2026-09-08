@@ -5,8 +5,10 @@ use client_lib::transform::{Transform, TransformDirection};
 use graphics::Context;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
+use log::error;
 use std::f64::consts::PI;
-use tunnels_model::layer::{Layer, RenderMode, ShapeGeometry, ShapeMode};
+use std::sync::Once;
+use tunnels_model::layer::{Layer, MarkLayer, RenderMode, SegmentPath, ShapeGeometry};
 
 const TWOPI: f64 = 2.0 * PI;
 
@@ -68,11 +70,25 @@ fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
 
 impl<G: Graphics> Draw<G> for Layer {
     fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
+        match self {
+            Self::Marks(layer) => layer.draw(c, gl, cfg),
+            Self::Fill(_) => {
+                // A channel renders every frame and the status display is the
+                // only log sink, so a stub on this path reports once.
+                static REPORTED: Once = Once::new();
+                REPORTED.call_once(|| error!("This client cannot draw figures yet."));
+            }
+        }
+    }
+}
+
+impl<G: Graphics> Draw<G> for MarkLayer {
+    fn draw(&self, c: &Context, gl: &mut G, cfg: &ClientConfig) {
         for shape in &self.shapes {
             draw_shape(
                 shape,
                 self.render_mode,
-                self.shape_mode,
+                self.segment_path,
                 self.span,
                 c,
                 gl,
@@ -93,7 +109,7 @@ struct ShapeStyle {
 fn draw_shape<G: Graphics>(
     shape: &ShapeGeometry,
     render_mode: RenderMode,
-    shape_mode: ShapeMode,
+    segment_path: SegmentPath,
     span: f64,
     c: &Context,
     gl: &mut G,
@@ -130,12 +146,9 @@ fn draw_shape<G: Graphics>(
         spin_rad,
         transform,
     };
-    match shape_mode {
-        ShapeMode::Ellipse => draw_ellipse(shape, render_mode, span, &style, gl, cfg),
-        ShapeMode::Line => draw_line(shape, render_mode, span, &style, gl, cfg),
-        // A figure is an area rather than a run of segments, and has no
-        // geometry yet for a layer to carry.
-        ShapeMode::Generated | ShapeMode::Sprite => (),
+    match segment_path {
+        SegmentPath::Ellipse => draw_ellipse(shape, render_mode, span, &style, gl, cfg),
+        SegmentPath::Line => draw_line(shape, render_mode, span, &style, gl, cfg),
     }
 }
 

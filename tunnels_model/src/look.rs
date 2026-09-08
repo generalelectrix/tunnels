@@ -1,4 +1,4 @@
-use crate::layer::Layer;
+use crate::layer::{Layer, LayerKey};
 use crate::mixer::Channel;
 use crate::render_context::RenderContext;
 use serde::de::{self, Deserializer};
@@ -34,10 +34,11 @@ impl Look {
         level: UnipolarFloat,
         mask: bool,
         ctx: RenderContext,
+        key: LayerKey,
         out: &mut Vec<Layer>,
     ) {
-        for channel in &self.channels {
-            channel.render(level, mask, ctx, out);
+        for (index, channel) in self.channels.iter().enumerate() {
+            channel.render(level, mask, ctx, key.child(index), out);
         }
     }
 }

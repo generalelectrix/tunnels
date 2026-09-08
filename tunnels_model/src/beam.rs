@@ -1,4 +1,4 @@
-use crate::layer::Layer;
+use crate::layer::{Layer, LayerKey};
 use crate::render_context::RenderContext;
 use crate::{look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
@@ -27,17 +27,20 @@ impl Beam {
     /// Append this beam's layers to `out`.
     ///
     /// A tunnel contributes one layer; a look contributes one per subchannel,
-    /// and its subchannels may themselves hold looks.
+    /// and its subchannels may themselves hold looks. `key` is the path taken
+    /// to reach this beam, which is what a layer is identified by across
+    /// frames.
     pub fn render(
         &self,
         level: UnipolarFloat,
         mask: bool,
         ctx: RenderContext,
+        key: LayerKey,
         out: &mut Vec<Layer>,
     ) {
         match self {
-            Self::Tunnel(t) => out.push(t.render(level, mask, ctx)),
-            Self::Look(l) => l.render(level, mask, ctx, out),
+            Self::Tunnel(t) => out.push(t.render(level, mask, ctx, key)),
+            Self::Look(l) => l.render(level, mask, ctx, key, out),
         }
     }
 }

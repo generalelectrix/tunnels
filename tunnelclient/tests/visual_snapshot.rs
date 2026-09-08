@@ -7,7 +7,9 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::draw::Draw;
-use tunnels_model::layer::{Layer, LayerCollection, RenderMode, ShapeGeometry, ShapeMode};
+use tunnels_model::layer::{
+    Layer, LayerCollection, MarkLayer, RenderMode, SegmentPath, ShapeGeometry,
+};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 512;
@@ -117,7 +119,12 @@ fn assert_images_match_with_limit(
 /// Wrap shapes in a layer drawn with the default render mode and path shape,
 /// every segment spanning `span` turns.
 fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
-    Layer::new(RenderMode::default(), ShapeMode::default(), span, shapes)
+    Layer::Marks(MarkLayer::new(
+        RenderMode::default(),
+        SegmentPath::Ellipse,
+        span,
+        shapes,
+    ))
 }
 
 fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
@@ -405,7 +412,14 @@ fn snapshot_from_groups(
 ) -> LayerCollection {
     groups
         .into_iter()
-        .map(|(span, shapes)| Arc::new(Layer::new(render_mode, ShapeMode::Line, span, shapes)))
+        .map(|(span, shapes)| {
+            Arc::new(Layer::Marks(MarkLayer::new(
+                render_mode,
+                SegmentPath::Line,
+                span,
+                shapes,
+            )))
+        })
         .collect()
 }
 

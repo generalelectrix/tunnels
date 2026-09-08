@@ -3,7 +3,7 @@ source: tunnels/src/show.rs
 expression: "check_render(&show, show.state.mixer.channel_count())"
 ---
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
@@ -1519,7 +1519,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
       rot_angle: 0
       spin_angle: 0
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
@@ -3035,7 +3035,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
       rot_angle: 0
       spin_angle: 0
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
@@ -4551,7 +4551,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
       rot_angle: 0
       spin_angle: 0
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
@@ -6067,7 +6067,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
       rot_angle: 0
       spin_angle: 0
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
@@ -7583,7 +7583,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
       rot_angle: 0
       spin_angle: 0
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
@@ -9099,7 +9099,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
       rot_angle: 0
       spin_angle: 0
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
@@ -10615,7 +10615,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
       rot_angle: 0
       spin_angle: 0
 - render_mode: Arc
-  shape_mode: Ellipse
+  segment_path: Ellipse
   span: 0.007936507936507936
   shapes:
     - level: 1
