@@ -114,10 +114,15 @@ pub fn chord(a: Point, b: Point, width: f64) -> Vec<Contour> {
     ribbon(&[a, b], width, false)
 }
 
+/// The `i`'th of `count` points evenly spaced around a circle centred on the frame.
+pub fn on_ring(i: usize, count: usize, radius: f64, phase: f64) -> Point {
+    Point::polar(phase + TAU * i as f64 / count as f64, radius)
+}
+
 /// `count` points evenly spaced around a circle centred on the frame.
 pub fn ring_points(count: usize, radius: f64, phase: f64) -> Vec<Point> {
     (0..count)
-        .map(|i| Point::polar(phase + TAU * i as f64 / count as f64, radius))
+        .map(|i| on_ring(i, count, radius, phase))
         .collect()
 }
 
