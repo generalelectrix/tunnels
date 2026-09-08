@@ -16,11 +16,13 @@
 //! trusted.
 
 use crate::families::*;
+use serde::{Deserialize, Serialize};
 use std::f64::consts::{FRAC_PI_3, TAU};
+use std::hash::{Hash, Hasher};
 use std::ops::RangeInclusive;
 
 /// The count a family is built around, resolved in that family's own domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Arity(u32);
 
 impl Arity {
@@ -48,13 +50,17 @@ impl Arity {
 ///
 /// What it selects differs by family — a step, a divisor, an orientation, a
 /// curve — so it arrives without units and is resolved on the way in.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(from = "f64")]
 pub struct Secondary(f64);
 
 impl Secondary {
     pub fn new(value: f64) -> Self {
         Self(if value.is_finite() {
-            value.clamp(0.0, 1.0)
+            // Adding zero is what folds a negative zero onto the positive one.
+            // Both compare equal, and a position that names the same figure
+            // has to hash to the same place as well as compare equal to it.
+            value.clamp(0.0, 1.0) + 0.0
         } else {
             0.0
         })
@@ -84,6 +90,23 @@ impl Secondary {
     /// This position mapped onto an interval.
     fn between(self, low: f64, high: f64) -> f64 {
         low + (high - low) * self.0
+    }
+}
+
+/// A position is a number, and two of them that came out of the same
+/// arithmetic agree bit for bit; two that merely landed close are different
+/// figures and stay so.
+impl Eq for Secondary {}
+
+impl Hash for Secondary {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
+impl From<f64> for Secondary {
+    fn from(value: f64) -> Self {
+        Self::new(value)
     }
 }
 

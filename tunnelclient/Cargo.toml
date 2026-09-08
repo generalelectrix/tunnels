@@ -33,6 +33,7 @@ lyon_tessellation = "1"
 lyon_path = "1"
 image = "0.25"
 tunnels_sprites = { path = "../tunnels_sprites" }
+tunnels_shapes = { path = "../tunnels_shapes" }
 
 [dev-dependencies]
 image = "0.25"
