@@ -6,6 +6,7 @@ members = [
     "tunnels",
     "tunnels_model",
     "tunnels_sprites",
+    "tunnels_shapes",
     "tunnels_net",
     "tunnelclient",
     "tunnel-bootstrap",
