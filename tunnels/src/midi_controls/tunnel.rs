@@ -99,7 +99,7 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         ASPECT_RATIO => Tunnel(Set(AspectRatio(unipolar_from_midi(v)))),
         ROT_SPEED => Tunnel(Set(RotationSpeed(bipolar_from_midi(v)))),
         MARQUEE_SPEED => Tunnel(Set(MarqueeSpeed(bipolar_from_midi(v)))),
-        BLACKING => Tunnel(Set(Blacking(bipolar_from_midi(v)))),
+        BLACKING => Tunnel(Set(Blacking(v))),
         SEGMENTS => Tunnel(Set(Segments(v + 1))),
         NUDGE_RIGHT => Tunnel(NudgeRight),
         NUDGE_LEFT => Tunnel(NudgeLeft),
@@ -167,7 +167,7 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
             );
         }
         Segments(v) => send(event(SEGMENTS, v - 1)),
-        Blacking(v) => send(event(BLACKING, bipolar_to_midi(v))),
+        Blacking(v) => send(event(BLACKING, v)),
         MarqueeSpeed(v) => send(event(MARQUEE_SPEED, bipolar_to_midi(v))),
         RotationSpeed(v) => send(event(ROT_SPEED, bipolar_to_midi(v))),
         // Clamp outgoing tunnel position messages to regular midi range.

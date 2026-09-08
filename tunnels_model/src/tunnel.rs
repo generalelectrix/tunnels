@@ -47,11 +47,15 @@ pub struct Tunnel {
     position_selection: Option<PositionIdx>,
     /// TODO: regularize segs interface into regular float knobs
     segs: u8,
-    /// remove segments at this interval
+    /// Where the blacking knob is standing, as the raw position a control
+    /// surface sends.
     ///
-    /// bipolar float, internally interpreted as an int on [-16, 16]
-    /// defaults to every other chicklet removed
-    blacking: BipolarFloat,
+    /// A knob position and not a value: it has no units and no domain until a
+    /// mode reads it, which is what lets one knob mean an interval to a mark
+    /// mode and a figure to a figure mode without either having to round-trip
+    /// through a number that means something else. The default takes out every
+    /// other chicklet.
+    blacking: u8,
     curr_rot_angle: Phase,
     curr_marquee_angle: Phase,
     spin_speed: BipolarFloat,
@@ -108,7 +112,7 @@ impl Default for Tunnel {
             palette_selection: None,
             position_selection: None,
             segs: 126,
-            blacking: BipolarFloat::new(0.15),
+            blacking: 73,
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
             spin_speed: BipolarFloat::ZERO,
@@ -128,15 +132,24 @@ impl Default for Tunnel {
 impl Tunnel {
     const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
     const GEOM_SMOOTH_TIME: Duration = Duration::from_millis(100);
-    /// Return the blacking parameter, scaled to be an int on [-16, 16].
+    /// How often a mark is taken out, on [-16, 16].
     ///
-    /// If -1, return 1 (-1 implies all segments are black)
-    /// If 0, return 1
-    fn blacking_integer(&self) -> i32 {
-        let scaled = (17. * self.blacking.val()) as i32;
+    /// A positive interval keeps every nth mark and a negative one drops
+    /// every nth, so the knob sweeps from mostly dark through solid and out
+    /// the other side. Its two halves are read against different spans
+    /// because the detent belongs to the lower one, which is why the travel
+    /// does not divide evenly.
+    ///
+    /// An interval of 0 or -1 would black every mark and leave nothing to
+    /// look at, so the bottom of the positive half absorbs both.
+    fn blacking_interval(&self) -> i32 {
+        let (knob, centre) = (i32::from(self.blacking), i32::from(KNOB_CENTRE));
+        let scaled = if knob <= centre {
+            -(17 * (centre - knob) / centre)
+        } else {
+            17 * (knob - centre) / (i32::from(KNOB_MAX) - centre)
+        };
         let clamped = scaled.clamp(-16, 16);
-
-        // remote the "all segments blacked" bug
         if clamped >= -1 {
             max(clamped, 1)
         } else {
@@ -183,28 +196,31 @@ impl Tunnel {
 
     /// How far into a family a position of the blacking knob reaches.
     ///
-    /// The knob is bipolar where the family knob is not, so its travel is read
-    /// as the unipolar span it covers: fully counter-clockwise is the first
-    /// figure of the family, fully clockwise the last, and the family's whole
-    /// length lies between. Nothing distinguishes the two halves, because a
-    /// selection has no centre for zero to mean.
-    fn selection_for_blacking(blacking: BipolarFloat, len: u16) -> u16 {
+    /// The knob's whole travel is spread over the family, one end on its first
+    /// figure and the other on its last. Nothing distinguishes the halves of
+    /// the travel, unlike the interval the same knob names in a mark mode: a
+    /// selection has no centre for a detent to mean.
+    fn selection_for_blacking(blacking: u8, len: u16) -> u16 {
         let Some(last) = len.checked_sub(1).filter(|l| *l > 0) else {
             return 0;
         };
-        let position = blacking.rescale_as_unipolar().val() * f64::from(last);
-        (position.round() as u16).min(last)
+        // Rounded rather than truncated, so the top of the travel reaches the
+        // last figure instead of stopping one short.
+        let (knob, last, top) = (u32::from(blacking), u32::from(last), u32::from(KNOB_MAX));
+        let position = (2 * knob * last + top) / (2 * top);
+        position.min(last) as u16
     }
 
     /// The knob position that names a position in a family.
     ///
     /// The middle of the band of positions that select it, so a position
     /// reported to a surface selects the figure it came from.
-    fn blacking_for_selection(selection: u16, len: u16) -> BipolarFloat {
+    fn blacking_for_selection(selection: u16, len: u16) -> u8 {
         let Some(last) = len.checked_sub(1).filter(|l| *l > 0) else {
-            return BipolarFloat::ZERO;
+            return KNOB_CENTRE;
         };
-        UnipolarFloat::new(f64::from(selection.min(last)) / f64::from(last)).rescale_as_bipolar()
+        let (selection, last) = (u32::from(selection.min(last)), u32::from(last));
+        ((2 * selection * u32::from(KNOB_MAX) + last) / (2 * last)) as u8
     }
 
     /// Where the figure being drawn sits in the library.
@@ -256,7 +272,7 @@ impl Tunnel {
     /// one moves this knob even though the position within the family is
     /// carried across — a surface reporting anything else would name a figure
     /// that is not the one being drawn.
-    fn blacking_control(&self) -> BipolarFloat {
+    fn blacking_control(&self) -> u8 {
         if self.shape_mode.draws_segments() {
             self.blacking
         } else {
@@ -485,7 +501,7 @@ impl Tunnel {
         } else {
             self.segs
         };
-        let blacking = self.blacking_integer();
+        let blacking = self.blacking_interval();
 
         let mut arcs = Vec::new();
 
@@ -821,6 +837,13 @@ const COLOR_SPREAD_SCALE: f64 = 16.;
 /// The segment knob's travel, which is what the control surface can send.
 const SEGMENTS_MIN: u8 = 1;
 const SEGMENTS_MAX: u8 = 128;
+/// The top of a knob's raw travel, and the position its detent sits at.
+///
+/// A surface reports a knob in seven bits, so a position is one of 128 and the
+/// centre is not the middle of them: the detent is the last position of the
+/// lower half, leaving that half one longer than the upper.
+const KNOB_MAX: u8 = 127;
+const KNOB_CENTRE: u8 = 64;
 
 /// The largest family index this build carries, or `None` if there is nothing
 /// to choose between.
@@ -853,7 +876,9 @@ pub enum StateChange {
     ColorSaturation(UnipolarFloat),
     PaletteSelection(Option<ColorPaletteIdx>),
     Segments(u8), // FIXME integer knob
-    Blacking(BipolarFloat),
+    /// Where the blacking knob is standing, as the raw position a surface
+    /// sends. What it means is the mode's business, not the message's.
+    Blacking(u8),
     PositionX(f64),
     PositionY(f64),
     SpinSpeed(BipolarFloat),
@@ -968,7 +993,7 @@ mod test {
             tunnel.shape_mode.draws_segments(),
             "the default draws marks"
         );
-        let blacking = BipolarFloat::new(0.4);
+        let blacking = 89;
 
         tunnel.handle_state_change(StateChange::Segments(37), &mut Silent);
         tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
@@ -988,7 +1013,7 @@ mod test {
 
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut Silent);
         tunnel.handle_state_change(StateChange::Segments(90), &mut Silent);
-        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ONE), &mut Silent);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_MAX), &mut Silent);
         let family = Tunnel::family_for_segments(90);
         assert_eq!(
             tunnel.sprite,
@@ -1071,17 +1096,10 @@ mod test {
         );
 
         for family in families {
-            let ends = [BipolarFloat::new(-1.0), BipolarFloat::ONE]
-                .map(|v| Tunnel::selection_for_blacking(v, family.len));
+            let ends = [0, KNOB_MAX].map(|v| Tunnel::selection_for_blacking(v, family.len));
             assert_eq!(ends, [0, family.len - 1], "the {} family", family.name);
-            // Finer than any control surface's own resolution, so a figure
-            // the knob skips here is one it cannot reach at all.
-            const STEPS: u16 = 1024;
-            let mut reached: Vec<u16> = (0..=STEPS)
-                .map(|step| {
-                    let v = BipolarFloat::new(f64::from(step) * 2.0 / f64::from(STEPS) - 1.0);
-                    Tunnel::selection_for_blacking(v, family.len)
-                })
+            let mut reached: Vec<u16> = (0..=KNOB_MAX)
+                .map(|v| Tunnel::selection_for_blacking(v, family.len))
                 .collect();
             assert!(
                 reached.windows(2).all(|w| w[0] <= w[1]),
@@ -1100,6 +1118,60 @@ mod test {
         }
     }
 
+    /// Every knob position gives the interval it names, over the whole travel.
+    ///
+    /// The interval is a ratio of the knob's position to the span its half of
+    /// the travel covers, truncated. Stated here as that ratio, in floating
+    /// point, against the integer arithmetic that computes it — the two agree
+    /// for all 128 positions, and an interval is a count of marks, so a
+    /// position that landed a step either side of the ratio would black the
+    /// wrong ones.
+    #[test]
+    fn the_blacking_interval_is_the_ratio_the_knob_stands_at() {
+        for knob in 0..=KNOB_MAX {
+            let centre = f64::from(KNOB_CENTRE);
+            let span = if knob <= KNOB_CENTRE {
+                centre
+            } else {
+                f64::from(KNOB_MAX) - centre
+            };
+            let ratio = (17.0 * (f64::from(knob) - centre) / span) as i32;
+            let clamped = ratio.clamp(-16, 16);
+            let expected = if clamped >= -1 {
+                max(clamped, 1)
+            } else {
+                clamped
+            };
+
+            let tunnel = Tunnel {
+                blacking: knob,
+                ..Default::default()
+            };
+            assert_eq!(
+                tunnel.blacking_interval(),
+                expected,
+                "knob position {knob} names the wrong interval"
+            );
+        }
+    }
+
+    /// No knob position blacks every mark, because a beam that draws nothing
+    /// is indistinguishable from one that is broken.
+    #[test]
+    fn no_knob_position_leaves_nothing_to_look_at() {
+        for knob in 0..=KNOB_MAX {
+            let interval = Tunnel {
+                blacking: knob,
+                ..Default::default()
+            }
+            .blacking_interval();
+            assert!(
+                interval >= 1 || interval <= -2,
+                "knob position {knob} gives an interval of {interval}"
+            );
+        }
+    }
+
     /// Opening another family keeps the position within it, and reports the
     /// knob position that names where the figure now sits.
     #[test]
@@ -1108,7 +1180,7 @@ mod test {
             shape_mode: ShapeMode::Sprite,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut Silent);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut Silent);
         let index = tunnel.placement().index;
         assert!(index > 0, "the middle of a family is not its first figure");
 
@@ -1241,7 +1313,7 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(StateChange::MarqueeSpeed(marquee_speed), &mut NoopEmitter);
-        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut NoopEmitter);
 
         for (i, anim) in tunnel.anims.iter_mut().enumerate() {
             anim.animation.control(
@@ -1703,7 +1775,7 @@ pub mod fixture {
     pub fn configure_max_variation(tunnel: &mut Tunnel, index: usize, of: usize, segments: u8) {
         let phase = index as f64 / of as f64;
         tunnel.handle_state_change(StateChange::Segments(segments), &mut NoopEmitter);
-        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut NoopEmitter);
         tunnel.handle_state_change(
             StateChange::ColorSpread(UnipolarFloat::ONE),
             &mut NoopEmitter,

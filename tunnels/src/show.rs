@@ -666,7 +666,7 @@ mod test {
                 T::PaletteSelection(Some(ColorPaletteIdx(0))),
             );
             t("tunnel/segments", T::Segments(4));
-            t("tunnel/blacking", T::Blacking(bip));
+            t("tunnel/blacking", T::Blacking(80));
             t("tunnel/marquee_speed", T::MarqueeSpeed(bip));
             t("tunnel/rotation_speed", T::RotationSpeed(bip));
             t("tunnel/position_x", T::PositionX(0.3));
