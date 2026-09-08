@@ -34,6 +34,15 @@ impl MoireRings {
         }
     }
 
+    /// Two stacks divide the same radius, so where the counts share a factor a
+    /// ring of one lands exactly on a ring of the other and the pair cancels.
+    ///
+    /// Two curated figures do this: at 16 and 18 rings, and at 22 and 24, one
+    /// ring at radius 235 is drawn twice and the even-odd fill erases it. That
+    /// is faithful — it is the figure that was judged, and losing one ring out
+    /// of forty is why nobody caught it by looking — so it is reproduced rather
+    /// than corrected. New figures reached through the arity control are not
+    /// allowed to do it; see `arity::ring_offsets`.
     pub fn generate(&self) -> Figure {
         let mut contours = Vec::new();
         for count in [self.rings, self.rings + self.offset] {

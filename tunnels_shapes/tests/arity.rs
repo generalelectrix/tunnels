@@ -194,3 +194,42 @@ fn arities_outside_the_range_are_brought_back_in() {
         }
     }
 }
+
+/// A family the knob cannot reach, or one with nothing curated in it, is a
+/// family that does not exist as far as a show is concerned.
+///
+/// This does not catch a family left out of `ShapeFamily::ALL` that also has no
+/// preset — but a family earns its place by having been curated, so one with no
+/// preset is not a family yet.
+#[test]
+fn every_family_is_reachable() {
+    use std::collections::BTreeSet;
+    use tunnels_shapes::presets;
+
+    let swept: BTreeSet<ShapeFamily> = ShapeFamily::ALL.into_iter().collect();
+    assert_eq!(
+        swept.len(),
+        ShapeFamily::ALL.len(),
+        "a family is listed twice in the sweep"
+    );
+
+    let curated: BTreeSet<ShapeFamily> = presets::all()
+        .iter()
+        .map(|preset| preset.params.family())
+        .collect();
+
+    for family in &curated {
+        assert!(
+            swept.contains(family),
+            "{}: curated, but the arity control cannot reach it",
+            family.name()
+        );
+    }
+    for family in &swept {
+        assert!(
+            curated.contains(family),
+            "{}: reachable by the arity control, but nothing in it was curated",
+            family.name()
+        );
+    }
+}
