@@ -119,6 +119,15 @@ pub struct Config {
     /// deadlines as it takes writes: two on macOS and three on Linux, against
     /// a peer that has stopped reading.
     ///
+    /// What it therefore does not bound is a peer that reads just enough to
+    /// keep the writes short rather than stopping them. Every short write
+    /// restarts the deadline, so a subscriber accepting a trickle holds its
+    /// sender thread for as long as it goes on trickling, and is never
+    /// reported as behind because nothing it was sent was ever replaced. That
+    /// is a subscriber alive and keeping up badly rather than one that has
+    /// departed, so it is left alone deliberately: bounding a whole message
+    /// would drop a subscriber that is still there for being slow.
+    ///
     /// It is also the smaller half of what a departed subscriber costs, since
     /// the write it fails is the one that finds the buffers already full.
     /// Those are autotuned and no setting here shortens them: about 2.6 MB on
