@@ -570,10 +570,10 @@ fn saucer_line_marquee_sequence() {
 #[test]
 fn the_fixtures_draw_the_figures_they_were_taken_of() {
     for (id, name) in [
-        (fixture::SNOWFLAKE, "db_snowflake"),
-        (fixture::BULLSEYE, "db_bullseye"),
-        (fixture::UMBRELLA, "db_umbrella"),
-        (fixture::PINWHEEL, "db_six_pointed_pinwheel_star"),
+        (fixture::SNOWFLAKE, "blossoms/snowflake"),
+        (fixture::BULLSEYE, "emblems/bullseye"),
+        (fixture::UMBRELLA, "novelty/umbrella"),
+        (fixture::PINWHEEL, "pinwheels/six_pointed"),
     ] {
         let sprite = tunnels_sprites::sprite(id.0)
             .unwrap_or_else(|| panic!("this build carries no figure {}", id.0));

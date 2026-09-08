@@ -263,12 +263,19 @@ mod test {
     /// half turn, which maps the bounding box onto itself and so puts its
     /// centre on the centre of rotation.
     const RECENTRED: [&str; 5] = [
-        "db_pinwheel_star",
-        "db_black_centre_white_star",
-        "db_black_florette",
-        "db_six_petalled_black_and_white_florette",
-        "db_biohazard_sign",
+        "pinwheels/five_pointed",
+        "stars/five_pointed",
+        "blossoms/five_petal",
+        "blossoms/six_petal",
+        "emblems/biohazard",
     ];
+
+    /// `blossoms/five_petal_open` is not in that list and looks as though it
+    /// should be: it has five petals and sits about 0.068 high. Its top petal
+    /// is drawn differently from the other four, so it is not five-fold, and
+    /// it leaves a fifth of its angular energy unexplained by any rotation —
+    /// against 0.083 for the worst figure that is accepted. Admitting it means
+    /// admitting `hands/victory` too, so it keeps its wobble.
 
     #[test]
     fn a_figure_that_turns_onto_itself_sits_on_the_point_it_turns_about() {

@@ -32,24 +32,23 @@ const RULE_NONZERO: u8 = 0;
 const RULE_EVENODD: u8 = 1;
 
 fn main() {
-    let root = FsPath::new(env!("CARGO_MANIFEST_DIR"));
-    let assets = root.join("assets/shapes");
-    let manifest = root.join("assets/library.txt");
-    println!("cargo:rerun-if-changed={}", assets.display());
-    println!("cargo:rerun-if-changed={}", manifest.display());
+    let shapes = FsPath::new(env!("CARGO_MANIFEST_DIR")).join("assets/shapes");
+    println!("cargo:rerun-if-changed={}", shapes.display());
 
-    let families = read_manifest(&manifest);
-    check_against(&families, &assets);
+    let families = read_library(&shapes);
 
     let mut names = Vec::new();
     let mut blob = Vec::new();
     let mut sprites = Vec::new();
     for family in &families {
-        for name in &family.members {
-            let file = assets.join(format!("{name}.svg"));
-            let figures = load(&file);
-            assert!(!figures.is_empty(), "{name} has no filled paths");
-            names.push(name.clone());
+        for member in &family.members {
+            let figures = load(&member.file);
+            assert!(
+                !figures.is_empty(),
+                "{} has no filled paths",
+                member.file.display()
+            );
+            names.push(format!("{}/{}", family.name, member.name));
             sprites.push(figures);
         }
     }
@@ -106,100 +105,112 @@ fn main() {
     writeln!(table, "];").unwrap();
 }
 
-/// One block of the manifest: a family and the figures under it, in order.
+/// How the ordering prefix on a directory entry is written.
+///
+/// Two digits, an underscore, then the name. Two because the largest family
+/// holds ten figures and the library holds nine families, and because a fixed
+/// width is what makes a plain lexicographic sort the intended order.
+const PREFIX: usize = 2;
+
+/// One family directory: its name, and the figures under it in order.
 struct FamilyEntry {
     name: String,
-    members: Vec<String>,
+    members: Vec<Member>,
 }
 
-/// Read the manifest that gives the library its order.
+/// One figure file: its name, and where to read it from.
+struct Member {
+    name: String,
+    file: PathBuf,
+}
+
+/// Read the shape directory, which is what gives the library its order.
 ///
-/// A bracketed line opens a family and the bare lines under it name its
-/// figures; `#` comments and blank lines are ignored. Ids are handed out by
-/// reading top to bottom, so a family is always one contiguous run of them.
-fn read_manifest(file: &FsPath) -> Vec<FamilyEntry> {
-    let text =
-        fs::read_to_string(file).unwrap_or_else(|e| panic!("reading {}: {e}", file.display()));
-    let mut families: Vec<FamilyEntry> = Vec::new();
-    for line in text.lines() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
+/// A family is a subdirectory and a figure is a file inside one, both named
+/// `<two digits>_<name>`, and both are taken in the order the names sort.
+/// Ordering the library is therefore moving a file: inserting a figure,
+/// reordering a family or moving a figure between families is a rename and
+/// nothing else, with no second place for the order to live.
+///
+/// Ids are handed out by walking this in order, so a family is always one
+/// contiguous run of them.
+fn read_library(shapes: &FsPath) -> Vec<FamilyEntry> {
+    let mut families = Vec::new();
+    for entry in sorted(shapes) {
+        // The directory's own notes, which carry the reasons for the orders.
+        if entry.file_name().is_some_and(|n| n == "README.md") {
             continue;
         }
-        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            families.push(FamilyEntry {
-                name: name.to_string(),
-                members: Vec::new(),
-            });
-        } else {
-            let family = families
-                .last_mut()
-                .unwrap_or_else(|| panic!("{line} is listed before any family"));
-            family.members.push(line.to_string());
-        }
-    }
-    assert!(!families.is_empty(), "{} names no family", file.display());
-    for family in &families {
         assert!(
-            !family.members.is_empty(),
-            "the {} family is empty",
-            family.name
+            entry.is_dir(),
+            "{} is not a family directory. Every figure lives in one, because \
+             a family is a directory and a figure is a file inside it.",
+            entry.display()
         );
+        let name = unprefixed(&entry);
+        let members: Vec<Member> = sorted(&entry)
+            .into_iter()
+            .map(|file| {
+                assert!(
+                    file.extension().is_some_and(|e| e == "svg"),
+                    "{} is not an SVG. A family directory holds figures and \
+                     nothing else.",
+                    file.display()
+                );
+                Member {
+                    name: unprefixed(&file),
+                    file,
+                }
+            })
+            .collect();
+        assert!(!members.is_empty(), "{} holds no figures", entry.display());
+        families.push(FamilyEntry { name, members });
     }
+    assert!(
+        !families.is_empty(),
+        "{} holds no families",
+        shapes.display()
+    );
     families
 }
 
-/// Fail unless the manifest and the shape directory hold the same figures.
-///
-/// Both directions matter. A figure listed but absent would bake nothing under
-/// a name the console offers; a figure present but unlisted would be
-/// undrawable, and silently so.
-fn check_against(families: &[FamilyEntry], assets: &FsPath) {
-    let mut listed: Vec<&str> = families
-        .iter()
-        .flat_map(|f| f.members.iter().map(String::as_str))
-        .collect();
-    let mut present: Vec<String> = fs::read_dir(assets)
-        .unwrap_or_else(|e| panic!("reading {}: {e}", assets.display()))
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "svg"))
-        .map(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_else(|| panic!("un-nameable shape file {}", p.display()))
-                .to_string()
+/// Everything in a directory, in the order its entries sort.
+fn sorted(dir: &FsPath) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
+        .map(|e| {
+            e.unwrap_or_else(|e| panic!("reading an entry of {}: {e}", dir.display()))
+                .path()
         })
         .collect();
-    listed.sort_unstable();
-    present.sort_unstable();
+    paths.sort();
+    paths
+}
 
-    let duplicated: Vec<&&str> = listed
-        .windows(2)
-        .filter(|w| w[0] == w[1])
-        .map(|w| &w[0])
-        .collect();
-    assert!(
-        duplicated.is_empty(),
-        "listed more than once: {duplicated:?}"
-    );
-    let missing: Vec<&&str> = listed
-        .iter()
-        .filter(|n| !present.contains(&n.to_string()))
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "listed but not in {}: {missing:?}",
-        assets.display()
-    );
-    let unplaced: Vec<&String> = present
-        .iter()
-        .filter(|n| !listed.contains(&n.as_str()))
-        .collect();
-    assert!(
-        unplaced.is_empty(),
-        "in {} but placed in no family: {unplaced:?}",
-        assets.display()
-    );
+/// The name a prefixed entry carries, with the prefix that orders it removed.
+///
+/// The prefix is checked rather than assumed. An entry that does not carry one
+/// would sort somewhere unintended and take every id after it along, which is
+/// the kind of thing noticed only when a knob position draws the wrong figure.
+fn unprefixed(path: &FsPath) -> String {
+    let raw = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_else(|| panic!("un-nameable entry {}", path.display()));
+    let named = raw.split_at_checked(PREFIX).and_then(|(digits, rest)| {
+        let name = rest.strip_prefix('_')?;
+        let ordered = digits.chars().all(|c| c.is_ascii_digit()) && !name.is_empty();
+        ordered.then(|| name.to_string())
+    });
+    match named {
+        Some(name) => name,
+        None => panic!(
+            "{} is not named for its place. Both a family directory and a \
+             figure file are named `<{PREFIX} digits>_<name>`, and the digits \
+             are what put them in order.",
+            path.display()
+        ),
+    }
 }
 
 fn write_u32(out: &mut Vec<u8>, n: usize) {

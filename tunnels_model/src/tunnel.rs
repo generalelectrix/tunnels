@@ -1822,8 +1822,8 @@ pub mod fixture {
 
     /// The figures the render fixtures draw, by the id the build assigns them.
     ///
-    /// The ids come from the library manifest's order, so a test that draws
-    /// one should check the name it got: a figure placed into a family
+    /// The ids come from the shape directory's own order, so a test that
+    /// draws one should check the name it got: a figure added to a family
     /// renumbers everything after it, and a golden image would otherwise
     /// quietly become an image of something else.
     pub const SNOWFLAKE: SpriteId = SpriteId(25);
@@ -1835,7 +1835,7 @@ pub mod fixture {
     pub const PINWHEEL: SpriteId = SpriteId(2);
     /// A figure whose handle is one long straight contour passing close to the
     /// origin, which is where a stroke's colour is hardest to get right.
-    pub const UMBRELLA: SpriteId = SpriteId(57);
+    pub const UMBRELLA: SpriteId = SpriteId(58);
 
     /// A tunnel that draws a figure instead of a run of segments.
     ///
