@@ -26,6 +26,8 @@ tunnels_lib = { path = "../tunnels_lib" }
 tunnels_model = { path = "../tunnels_model" }
 tunnels_net = { path = "../tunnels_net" }
 client_lib = { path = "../client_lib" }
+zero_configure = { path = "../zero_configure" }
+rust_dmx = "0.11"
 
 [dev-dependencies]
 image = "0.24"

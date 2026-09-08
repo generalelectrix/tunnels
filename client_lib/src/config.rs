@@ -29,6 +29,8 @@ pub struct ClientConfig {
     pub y_center: f64,
     /// Geometric transformation to optionally apply to the entire image.
     pub transformation: Option<Transform>,
+    /// Serve a DMX interface attached to this machine as an artnet node.
+    pub artnet_node: bool,
     /// Log at debug level?
     pub log_level_debug: bool,
 }
@@ -43,6 +45,7 @@ impl ClientConfig {
         fullscreen: bool,
         capture_mouse: bool,
         transformation: Option<Transform>,
+        artnet_node: bool,
         log_level_debug: bool,
     ) -> ClientConfig {
         let (x_resolution, y_resolution) = resolution;
@@ -59,6 +62,7 @@ impl ClientConfig {
             x_center: f64::from(x_resolution / 2),
             y_center: f64::from(y_resolution / 2),
             transformation,
+            artnet_node,
             log_level_debug,
         }
     }
@@ -101,6 +105,9 @@ impl ClientConfig {
             flag("fullscreen", "Bad fullscreen flag.")?,
             flag("capture_mouse", "Bad mouse capture flag.")?,
             transformation,
+            // An absent key leaves the node off, so a config written before
+            // clients could serve one still loads.
+            cfg["artnet_node"].as_bool().unwrap_or(false),
             flag("log_level_debug", "Bad log level flag.")?,
         ))
     }

@@ -1,3 +1,4 @@
+use crate::artnet_node::ArtnetNodeService;
 use anyhow::{Context as _, Result, anyhow};
 use client_lib::config::ClientConfig;
 use graphics::{CircleArc, Context, clear};
@@ -101,6 +102,12 @@ pub struct Show {
     /// The video channel drawn out of every frame.
     video_channel: VideoChannel,
     cfg: ClientConfig,
+    /// The artnet node this client serves, if it was asked to serve one.
+    ///
+    /// Never read: it is held so that serving lasts exactly as long as the
+    /// show does, and ends when the show is dropped.
+    #[expect(unused)]
+    artnet: Option<ArtnetNodeService>,
     window: PistonWindow<Sdl2Window>,
     /// Reference instant for animating the waiting-for-frame spinner.
     start_time: Instant,
@@ -112,6 +119,8 @@ impl Show {
         info!("Running on video channel {}.", cfg.video_channel);
 
         let frames = FrameReceiver::new(&cfg.server_hostname)?;
+
+        let artnet = cfg.artnet_node.then(ArtnetNodeService::new).transpose()?;
 
         let opengl = OpenGL::V3_2;
 
@@ -138,6 +147,7 @@ impl Show {
             frames,
             video_channel,
             cfg,
+            artnet,
             window,
             start_time: Instant::now(),
         })

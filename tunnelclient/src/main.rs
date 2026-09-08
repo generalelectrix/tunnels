@@ -1,3 +1,4 @@
+mod artnet_node;
 mod show;
 
 use crate::show::Show;

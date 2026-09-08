@@ -113,6 +113,7 @@ pub struct AdminPanelState {
     fullscreen: bool,
     flip_horizontal: bool,
     capture_mouse: bool,
+    artnet_node: bool,
 
     // Async config send / monitor launch
     config_send_state: Arc<Mutex<Option<ConfigSendState>>>,
@@ -141,6 +142,7 @@ impl AdminPanelState {
             fullscreen: false,
             flip_horizontal: false,
             capture_mouse: false,
+            artnet_node: false,
             config_send_state: Arc::new(Mutex::new(None)),
             monitor_children: Arc::new(Mutex::new(Vec::new())),
         }
@@ -192,6 +194,7 @@ impl AdminPanelState {
         } else {
             None
         };
+        let artnet_node = self.artnet_node;
         Ok(ClientConfig::new(
             self.video_channel,
             self.hostname.clone(),
@@ -199,6 +202,7 @@ impl AdminPanelState {
             self.fullscreen,
             self.capture_mouse,
             transformation,
+            artnet_node,
             false,
         ))
     }
@@ -213,6 +217,7 @@ impl AdminPanelState {
                 self.half_size = true;
                 self.fullscreen = false;
                 self.capture_mouse = false;
+                self.artnet_node = false;
             }
             Target::RemoteClient(_) => {
                 self.half_size = false;
@@ -527,6 +532,9 @@ impl AdminPanelState {
             ui.checkbox(&mut self.fullscreen, "Fullscreen");
             ui.checkbox(&mut self.flip_horizontal, "Flip Horizontal");
             ui.checkbox(&mut self.capture_mouse, "Capture Mouse");
+            if target != Target::Monitor {
+                ui.checkbox(&mut self.artnet_node, "Run Art-Net Node");
+            }
 
             ui.add_space(16.0);
 
@@ -641,6 +649,43 @@ mod tests {
             .select_target(Target::RemoteClient("projector-1".to_string()));
         harness.run();
         assert!(harness.query_by_label("Send Configuration").is_some());
+    }
+
+    // --- Art-Net node tests ---
+
+    #[test]
+    fn the_node_checkbox_decides_whether_a_client_serves_one() {
+        let mut harness = test_harness(vec!["projector-1".to_string()]);
+        harness
+            .state_mut()
+            .select_target(Target::RemoteClient("projector-1".to_string()));
+        harness.run();
+        assert!(harness.query_by_label("Run Art-Net Node").is_some());
+
+        let app = harness.state_mut();
+        // Off by default: a client only serves a node when asked to.
+        assert!(!app.build_config().unwrap().artnet_node);
+        app.artnet_node = true;
+        assert!(app.build_config().unwrap().artnet_node);
+    }
+
+    /// A node on this machine would take the artnet port for the whole host,
+    /// so a local monitor is never offered one, and a node asked for on behalf
+    /// of a remote client does not follow the selection back here.
+    #[test]
+    fn a_local_monitor_is_never_offered_a_node() {
+        let mut harness = test_harness(vec!["projector-1".to_string()]);
+        harness
+            .state_mut()
+            .select_target(Target::RemoteClient("projector-1".to_string()));
+        harness.state_mut().artnet_node = true;
+        harness.run();
+        assert!(harness.query_by_label("Run Art-Net Node").is_some());
+
+        harness.state_mut().select_target(Target::Monitor);
+        harness.run();
+        assert!(harness.query_by_label("Run Art-Net Node").is_none());
+        assert!(!harness.state_mut().build_config().unwrap().artnet_node);
     }
 
     // --- Dynamic defaults tests ---
