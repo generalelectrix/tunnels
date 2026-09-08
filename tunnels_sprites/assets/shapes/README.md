@@ -38,10 +38,13 @@ openings but only middling coverage, so ink would sort it near the bare
 crossing it is nothing like. The openings are what make the moiré, and the
 moiré is the reason these are in the library.
 
-**Rosettes runs hollow before solid within each pair.** The two framed
-rosettes paint 75–79% of the frame against the unframed pair's 20–24%, and
-hollow-first is the only direction in which "how much of the frame it fills"
-runs monotone across all four.
+**Rosettes puts solid after hollow in the unframed pair and before it in the
+framed one.** A frame reverses which of a pair paints more: unframed, the solid
+rosette's petals are the ink; framed, those same petals cut out of the disc, so
+the solid one paints less than the hollow. The two framed rosettes paint 75–79%
+of the frame against the unframed pair's 20–24%, and the order the directory is
+in is the one in which "how much of the frame it fills" runs monotone across all
+four.
 
-Every other family runs low to high — more points, more spokes, more petals,
-more openings, more ink — so turning the second knob up always adds.
+Weaves aside, every family runs low to high — more points, more spokes, more
+petals, more ink — so turning the second knob up always adds.

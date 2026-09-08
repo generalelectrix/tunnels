@@ -67,11 +67,11 @@ pub struct Tunnel {
     shape_mode: ShapeMode,
     /// Which coordinate of a figure indexes the color ramp.
     ///
-    /// Held at its default: no control writes to it.
+    /// No control surface carries it, so it stays wherever it is set.
     color_phase: ColorPhase,
     /// How much of a figure is painted.
     ///
-    /// Held at its default: no control writes to it.
+    /// No control surface carries it, so it stays wherever it is set.
     draw_mode: DrawMode,
     /// Which baked figure a sprite draws.
     ///

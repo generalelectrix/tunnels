@@ -204,7 +204,8 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 RENDER_MODE_BUTTONS.all_off(&mut send);
             }
         }
-        // No control writes to a figure's own state yet.
+        // No control surface carries either of these, so there is nothing to
+        // report a change to.
         ColorPhase(_) | DrawMode(_) => (),
     };
 }

@@ -27,7 +27,7 @@ use std::path::{Path as FsPath, PathBuf};
 /// place the difference could show.
 const TOLERANCE: f32 = 0.002;
 
-/// Winding rule tags, matching the discriminants `sprites.rs` reads back.
+/// Winding rule tags, as the crate's decoder reads them back out of the blob.
 const RULE_NONZERO: u8 = 0;
 const RULE_EVENODD: u8 = 1;
 
