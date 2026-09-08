@@ -29,5 +29,14 @@ https://creativecommons.org/licenses/by-sa/3.0/
 The baked contours are an adaptation, so ShareAlike applies to them: they are
 offered under CC BY-SA 3.0, and this is the notice that goes with them.
 
+Keeping this one figure alongside 61 that are under a licence with no such
+reach was a deliberate choice, made when the client binary went only to the
+operator's own render machines and was distributed to nobody. Revisit it if
+tunnels is published, open-sourced more widely, or handed to another operator:
+the choice then is to accept the share-alike obligation on whatever the
+contours are built into, or to drop this file. Dropping it costs one figure out
+of sixty-two and nothing else — no other figure here derives from it, and the
+rest of the library is unaffected.
+
 `CREDITS.json`, compiled in with these, records the source and licence of every
 figure individually, including each glyph's codepoint.
