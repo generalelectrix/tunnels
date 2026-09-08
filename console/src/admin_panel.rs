@@ -1,7 +1,7 @@
 //! egui-based panel for administering tunnel clients.
 
 use crate::bootstrap_controller::BootstrapController;
-use client_lib::config::{ArtnetNodeSettings, ClientConfig};
+use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
 use eframe::egui;
 use std::io::{BufRead, BufReader, Write};
@@ -194,7 +194,7 @@ impl AdminPanelState {
         } else {
             None
         };
-        let artnet_node = self.artnet_node.then(ArtnetNodeSettings::default);
+        let artnet_node = self.artnet_node;
         Ok(ClientConfig::new(
             self.video_channel,
             self.hostname.clone(),
@@ -217,6 +217,7 @@ impl AdminPanelState {
                 self.half_size = true;
                 self.fullscreen = false;
                 self.capture_mouse = false;
+                self.artnet_node = false;
             }
             Target::RemoteClient(_) => {
                 self.half_size = false;
@@ -531,7 +532,9 @@ impl AdminPanelState {
             ui.checkbox(&mut self.fullscreen, "Fullscreen");
             ui.checkbox(&mut self.flip_horizontal, "Flip Horizontal");
             ui.checkbox(&mut self.capture_mouse, "Capture Mouse");
-            ui.checkbox(&mut self.artnet_node, "Run Art-Net Node");
+            if target != Target::Monitor {
+                ui.checkbox(&mut self.artnet_node, "Run Art-Net Node");
+            }
 
             ui.add_space(16.0);
 
@@ -652,15 +655,37 @@ mod tests {
 
     #[test]
     fn the_node_checkbox_decides_whether_a_client_serves_one() {
-        let mut harness = test_harness(vec![]);
+        let mut harness = test_harness(vec!["projector-1".to_string()]);
+        harness
+            .state_mut()
+            .select_target(Target::RemoteClient("projector-1".to_string()));
+        harness.run();
         assert!(harness.query_by_label("Run Art-Net Node").is_some());
 
         let app = harness.state_mut();
         // Off by default: a client only serves a node when asked to.
-        assert!(app.build_config().unwrap().artnet_node.is_none());
-
+        assert!(!app.build_config().unwrap().artnet_node);
         app.artnet_node = true;
-        assert!(app.build_config().unwrap().artnet_node.is_some());
+        assert!(app.build_config().unwrap().artnet_node);
+    }
+
+    /// A node on this machine would take the artnet port for the whole host,
+    /// so a local monitor is never offered one, and a node asked for on behalf
+    /// of a remote client does not follow the selection back here.
+    #[test]
+    fn a_local_monitor_is_never_offered_a_node() {
+        let mut harness = test_harness(vec!["projector-1".to_string()]);
+        harness
+            .state_mut()
+            .select_target(Target::RemoteClient("projector-1".to_string()));
+        harness.state_mut().artnet_node = true;
+        harness.run();
+        assert!(harness.query_by_label("Run Art-Net Node").is_some());
+
+        harness.state_mut().select_target(Target::Monitor);
+        harness.run();
+        assert!(harness.query_by_label("Run Art-Net Node").is_none());
+        assert!(!harness.state_mut().build_config().unwrap().artnet_node);
     }
 
     // --- Dynamic defaults tests ---

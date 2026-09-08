@@ -21,7 +21,7 @@ fn test_config_sized(width: u32, height: u32) -> ClientConfig {
         false,
         false,
         None,
-        None,
+        false,
         false,
     )
 }
@@ -190,7 +190,7 @@ fn flipped_horizontal() {
         false,
         false,
         Some(Transform::Flip(TransformDirection::Horizontal)),
-        None,
+        false,
         false,
     );
     let flipped = render_snapshot(&snapshot, &flipped_cfg);

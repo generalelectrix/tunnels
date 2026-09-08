@@ -987,7 +987,6 @@ name = "client_lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "postcard",
  "serde",
  "yaml-rust",
 ]

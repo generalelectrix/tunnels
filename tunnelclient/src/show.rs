@@ -1,12 +1,11 @@
-use anyhow::{Context as _, Result, anyhow, bail};
-use client_lib::config::{ArtnetNodeSettings, ClientConfig};
+use crate::artnet_node::ArtnetNodeService;
+use anyhow::{Context as _, Result, anyhow};
+use client_lib::config::ClientConfig;
 use graphics::{CircleArc, Context, clear};
-use log::{error, info, warn};
+use log::{error, info};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston_window::prelude::*;
-use rust_dmx::{ArtnetNode, ArtnetNodeConfig, PortAddress};
 use sdl2_window::Sdl2Window;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -96,85 +95,6 @@ impl Drop for FrameReceiver {
     }
 }
 
-/// An artnet node this client serves alongside the show.
-///
-/// The node forwards the universe it serves to a DMX interface attached to
-/// this machine, so a machine with a spare USB port earns its keep as a
-/// lighting node. Serving runs on a thread of its own, which lasts as long as
-/// the service that owns it.
-struct ArtnetNodeService {
-    /// Cleared to bring the serving thread home.
-    serving: Arc<AtomicBool>,
-    /// The thread serving the node. Empty once it has been taken out to be
-    /// joined.
-    service: Option<JoinHandle<()>>,
-}
-
-impl ArtnetNodeService {
-    /// Serve the first DMX interface attached to this machine as an artnet node.
-    ///
-    /// Fails when there is no interface to serve, so that a client asked for a
-    /// node it cannot provide does not start at all: a missing interface is
-    /// known when the client is configured rather than when the lights are
-    /// wanted.
-    fn new(settings: ArtnetNodeSettings) -> Result<Self> {
-        // Settled before any hardware is looked at, so a client with nothing
-        // attached still reports a universe it could never have served.
-        let port_address = PortAddress::try_from(settings.port_address)?;
-        // Chosen once. An interface unplugged later is reopened by the port
-        // itself on the next write.
-        let Some(port) = rust_dmx::first_available_port()? else {
-            bail!("an artnet node was requested but no DMX port is attached");
-        };
-        // The name this machine is discovered under, so a node and the client
-        // serving it answer to the same thing.
-        let machine = zero_configure::bare::machine_hostname();
-        info!(
-            "Serving {port} as artnet node {machine:?} on universe {}.",
-            settings.port_address
-        );
-        let mut node = ArtnetNode::new(
-            port,
-            ArtnetNodeConfig {
-                port_address,
-                long_name: format!("{machine} (tunnels render client)"),
-                short_name: machine,
-            },
-        )?;
-        // A controller that polled before this node existed would not otherwise
-        // learn about it until it polled again.
-        if let Err(err) = node.announce() {
-            warn!("Could not announce the artnet node: {err:#}.");
-        }
-        let serving = Arc::new(AtomicBool::new(true));
-        let service = thread::Builder::new()
-            .name("artnet_node".to_string())
-            .spawn({
-                let serving = serving.clone();
-                move || node.run(|| serving.load(Ordering::Relaxed))
-            })
-            .context("failed to spawn the artnet node thread")?;
-        Ok(Self {
-            serving,
-            service: Some(service),
-        })
-    }
-}
-
-impl Drop for ArtnetNodeService {
-    /// Stop the serving thread and wait for it.
-    ///
-    /// The thread waits for artnet packets with a timeout of its own, so it
-    /// comes home within one of those waits whether or not a controller is
-    /// sending to it.
-    fn drop(&mut self) {
-        self.serving.store(false, Ordering::Relaxed);
-        if let Some(service) = self.service.take() {
-            let _ = service.join();
-        }
-    }
-}
-
 /// Top-level structure that owns all of the show data.
 pub struct Show {
     gl: GlGraphics, // OpenGL drawing backend.
@@ -183,6 +103,9 @@ pub struct Show {
     video_channel: VideoChannel,
     cfg: ClientConfig,
     /// The artnet node this client serves, if it was asked to serve one.
+    ///
+    /// Never read: it is held so that serving lasts exactly as long as the
+    /// show does, and ends when the show is dropped.
     #[expect(unused)]
     artnet: Option<ArtnetNodeService>,
     window: PistonWindow<Sdl2Window>,
@@ -197,7 +120,7 @@ impl Show {
 
         let frames = FrameReceiver::new(&cfg.server_hostname)?;
 
-        let artnet = cfg.artnet_node.map(ArtnetNodeService::new).transpose()?;
+        let artnet = cfg.artnet_node.then(ArtnetNodeService::new).transpose()?;
 
         let opengl = OpenGL::V3_2;
 
@@ -382,23 +305,6 @@ mod tests {
         assert!(
             completion.recv_timeout(Duration::from_secs(10)).is_ok(),
             "dropping the receiver never finished: its thread is still waiting for a frame"
-        );
-    }
-
-    /// A universe no artnet node could serve stops the client.
-    ///
-    /// It is settled before an interface is looked for, so this is the answer
-    /// whether or not one is attached to the machine running the test.
-    #[test]
-    fn a_universe_no_node_could_serve_is_refused() {
-        let Err(err) = ArtnetNodeService::new(ArtnetNodeSettings {
-            port_address: 40_000,
-        }) else {
-            panic!("an unservable universe was accepted");
-        };
-        assert_eq!(
-            err.to_string(),
-            "Art-Net PortAddress must be from 0 to 32_767. Got 40000"
         );
     }
 
