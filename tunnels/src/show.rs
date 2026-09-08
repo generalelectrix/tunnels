@@ -488,15 +488,15 @@ mod test {
     /// Truncate the values in an arc segment to a reasonable precision.
     /// This should avoid very minor platform-dependent floating point differences.
     fn trunc_arc_segment(seg: &mut ShapeGeometry) {
-        seg.level = trunc_f64(seg.level);
+        seg.color.level = trunc_f64(seg.color.level);
         seg.thickness = trunc_f64(seg.thickness);
-        seg.hue = trunc_f64(seg.hue);
-        seg.sat = trunc_f64(seg.sat);
-        seg.val = trunc_f64(seg.val);
-        seg.extent_x = trunc_f64(seg.extent_x);
-        seg.extent_y = trunc_f64(seg.extent_y);
+        seg.color.hue = trunc_f64(seg.color.hue);
+        seg.color.sat = trunc_f64(seg.color.sat);
+        seg.color.val = trunc_f64(seg.color.val);
+        seg.placement.extent_x = trunc_f64(seg.placement.extent_x);
+        seg.placement.extent_y = trunc_f64(seg.placement.extent_y);
         seg.start = trunc_f64(seg.start);
-        seg.rot_angle = trunc_f64(seg.rot_angle);
+        seg.placement.rot_angle = trunc_f64(seg.placement.rot_angle);
     }
 
     /// Truncate a unit-float to 15 decimal places.

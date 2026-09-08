@@ -155,7 +155,7 @@ pub fn build_into(
             RampSpan::Cycle => color.sample(phase, adjust),
             RampSpan::Figure => color.sample(Phase::new(phase.val() * color.cycles), adjust),
         };
-        let c = hsv_to_rgb(sampled.hue, sampled.sat, sampled.val, sampled.level);
+        let c = hsv_to_rgb(&sampled);
         img.put_pixel(
             x,
             0,

@@ -115,19 +115,13 @@ pub struct SpriteId(pub u16);
 
 /// A command to draw a single shape, less the render mode and segment path
 /// that the layer holding it fixes for all of its shapes at once.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ShapeGeometry {
-    pub level: f64,
+    pub color: Hsva,
+    pub placement: Placement,
     pub thickness: f64,
-    pub hue: f64,
-    pub sat: f64,
-    pub val: f64,
-    pub x: f64,
-    pub y: f64,
-    pub extent_x: f64,
-    pub extent_y: f64,
+    /// Where the shape starts along the layer's path, in turns.
     pub start: f64,
-    pub rot_angle: f64,
     pub spin_angle: f64,
 }
 
@@ -165,14 +159,16 @@ impl SegmentLayer {
     }
 }
 
-/// Where a figure sits and how large it is, in the units a segment uses.
+/// Where a shape sits, how large it is, and which way it is turned.
+///
+/// The half-extents mean whatever the shape they place reads them as: the two
+/// radii of an ellipse, the half-length and offset of a line, or the box a
+/// figure's own unit square is scaled into.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct Placement {
     pub x: f64,
     pub y: f64,
-    /// Half-width, before the figure's own unit box is scaled by it.
     pub extent_x: f64,
-    /// Half-height.
     pub extent_y: f64,
     pub rot_angle: f64,
 }
@@ -243,7 +239,7 @@ pub struct ColorAdjust {
 }
 
 /// A resolved colour, and the level it is drawn at.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct Hsva {
     pub hue: f64,
     pub sat: f64,

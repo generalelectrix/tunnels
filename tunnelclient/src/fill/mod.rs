@@ -431,8 +431,7 @@ where
 
 /// The single colour a figure draws in when nothing varies across it.
 fn flat_color(fill: &FillLayer) -> Color {
-    let c = fill.color.sample(Phase::ZERO, ColorAdjust::default());
-    hsv_to_rgb(c.hue, c.sat, c.val, c.level)
+    hsv_to_rgb(&fill.color.sample(Phase::ZERO, ColorAdjust::default()))
 }
 
 /// Where a figure lands on screen.
@@ -449,7 +448,7 @@ impl Placed {
     /// settings cover the same ground.
     fn of(fill: &FillLayer, c: &Context, cfg: &ClientConfig) -> Self {
         let p = &fill.placement;
-        let placed = place(p.x, p.y, p.rot_angle, c, cfg);
+        let placed = place(p, c, cfg);
         let (half_x, half_y) = (
             p.extent_x * cfg.critical_size,
             p.extent_y * cfg.critical_size,

@@ -596,17 +596,16 @@ impl Tunnel {
             );
 
             arcs.push(ShapeGeometry {
-                level: color.level,
+                color,
+                placement: Placement {
+                    x: x_center,
+                    y: y_center,
+                    extent_x,
+                    extent_y,
+                    rot_angle: rot_angle.val(),
+                },
                 thickness: stroke_weight,
-                hue: color.hue,
-                sat: color.sat,
-                val: color.val,
-                x: x_center,
-                y: y_center,
-                extent_x,
-                extent_y,
                 start: start_angle.val(),
-                rot_angle: rot_angle.val(),
                 spin_angle: spin_angle.val(),
             });
         }

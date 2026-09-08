@@ -8,7 +8,8 @@ use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::fill::Renderer;
 use tunnels_model::layer::{
-    ColorPhase, Layer, LayerCollection, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry,
+    ColorPhase, Hsva, Layer, LayerCollection, Placement, RenderMode, SegmentLayer, SegmentPath,
+    ShapeGeometry,
 };
 use tunnels_model::tunnel::fixture;
 
@@ -165,17 +166,21 @@ fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
 
 fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
     ShapeGeometry {
-        level: 1.0,
+        color: Hsva {
+            hue,
+            sat: 1.0,
+            val: 1.0,
+            level: 1.0,
+        },
+        placement: Placement {
+            x: 0.0,
+            y: 0.0,
+            extent_x: radius,
+            extent_y: radius,
+            rot_angle: 0.0,
+        },
         thickness: 0.1,
-        hue,
-        sat: 1.0,
-        val: 1.0,
-        x: 0.0,
-        y: 0.0,
-        extent_x: radius,
-        extent_y: radius,
         start,
-        rot_angle: 0.0,
         spin_angle: 0.0,
     }
 }
@@ -205,7 +210,7 @@ fn concentric_rings() {
 fn rotated_arc() {
     let mut seg = test_arc(0.0, 0.6, 0.3);
     let span = 0.5;
-    seg.rot_angle = 0.125; // 45 degrees
+    seg.placement.rot_angle = 0.125; // 45 degrees
     let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "rotated_arc.png");
@@ -217,7 +222,7 @@ fn flipped_horizontal() {
 
     let mut seg = test_arc(0.0, 0.0, 0.4);
     let span = 0.25;
-    seg.x = 0.3; // offset from center so flip is visually distinct
+    seg.placement.x = 0.3; // offset from center so flip is visually distinct
 
     let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
 
@@ -426,17 +431,21 @@ fn arc_line_spin() {
 /// Helper to create a line-path shape with specific start and stop angles.
 fn test_line_shape(start: f64) -> ShapeGeometry {
     ShapeGeometry {
-        level: 1.0,
+        color: Hsva {
+            hue: 0.0,
+            sat: 1.0,
+            val: 1.0,
+            level: 1.0,
+        },
+        placement: Placement {
+            x: 0.0,
+            y: 0.0,
+            extent_x: 0.4, // line half-length
+            extent_y: 0.0, // on the line (no perpendicular offset)
+            rot_angle: 0.0,
+        },
         thickness: 0.1,
-        hue: 0.0,
-        sat: 1.0,
-        val: 1.0,
-        x: 0.0,
-        y: 0.0,
-        extent_x: 0.4, // line half-length
-        extent_y: 0.0, // on the line (no perpendicular offset)
         start,
-        rot_angle: 0.0,
         spin_angle: 0.0,
     }
 }

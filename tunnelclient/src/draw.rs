@@ -5,7 +5,7 @@ use graphics::math::Matrix2d;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
 use std::f64::consts::TAU;
-use tunnels_model::layer::{RenderMode, SegmentLayer, SegmentPath, ShapeGeometry};
+use tunnels_model::layer::{Hsva, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry};
 
 #[inline]
 fn color_from_rgb(r: f64, g: f64, b: f64, a: f64) -> Color {
@@ -14,7 +14,8 @@ fn color_from_rgb(r: f64, g: f64, b: f64, a: f64) -> Color {
 
 /// Convert HSV to a Piston RGB color.
 #[inline]
-pub(crate) fn hsv_to_rgb(hue: f64, sat: f64, val: f64, alpha: f64) -> Color {
+pub(crate) fn hsv_to_rgb(c: &Hsva) -> Color {
+    let (hue, sat, val, alpha) = (c.hue, c.sat, c.val, c.level);
     if sat == 0.0 {
         color_from_rgb(val, val, val, alpha)
     } else {
@@ -56,7 +57,7 @@ pub(crate) fn draw_segments<G: Graphics>(
     }
 }
 
-/// The viewport transform placing something at `x`, `y`, turned by `rot_angle`.
+/// The viewport transform placing a shape where its placement says.
 ///
 /// Coordinates are in unit terms, a turn is one unit of angle, and the result
 /// maps that frame onto the screen.
@@ -66,7 +67,7 @@ pub(crate) fn draw_segments<G: Graphics>(
 /// what is drawn there is reflected about are the same pair of factors. Spelt
 /// separately they can be made to disagree, and a figure and a beam at the same
 /// knob settings would then land in different places under a mirror.
-pub(crate) fn place(x: f64, y: f64, rot_angle: f64, c: &Context, cfg: &ClientConfig) -> Matrix2d {
+pub(crate) fn place(p: &Placement, c: &Context, cfg: &ClientConfig) -> Matrix2d {
     let (sx, sy) = match cfg.transformation {
         None => (1.0, 1.0),
         Some(Transform::Flip(TransformDirection::Horizontal)) => (-1.0, 1.0),
@@ -74,11 +75,11 @@ pub(crate) fn place(x: f64, y: f64, rot_angle: f64, c: &Context, cfg: &ClientCon
     };
     c.transform
         .trans(
-            sx * x * f64::from(cfg.x_resolution) + cfg.x_center,
-            sy * y * f64::from(cfg.y_resolution) + cfg.y_center,
+            sx * p.x * f64::from(cfg.x_resolution) + cfg.x_center,
+            sy * p.y * f64::from(cfg.y_resolution) + cfg.y_center,
         )
         .scale(sx, sy)
-        .rot_rad(rot_angle * TAU)
+        .rot_rad(p.rot_angle * TAU)
 }
 
 /// The thickness knob resolved to pixels on screen.
@@ -106,10 +107,10 @@ fn draw_shape<G: Graphics>(
     gl: &mut G,
     cfg: &ClientConfig,
 ) {
-    let color = hsv_to_rgb(shape.hue, shape.sat, shape.val, shape.level);
+    let color = hsv_to_rgb(&shape.color);
     let thickness = thickness_px(shape.thickness, cfg);
     let spin_rad = shape.spin_angle * TAU;
-    let transform = place(shape.x, shape.y, shape.rot_angle, c, cfg);
+    let transform = place(&shape.placement, c, cfg);
 
     let style = ShapeStyle {
         color,
@@ -139,8 +140,8 @@ fn draw_ellipse<G: Graphics>(
     } = *style;
     match render_mode {
         RenderMode::Arc => {
-            let x_size = shape.extent_x * cfg.critical_size;
-            let y_size = shape.extent_y * cfg.critical_size;
+            let x_size = shape.placement.extent_x * cfg.critical_size;
+            let y_size = shape.placement.extent_y * cfg.critical_size;
             let start = shape.start * TAU;
             let stop = start + span * TAU;
             let bound = rectangle::centered([0.0, 0.0, x_size, y_size]);
@@ -174,15 +175,15 @@ fn draw_ellipse<G: Graphics>(
         }
         RenderMode::Dot => {
             let mid_angle = (shape.start + span / 2.0) * TAU;
-            let cx = shape.extent_x * cfg.critical_size * mid_angle.cos();
-            let cy = shape.extent_y * cfg.critical_size * mid_angle.sin();
+            let cx = shape.placement.extent_x * cfg.critical_size * mid_angle.cos();
+            let cy = shape.placement.extent_y * cfg.critical_size * mid_angle.sin();
             let bound = rectangle::centered([cx, cy, thickness, thickness]);
             ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
         }
         RenderMode::Saucer => {
             let mid_angle = (shape.start + span / 2.0) * TAU;
-            let rx = shape.extent_x * cfg.critical_size;
-            let ry = shape.extent_y * cfg.critical_size;
+            let rx = shape.placement.extent_x * cfg.critical_size;
+            let ry = shape.placement.extent_y * cfg.critical_size;
             let cx = rx * mid_angle.cos();
             let cy = ry * mid_angle.sin();
 
@@ -253,8 +254,8 @@ fn draw_line<G: Graphics>(
         spin_rad,
         transform,
     } = *style;
-    let half_length = shape.extent_x * cfg.critical_size;
-    let y_offset = shape.extent_y * cfg.critical_size;
+    let half_length = shape.placement.extent_x * cfg.critical_size;
+    let y_offset = shape.placement.extent_y * cfg.critical_size;
 
     // Normalize start/stop to [0, 1) and compute segment span.
     let start_norm = ((shape.start % 1.0) + 1.0) % 1.0;
@@ -375,7 +376,14 @@ mod test {
         point: (f64, f64),
     ) -> (f64, f64) {
         let cfg = config(transformation);
-        let m = place(at.0, at.1, 0.0, &graphics::Context::new(), &cfg);
+        let placement = Placement {
+            x: at.0,
+            y: at.1,
+            extent_x: 1.0,
+            extent_y: 1.0,
+            rot_angle: 0.0,
+        };
+        let m = place(&placement, &graphics::Context::new(), &cfg);
         (
             m[0][0] * point.0 + m[0][1] * point.1 + m[0][2],
             m[1][0] * point.0 + m[1][1] * point.1 + m[1][2],

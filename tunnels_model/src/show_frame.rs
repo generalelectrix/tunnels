@@ -388,7 +388,9 @@ mod tests {
     use super::fixture::NamedFrame;
     use super::*;
     use crate::beam::Beam;
-    use crate::layer::{FillLayer, Layer, LayerCollection, ShapeGeometry};
+    use crate::layer::{
+        ColorField, FillLayer, Hsva, Layer, LayerCollection, Placement, ShapeGeometry,
+    };
     use crate::look::{Look, MAX_NESTING_DEPTH};
     use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
     use crate::tunnel::Tunnel;
@@ -410,41 +412,84 @@ mod tests {
         }
     }
 
-    /// Every field of a shape, under the name a failure should report.
-    fn shape_fields(shape: &ShapeGeometry) -> [(&'static str, f64); 12] {
+    /// Every float of a placement, under the name a failure should report.
+    ///
+    /// Destructured rather than read field by field, here and in the three
+    /// below it, so that a field added to one of these types fails to compile
+    /// instead of going quietly uncompared.
+    fn placement_fields(p: Placement) -> [(&'static str, f64); 5] {
+        let Placement {
+            x,
+            y,
+            extent_x,
+            extent_y,
+            rot_angle,
+        } = p;
         [
-            ("level", shape.level),
-            ("thickness", shape.thickness),
-            ("hue", shape.hue),
-            ("sat", shape.sat),
-            ("val", shape.val),
-            ("x", shape.x),
-            ("y", shape.y),
-            ("extent_x", shape.extent_x),
-            ("extent_y", shape.extent_y),
-            ("start", shape.start),
-            ("rot_angle", shape.rot_angle),
-            ("spin_angle", shape.spin_angle),
+            ("x", x),
+            ("y", y),
+            ("extent_x", extent_x),
+            ("extent_y", extent_y),
+            ("rot_angle", rot_angle),
         ]
     }
 
+    /// Every float of a resolved colour, under the name a failure should
+    /// report.
+    fn color_fields(c: Hsva) -> [(&'static str, f64); 4] {
+        let Hsva {
+            hue,
+            sat,
+            val,
+            level,
+        } = c;
+        [("hue", hue), ("sat", sat), ("val", val), ("level", level)]
+    }
+
+    /// Every float of a shape, under the name a failure should report.
+    fn shape_fields(shape: &ShapeGeometry) -> impl Iterator<Item = (&'static str, f64)> {
+        let ShapeGeometry {
+            color,
+            placement,
+            thickness,
+            start,
+            spin_angle,
+        } = *shape;
+        color_fields(color)
+            .into_iter()
+            .chain(placement_fields(placement))
+            .chain([
+                ("thickness", thickness),
+                ("start", start),
+                ("spin_angle", spin_angle),
+            ])
+    }
+
     /// Every float of a figure, under the name a failure should report.
-    fn fill_fields(fill: &FillLayer) -> [(&'static str, f64); 13] {
-        [
-            ("x", fill.placement.x),
-            ("y", fill.placement.y),
-            ("extent_x", fill.placement.extent_x),
-            ("extent_y", fill.placement.extent_y),
-            ("rot_angle", fill.placement.rot_angle),
-            ("spin_speed", fill.spin_speed),
-            ("thickness", fill.thickness),
-            ("cycles", fill.color.cycles),
-            ("center", fill.color.center),
-            ("width", fill.color.width),
-            ("sat", fill.color.sat),
-            ("val", fill.color.val),
-            ("level", fill.color.level),
-        ]
+    fn fill_fields(fill: &FillLayer) -> impl Iterator<Item = (&'static str, f64)> {
+        let ColorField {
+            phase: _,
+            cycles,
+            center,
+            width,
+            sat,
+            val,
+            level,
+        } = fill.color;
+        placement_fields(fill.placement)
+            .into_iter()
+            .chain([
+                ("spin_speed", fill.spin_speed),
+                ("thickness", fill.thickness),
+            ])
+            .chain([
+                ("cycles", cycles),
+                ("center", center),
+                ("width", width),
+                ("sat", sat),
+                ("val", val),
+                ("level", level),
+            ])
     }
 
     /// How many layers of each kind a comparison walked.
@@ -501,9 +546,8 @@ mod tests {
                     for (j, (expected_shape, actual_shape)) in
                         e.shapes.iter().zip(&a.shapes).enumerate()
                     {
-                        for ((name, ev), (_, av)) in shape_fields(expected_shape)
-                            .iter()
-                            .zip(shape_fields(actual_shape))
+                        for ((name, ev), (_, av)) in
+                            shape_fields(expected_shape).zip(shape_fields(actual_shape))
                         {
                             assert_eq!(
                                 ev.to_bits(),
@@ -531,7 +575,7 @@ mod tests {
                         a.warps.len(),
                         "{label}: layer {i} warp count"
                     );
-                    for ((name, ev), (_, av)) in fill_fields(e).iter().zip(fill_fields(a)) {
+                    for ((name, ev), (_, av)) in fill_fields(e).zip(fill_fields(a)) {
                         assert_eq!(
                             ev.to_bits(),
                             av.to_bits(),
@@ -717,21 +761,24 @@ mod tests {
         ));
     }
 
-    /// The bytes an encoded frame is defined to be, stated without reference
-    /// to the code that produces them: the frame in postcard, and nothing
-    /// else.
+    /// The frame in postcard and nothing else: the bytes an encoder has to
+    /// produce, written the plainest way there is to write them.
     fn wire_format(frame: &ShowFrameRef) -> Vec<u8> {
         postcard::to_allocvec(frame).unwrap()
     }
 
-    /// A reused encoder writes the bytes the wire format defines, frame after
-    /// frame.
+    /// A reused encoder writes what a fresh one writes, frame after frame.
     ///
-    /// The bytes are a contract between applications rather than an internal
-    /// detail: every render client reads them, and reads them from a binary
-    /// built at another time. They are held against an independent statement
-    /// of the format, so that a change to how they are produced fails here
-    /// instead of quietly redefining what they are.
+    /// This holds the encoder and not the schema. Both sides reach the same
+    /// serde impl, so a field added to the model, or moved within it, moves
+    /// both sides together and passes here — the name notwithstanding, no byte
+    /// layout is pinned. What cannot move is the encoder: writing into a buffer
+    /// holding a previous frame has to produce what writing into an empty one
+    /// does.
+    ///
+    /// Nothing pins the layout across a change to the model, and nothing needs
+    /// to: a client and the console it renders for are the same build, so the
+    /// two ends cannot hold different ideas of the schema.
     #[test]
     fn an_encoded_frame_is_byte_for_byte_the_wire_format() {
         let frames = fixture::all();
