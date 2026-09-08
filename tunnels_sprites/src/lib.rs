@@ -100,6 +100,11 @@ pub fn families() -> &'static [SpriteFamily] {
     &SPRITE_FAMILIES
 }
 
+/// The family at this position in that order, or `None` past the end of it.
+pub fn family(index: u16) -> Option<SpriteFamily> {
+    SPRITE_FAMILIES.get(usize::from(index)).copied()
+}
+
 /// Which family a figure belongs to, and how far into it the figure sits.
 pub fn placement(id: u16) -> Option<Placement> {
     SPRITE_FAMILIES

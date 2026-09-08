@@ -17,7 +17,7 @@ use std::sync::Once;
 use std::time::Duration;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
-use tunnels_sprites::Placement as SpritePlacement;
+use tunnels_sprites::{Placement as SpritePlacement, SpriteFamily};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -200,8 +200,8 @@ impl Tunnel {
     /// figure and the other on its last. Nothing distinguishes the halves of
     /// the travel, unlike the interval the same knob names in a segment mode: a
     /// selection has no centre for a detent to mean.
-    fn selection_for_blacking(blacking: u8, len: u16) -> u16 {
-        let Some(last) = len.checked_sub(1).filter(|l| *l > 0) else {
+    fn selection_for_blacking(blacking: u8, family: SpriteFamily) -> u16 {
+        let Some(last) = family.len.checked_sub(1).filter(|l| *l > 0) else {
             return 0;
         };
         // Rounded rather than truncated, so the top of the travel reaches the
@@ -215,8 +215,8 @@ impl Tunnel {
     ///
     /// The middle of the band of positions that select it, so a position
     /// reported to a surface selects the figure it came from.
-    fn blacking_for_selection(selection: u16, len: u16) -> u8 {
-        let Some(last) = len.checked_sub(1).filter(|l| *l > 0) else {
+    fn blacking_for_selection(selection: u16, family: SpriteFamily) -> u8 {
+        let Some(last) = family.len.checked_sub(1).filter(|l| *l > 0) else {
             return KNOB_CENTRE;
         };
         let (selection, last) = (u32::from(selection.min(last)), u32::from(last));
@@ -232,18 +232,6 @@ impl Tunnel {
             family: 0,
             index: 0,
         })
-    }
-
-    /// The figure at a position in a family, clamped to the family's length.
-    ///
-    /// A family shorter than the position asked for gives up its last figure
-    /// rather than reaching into the next one, so the two controls stay
-    /// independent: the family knob names a family and nothing else.
-    fn figure_at(family: u16, selection: u16) -> SpriteId {
-        let Some(family) = tunnels_sprites::families().get(usize::from(family)) else {
-            return SpriteId(0);
-        };
-        SpriteId(family.member(selection))
     }
 
     /// What the segment control reads, which depends on the mode.
@@ -277,15 +265,13 @@ impl Tunnel {
             self.blacking
         } else {
             let placement = self.placement();
-            Self::blacking_for_selection(placement.index, Self::family_len(placement.family))
+            match tunnels_sprites::family(placement.family) {
+                Some(family) => Self::blacking_for_selection(placement.index, family),
+                // A library with no families offers nothing to select between,
+                // so the knob has nothing to report but its detent.
+                None => KNOB_CENTRE,
+            }
         }
-    }
-
-    /// How many figures a family holds, or one if there is no such family.
-    fn family_len(family: u16) -> u16 {
-        tunnels_sprites::families()
-            .get(usize::from(family))
-            .map_or(1, |f| f.len)
     }
 
     /// Borrow an animation as a mutable reference.
@@ -713,8 +699,13 @@ impl Tunnel {
                 if self.shape_mode.draws_segments() {
                     self.segs = v;
                 } else {
-                    let family = Self::family_for_segments(v);
-                    self.sprite = Self::figure_at(family, self.placement().index);
+                    let index = self.placement().index;
+                    if let Some(family) = tunnels_sprites::family(Self::family_for_segments(v)) {
+                        // A family shorter than the position asked for gives up
+                        // its last figure rather than reaching into the next
+                        // one, so the two controls stay independent.
+                        self.sprite = SpriteId(family.member(index));
+                    }
                     // The position within the family carried across, but the
                     // knob that names it did not: a shorter family puts the
                     // same position somewhere else in the travel.
@@ -726,10 +717,8 @@ impl Tunnel {
             Blacking(v) => {
                 if self.shape_mode.draws_segments() {
                     self.blacking = v;
-                } else {
-                    let family = self.placement().family;
-                    let selection = Self::selection_for_blacking(v, Self::family_len(family));
-                    self.sprite = Self::figure_at(family, selection);
+                } else if let Some(family) = tunnels_sprites::family(self.placement().family) {
+                    self.sprite = SpriteId(family.member(Self::selection_for_blacking(v, family)));
                 }
             }
             PositionX(v) => self.x_offset.set_target(v),
@@ -972,17 +961,18 @@ mod test {
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut Silent);
         tunnel.handle_state_change(StateChange::Segments(90), &mut Silent);
         tunnel.handle_state_change(StateChange::Blacking(KNOB_MAX), &mut Silent);
-        let family = Tunnel::family_for_segments(90);
+        let index = Tunnel::family_for_segments(90);
+        let family = tunnels_sprites::family(index).expect("the knob names a family");
         assert_eq!(
             tunnel.sprite,
-            Tunnel::figure_at(family, Tunnel::family_len(family) - 1),
+            SpriteId(family.member(family.len - 1)),
             "the far end of the blacking knob is the last figure of the family"
         );
         assert_eq!(tunnel.segs, 37, "the segment count is untouched");
         assert_eq!(tunnel.blacking, blacking, "the blacking is untouched");
         assert_eq!(
             tunnel.segments_control(),
-            Tunnel::segments_for_family(family),
+            Tunnel::segments_for_family(index),
             "a figure mode reports the family"
         );
 
@@ -1054,10 +1044,10 @@ mod test {
         );
 
         for family in families {
-            let ends = [0, KNOB_MAX].map(|v| Tunnel::selection_for_blacking(v, family.len));
+            let ends = [0, KNOB_MAX].map(|v| Tunnel::selection_for_blacking(v, *family));
             assert_eq!(ends, [0, family.len - 1], "the {} family", family.name);
             let mut reached: Vec<u16> = (0..=KNOB_MAX)
-                .map(|v| Tunnel::selection_for_blacking(v, family.len))
+                .map(|v| Tunnel::selection_for_blacking(v, *family))
                 .collect();
             assert!(
                 reached.windows(2).all(|w| w[0] <= w[1]),
@@ -1149,9 +1139,10 @@ mod test {
             placement.family,
             tunnels_sprites::families().len() as u16 - 1
         );
+        let family = tunnels_sprites::family(placement.family).expect("the last family");
         assert_eq!(
             placement.index,
-            index.min(Tunnel::family_len(placement.family) - 1),
+            index.min(family.len - 1),
             "the position within the family did not carry across"
         );
         assert!(
