@@ -251,6 +251,11 @@ where
     /// reader looking at the level table will assume otherwise, which is why it
     /// is written here.
     ///
+    /// The figure counts what is allocated and not what is used, which is the
+    /// distinction to hold on to: a vertex list grows by doubling, so counting
+    /// its contents instead reads about a seventh low and two measurements of
+    /// the same table disagree for no reason anyone can find later.
+    ///
     /// All of it is vertex and index data on the CPU, not textures. It does
     /// not compete for the share of system memory an integrated GPU takes,
     /// which is why a few hundred megabytes is comfortable on these machines
