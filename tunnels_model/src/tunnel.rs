@@ -130,7 +130,7 @@ pub struct Tunnel {
     /// Which coordinate of a figure indexes the color ramp.
     ///
     /// No control surface carries it, so it stays wherever it is set.
-    color_phase: PhaseAxis,
+    phase_axis: PhaseAxis,
     /// How much of a figure is painted.
     ///
     /// No control surface carries it, so it stays wherever it is set.
@@ -190,7 +190,7 @@ impl Default for Tunnel {
             anims: Default::default(),
             render_mode: RenderMode::default(),
             shape_mode: ShapeMode::default(),
-            color_phase: PhaseAxis::default(),
+            phase_axis: PhaseAxis::default(),
             draw_mode: DrawMode::default(),
             sprite: SpriteId::default(),
             generated: GeneratedId::default(),
@@ -516,7 +516,7 @@ impl Tunnel {
     fn color_field(&self, base_hue: f64, level_scale: UnipolarFloat, as_mask: bool) -> ColorField {
         if as_mask {
             ColorField {
-                phase: self.color_phase,
+                phase: self.phase_axis,
                 cycles: 0.,
                 center: 0.,
                 width: 0.,
@@ -526,7 +526,7 @@ impl Tunnel {
             }
         } else {
             ColorField {
-                phase: self.color_phase,
+                phase: self.phase_axis,
                 cycles: (COLOR_SPREAD_SCALE * self.col_spread.val()).floor(),
                 center: base_hue,
                 width: self.col_width.val(),
@@ -694,7 +694,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
         emitter.emit_tunnel_state_change(RenderModeButton(self.render_mode_control()));
-        emitter.emit_tunnel_state_change(PhaseAxis(self.color_phase));
+        emitter.emit_tunnel_state_change(PhaseAxis(self.phase_axis));
         emitter.emit_tunnel_state_change(DrawMode(self.draw_mode));
         emitter.emit_tunnel_state_change(ShapeMode(self.shape_mode));
     }
@@ -798,7 +798,7 @@ impl Tunnel {
                     self.draw_mode = mode;
                 }
             }
-            PhaseAxis(v) => self.color_phase = v,
+            PhaseAxis(v) => self.phase_axis = v,
             DrawMode(v) => self.draw_mode = v,
             ShapeMode(v) => {
                 self.shape_mode = v;
@@ -2583,7 +2583,7 @@ pub mod fixture {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
         tunnel.col_width = UnipolarFloat::ONE;
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
-        tunnel.color_phase = phase;
+        tunnel.phase_axis = phase;
         snapshot(render_default(&tunnel))
     }
 
@@ -2691,7 +2691,7 @@ pub mod fixture {
         );
         // Along the figure rather than around it, so the displacement is
         // across the direction it is applied in and reads as a shear.
-        tunnel.color_phase = PhaseAxis::Linear;
+        tunnel.phase_axis = PhaseAxis::Linear;
         tunnel.anims[0].target = AnimationTarget::PositionX;
         for sc in [
             AnimStateChange::Waveform(Waveform::Sine),
@@ -2783,7 +2783,7 @@ pub mod fixture {
         );
         // Around the figure rather than along it, so the taper runs the way a
         // ring's own outline does.
-        tunnel.color_phase = ColorPhase::Angle;
+        tunnel.phase_axis = PhaseAxis::Angle;
         tunnel.anims[0].target = AnimationTarget::Thickness;
         for sc in [
             AnimStateChange::Waveform(Waveform::Sine),

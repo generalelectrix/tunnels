@@ -603,7 +603,7 @@ fn sprite_flat() {
 /// it is the one that would show a band of spurious rainbow if the
 /// same-branch shift were wrong.
 #[test]
-fn sprite_color_phases() {
+fn sprite_color_on_each_axis() {
     for (phase, name) in [
         (PhaseAxis::Angle, "sprite_color_angle.png"),
         (PhaseAxis::Radius, "sprite_color_radius.png"),
