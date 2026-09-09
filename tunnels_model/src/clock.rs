@@ -343,9 +343,16 @@ impl TapSync {
         let tap = Instant::now();
         // if the tap buffer isn't empty, determine elapsed time from the last
         // tap to this one
-        match self.period {
-            Some(period) => {
-                let dt = tap - *self.taps.last().unwrap();
+        //
+        // A period without a previous tap is not a contradiction: `taps` is not
+        // saved and a period is, so a show reloads holding the rate it was
+        // saved at and no taps at all. That first tap after a load seeds the
+        // buffer, and the one after it is compared against the saved period —
+        // so a reloaded clock keeps its tempo until the operator taps a
+        // different one.
+        match (self.period, self.taps.last().copied()) {
+            (Some(period), Some(last)) => {
+                let dt = tap - last;
 
                 // if this single estimate of tempo is within +-10% of current, use it
                 // otherwise, empty the buffer and start over
@@ -360,8 +367,37 @@ impl TapSync {
                     self.add_tap(tap);
                 }
             }
-            None => self.add_tap(tap),
+            _ => self.add_tap(tap),
         }
         self.rate
+    }
+}
+
+#[cfg(test)]
+mod test_tap_sync {
+    use super::*;
+
+    /// A reloaded show taps without panicking.
+    ///
+    /// `taps` is `#[serde(skip)]` while `period` is saved, so a show that was
+    /// saved after two taps comes back with a period and no taps at all. The
+    /// arm that trusts a period to imply a previous tap is the one that has to
+    /// tolerate it.
+    #[test]
+    fn a_reloaded_clock_taps_without_panicking() {
+        let mut saved = TapSync::default();
+        saved.add_tap(Instant::now());
+        saved.add_tap(Instant::now() + Duration::from_millis(500));
+        assert!(saved.period.is_some(), "two taps should establish a period");
+
+        let bytes = postcard::to_allocvec(&saved).unwrap();
+        let mut loaded: TapSync = postcard::from_bytes(&bytes).unwrap();
+        assert!(
+            loaded.period.is_some(),
+            "the period survives the round trip"
+        );
+        assert!(loaded.taps.is_empty(), "the taps do not");
+
+        loaded.tap();
     }
 }
