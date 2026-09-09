@@ -41,20 +41,27 @@ impl AnimationTarget {
     ///
     /// A figure is one shape rather than a run of them, so a target that means
     /// the same thing everywhere on it is resolved into a single number before
-    /// the layer is built and never has to reach the points. A marquee is the
-    /// one that is simply dead: it slides segments along a path, and a figure
-    /// has no segments.
+    /// the layer is built and never has to reach the points. A rotation is one
+    /// of those: a figure turns as a whole, and there is no second thing for a
+    /// second reading of the knob to turn. A marquee is the one that is simply
+    /// dead: it slides segments along a path, and a figure has no segments.
+    ///
+    /// Thickness is not one of those, though it reads like one. An outline has
+    /// a width at every point of the contour it follows, so a periodicity of
+    /// two makes it thick at two places around the figure and thin between
+    /// them — which is a beam rather than a line of even weight.
     pub fn varies_across_figure(self) -> bool {
         match self {
             Self::Size
             | Self::AspectRatio
             | Self::Spin
+            | Self::Thickness
             | Self::PositionX
             | Self::PositionY
             | Self::Color
             | Self::ColorSpread
             | Self::ColorSaturation => true,
-            Self::Rotation | Self::Thickness | Self::MarqueeRotation => false,
+            Self::Rotation | Self::MarqueeRotation => false,
         }
     }
 

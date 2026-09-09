@@ -81,6 +81,15 @@ fn sign(p1: [f32; 2], p2: [f32; 2], p3: [f32; 2]) -> f32 {
 }
 
 fn triangle_contains(tri: &[[f32; 2]], point: [f32; 2]) -> bool {
+    // A triangle with no signed area encloses nothing, and the sign tests
+    // below cannot say so: all three collapse to zero, every one of them
+    // satisfies `<=`, and the triangle then claims every point put to it —
+    // its whole bounding box rather than the nothing it covers. Answering
+    // that here is what makes a collapsed triangle draw nothing, the way a
+    // hardware rasteriser and `barycentric` both already do.
+    if sign(tri[0], tri[1], tri[2]) == 0.0 {
+        return false;
+    }
     // Use <= (inclusive edges) to avoid gaps between adjacent triangles.
     // This matches hardware rasterizer behavior more closely than strict <.
     // Edge pixels may be claimed by both adjacent triangles, but since all
@@ -334,5 +343,58 @@ impl UpdateTexture<()> for RenderBuffer {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// How many pixels a run of triangles leaves lit on a cleared buffer.
+    fn lit(triangles: &[[f32; 2]]) -> usize {
+        let mut buffer = RenderBuffer::new(16, 16);
+        buffer.clear_color([0.0, 0.0, 0.0, 1.0]);
+        buffer.tri_list(&DrawState::default(), &[1.0, 1.0, 1.0, 1.0], |f| {
+            f(triangles);
+        });
+        buffer
+            .into_image()
+            .pixels()
+            .filter(|px| px[0] > 0 || px[1] > 0 || px[2] > 0)
+            .count()
+    }
+
+    /// A triangle with no area covers no pixels.
+    ///
+    /// Both ways of having none are drawn, because they reach the sign tests
+    /// differently: three coincident corners leave every test at zero, so the
+    /// triangle claims whatever is put to it, while three collinear ones leave
+    /// them disagreeing off the line and agreeing along it. A stroke
+    /// contracted to nothing is made of the first kind — every vertex of a
+    /// round join's fan shares one contour point — so a rasteriser that draws
+    /// it paints a dotted contour where the figure has vanished.
+    ///
+    /// The coincident corners sit off the pixel grid, because a bounding box
+    /// taken between the floor and the ceiling of one integer coordinate is
+    /// empty and would leave that case untested.
+    #[test]
+    fn a_triangle_with_no_area_covers_nothing() {
+        assert_eq!(
+            lit(&[[4.5, 4.5], [4.5, 4.5], [4.5, 4.5]]),
+            0,
+            "three coincident corners lit pixels"
+        );
+        assert_eq!(
+            lit(&[[2.0, 2.0], [7.0, 7.0], [12.0, 12.0]]),
+            0,
+            "three collinear corners lit pixels"
+        );
+        // The same triangle with one corner moved off the line does cover
+        // pixels, so the two above are empty for want of area and not for want
+        // of a working rasteriser.
+        assert!(
+            lit(&[[2.0, 2.0], [12.0, 2.0], [12.0, 12.0]]) > 0,
+            "a triangle with area lit nothing"
+        );
     }
 }
