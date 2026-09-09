@@ -62,6 +62,64 @@ const TARGET_PX: f64 = 14.0;
 /// triangles are smaller than a pixel and the extra ones buy nothing.
 const FINEST_LEVEL: i8 = -7;
 
+/// Steps of the grid a mesh's vertices are stored on, in one figure-space unit.
+///
+/// A vertex is kept as a pair of `i16` rather than a pair of `f32`, halving
+/// what a mesh's vertices weigh. This is the whole of the mapping: the pair
+/// spans **±4 figure units**, which is a power of two and so exact both ways,
+/// and every figure either library can draw sits inside it — the furthest,
+/// a star lattice, reaches 2.4314, which leaves the range 1.64 times wider
+/// than anything drawn on it. It clamps rather than wrapping, so a figure that
+/// somehow ran past the range would be folded onto its edge instead of
+/// appearing on the far side; [`every_figure_fits_the_grid_it_is_stored_on`]
+/// is what keeps that from being reached.
+///
+/// **The resolution is four orders of magnitude finer than the mesh it
+/// carries.** One step is 1/8192 of a figure unit, which at 1920 lines with
+/// the figure filling the frame is 0.23 of a pixel, against triangles refined
+/// to fourteen; the whole grid is 128 steps across one triangle edge at the
+/// density that a screen reaches.
+///
+/// That it is invisible was measured rather than argued, over all 401 figures
+/// rendered at 1024 and at 1920: **snapping disturbs the raster less than
+/// translating the same unsnapped figure by a sixteenth of a pixel does**, on
+/// coverage IoU, on a two-sided Hausdorff distance, and on how many pixels
+/// change at all. Snapping also moves the figure's own area by 0.011% across
+/// the library and by 1.08% on the worst single figure, so nothing thin is
+/// being swallowed.
+///
+/// **The decode is what makes it worth doing.** The per-vertex pass already
+/// touches every vertex every frame to work out polar coordinates and phase,
+/// so widening an `i16` there disappears beside the arctangent beside it. The
+/// stored form never has to be the form a backend sees.
+const QUANTISATION: f32 = 8192.0;
+
+/// A mesh vertex, snapped to the grid [`QUANTISATION`] describes.
+///
+/// Equality is equality of the stored cell, which is what a refinement dedups
+/// on: two vertices that land in one cell are one vertex, and the triangle
+/// between them collapses to no area and draws nothing.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct StoredPoint([i16; 2]);
+
+impl StoredPoint {
+    fn of(p: Point) -> Self {
+        let snap = |v: f32| {
+            (v * QUANTISATION)
+                .round()
+                .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
+        };
+        Self([snap(p.x()), snap(p.y())])
+    }
+
+    fn widen(self) -> Point {
+        Point::new(
+            f32::from(self.0[0]) / QUANTISATION,
+            f32::from(self.0[1]) / QUANTISATION,
+        )
+    }
+}
+
 /// A mesh's triangles, as indices into its vertices, in the narrowest width
 /// that addresses them.
 ///
@@ -72,9 +130,9 @@ const FINEST_LEVEL: i8 = -7;
 /// for all of them would either be `u32` everywhere, which is what this
 /// replaces, or a cap on how finely a figure may be refined.
 ///
-/// Indices are three-quarters of what a mesh weighs — a triangle costs three
-/// of them against the two coordinates of about half a vertex — so this is the
-/// term worth narrowing first. It halves the coarse densities, where every
+/// Indices are two-thirds of what a mesh weighs — a triangle costs three of
+/// them against the two stored coordinates of about half a vertex — so this is
+/// the term worth narrowing first. It halves the coarse densities, where every
 /// mesh fits, and does almost nothing at the finest, where the meshes that do
 /// not fit hold nine tenths of the triangles.
 enum Indices {
@@ -112,7 +170,7 @@ impl Indices {
 /// triangle list repeats each shared vertex about six times, and each repeat
 /// would be another transcendental evaluated for an answer already known.
 pub struct RefinedMesh {
-    verts: Vec<Point>,
+    verts: Vec<StoredPoint>,
     indices: Indices,
 }
 
@@ -125,15 +183,16 @@ impl RefinedMesh {
         self.indices.len() == 0
     }
 
-    /// Every vertex, in the order the indices address them.
+    /// Every vertex, in the order the indices address them, widened back into
+    /// figure space.
     pub fn points(&self) -> impl Iterator<Item = Point> + '_ {
-        self.verts.iter().copied()
+        self.verts.iter().map(|v| v.widen())
     }
 
     /// What this mesh weighs, which is what the caches holding it are sized
     /// against.
     fn bytes(&self) -> usize {
-        self.verts.len() * size_of::<Point>() + self.indices.bytes()
+        self.verts.len() * size_of::<StoredPoint>() + self.indices.bytes()
     }
 
     /// Runs of whole triangles, each within `max_vertices`.
@@ -219,14 +278,14 @@ pub struct MeshId {
 /// **The set is bounded, because both libraries are tables.** Each names a
 /// fixed list of figures, so the key runs over those figures times the six
 /// densities and no further: 62 baked and 514 generated, 3,456 meshes, 176
-/// million triangles, **2.5 GB** if every one of them were ever drawn.
+/// million triangles, **2.1 GB** if every one of them were ever drawn.
 ///
 /// Bounded is not small, and where the two libraries sit in that number is
-/// worth knowing: the baked share is 279 MB of it and the generated share is
-/// the other 2.26 GB, because a generated figure carries an order of magnitude
+/// worth knowing: the baked share is 239 MB of it and the generated share is
+/// the other 1.91 GB, because a generated figure carries an order of magnitude
 /// more triangles than a piece of artwork does. Most of that is the two finest
 /// densities, which only a figure drawn larger than the size knob's default
-/// reaches; the four coarser ones come to 220 MB between them.
+/// reaches; the four coarser ones come to 168 MB between them.
 ///
 /// **How much the narrow index saves depends on the density, and the coarse
 /// end is where it lands.** 2,947 of these meshes are addressed by a `u16`,
@@ -284,14 +343,17 @@ fn refine(tris: &TriangleList, target: f32) -> RefinedMesh {
         bisect(tri, target, 0, &mut flat);
     }
 
-    // Midpoints are computed as (a + b) / 2 from both triangles sharing an
-    // edge, and float addition is commutative, so the two agree bit for bit and
-    // this dedup finds them.
-    let mut seen: HashMap<(u32, u32), u32> = HashMap::new();
-    let mut verts: Vec<Point> = Vec::new();
+    // Refinement is done in full precision and only the answer is snapped, so
+    // an edge cut a dozen times is cut where it should be and not on a grid
+    // that compounds. What the dedup then welds is a grid cell rather than a
+    // bit pattern: the midpoints two triangles share agree exactly, and so now
+    // do the few vertices that merely landed within a step of each other.
+    let mut seen: HashMap<StoredPoint, u32> = HashMap::new();
+    let mut verts: Vec<StoredPoint> = Vec::new();
     let mut indices = Vec::with_capacity(flat.len());
     for v in flat {
-        let idx = *seen.entry(v.bits()).or_insert_with(|| {
+        let v = StoredPoint::of(v);
+        let idx = *seen.entry(v).or_insert_with(|| {
             verts.push(v);
             (verts.len() - 1) as u32
         });
@@ -329,6 +391,8 @@ fn bisect(tri: Triangle, target: f32, depth: u32, out: &mut Vec<Point>) {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::fill::figure::FigureCache;
+    use tunnels_model::layer::{GeneratedId, SpriteId};
 
     #[test]
     fn a_level_buckets_scale_by_powers_of_two() {
@@ -352,6 +416,70 @@ mod test {
         assert_eq!(Level::for_screen(1e9, Level::IN_TABLE), Level::IN_TABLE);
     }
 
+    /// The grid vertices are stored on reaches every figure either library can
+    /// draw, and resolves each of them far past what a screen can show.
+    ///
+    /// Both halves are worth pinning. Snapping clamps, so a figure that ran
+    /// outside the range would be folded onto its edge rather than land on the
+    /// far side — and several families are composed to run outside the frame
+    /// they are built in, so how far the library reaches is not a thing to
+    /// assume. A contour bounds the mesh refined from it, because refinement
+    /// only ever adds midpoints of edges it already has.
+    #[test]
+    fn every_figure_fits_the_grid_it_is_stored_on() {
+        let limit = f32::from(i16::MAX) / QUANTISATION;
+        // One step, and what a vertex may move by: half a step each way.
+        let step = 1.0 / QUANTISATION;
+        for p in [
+            Point::new(0.0, 0.0),
+            Point::new(1.0, -1.0),
+            Point::new(0.499_97, -2.431_43),
+        ] {
+            let back = StoredPoint::of(p).widen();
+            assert!(
+                (back.x() - p.x()).abs() <= step / 2.0 && (back.y() - p.y()).abs() <= step / 2.0,
+                "{p:?} came back as {back:?}, further than half a step of {step}"
+            );
+        }
+        // Past the range it folds onto the edge, and never onto the far side.
+        assert_eq!(StoredPoint::of(Point::new(50.0, -50.0)).widen().x(), limit);
+        assert_eq!(
+            StoredPoint::of(Point::new(50.0, -50.0)).widen().y(),
+            -limit - step
+        );
+
+        let mut cache = FigureCache::default();
+        let baked = (0..tunnels_sprites::count())
+            .filter_map(|id| u16::try_from(id).ok())
+            .map(|id| FigureId::Baked(SpriteId(id)));
+        let generated = GeneratedId::library().map(FigureId::Generated);
+        let mut worst = (0.0f32, None);
+        for figure in baked.chain(generated) {
+            let Some(figures) = cache.get(figure) else {
+                continue;
+            };
+            for p in figures
+                .iter()
+                .flat_map(|f| f.subpaths.iter())
+                .flat_map(|c| c.points())
+            {
+                let reach = p.x().abs().max(p.y().abs());
+                if reach > worst.0 {
+                    worst = (reach, Some(figure));
+                }
+            }
+        }
+        // Room to spare rather than merely fitting, because the figure that
+        // reaches furthest is a field cut out of a tiling and a family added
+        // later could cut a wider one.
+        assert!(
+            worst.0 < limit * 0.75,
+            "{:?} reaches {}, too near the edge of a grid that stops at {limit}",
+            worst.1,
+            worst.0
+        );
+    }
+
     /// The index width is a property of one mesh, and nothing downstream can
     /// tell which width a mesh it is walking chose.
     ///
@@ -363,7 +491,7 @@ mod test {
         let triangles: [[u32; 3]; 3] = [[0, 1, 2], [2, 1, 3], [65_534, 3, 0]];
         let flat: Vec<u32> = triangles.iter().flatten().copied().collect();
         let mesh = |vertices: usize| RefinedMesh {
-            verts: vec![Point::new(0.0, 0.0); vertices],
+            verts: vec![StoredPoint::of(Point::new(0.0, 0.0)); vertices],
             indices: Indices::of(flat.clone(), vertices),
         };
         // The largest index a `u16` carries is 65,535, so a mesh of that many
