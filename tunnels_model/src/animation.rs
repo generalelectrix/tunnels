@@ -525,6 +525,10 @@ const SAMPLES_PER_NOISE_UNIT: f64 = 8.0;
 ///
 /// Held beside the density that buys it, because a change to one without the
 /// other is a change to what a table promises.
+///
+/// How finely a table's samples are *stored* is chosen against this too, and
+/// not only how many of them there are — so tightening it is a wider change
+/// than it looks.
 pub const NOISE_TABLE_TOLERANCE: f64 = 0.1;
 
 /// Samples along an axis that spans no noise at all.

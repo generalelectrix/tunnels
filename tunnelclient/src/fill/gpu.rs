@@ -82,7 +82,16 @@ pub fn phase_code(axis: PhaseAxis) -> i32 {
 /// The waveform, as the shader numbers it.
 ///
 /// `None` for a waveform the shader does not carry. Noise reads a field no
-/// uniform can hold.
+/// uniform can hold: what it reads is a table of samples, which is a texture
+/// rather than a uniform, and until one is bound a layer using it draws on the
+/// CPU.
+///
+/// A table of noise wants one byte a sample and not four. Quantising its range
+/// to 256 steps puts a sample 0.004 from where it was, against a table that
+/// stands 0.082 from the field it stands for and promises only
+/// `NOISE_TABLE_TOLERANCE` — so the quantisation is twenty times smaller than
+/// the error already accepted, and a quarter of the bandwidth. Tighten that
+/// promise and the format is part of what has to be revisited.
 pub fn waveform_code(waveform: Waveform) -> Option<i32> {
     match waveform {
         Waveform::Sine => Some(WAVE_SINE),

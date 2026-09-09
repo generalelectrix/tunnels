@@ -31,13 +31,36 @@ const HEIGHT: u32 = 512;
 /// ramp, so a phase error shows up as a neighbouring texel.
 const TOLERANCE: u8 = 2;
 
-/// Pixels allowed to differ by more than [`TOLERANCE`].
+/// Pixels on a figure's silhouette allowed to differ by more than
+/// [`TOLERANCE`].
 ///
-/// A phase error at a colour discontinuity moves the edge between two
-/// neighbouring texels of the ramp, and a figure has tens of thousands of
-/// triangles for that edge to cross. Budgeted like the golden-image fill
-/// comparison, for the same reason.
-const BUDGET: usize = 200;
+/// **This budget covers one thing only: a sub-pixel vertex shift flipping a
+/// pixel's coverage at the silhouette.** Both paths here go through the same
+/// rasteriser, so nothing is owed to two rasterisers disagreeing — the reason
+/// the golden-image comparison carries a budget does not apply. What is left is
+/// arithmetic: the CPU path resolves a vertex in `f64` through
+/// `fastmath::atan2`, the shader in `f32` through the driver's own, and where
+/// that moves a vertex by a fraction of a pixel the edge it bounds lands on the
+/// other side of a pixel centre. Against an unlit background that reads as a
+/// difference of the full range, which is why a magnitude cannot tell it from a
+/// real fault and position has to.
+///
+/// Measured on llvmpipe at this size: 59 pixels at worst, every one of them on
+/// a boundary and none in an interior. **Apple's GL over Metal may put the
+/// arithmetic somewhere else, and this is the number to revisit there** — a
+/// figure's silhouette also grows with resolution, so it is tied to the size
+/// this test draws at and not to a figure.
+const BOUNDARY_BUDGET: usize = 200;
+
+/// Pixels away from a silhouette allowed to differ by more than [`TOLERANCE`].
+///
+/// None. A phase, a displacement or a colour resolved differently moves the
+/// inside of a figure, and there is nothing in the arithmetic that reaches
+/// there — an interior pixel is the same lookup into the same ramp either way.
+/// So one is a fault, and this is what makes the comparison say anything: a
+/// budget that absorbed interior differences would absorb exactly the failures
+/// worth catching.
+const INTERIOR_BUDGET: usize = 0;
 
 fn test_config() -> ClientConfig {
     let mut cfg = ClientConfig::new(
@@ -179,16 +202,85 @@ impl Offscreen {
     }
 }
 
-/// How many pixels of two images differ by more than [`TOLERANCE`].
-fn mismatches(a: &image::RgbaImage, b: &image::RgbaImage) -> usize {
-    a.pixels()
-        .zip(b.pixels())
-        .filter(|(p, q)| {
-            p.0.iter()
+/// Where two renderings of the same scene disagree.
+#[derive(Default, PartialEq, Eq)]
+struct Divergence {
+    /// Differing pixels whose neighbourhood straddles a figure's silhouette,
+    /// where a fraction of a pixel decides coverage.
+    boundary: usize,
+    /// Differing pixels away from any silhouette.
+    interior: usize,
+}
+
+impl Divergence {
+    /// Whether either count has passed its budget.
+    fn over_budget(&self) -> bool {
+        self.boundary > BOUNDARY_BUDGET || self.interior > INTERIOR_BUDGET
+    }
+
+    /// Whether the two renderings agree everywhere.
+    fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl std::fmt::Display for Divergence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} on a silhouette (budget {BOUNDARY_BUDGET}), {} inside one \
+             (budget {INTERIOR_BUDGET})",
+            self.boundary, self.interior
+        )
+    }
+}
+
+/// Whether a pixel carries any light.
+fn lit(p: &image::Rgba<u8>) -> bool {
+    p.0[..3].iter().any(|&c| c > 8)
+}
+
+/// How two renderings of the same scene differ, split by where.
+///
+/// A pixel counts as being on a silhouette when its own eight neighbours cover
+/// both lit and unlit ground in either rendering, because that is exactly the
+/// neighbourhood in which a fraction of a pixel decides which side of an edge
+/// a sample falls.
+fn diverge(a: &image::RgbaImage, b: &image::RgbaImage) -> Divergence {
+    let (w, h) = a.dimensions();
+    let mut out = Divergence::default();
+    for y in 0..h {
+        for x in 0..w {
+            let (p, q) = (a.get_pixel(x, y), b.get_pixel(x, y));
+            if !p
+                .0
+                .iter()
                 .zip(q.0.iter())
-                .any(|(x, y)| x.abs_diff(*y) > TOLERANCE)
-        })
-        .count()
+                .any(|(u, v)| u.abs_diff(*v) > TOLERANCE)
+            {
+                continue;
+            }
+            let mut sees_light = false;
+            let mut sees_dark = false;
+            for ny in y.saturating_sub(1)..(y + 2).min(h) {
+                for nx in x.saturating_sub(1)..(x + 2).min(w) {
+                    for image in [a, b] {
+                        if lit(image.get_pixel(nx, ny)) {
+                            sees_light = true;
+                        } else {
+                            sees_dark = true;
+                        }
+                    }
+                }
+            }
+            if sees_light && sees_dark {
+                out.boundary += 1;
+            } else {
+                out.interior += 1;
+            }
+        }
+    }
+    out
 }
 
 /// The shader against the CPU path, on every scene either of them answers.
@@ -253,20 +345,17 @@ fn the_shader_draws_what_the_cpu_draws() {
             ));
             continue;
         }
-        let differing = mismatches(&cpu, &shader);
-        let lit = cpu
-            .pixels()
-            .filter(|p| p.0[..3].iter().any(|&c| c > 8))
-            .count();
-        if lit == 0 {
+        let divergence = diverge(&cpu, &shader);
+        let drawn = cpu.pixels().filter(|p| lit(p)).count();
+        if drawn == 0 {
             failures.push(format!("{name}: nothing was drawn to compare"));
-        } else if differing > BUDGET {
+        } else if divergence.over_budget() {
             failures.push(format!(
-                "{name}: {differing} pixels differ by more than {TOLERANCE} \
-                 (budget {BUDGET}, {lit} lit)"
+                "{name}: differs by more than {TOLERANCE} in {divergence}, of \
+                 {drawn} lit"
             ));
         } else {
-            eprintln!("{name}: {differing} of {lit} lit pixels differ");
+            eprintln!("{name}: {divergence}, of {drawn} lit");
         }
     }
 
@@ -284,9 +373,9 @@ fn the_shader_draws_what_the_cpu_draws() {
         if draws != 0 {
             failures.push(format!("{name}: the shader answered a layer it cannot"));
         }
-        let differing = mismatches(&off, &on);
-        if differing != 0 {
-            failures.push(format!("{name}: the switch moved {differing} pixels"));
+        let divergence = diverge(&off, &on);
+        if !divergence.is_none() {
+            failures.push(format!("{name}: the switch moved {divergence}"));
         } else {
             eprintln!("{name}: untouched by the switch");
         }
@@ -310,15 +399,14 @@ fn the_shader_draws_what_the_cpu_draws() {
     for (name, snapshot) in &stacked {
         let (off, _) = offscreen.render(snapshot, &cfg, false);
         let (on, draws) = offscreen.render(snapshot, &cfg, true);
-        let differing = mismatches(&off, &on);
+        let divergence = diverge(&off, &on);
         dump(name, &off, &on);
-        if differing > BUDGET {
+        if divergence.over_budget() {
             failures.push(format!(
-                "{name}: {differing} pixels differ by more than {TOLERANCE} \
-                 with the switch on (budget {BUDGET}, {draws} shader draws)"
+                "{name}: the switch moved {divergence}, {draws} shader draws"
             ));
         } else {
-            eprintln!("{name}: {differing} pixels differ, {draws} shader draws");
+            eprintln!("{name}: {divergence}, {draws} shader draws");
         }
     }
 
