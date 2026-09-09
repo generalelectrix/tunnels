@@ -25,28 +25,33 @@ const LOOK: u8 = 0x30;
 
 /// The note a channel's bump button sends.
 ///
-/// The APC40's Clip Stop, which is a larger button than the row bump used to
-/// sit on and so an easier one to mash mid-show.
+/// The APC40's Clip Stop, a larger button than the row bump used to sit on and
+/// so an easier one to mash mid-show.
 ///
-/// **Bump is the one control here that is momentary**: the note on sets it and
-/// the note off releases it. That makes this the note whose behaviour on
-/// release matters, and the first thing to check with the desk in front of
-/// you. A button that sends only on press leaves bump latched on, which is a
-/// channel stuck at full for as long as nobody notices — a worse failure than
-/// any of the toggles above can produce, and one that looks like a fader
-/// problem rather than a note problem.
+/// Bump is the one control here that is momentary — the note on sets it and
+/// the note off releases it — so it is the one whose behaviour on release
+/// matters. A button sending only on press would leave bump latched and the
+/// channel stuck at full, which looks like a fader fault rather than a note
+/// one. The protocol answers it twice over: Clip Stop is `Momentary` even in
+/// generic mode, and this surface is put into mode 2, of which the document
+/// says "All buttons are momentary buttons". Nothing here rests on the button
+/// type column, which covers mode 0 only.
 const BUMP: u8 = 0x34;
 
 /// The note a channel's gobo button sends, and lights its lamp from.
 ///
-/// The APC40's Activator, which the row above bump used to occupy and which
-/// bump moving to Clip Stop freed. Its lamp is green, so a gobo'd channel
-/// reads green against a mask's blue, and the look indicator keeps red to
-/// match the saved-look red in the beam grid.
+/// The APC40's Activator, which bump moving to Clip Stop freed. The protocol
+/// gives the per-track rows as Record Arm, Solo, Activator, Track Selection
+/// and Clip Stop across 0x30 to 0x34, on the track's own midi channel, which
+/// is the order the constants here are in.
 ///
-/// **Taken from the protocol document rather than measured off the hardware**,
-/// so a surface that turns out to send something else here needs this number
-/// changed and nothing else.
+/// **What the protocol will not do is choose this lamp's colour.** Against
+/// 0x32 it gives only "0=off, 1-127=on", where the clip launch rows above
+/// carry green, red and yellow with a blinking variant of each. So a gobo'd
+/// channel reads in whatever colour this button lights in, fixed in the
+/// hardware and never named in the document — not something this code selects
+/// and not something to design a colour scheme around without looking at the
+/// desk.
 const GOBO: u8 = 0x32;
 
 /// The midi note value for the 0th video channel selector.
