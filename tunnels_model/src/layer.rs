@@ -358,7 +358,8 @@ pub struct FillLayer {
     pub placement: Placement,
     /// The beam's spin knob, as the operator set it.
     pub spin_speed: f64,
-    /// Stroke width, in the same units a segment's thickness is.
+    /// The width an outline is stroked at where nothing tapers it, in the same
+    /// units a segment's thickness is.
     pub thickness: f64,
     pub draw_mode: DrawMode,
     pub color: ColorField,
@@ -366,6 +367,13 @@ pub struct FillLayer {
     pub color_anims: Vec<TargetedAnimation<PreparedAnimation>>,
     /// Animations resolved per point of the figure, displacing it.
     pub warps: Vec<TargetedAnimation<PreparedAnimation>>,
+    /// Animations resolved per point of an outline, scaling its width there.
+    ///
+    /// Kept apart from the warps because they answer different questions about
+    /// the same point: a warp says where it goes, and these say how far the
+    /// ribbon reaches either side of it. Only an outline has the second, so a
+    /// figure that is filled and not stroked ignores these entirely.
+    pub taper: Vec<TargetedAnimation<PreparedAnimation>>,
 }
 
 impl FillLayer {
