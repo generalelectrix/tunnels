@@ -1597,6 +1597,10 @@ mod test {
     /// No knob position gives an interval of 0 or -1: the first is the divisor
     /// of a remainder and cannot be zero, and the second takes out every
     /// segment, leaving a beam indistinguishable from a broken one.
+    ///
+    /// This says nothing about how many segments survive an interval it does
+    /// name. A one-segment run is emptied by every negative one, which the
+    /// test below holds.
     #[test]
     fn no_knob_position_leaves_nothing_to_look_at() {
         for knob in 0..=KNOB_MAX {
@@ -1606,6 +1610,76 @@ mod test {
                 "knob position {knob} gives an interval of {interval}"
             );
         }
+    }
+
+    /// The knobs can still leave a run with no segments in it, which the
+    /// guarantee above does not cover: that one is about the interval, and
+    /// this is about the outcome.
+    ///
+    /// The segments knob at its bottom leaves one segment, at index 0. A
+    /// negative interval keeps a segment when the remainder is not zero, and
+    /// zero is a multiple of everything, so index 0 is the one index a
+    /// negative interval can never keep. One segment above that is enough to
+    /// escape it, since index 1 leaves a remainder against every interval a
+    /// knob names.
+    ///
+    /// Worth holding because a reader meeting the guarantee above will
+    /// reasonably conclude that an empty run cannot happen, and the gobo arm
+    /// of `Layer::is_empty` exists to serve exactly this case. Struck as dead,
+    /// it would make a gobo vanish where it should black — on the two knobs an
+    /// operator is most likely to bottom out together.
+    #[test]
+    fn the_bottom_of_the_segments_knob_can_leave_no_segments_at_all() {
+        let run_at = |segs_knob, blacking_knob| {
+            let mut tunnel = Tunnel::default();
+            tunnel.handle_state_change(StateChange::Segments(segs_knob), &mut Silent);
+            tunnel.handle_state_change(StateChange::Blacking(blacking_knob), &mut Silent);
+            let layer = tunnel.render(
+                UnipolarFloat::ONE,
+                PaintMode::Gobo,
+                RenderContext {
+                    clocks: &ClockBank::default().as_static(),
+                    palette: &ColorPalette::default(),
+                    positions: &PositionBank::default(),
+                    audio_envelope: UnipolarFloat::ZERO,
+                },
+            );
+            let Layer::Segments(run) = &layer else {
+                panic!("a segment mode rendered something other than a run of segments");
+            };
+            let empty = run.shapes.is_empty();
+            // The point of the whole exercise: a gobo left with nothing to
+            // open a window with is still a layer, because what it draws is
+            // the frame going black.
+            assert!(
+                !layer.is_empty(),
+                "a gobo run of {} segments called itself droppable",
+                run.shapes.len()
+            );
+            empty
+        };
+
+        let blacked_out: Vec<u8> = (0..=KNOB_MAX).filter(|k| run_at(0, *k)).collect();
+        let negative: Vec<u8> = (0..=KNOB_MAX)
+            .filter(|k| BlackingInterval::for_knob(*k).0 < 0)
+            .collect();
+        assert!(
+            !blacked_out.is_empty(),
+            "no blacking knob empties a one-segment run, so the gobo arm of \
+             Layer::is_empty is unreachable and one of these two is wrong"
+        );
+        assert_eq!(
+            blacked_out, negative,
+            "the positions that empty a one-segment run are the ones naming a \
+             negative interval, and nothing else"
+        );
+
+        let survives_two: Vec<u8> = (0..=KNOB_MAX).filter(|k| run_at(1, *k)).collect();
+        assert!(
+            survives_two.is_empty(),
+            "blacking knob {survives_two:?} emptied a two-segment run, so index \
+             1 is not the escape this rests on"
+        );
     }
 
     /// Opening another family keeps the position within it, and reports the
