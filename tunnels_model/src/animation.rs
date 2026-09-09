@@ -187,9 +187,14 @@ impl Animation {
     }
 
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+        // Reached whatever the amplitude, because it shapes the waveform rather
+        // than driving it: an animation held at no size is one being set up,
+        // and the controls turned while it is have to arrive. Its clock is a
+        // different matter — an animation that is not showing has no time to
+        // keep, and starts from the top when it is given a size.
+        self.smoothing.update_state(delta_t);
         if self.active() {
             self.internal_clock.update_state(delta_t, audio_envelope);
-            self.smoothing.update_state(delta_t);
         }
     }
 
@@ -581,6 +586,44 @@ mod test {
                 slope < ramp / 100.0,
                 "a pulse turned a corner at the {knee} knee: it moved {slope} \
                  over a step a straight ramp would move {ramp}"
+            );
+        }
+    }
+
+    /// A control that shapes an animation is reached over time rather than set,
+    /// and it has to be reached whether or not the animation is currently
+    /// showing. An animation at no amplitude is still one an operator is
+    /// looking at while they set it up — the waveform it would draw is exactly
+    /// what a preview is for — so a control turned then must arrive, not sit
+    /// where it was until the animation is given a size.
+    #[test]
+    fn a_shaping_control_is_reached_at_any_amplitude() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let clocks = crate::clock_bank::ClockBank::default();
+
+        for size in [UnipolarFloat::ZERO, UnipolarFloat::ONE] {
+            let mut animation = Animation::default();
+            let set = |a: &mut Animation, sc| a.control(ControlMessage::Set(sc), &mut Noop);
+            set(&mut animation, StateChange::Size(size));
+            set(
+                &mut animation,
+                StateChange::Smoothing(UnipolarFloat::new(0.75)),
+            );
+
+            // Longer than the control takes to be reached.
+            animation.update_state(Duration::from_millis(500), UnipolarFloat::ZERO);
+
+            let reached = animation.prepare(&clocks, UnipolarFloat::ZERO).smoothing;
+            assert_eq!(
+                reached,
+                animation.smoothing(),
+                "at a size of {}, smoothing stalled at {} short of the {} it was turned to",
+                size.val(),
+                reached.val(),
+                animation.smoothing().val()
             );
         }
     }

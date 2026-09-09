@@ -247,13 +247,14 @@ mod tests {
             for sc in [
                 StateChange::Waveform(Waveform::Noise),
                 StateChange::NPeriods(3),
-                StateChange::Size(UnipolarFloat::ONE),
+                // No size: a plot draws the waveform an animation would make
+                // whatever its amplitude, and an animation still being set up
+                // is exactly the one an operator is watching the plot for.
                 StateChange::Smoothing(UnipolarFloat::new(smoothing)),
             ] {
                 animation.control(ControlMessage::Set(sc), &mut Silent);
             }
-            // The smoothing control is reached over time rather than set, and
-            // only while the animation has a size to be seen at.
+            // The smoothing control is reached over time rather than set.
             animation.update_state(std::time::Duration::from_secs(1), UnipolarFloat::ZERO);
             let mut panel = VisualizerPanelState::default();
             panel.compute(&AnimationSnapshot {
