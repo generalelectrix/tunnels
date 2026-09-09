@@ -450,18 +450,13 @@ impl PreparedAnimation {
                     (1.0 - self.smoothing.val()) * offset_index as f64
                 };
 
-                let mut val = self.simplex_gen.get([x_offset, y_offset]);
+                let val = self.simplex_gen.get([x_offset, y_offset]);
 
-                // Take the square for pulse mode to avoid sharp edges at zero,
-                // and to maintain a bias towards the animation value frequently
-                // touching zero. This produces more of a forest of peaks.
-                // Simply rescaling the full noise spectrum into the unipolar
-                // range would result in very rarely touching zero, which is
-                // unlikely to be what we're looking for, artistically speaking.
                 if self.static_params.pulse {
-                    val = val.powi(2);
+                    gate_noise(val)
+                } else {
+                    val
                 }
-                val
             }
             Waveform::Constant => 1.0,
         };
@@ -486,10 +481,109 @@ impl PreparedAnimation {
     }
 }
 
+/// Where a noise pulse stops being dark, as a magnitude of the noise.
+///
+/// The magnitude of simplex noise is close to uniform across the lower part of
+/// its range, so a knee placed a quarter of the way up that range is the value
+/// noise spends about a quarter of its time below.
+const NOISE_GATE_LOW: f64 = 0.15;
+
+/// Where a noise pulse reaches full, as a magnitude of the noise.
+///
+/// Placed so that about the top tenth of noise magnitudes saturate. Noise
+/// approaches the end of its own range too rarely to arrive at full any other
+/// way.
+const NOISE_GATE_HIGH: f64 = 0.63;
+
+/// Shape bipolar noise into a unipolar pulse.
+///
+/// Noise reaches the ends of its own range only rarely, so a curve that merely
+/// rescales it settles into a dim middle: never resolving to black, never
+/// arriving at full. The gate is flat at both ends instead — dark below one
+/// knee, full above the other — which is what buys a pulse that starts and
+/// ends at rest and a peak that lands rather than approaches.
+///
+/// Between the knees it is smoothstepped, so brightness enters and leaves a
+/// pulse with no kink. The dark zone also holds the fold that taking a
+/// magnitude puts at zero, keeping that corner off the sloped part of the
+/// curve.
+fn gate_noise(v: f64) -> f64 {
+    let t = ((v.abs() - NOISE_GATE_LOW) / (NOISE_GATE_HIGH - NOISE_GATE_LOW)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::clock_bank::ClockBank;
+
+    /// A gated noise pulse rests at each end of the unipolar range rather than
+    /// only approaching it, so the two knees are where it arrives, and outside
+    /// them it holds still however far the noise goes on.
+    #[test]
+    fn a_noise_gate_rests_at_both_ends_of_its_range() {
+        for v in [0.0, 0.05, NOISE_GATE_LOW, -NOISE_GATE_LOW, 0.1, -0.02] {
+            assert_eq!(
+                gate_noise(v),
+                0.0,
+                "noise of {v} lit a pulse from inside the dark zone"
+            );
+        }
+        for v in [NOISE_GATE_HIGH, -NOISE_GATE_HIGH, 0.8, -0.9, 1.0, -1.0] {
+            assert_eq!(
+                gate_noise(v),
+                1.0,
+                "noise of {v} fell short of full from above the high knee"
+            );
+        }
+    }
+
+    /// The gate reads a magnitude, so noise displaced either way lights a pulse
+    /// the same amount, and a pulse rises without pause between its knees.
+    #[test]
+    fn a_noise_gate_is_symmetric_and_rises_between_its_knees() {
+        let step = (NOISE_GATE_HIGH - NOISE_GATE_LOW) / 64.0;
+        let mut previous = 0.0;
+        for i in 1..64 {
+            let v = NOISE_GATE_LOW + step * i as f64;
+            let value = gate_noise(v);
+            assert_eq!(
+                value,
+                gate_noise(-v),
+                "noise of {v} and of its negation lit a pulse differently"
+            );
+            assert!(
+                value > previous,
+                "a pulse stalled at {value} between its knees, at noise of {v}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&value),
+                "noise of {v} lit a pulse to {value}, outside the unipolar range"
+            );
+            previous = value;
+        }
+    }
+
+    /// A pulse leaves and reaches rest smoothly, so brightness has no kink at
+    /// either knee where a viewer would read it as a corner in the light.
+    #[test]
+    fn a_noise_gate_has_no_kink_at_either_knee() {
+        let span = NOISE_GATE_HIGH - NOISE_GATE_LOW;
+        let step = span / 4096.0;
+        // The slope just inside a knee, against the slope of a straight ramp
+        // between the knees, which is what the gate would have if it did not
+        // ease in and out.
+        let ramp = step / span;
+        for knee in [NOISE_GATE_LOW, NOISE_GATE_HIGH] {
+            let inside = if knee == NOISE_GATE_LOW { step } else { -step };
+            let slope = (gate_noise(knee + inside) - gate_noise(knee)).abs();
+            assert!(
+                slope < ramp / 100.0,
+                "a pulse turned a corner at the {knee} knee: it moved {slope} \
+                 over a step a straight ramp would move {ramp}"
+            );
+        }
+    }
 
     /// Whether an animation varies in space is what decides how finely a
     /// caller has to resolve it, so the two ways of answering "not at all" —
