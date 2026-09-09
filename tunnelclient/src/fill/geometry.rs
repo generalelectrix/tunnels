@@ -76,6 +76,18 @@ pub const REFERENCE_WIDTH: f32 = 1.0;
 pub struct FillGeometry(HashMap<FigureId, TriangleList>);
 
 impl FillGeometry {
+    /// How many interiors are held.
+    #[cfg(test)]
+    pub fn held(&self) -> usize {
+        self.0.len()
+    }
+
+    /// What the interiors held weigh.
+    #[cfg(test)]
+    pub fn bytes(&self) -> usize {
+        self.0.values().map(|tris| size_of_val(tris.points())).sum()
+    }
+
     /// The figure's interior, tessellated on first use.
     pub fn get(&mut self, id: FigureId, figures: &[Figure]) -> &TriangleList {
         self.0.entry(id).or_insert_with(|| {
