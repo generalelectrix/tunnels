@@ -289,6 +289,19 @@ fn diverge(a: &image::RgbaImage, b: &image::RgbaImage) -> Divergence {
 /// made it and tests run in parallel, so a second context in the same process
 /// is a second driver's worth of state and a race for the one that is current.
 #[test]
+/// The two paths draw a figure alike, and the shader path draws it at all.
+///
+/// The second half is not a formality. A comparison that renders one path
+/// twice agrees with itself perfectly, so counting the draws is what stops a
+/// silently disabled shader from reading as a pass — the state where this test
+/// is at its most reassuring and least useful.
+///
+/// What a comparison catches that a stored image cannot: a difference between
+/// the two paths in anything they share. The backend gamma-converts a flat
+/// colour on its way through `tri_list`, so the same colour arrived as 218 one
+/// way and 178 the other — a discrepancy a recorded golden would have kept as
+/// the expected answer, and one that reading the shader's own output would have
+/// missed entirely, the shader being right and its surroundings not.
 fn the_shader_draws_what_the_cpu_draws() {
     let Some(mut offscreen) = Offscreen::open() else {
         eprintln!(

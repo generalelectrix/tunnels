@@ -6,6 +6,10 @@
 //
 // The waveforms are ported from `tunnels_model::waveforms` and read the same
 // parameters, so a look dialled in on the CPU path arrives here unchanged.
+// **That module is the authority, and this is the copy.** Anything here that
+// disagrees with it is wrong by definition, so diff against it — and not
+// against any other shader that has grown from the same maths, since one of
+// those can be older than the model without looking it.
 // `Phase` wraps by euclidean modulus, which for a finite value is `fract`, and
 // every place the CPU builds one this does the same.
 //
