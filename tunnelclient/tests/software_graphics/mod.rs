@@ -165,6 +165,8 @@ impl RenderBuffer {
     }
 }
 
+impl tunnelclient::fill::gpu::FillBackend for RenderBuffer {}
+
 impl Graphics for RenderBuffer {
     type Texture = RenderBuffer;
 

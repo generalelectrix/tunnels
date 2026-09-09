@@ -6,6 +6,7 @@
 use super::fastmath;
 use super::geom::Indices;
 use super::geometry::StrokeMesh;
+use super::gpu::{Uniforms, Wave, phase_code};
 use super::mesh::RefinedMesh;
 use super::ramp::RampSpan;
 use graphics::Graphics;
@@ -15,6 +16,7 @@ use tunnels_lib::number::Phase;
 use tunnels_model::animation::{PreparedAnimation, SpreadOffset, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
 use tunnels_model::layer::PhaseAxis;
+use tunnels_model::tunnel::N_ANIM;
 use tunnels_sprites::Point;
 
 /// Vertices per chunk handed to the backend. `BACK_END_MAX_VERTEX_COUNT` is
@@ -215,6 +217,47 @@ impl VertexWork<'_> {
         });
         (self.stroke_width * scale).clamp(0.0, 1.0)
     }
+}
+
+/// Everything the shader needs to stand in for one layer's per-vertex pass.
+///
+/// `None` where it cannot stand in for it, which is the signal to walk the mesh
+/// on the CPU: a waveform the shader does not carry, or more animations
+/// displacing a figure than the shader has slots for.
+pub fn shader_uniforms(work: &VertexWork, m: Matrix2d, flat: Option<[f32; 4]>) -> Option<Uniforms> {
+    let needs = Needs::of(work);
+    let anchor = Displacement::anchor(work);
+    let mut waves = [Wave::default(); N_ANIM];
+    let mut filled = 0;
+    for warp in work.warps {
+        match Wave::of(warp.target, &warp.animation).ok()? {
+            Some(wave) => {
+                *waves.get_mut(filled)? = wave;
+                filled += 1;
+            }
+            None => continue,
+        }
+    }
+    // A taper reaches an outline alone, but whether an animation reads its
+    // offset decides which coordinates the pass computes for the interior too,
+    // so a waveform the shader does not carry refuses the layer wherever it
+    // sits.
+    for taper in work.taper {
+        Wave::of(taper.target, &taper.animation).ok()?;
+    }
+    Some(Uniforms {
+        xform: m,
+        phase: phase_code(work.field.phase),
+        ramp_scale: work.field.ramp_scale(),
+        unwrap: work.field.wrap_period().unwrap_or(0.0),
+        spin_speed: work.spin_speed,
+        rotates: needs.rotates,
+        needs_angle: needs.angle,
+        needs_radius: needs.radius,
+        anchor: [anchor.offset_x, anchor.offset_y],
+        flat,
+        waves,
+    })
 }
 
 /// Which coordinates a frame's work actually asks for.

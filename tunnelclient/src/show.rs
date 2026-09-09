@@ -152,6 +152,14 @@ impl Show {
         // only when `refine_large_figures` is on, and are built per figure on
         // first use when they are.
         let mut renderer = Renderer::default();
+        // A prototype switch, off unless the environment asks for it: the
+        // shader fill path is meant to be indistinguishable from the CPU one,
+        // and the way to find out is to run a scene through both.
+        let shader_fill = std::env::var_os("TUNNELS_SHADER_FILL").is_some();
+        if shader_fill {
+            info!("Drawing varying figure fills through the fill shader.");
+        }
+        renderer.use_shader_fill(shader_fill);
         renderer.tessellate_library();
 
         Ok(Show {

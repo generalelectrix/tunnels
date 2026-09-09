@@ -525,6 +525,10 @@ const SAMPLES_PER_NOISE_UNIT: f64 = 8.0;
 ///
 /// Held beside the density that buys it, because a change to one without the
 /// other is a change to what a table promises.
+///
+/// How finely a table's samples are *stored* is chosen against this too, and
+/// not only how many of them there are — so tightening it is a wider change
+/// than it looks.
 pub const NOISE_TABLE_TOLERANCE: f64 = 0.1;
 
 /// Samples along an axis that spans no noise at all.
@@ -672,6 +676,27 @@ impl PreparedAnimation {
     /// otherwise ask it once per point can drop it instead.
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// The parameters that hold for as long as the frame does.
+    pub fn static_params(&self) -> StaticParams {
+        self.static_params
+    }
+
+    /// Where the driving clock has got to.
+    pub fn phase_temporal(&self) -> Phase {
+        self.phase_temporal
+    }
+
+    /// The smoother's current value, not its target.
+    pub fn smoothing(&self) -> UnipolarFloat {
+        self.smoothing
+    }
+
+    /// What the amplitude factors — size, clock submaster and audio envelope —
+    /// multiply out to.
+    pub fn scale(&self) -> f64 {
+        self.scale
     }
 
     /// Whether the value depends on where along a coordinate it is asked.
