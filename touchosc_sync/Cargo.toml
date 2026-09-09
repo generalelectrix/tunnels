@@ -11,7 +11,7 @@ zip = ["dep:zip"]
 [dependencies]
 anyhow.workspace = true
 log.workspace = true
-hostname = "0.4"
+gethostname = "1"
 mdns-sd = "0.18"
 tiny_http = "0.12"
 zip = { version = "2", default-features = false, features = [

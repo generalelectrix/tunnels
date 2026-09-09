@@ -5893,7 +5893,7 @@ name = "touchosc_sync"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "hostname",
+ "gethostname",
  "log",
  "mdns-sd",
  "tiny_http",

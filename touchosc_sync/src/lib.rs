@@ -36,14 +36,18 @@ pub struct LayoutServer {
 impl LayoutServer {
     /// Bind the sync port, register the mDNS service, and begin serving `xml`.
     ///
-    /// `instance_name` is how this host appears in the device's list of
-    /// editors; `layout_name` is the name the layout is given once it lands.
-    /// `xml` is a raw TouchOSC layout document, not a `.touchosc` container —
-    /// [`extract_layout_xml`] unwraps one of those.
+    /// `layout_name` is the name the layout is given once it lands on the
+    /// device. `xml` is a raw TouchOSC layout document, not a `.touchosc`
+    /// container — [`extract_layout_xml`] unwraps one of those.
+    ///
+    /// The host appears in the device's list of editors under its system
+    /// hostname. On macOS that is a different setting from the Computer Name
+    /// and the two can disagree, so the entry a device offers may not match
+    /// what the machine calls itself elsewhere.
     ///
     /// Returns once the server is reachable; requests are handled on a
     /// background thread.
-    pub fn start(instance_name: &str, layout_name: &str, xml: &[u8]) -> Result<Self> {
+    pub fn start(layout_name: &str, xml: &[u8]) -> Result<Self> {
         let layout_xml = xml.to_vec();
         let headers =
             response_headers(layout_name).context("failed to build the sync response headers")?;
@@ -55,10 +59,11 @@ impl LayoutServer {
         );
 
         let mdns = ServiceDaemon::new().context("failed to start the mDNS daemon")?;
+        let instance_name = short_hostname();
         let service_info = ServiceInfo::new(
             SERVICE_TYPE,
-            instance_name,
-            &local_hostname(),
+            &instance_name,
+            &format!("{instance_name}.local."),
             (),
             PORT,
             None,
@@ -146,14 +151,10 @@ fn response_headers(layout_name: &str) -> Result<ResponseHeaders> {
     })
 }
 
-/// This machine's hostname in the form the mDNS daemon expects.
-fn local_hostname() -> String {
-    let raw = hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .unwrap_or_else(|| "unknown".to_string());
-    let short = raw.split('.').next().unwrap_or(&raw);
-    format!("{short}.local.")
+/// This machine's hostname, stripped of any domain.
+fn short_hostname() -> String {
+    let raw = gethostname::gethostname().to_string_lossy().into_owned();
+    raw.split('.').next().unwrap_or(&raw).to_string()
 }
 
 fn serve_loop(server: &Server, layout_xml: &[u8], headers: &ResponseHeaders) {

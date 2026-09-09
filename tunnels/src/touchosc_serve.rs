@@ -12,14 +12,13 @@ const TEMPLATE: &[u8] = include_bytes!(concat!(
     "/../controller_templates/tunnels.touchosc"
 ));
 
-/// Start serving the bundled layout, advertising this machine under the name
-/// it is known by elsewhere on the network.
+/// Start serving the bundled layout.
 pub fn serve_layout() -> Result<LayoutServer> {
     // The Mk1 app expects the raw layout XML rather than the ZIP container it
     // is distributed in.
     let xml = touchosc_sync::extract_layout_xml(TEMPLATE)
         .context("failed to read the bundled TouchOSC layout")?;
-    LayoutServer::start(&zero_configure::bare::machine_hostname(), LAYOUT_NAME, &xml)
+    LayoutServer::start(LAYOUT_NAME, &xml)
 }
 
 #[cfg(test)]
