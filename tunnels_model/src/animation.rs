@@ -1,3 +1,4 @@
+use crate::animation_target::AnimationTarget;
 use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock::Ticks;
@@ -21,6 +22,19 @@ pub enum Waveform {
     Sawtooth,
     Noise,
     Constant,
+}
+
+impl Waveform {
+    /// Whether the value depends on the phase it is asked at.
+    ///
+    /// A constant answers one number for every phase, so a caller that would
+    /// otherwise resolve it across a coordinate can resolve it once.
+    pub fn varies_with_phase(self) -> bool {
+        match self {
+            Self::Sine | Self::Triangle | Self::Square | Self::Sawtooth | Self::Noise => true,
+            Self::Constant => false,
+        }
+    }
 }
 
 /// The animation parameters that are fixed for the duration of a frame.
@@ -48,6 +62,32 @@ impl Default for StaticParams {
             invert: false,
             n_periods: 1,
             duty_cycle: UnipolarFloat::ONE,
+        }
+    }
+}
+
+/// An animation and the parameter it drives.
+///
+/// Generic over the animation so that one already resolved for a frame pairs
+/// with its target the same way an unresolved one does: it is the same
+/// association either side of `prepare`, and naming it twice would make two
+/// things out of one.
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+pub struct TargetedAnimation<A = Animation> {
+    pub animation: A,
+    pub target: AnimationTarget,
+}
+
+impl TargetedAnimation {
+    /// Resolve everything that is fixed for a frame, keeping the target.
+    pub fn prepare(
+        &self,
+        external_clocks: &impl ClockStore,
+        audio_envelope: UnipolarFloat,
+    ) -> TargetedAnimation<PreparedAnimation> {
+        TargetedAnimation {
+            animation: self.animation.prepare(external_clocks, audio_envelope),
+            target: self.target,
         }
     }
 }
@@ -316,7 +356,7 @@ pub trait EmitStateChange {
 ///
 /// Holds no reference to the animation it came from, so a render can prepare
 /// its animations once and then walk a figure without borrowing anything.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PreparedAnimation {
     static_params: StaticParams,
     /// Where the driving clock has got to.
@@ -333,6 +373,28 @@ pub struct PreparedAnimation {
 }
 
 impl PreparedAnimation {
+    /// Whether this animation contributes anything.
+    ///
+    /// A zero-size animation answers zero everywhere, so a caller that would
+    /// otherwise ask it once per point can drop it instead.
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Whether the value depends on where along a coordinate it is asked.
+    ///
+    /// A periodicity of zero holds the spatial phase at zero for every
+    /// waveform, noise included, so the animation answers one number for the
+    /// whole frame; a constant waveform answers one number whatever the
+    /// periodicity. A caller that would otherwise resolve it across a
+    /// coordinate can resolve it once, and one that sizes a table by how
+    /// finely the answer varies needs no table at all.
+    pub fn varies_in_space(&self) -> bool {
+        self.active
+            && self.static_params.n_periods > 0
+            && self.static_params.waveform.varies_with_phase()
+    }
+
     /// The animation's value at a point, with amplitude applied.
     pub fn value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
         if !self.active {
@@ -421,5 +483,52 @@ impl PreparedAnimation {
             pulse: self.static_params.pulse,
             standing: self.static_params.standing,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::clock_bank::ClockBank;
+
+    /// Whether an animation varies in space is what decides how finely a
+    /// caller has to resolve it, so the two ways of answering "not at all" —
+    /// no periodicity and no amplitude — both have to read that way.
+    #[test]
+    fn periodicity_is_what_makes_an_animation_vary_in_space() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let prepare = |waveform: Waveform, n_periods: u16, size: f64| {
+            let mut animation = Animation::default();
+            animation.control(
+                ControlMessage::Set(StateChange::Waveform(waveform)),
+                &mut Noop,
+            );
+            animation.control(
+                ControlMessage::Set(StateChange::NPeriods(n_periods)),
+                &mut Noop,
+            );
+            animation.control(
+                ControlMessage::Set(StateChange::Size(UnipolarFloat::new(size))),
+                &mut Noop,
+            );
+            animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
+        };
+
+        assert!(prepare(Waveform::Sine, 1, 1.0).varies_in_space());
+        assert!(
+            !prepare(Waveform::Sine, 0, 1.0).varies_in_space(),
+            "no periodicity is one value everywhere"
+        );
+        assert!(
+            !prepare(Waveform::Sine, 1, 0.0).varies_in_space(),
+            "no amplitude is zero everywhere"
+        );
+        assert!(
+            !prepare(Waveform::Constant, 1, 1.0).varies_in_space(),
+            "a constant ignores the phase it is asked at, however many periods it is given"
+        );
     }
 }

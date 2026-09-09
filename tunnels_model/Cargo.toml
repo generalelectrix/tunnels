@@ -18,6 +18,7 @@ noise = "0.9.0"
 arrayvec = { version = "0.7", features = ["serde"] }
 
 tunnels_lib = { path = "../tunnels_lib" }
+tunnels_sprites = { path = "../tunnels_sprites" }
 
 # The frame payload is encoded tagless: the schema is the Rust type, so nothing
 # self-describing needs to travel with it.

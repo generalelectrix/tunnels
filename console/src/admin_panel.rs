@@ -113,6 +113,7 @@ pub struct AdminPanelState {
     fullscreen: bool,
     flip_horizontal: bool,
     capture_mouse: bool,
+    refine_large_figures: bool,
     artnet_node: bool,
 
     // Async config send / monitor launch
@@ -142,6 +143,7 @@ impl AdminPanelState {
             fullscreen: false,
             flip_horizontal: false,
             capture_mouse: false,
+            refine_large_figures: false,
             artnet_node: false,
             config_send_state: Arc::new(Mutex::new(None)),
             monitor_children: Arc::new(Mutex::new(Vec::new())),
@@ -195,7 +197,7 @@ impl AdminPanelState {
             None
         };
         let artnet_node = self.artnet_node;
-        Ok(ClientConfig::new(
+        let mut config = ClientConfig::new(
             self.video_channel,
             self.hostname.clone(),
             resolution,
@@ -204,7 +206,9 @@ impl AdminPanelState {
             transformation,
             artnet_node,
             false,
-        ))
+        );
+        config.refine_large_figures = self.refine_large_figures;
+        Ok(config)
     }
 
     /// Switch to a new target, applying dynamic defaults.
@@ -532,6 +536,7 @@ impl AdminPanelState {
             ui.checkbox(&mut self.fullscreen, "Fullscreen");
             ui.checkbox(&mut self.flip_horizontal, "Flip Horizontal");
             ui.checkbox(&mut self.capture_mouse, "Capture Mouse");
+            ui.checkbox(&mut self.refine_large_figures, "High-res figures");
             if target != Target::Monitor {
                 ui.checkbox(&mut self.artnet_node, "Run Art-Net Node");
             }

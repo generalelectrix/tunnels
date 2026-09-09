@@ -133,7 +133,7 @@ pub mod fixture {
     };
     use crate::position_bank::{Position, PositionIdx};
     use crate::tunnel::Tunnel;
-    use crate::tunnel::fixture::{bind_to_frame_state, configure_max_variation};
+    use crate::tunnel::fixture::{bind_to_frame_state, configure_figure, configure_max_variation};
     use std::time::Duration;
 
     use super::*;
@@ -171,6 +171,10 @@ pub mod fixture {
             NamedFrame {
                 name: "nested looks",
                 frame: nested_look_frame(),
+            },
+            NamedFrame {
+                name: "figures",
+                frame: figure_frame(),
             },
         ]
     }
@@ -215,6 +219,43 @@ pub mod fixture {
             }
             if let Beam::Tunnel(tunnel) = &mut channel.beam {
                 stress_tunnel(tunnel, i, n_channels);
+            }
+        }
+        mixer.update_state(ADVANCE, audio_envelope());
+
+        ShowFrame {
+            mixer,
+            clocks: clocks(),
+            palette: palette(),
+            positions: positions(),
+            audio_envelope: audio_envelope(),
+        }
+    }
+
+    /// A frame of filled figures, which is the other kind of layer a beam
+    /// expands into.
+    ///
+    /// A figure carries no per-shape geometry: what travels is which figure to
+    /// draw, where to put it, the colour model to resolve it against, and the
+    /// animations left unresolved because they vary across it. None of that is
+    /// on the path a run of segments takes, so a suite of segment frames speaks
+    /// for none of it.
+    pub fn figure_frame() -> ShowFrame {
+        let mut mixer = Mixer::new(1);
+        let n_channels = mixer.channel_count();
+        for (i, channel) in mixer.channels().enumerate() {
+            channel.level = UnipolarFloat::new(0.25 + 0.75 * (i as f64 / n_channels as f64));
+            channel.mask = i == 2;
+            channel.video_outs.clear();
+            channel.video_outs.insert(VideoChannel(i));
+            if let Beam::Tunnel(tunnel) = &mut channel.beam {
+                configure_figure(tunnel, i, n_channels);
+                bind_to_frame_state(
+                    tunnel,
+                    ColorPaletteIdx(i % PALETTE_SIZE),
+                    PositionIdx(i % POSITION_COUNT),
+                    ClockIdx(i % MAX_CLOCKS),
+                );
             }
         }
         mixer.update_state(ADVANCE, audio_envelope());
@@ -347,7 +388,9 @@ mod tests {
     use super::fixture::NamedFrame;
     use super::*;
     use crate::beam::Beam;
-    use crate::layer::{LayerCollection, ShapeGeometry};
+    use crate::layer::{
+        ColorField, FillLayer, Hsva, Layer, LayerCollection, Placement, ShapeGeometry,
+    };
     use crate::look::{Look, MAX_NESTING_DEPTH};
     use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
     use crate::tunnel::Tunnel;
@@ -369,59 +412,181 @@ mod tests {
         }
     }
 
-    /// Every field of a shape, under the name a failure should report.
-    fn shape_fields(shape: &ShapeGeometry) -> [(&'static str, f64); 12] {
+    /// Every float of a placement, under the name a failure should report.
+    ///
+    /// Destructured rather than read field by field, here and in the three
+    /// below it, so that a field added to one of these types fails to compile
+    /// instead of going quietly uncompared.
+    fn placement_fields(p: Placement) -> [(&'static str, f64); 5] {
+        let Placement {
+            x,
+            y,
+            extent_x,
+            extent_y,
+            rot_angle,
+        } = p;
         [
-            ("level", shape.level),
-            ("thickness", shape.thickness),
-            ("hue", shape.hue),
-            ("sat", shape.sat),
-            ("val", shape.val),
-            ("x", shape.x),
-            ("y", shape.y),
-            ("extent_x", shape.extent_x),
-            ("extent_y", shape.extent_y),
-            ("start", shape.start),
-            ("rot_angle", shape.rot_angle),
-            ("spin_angle", shape.spin_angle),
+            ("x", x),
+            ("y", y),
+            ("extent_x", extent_x),
+            ("extent_y", extent_y),
+            ("rot_angle", rot_angle),
         ]
+    }
+
+    /// Every float of a resolved colour, under the name a failure should
+    /// report.
+    fn color_fields(c: Hsva) -> [(&'static str, f64); 4] {
+        let Hsva {
+            hue,
+            sat,
+            val,
+            level,
+        } = c;
+        [("hue", hue), ("sat", sat), ("val", val), ("level", level)]
+    }
+
+    /// Every float of a shape, under the name a failure should report.
+    fn shape_fields(shape: &ShapeGeometry) -> impl Iterator<Item = (&'static str, f64)> {
+        let ShapeGeometry {
+            color,
+            placement,
+            thickness,
+            start,
+            spin_angle,
+        } = *shape;
+        color_fields(color)
+            .into_iter()
+            .chain(placement_fields(placement))
+            .chain([
+                ("thickness", thickness),
+                ("start", start),
+                ("spin_angle", spin_angle),
+            ])
+    }
+
+    /// Every float of a figure, under the name a failure should report.
+    fn fill_fields(fill: &FillLayer) -> impl Iterator<Item = (&'static str, f64)> {
+        let ColorField {
+            phase: _,
+            cycles,
+            center,
+            width,
+            sat,
+            val,
+            level,
+        } = fill.color;
+        placement_fields(fill.placement)
+            .into_iter()
+            .chain([
+                ("spin_speed", fill.spin_speed),
+                ("thickness", fill.thickness),
+            ])
+            .chain([
+                ("cycles", cycles),
+                ("center", center),
+                ("width", width),
+                ("sat", sat),
+                ("val", val),
+                ("level", level),
+            ])
+    }
+
+    /// How many layers of each kind a comparison walked.
+    ///
+    /// A beam expands into one kind or the other, and the two are compared by
+    /// different code, so a suite of frames that reaches only one kind leaves
+    /// the other's comparison standing unrun.
+    #[derive(Default)]
+    struct LayersCompared {
+        segments: usize,
+        fills: usize,
+    }
+
+    impl LayersCompared {
+        fn add(&mut self, other: Self) {
+            self.segments += other.segments;
+            self.fills += other.fills;
+        }
     }
 
     /// Panic unless two renders of a video channel agree bit for bit.
     ///
     /// The render is deterministic and the payload lossless, so every float is
     /// compared as its raw bits: a tolerance here would hide real drift.
-    fn assert_identical(label: &str, expected: &LayerCollection, actual: &LayerCollection) {
+    fn assert_identical(
+        label: &str,
+        expected: &LayerCollection,
+        actual: &LayerCollection,
+    ) -> LayersCompared {
+        let mut compared = LayersCompared::default();
         assert_eq!(expected.len(), actual.len(), "{label}: layer count");
         for (i, (e, a)) in expected.iter().zip(actual).enumerate() {
-            assert_eq!(
-                e.render_mode, a.render_mode,
-                "{label}: layer {i} render mode"
-            );
-            assert_eq!(e.shape_mode, a.shape_mode, "{label}: layer {i} shape mode");
-            assert_eq!(
-                e.span.to_bits(),
-                a.span.to_bits(),
-                "{label}: layer {i} span"
-            );
-            assert_eq!(
-                e.shapes.len(),
-                a.shapes.len(),
-                "{label}: layer {i} shape count"
-            );
-            for (j, (expected_shape, actual_shape)) in e.shapes.iter().zip(&a.shapes).enumerate() {
-                for ((name, ev), (_, av)) in shape_fields(expected_shape)
-                    .iter()
-                    .zip(shape_fields(actual_shape))
-                {
+            match (e, a) {
+                (Layer::Segments(e), Layer::Segments(a)) => {
+                    compared.segments += 1;
                     assert_eq!(
-                        ev.to_bits(),
-                        av.to_bits(),
-                        "{label}: layer {i} shape {j} {name}: {ev} != {av}"
+                        e.render_mode, a.render_mode,
+                        "{label}: layer {i} render mode"
                     );
+                    assert_eq!(
+                        e.segment_path, a.segment_path,
+                        "{label}: layer {i} segment path"
+                    );
+                    assert_eq!(
+                        e.span.to_bits(),
+                        a.span.to_bits(),
+                        "{label}: layer {i} span"
+                    );
+                    assert_eq!(
+                        e.shapes.len(),
+                        a.shapes.len(),
+                        "{label}: layer {i} shape count"
+                    );
+                    for (j, (expected_shape, actual_shape)) in
+                        e.shapes.iter().zip(&a.shapes).enumerate()
+                    {
+                        for ((name, ev), (_, av)) in
+                            shape_fields(expected_shape).zip(shape_fields(actual_shape))
+                        {
+                            assert_eq!(
+                                ev.to_bits(),
+                                av.to_bits(),
+                                "{label}: layer {i} shape {j} {name}: {ev} != {av}"
+                            );
+                        }
+                    }
                 }
+                (Layer::Fill(e), Layer::Fill(a)) => {
+                    compared.fills += 1;
+                    assert_eq!(e.sprite, a.sprite, "{label}: layer {i} sprite");
+                    assert_eq!(e.draw_mode, a.draw_mode, "{label}: layer {i} draw mode");
+                    assert_eq!(
+                        e.color.phase, a.color.phase,
+                        "{label}: layer {i} colour phase"
+                    );
+                    assert_eq!(
+                        e.color_anims.len(),
+                        a.color_anims.len(),
+                        "{label}: layer {i} colour animation count"
+                    );
+                    assert_eq!(
+                        e.warps.len(),
+                        a.warps.len(),
+                        "{label}: layer {i} warp count"
+                    );
+                    for ((name, ev), (_, av)) in fill_fields(e).zip(fill_fields(a)) {
+                        assert_eq!(
+                            ev.to_bits(),
+                            av.to_bits(),
+                            "{label}: layer {i} {name}: {ev} != {av}"
+                        );
+                    }
+                }
+                _ => panic!("{label}: layer {i} is a different kind of layer"),
             }
         }
+        compared
     }
 
     /// Panic unless two values print identically, naming the first line on
@@ -457,6 +622,7 @@ mod tests {
     #[test]
     fn a_round_tripped_frame_is_unchanged() {
         let mut encoder = FrameEncoder::default();
+        let mut compared = LayersCompared::default();
         for NamedFrame { name, frame } in fixture::all() {
             let wire = encoded(&mut encoder, &frame);
             println!("{name}: {} bytes on the wire", wire.len());
@@ -472,13 +638,17 @@ mod tests {
                 let actual = decoded
                     .mixer
                     .render_video_channel(video_channel, decoded.render_context());
-                assert_identical(
+                compared.add(assert_identical(
                     &format!("{name}, video channel {channel}"),
                     &expected,
                     &actual,
-                );
+                ));
             }
         }
+        // A kind of layer no fixture produces is a kind of layer this test
+        // says nothing about, however many frames it walks.
+        assert!(compared.segments > 0, "no fixture drew a run of segments");
+        assert!(compared.fills > 0, "no fixture drew a filled figure");
     }
 
     /// The same frame, named by reference rather than owned.
@@ -591,21 +761,24 @@ mod tests {
         ));
     }
 
-    /// The bytes an encoded frame is defined to be, stated without reference
-    /// to the code that produces them: the frame in postcard, and nothing
-    /// else.
+    /// The frame in postcard and nothing else: the bytes an encoder has to
+    /// produce, written the plainest way there is to write them.
     fn wire_format(frame: &ShowFrameRef) -> Vec<u8> {
         postcard::to_allocvec(frame).unwrap()
     }
 
-    /// A reused encoder writes the bytes the wire format defines, frame after
-    /// frame.
+    /// A reused encoder writes what a fresh one writes, frame after frame.
     ///
-    /// The bytes are a contract between applications rather than an internal
-    /// detail: every render client reads them, and reads them from a binary
-    /// built at another time. They are held against an independent statement
-    /// of the format, so that a change to how they are produced fails here
-    /// instead of quietly redefining what they are.
+    /// This holds the encoder and not the schema. Both sides reach the same
+    /// serde impl, so a field added to the model, or moved within it, moves
+    /// both sides together and passes here — the name notwithstanding, no byte
+    /// layout is pinned. What cannot move is the encoder: writing into a buffer
+    /// holding a previous frame has to produce what writing into an empty one
+    /// does.
+    ///
+    /// Nothing pins the layout across a change to the model, and nothing needs
+    /// to: a client and the console it renders for are the same build, so the
+    /// two ends cannot hold different ideas of the schema.
     #[test]
     fn an_encoded_frame_is_byte_for_byte_the_wire_format() {
         let frames = fixture::all();

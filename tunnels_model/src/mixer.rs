@@ -3,7 +3,7 @@ use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, time::Duration};
 use tunnels_lib::number::UnipolarFloat;
 
 /// The number of mixer channels on a single mixer page.
@@ -68,7 +68,7 @@ impl Mixer {
     ) -> LayerCollection {
         let mut video_out = Vec::new();
         // One buffer, reused across channels: a channel's layers are drained
-        // into Arcs before the next channel renders into it.
+        // into the output before the next channel renders into it.
         let mut rendered = Vec::new();
         for channel in &self.channels {
             if !channel.video_outs.contains(&video_channel) {
@@ -80,7 +80,7 @@ impl Mixer {
                 if layer.is_empty() {
                     continue;
                 }
-                video_out.push(Arc::new(layer));
+                video_out.push(layer);
             }
         }
         video_out

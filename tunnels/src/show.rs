@@ -408,7 +408,7 @@ mod test {
     use std::sync::{Arc, mpsc::channel};
 
     use tunnels_lib::number::UnipolarFloat;
-    use tunnels_model::layer::{Layer, LayerCollection, ShapeGeometry};
+    use tunnels_model::layer::{Layer, SegmentLayer, ShapeGeometry};
 
     use super::*;
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
@@ -441,7 +441,11 @@ mod test {
     }
 
     /// Render the state of the show with some assertions on structure.
-    fn check_render(show: &Show, unique_beam_count: usize) -> LayerCollection {
+    ///
+    /// Returns the segment layers, which is everything the test mode draws:
+    /// a figure carries no per-segment geometry to compare and the stress
+    /// beams are all tunnels.
+    fn check_render(show: &Show, unique_beam_count: usize) -> Vec<SegmentLayer> {
         let clocks = show.state.clocks.as_static();
         let ctx = RenderContext {
             clocks: &clocks,
@@ -451,41 +455,48 @@ mod test {
         };
 
         // Channel 0 should contain data, but none of the others.
-        let mut first_channel = show.state.mixer.render_video_channel(VideoChannel(0), ctx);
+        let first_channel = show.state.mixer.render_video_channel(VideoChannel(0), ctx);
         assert!(!first_channel.is_empty());
         for i in 1..Mixer::N_VIDEO_CHANNELS {
             let chan = show.state.mixer.render_video_channel(VideoChannel(i), ctx);
             assert_eq!(0, chan.len());
         }
 
-        for beam in first_channel.iter_mut() {
-            for seg in Arc::get_mut(beam).unwrap().shapes.iter_mut() {
+        let mut layers: Vec<SegmentLayer> = first_channel
+            .iter()
+            .map(|layer| match layer {
+                Layer::Segments(segments) => segments.clone(),
+                Layer::Fill(_) => panic!("the stress test mode draws no figures"),
+            })
+            .collect();
+        for layer in &mut layers {
+            for seg in &mut layer.shapes {
                 trunc_arc_segment(seg);
             }
         }
 
-        let mut distinct: Vec<&Arc<Layer>> = Vec::new();
-        for layer in first_channel.iter() {
-            if !distinct.iter().any(|seen| ***seen == **layer) {
+        let mut distinct: Vec<&SegmentLayer> = Vec::new();
+        for layer in &layers {
+            if !distinct.contains(&layer) {
                 distinct.push(layer);
             }
         }
         assert_eq!(distinct.len(), unique_beam_count);
-        first_channel
+        layers
     }
 
     /// Truncate the values in an arc segment to a reasonable precision.
     /// This should avoid very minor platform-dependent floating point differences.
     fn trunc_arc_segment(seg: &mut ShapeGeometry) {
-        seg.level = trunc_f64(seg.level);
+        seg.color.level = trunc_f64(seg.color.level);
         seg.thickness = trunc_f64(seg.thickness);
-        seg.hue = trunc_f64(seg.hue);
-        seg.sat = trunc_f64(seg.sat);
-        seg.val = trunc_f64(seg.val);
-        seg.extent_x = trunc_f64(seg.extent_x);
-        seg.extent_y = trunc_f64(seg.extent_y);
+        seg.color.hue = trunc_f64(seg.color.hue);
+        seg.color.sat = trunc_f64(seg.color.sat);
+        seg.color.val = trunc_f64(seg.color.val);
+        seg.placement.extent_x = trunc_f64(seg.placement.extent_x);
+        seg.placement.extent_y = trunc_f64(seg.placement.extent_y);
         seg.start = trunc_f64(seg.start);
-        seg.rot_angle = trunc_f64(seg.rot_angle);
+        seg.placement.rot_angle = trunc_f64(seg.placement.rot_angle);
     }
 
     /// Truncate a unit-float to 15 decimal places.
@@ -614,7 +625,18 @@ mod test {
                     None => {
                         failures.push(format!("{device}: no expectation"));
                     }
-                    _ => {} // match
+                    // The device emitted what the expectation says it does.
+                    Some(_) => {}
+                }
+            }
+
+            // An expectation the run produced nothing for is never reached by
+            // the loop above, which walks results and looks each one up. So a
+            // device dropped from the list leaves its recording behind forever,
+            // unverified, and nothing fails.
+            for device in expected.keys() {
+                if !results.contains_key(device) {
+                    failures.push(format!("{device}: an expectation nothing produces"));
                 }
             }
 
@@ -630,7 +652,7 @@ mod test {
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
         use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-        use tunnels_model::layer::{ColorPhase, DrawMode, RenderMode, ShapeMode, SpriteId};
+        use tunnels_model::layer::{ColorPhase, DrawMode, ShapeMode};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);
@@ -655,15 +677,15 @@ mod test {
                 T::PaletteSelection(Some(ColorPaletteIdx(0))),
             );
             t("tunnel/segments", T::Segments(4));
-            t("tunnel/blacking", T::Blacking(bip));
+            t("tunnel/blacking", T::Blacking(80));
             t("tunnel/marquee_speed", T::MarqueeSpeed(bip));
             t("tunnel/rotation_speed", T::RotationSpeed(bip));
             t("tunnel/position_x", T::PositionX(0.3));
             t("tunnel/position_y", T::PositionY(-0.2));
             t("tunnel/spin_speed", T::SpinSpeed(bip));
-            t("tunnel/render_arc", T::RenderMode(RenderMode::Arc));
-            t("tunnel/render_dot", T::RenderMode(RenderMode::Dot));
-            t("tunnel/render_saucer", T::RenderMode(RenderMode::Saucer));
+            t("tunnel/render_button_0", T::RenderModeButton(0));
+            t("tunnel/render_button_1", T::RenderModeButton(1));
+            t("tunnel/render_button_2", T::RenderModeButton(2));
             t("tunnel/mode_ellipse", T::ShapeMode(ShapeMode::Ellipse));
             t("tunnel/mode_line", T::ShapeMode(ShapeMode::Line));
             t("tunnel/mode_generated", T::ShapeMode(ShapeMode::Generated));
@@ -673,7 +695,6 @@ mod test {
             t("tunnel/phase_linear", T::ColorPhase(ColorPhase::Linear));
             t("tunnel/draw_fill", T::DrawMode(DrawMode::Fill));
             t("tunnel/draw_outline", T::DrawMode(DrawMode::Outline));
-            t("tunnel/sprite", T::Sprite(SpriteId(7)));
         }
 
         // Animation state changes.
@@ -1003,7 +1024,18 @@ mod test {
                     None => {
                         failures.push(format!("{name}: no expectation"));
                     }
-                    _ => {} // match
+                    // The mapping interpreted to what the expectation says.
+                    Some(_) => {}
+                }
+            }
+
+            // An expectation the run produced nothing for is never reached by
+            // the loop above, which walks results and looks each one up. So a
+            // state change deleted from the model leaves its recording behind
+            // forever, unverified, and nothing fails.
+            for name in expected.keys() {
+                if !results.contains_key(name) {
+                    failures.push(format!("{name}: an expectation nothing produces"));
                 }
             }
 

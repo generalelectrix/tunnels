@@ -1,4 +1,5 @@
 use crate::{
+    animation::TargetedAnimation,
     audio::{AudioInput, ShowEmitter},
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
@@ -8,7 +9,7 @@ use crate::{
     palette::ColorPalette,
     position_bank::PositionBank,
     show::{ControlMessage as ShowControlMessage, StateChange as ShowStateChange},
-    tunnel::{AnimationIdx, TargetedAnimation},
+    tunnel::AnimationIdx,
 };
 
 use log::error;

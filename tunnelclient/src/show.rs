@@ -3,13 +3,13 @@ use anyhow::{Context as _, Result, anyhow};
 use client_lib::config::ClientConfig;
 use graphics::{CircleArc, Context, clear};
 use log::{error, info};
-use opengl_graphics::{GlGraphics, OpenGL};
+use opengl_graphics::{GlGraphics, OpenGL, Texture};
 use piston_window::prelude::*;
 use sdl2_window::Sdl2Window;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use tunnelclient::draw::Draw;
+use tunnelclient::fill::Renderer;
 use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
 use tunnels_net::{FrameSubscriber, SubscriberStop};
@@ -109,6 +109,11 @@ pub struct Show {
     #[expect(unused)]
     artnet: Option<ArtnetNodeService>,
     window: PistonWindow<Sdl2Window>,
+    /// The figure geometry and the ramp textures, which live as long as the
+    /// show does. A mesh is built once and held; a ramp is rebuilt every frame
+    /// into a texture the pool hands back once the GPU has finished reading
+    /// it.
+    renderer: Renderer<Texture>,
     /// Reference instant for animating the waiting-for-frame spinner.
     start_time: Instant,
 }
@@ -142,6 +147,13 @@ impl Show {
         // broken vsync this does work to make rendering a lot smoother.
         window.set_max_fps(120);
 
+        // The figure meshes a show is likely to want, built before the first
+        // frame. The two finest densities are left out: they are reachable
+        // only when `refine_large_figures` is on, and are built per figure on
+        // first use when they are.
+        let mut renderer = Renderer::default();
+        renderer.precompute();
+
         Ok(Show {
             gl: GlGraphics::new(opengl),
             frames,
@@ -149,6 +161,7 @@ impl Show {
             cfg,
             artnet,
             window,
+            renderer,
             start_time: Instant::now(),
         })
     }
@@ -186,11 +199,20 @@ impl Show {
                 .mixer
                 .render_video_channel(self.video_channel, frame.render_context())
         });
-        self.gl.draw(args.viewport(), |c, gl| {
+        // Split apart so the renderer's own buffers can be written while the
+        // backend the closure draws through is borrowed.
+        let Self {
+            gl,
+            cfg,
+            renderer,
+            start_time,
+            ..
+        } = self;
+        gl.draw(args.viewport(), |c, gl| {
             clear([0.0, 0.0, 0.0, 1.0], gl);
             match &layers {
-                Some(layers) => layers.draw(&c, gl, &self.cfg),
-                None => draw_waiting_spinner(&c, gl, &self.cfg, self.start_time.elapsed()),
+                Some(layers) => renderer.draw(layers, &c, gl, cfg),
+                None => draw_waiting_spinner(&c, gl, cfg, start_time.elapsed()),
             }
         });
     }

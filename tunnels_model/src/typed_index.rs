@@ -1,7 +1,4 @@
 /// Generate `Index`/`IndexMut` and `From` impls for a newtype index.
-///
-/// Replaces the `typed_index_derive` crate (which depends on ancient `syn 0.14`)
-/// with an equivalent declarative macro, minus unused arithmetic impls.
 macro_rules! typed_index {
     ($idx:ident, $target:ty) => {
         impl std::ops::Index<$idx> for [$target] {

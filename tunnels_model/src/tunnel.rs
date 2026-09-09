@@ -1,21 +1,90 @@
-use crate::animation::PreparedAnimation;
+use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
-    ColorPhase, DrawMode, Layer, RenderMode, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+    ColorAdjust, ColorField, ColorPhase, DrawMode, FillLayer, Layer, Placement, RenderMode,
+    SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
-use crate::waveforms::sawtooth;
 use crate::{
-    animation::Animation, animation_target::AnimationTarget, palette::ColorPaletteIdx,
-    position_bank::PositionIdx, waveforms::WaveformArgs,
+    animation_target::AnimationTarget,
+    palette::ColorPaletteIdx,
+    position_bank::{Position, PositionIdx},
 };
 use log::error;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::sync::Once;
 use std::time::Duration;
+use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
+use tunnels_sprites::{Slot, SpriteFamily};
+
+/// How often a segment is taken out, on [-16, 16].
+///
+/// A positive interval keeps every nth segment and a negative one drops every
+/// nth, so the two signs are two readings of the same count and a beam runs
+/// from mostly dark through solid and out the other side.
+///
+/// Neither 0 nor -1 is one of these, and for different reasons: -1 takes out
+/// every segment, since every index is a multiple of one, and 0 has no meaning
+/// at all, because the remainder that decides whether a segment is drawn is not
+/// defined against it. Nothing constructs either.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+struct BlackingInterval(i8);
+
+impl BlackingInterval {
+    /// The interval a position of the blacking knob names.
+    ///
+    /// The knob's two halves are read against different spans because the
+    /// detent belongs to the lower one, which is why the travel does not
+    /// divide evenly. The bottom of the positive half absorbs the two counts
+    /// that are not intervals, so neither reaches a render.
+    fn for_knob(knob: u8) -> Self {
+        let (knob, centre) = (i32::from(knob), i32::from(KNOB_CENTRE));
+        let scaled = if knob <= centre {
+            -(17 * (centre - knob) / centre)
+        } else {
+            17 * (knob - centre) / (i32::from(KNOB_MAX) - centre)
+        };
+        let clamped = scaled.clamp(-16, 16);
+        Self(if clamped >= -1 {
+            max(clamped, 1)
+        } else {
+            clamped
+        } as i8)
+    }
+
+    /// The knob position that names this interval.
+    ///
+    /// The middle of the band of positions that name it, so a position
+    /// reported to a surface names the interval it came from.
+    ///
+    /// Found by walking the travel rather than by inverting the arithmetic:
+    /// each half of the knob truncates a division, so there is no inverse to
+    /// write, and a band is contiguous because neither half turns back on
+    /// itself.
+    fn knob(self) -> u8 {
+        let mut band = (0..=KNOB_MAX).filter(|knob| Self::for_knob(*knob) == self);
+        match (band.next(), band.next_back()) {
+            (Some(first), Some(last)) => first + (last - first) / 2,
+            (Some(only), None) => only,
+            // No interval has an empty band, since every one of them came from
+            // a position of this knob.
+            (None, _) => KNOB_CENTRE,
+        }
+    }
+
+    /// Whether the segment at this index is drawn.
+    fn keeps(self, segment: u8) -> bool {
+        let remainder = i32::from(segment) % i32::from(self.0);
+        if self.0 > 0 {
+            remainder == 0
+        } else {
+            remainder != 0
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
@@ -45,11 +114,10 @@ pub struct Tunnel {
     position_selection: Option<PositionIdx>,
     /// TODO: regularize segs interface into regular float knobs
     segs: u8,
-    /// remove segments at this interval
+    /// How often a segment is taken out.
     ///
-    /// bipolar float, internally interpreted as an int on [-16, 16]
-    /// defaults to every other chicklet removed
-    blacking: BipolarFloat,
+    /// The default takes out every other chicklet.
+    blacking: BlackingInterval,
     curr_rot_angle: Phase,
     curr_marquee_angle: Phase,
     spin_speed: BipolarFloat,
@@ -61,15 +129,21 @@ pub struct Tunnel {
     shape_mode: ShapeMode,
     /// Which coordinate of a figure indexes the color ramp.
     ///
-    /// Held at its default: no control writes to it.
+    /// No control surface carries it, so it stays wherever it is set.
     color_phase: ColorPhase,
     /// How much of a figure is painted.
     ///
-    /// Held at its default: no control writes to it.
+    /// No control surface carries it, so it stays wherever it is set.
     draw_mode: DrawMode,
     /// Which baked figure a sprite draws.
     ///
-    /// Held at its default: no control writes to it.
+    /// Set by the segment and blacking controls, which a figure mode routes
+    /// here instead of to `segs` and `blacking`: the first names a family of
+    /// the library, the second a figure within it. The whole selection is one
+    /// id rather than a pair, so a figure set outright is as good a state as
+    /// one arrived at through the knobs, and the position of both knobs falls
+    /// back out of the library's shape. Neither is derived from the fields the
+    /// other mode reads, so turning a knob in one mode leaves the other alone.
     sprite: SpriteId,
 }
 
@@ -100,7 +174,7 @@ impl Default for Tunnel {
             palette_selection: None,
             position_selection: None,
             segs: 126,
-            blacking: BipolarFloat::new(0.15),
+            blacking: BlackingInterval(2),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
             spin_speed: BipolarFloat::ZERO,
@@ -120,19 +194,142 @@ impl Default for Tunnel {
 impl Tunnel {
     const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
     const GEOM_SMOOTH_TIME: Duration = Duration::from_millis(100);
-    /// Return the blacking parameter, scaled to be an int on [-16, 16].
+    /// The family a position of the segment knob names.
     ///
-    /// If -1, return 1 (-1 implies all segments are black)
-    /// If 0, return 1
-    fn blacking_integer(&self) -> i32 {
-        let scaled = (17. * self.blacking.val()) as i32;
-        let clamped = scaled.clamp(-16, 16);
+    /// A figure has no segments, so the knob that sets how many segments a beam
+    /// draws picks which shelf of the figure library is open instead — the
+    /// same reinterpretation `Size` gets when it becomes a radial deformation
+    /// on a figure rather than a scale on a segment.
+    ///
+    /// The knob's whole travel is used and both ends are reachable: its lowest
+    /// position lands on the first family and its highest on the last. A
+    /// mapping that indexed directly would leave most of the travel dead and
+    /// put the last family out of reach, which is the kind of thing found on
+    /// stage.
+    fn family_for_segments(segs: u8) -> u16 {
+        let Some(last) = family_span() else {
+            return 0;
+        };
+        let span = u32::from(KNOB_MAX);
+        let position = u32::from(segs.min(KNOB_MAX));
+        // Rounded rather than truncated, so the top of the travel reaches the
+        // last family instead of stopping one short.
+        ((position * last + span / 2) / span) as u16
+    }
 
-        // remote the "all segments blacked" bug
-        if clamped >= -1 {
-            max(clamped, 1)
+    /// The knob position that names a family.
+    ///
+    /// Every family has a band of positions that select it; this is the middle
+    /// of that band, so a position reported to a surface selects the family it
+    /// came from when the operator turns the knob back to it.
+    fn segments_for_family(family: u16) -> u8 {
+        let Some(last) = family_span() else {
+            return 0;
+        };
+        let span = u32::from(KNOB_MAX);
+        let family = u32::from(family).min(last);
+        ((family * span + last / 2) / last) as u8
+    }
+
+    /// How far into a family a position of the blacking knob reaches.
+    ///
+    /// The knob's whole travel is spread over the family, one end on its first
+    /// figure and the other on its last. Nothing distinguishes the halves of
+    /// the travel, unlike the interval the same knob names in a segment mode: a
+    /// selection has no centre for a detent to mean.
+    fn selection_for_blacking(blacking: u8, family: SpriteFamily) -> u16 {
+        let Some(last) = family.len.checked_sub(1).filter(|l| *l > 0) else {
+            return 0;
+        };
+        // Rounded rather than truncated, so the top of the travel reaches the
+        // last figure instead of stopping one short.
+        let (knob, last, top) = (u32::from(blacking), u32::from(last), u32::from(KNOB_MAX));
+        let position = (2 * knob * last + top) / (2 * top);
+        position.min(last) as u16
+    }
+
+    /// The knob position that names a position in a family.
+    ///
+    /// The middle of the band of positions that select it, so a position
+    /// reported to a surface selects the figure it came from.
+    fn blacking_for_selection(selection: u16, family: SpriteFamily) -> u8 {
+        let Some(last) = family.len.checked_sub(1).filter(|l| *l > 0) else {
+            return KNOB_CENTRE;
+        };
+        let (selection, last) = (u32::from(selection.min(last)), u32::from(last));
+        ((2 * selection * u32::from(KNOB_MAX) + last) / (2 * last)) as u8
+    }
+
+    /// Where the figure being drawn sits in the library.
+    ///
+    /// A figure past the end of the library reads as the first one, which is
+    /// the same figure it draws.
+    fn slot(&self) -> Slot {
+        tunnels_sprites::slot(self.sprite.0).unwrap_or(Slot {
+            family: 0,
+            index: 0,
+        })
+    }
+
+    /// What the segment control reads, which depends on the mode.
+    ///
+    /// One control, two state fields: a segment mode's segment count and a figure
+    /// mode's family are set by the same knob and stored separately, so
+    /// neither is disturbed by work done in the other mode. Changing the mode
+    /// therefore moves the knob, because the surface reports state and the
+    /// state it is now reporting is a different field. That jump is the
+    /// intended behaviour and not a round trip to be stabilized: the two
+    /// mappings are unrelated, and the alternative is a surface that lies
+    /// about which figure is drawn.
+    fn segments_control(&self) -> u8 {
+        if self.shape_mode.draws_segments() {
+            self.segs - SEGMENTS_MIN
         } else {
-            clamped
+            Self::segments_for_family(self.slot().family)
+        }
+    }
+
+    /// What the blacking control reads, which depends on the mode.
+    ///
+    /// The second half of the pair the segment control opens: a segment mode
+    /// blacks segments out with it, a figure mode picks within the family the
+    /// segment control named. Families differ in length, so moving to another
+    /// one moves this knob even though the position within the family is
+    /// carried across — a surface reporting anything else would name a figure
+    /// that is not the one being drawn.
+    fn blacking_control(&self) -> u8 {
+        if self.shape_mode.draws_segments() {
+            self.blacking.knob()
+        } else {
+            let slot = self.slot();
+            match tunnels_sprites::family(slot.family) {
+                Some(family) => Self::blacking_for_selection(slot.index, family),
+                // A library with no families offers nothing to select between,
+                // so the knob has nothing to report but its detent.
+                None => KNOB_CENTRE,
+            }
+        }
+    }
+
+    /// Which render-mode button a surface should light, which depends on the
+    /// mode.
+    ///
+    /// The third of the group the segment control opens: a segment mode picks
+    /// how a segment is drawn with these buttons, a figure mode picks how much
+    /// of the figure is painted. The two settings are stored apart, so neither
+    /// is disturbed by work done in the other mode, and changing the mode
+    /// moves the buttons because the state being reported is a different
+    /// field.
+    ///
+    /// The row carries a position and nothing else, and each mode reads that
+    /// position against its own list. Neither setting is ever expressed as the
+    /// other, which they are not: how a segment is drawn and how much of a
+    /// figure is painted have nothing to say about each other.
+    fn render_mode_control(&self) -> u8 {
+        if self.shape_mode.draws_segments() {
+            variant_index(self.render_mode)
+        } else {
+            variant_index(self.draw_mode)
         }
     }
 
@@ -183,35 +380,63 @@ impl Tunnel {
 
     /// Render the current state of the tunnel.
     ///
-    /// A mode that fills an area rather than drawing a run of segments has no
-    /// geometry yet, so it draws nothing and says so once. A show holding one
-    /// is a show missing a beam, not a show that stops.
+    /// A generated figure has no geometry yet, so it draws nothing and says so
+    /// once. A show holding one is a show missing a beam, not a show that
+    /// stops.
     pub fn render(&self, level_scale: UnipolarFloat, as_mask: bool, ctx: RenderContext) -> Layer {
-        let Some(segment_path) = self.shape_mode.segment_path() else {
-            static REPORTED: Once = Once::new();
-            REPORTED.call_once(|| error!("Filled figures have no geometry yet."));
-            return Layer::new(self.render_mode, self.shape_mode, 0., Vec::new());
-        };
+        // Resolve each animation's frame-constant state once. What an animation
+        // costs is mostly deciding which clock drives it, where that clock is,
+        // where its smoother has got to and what the amplitude works out to —
+        // none of which depends on where in the figure the question is asked.
+        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] =
+            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio_envelope));
 
-        // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
-        let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
-            self.segs + 1
-        } else {
-            self.segs
-        };
-        let blacking = self.blacking_integer();
+        match self.shape_mode {
+            ShapeMode::Ellipse => Layer::Segments(self.render_segments(
+                SegmentPath::Ellipse,
+                level_scale,
+                as_mask,
+                ctx,
+                &anims,
+            )),
+            ShapeMode::Line => Layer::Segments(self.render_segments(
+                SegmentPath::Line,
+                level_scale,
+                as_mask,
+                ctx,
+                &anims,
+            )),
+            ShapeMode::Sprite => Layer::Fill(self.render_fill(level_scale, as_mask, ctx, &anims)),
+            ShapeMode::Generated => {
+                static REPORTED: Once = Once::new();
+                REPORTED.call_once(|| error!("Generated figures have no geometry yet."));
+                // Empty, so it is dropped before it reaches a renderer. The
+                // segment path is arbitrary: nothing is drawn along it.
+                Layer::Segments(SegmentLayer::new(
+                    self.render_mode,
+                    SegmentPath::Ellipse,
+                    0.,
+                    Vec::new(),
+                ))
+            }
+        }
+    }
 
-        let mut arcs = Vec::new();
-
-        let marquee_interval = 1.0 / segs as f64;
-
-        let (x_offset, y_offset) = if let Some(position_idx) = self.position_selection {
+    /// The centre of the figure this frame, and the hue its colour starts from.
+    ///
+    /// Both may be pinned to a bank shared across beams instead of to the
+    /// beam's own knobs, so both are resolved the same way for either kind of
+    /// layer.
+    fn placement_and_hue(&self, ctx: RenderContext) -> (Position, f64) {
+        let offset = if let Some(position_idx) = self.position_selection {
             // TODO: if the position index is out of range, should we fall back
             // to something besides zero?
-            let position = ctx.positions.get(position_idx).unwrap_or_default();
-            (position.x, position.y)
+            ctx.positions.get(position_idx).unwrap_or_default()
         } else {
-            (self.x_offset.val(), self.y_offset.val())
+            Position {
+                x: self.x_offset.val(),
+                y: self.y_offset.val(),
+            }
         };
 
         let base_hue = if let Some(palette_idx) = self.palette_selection {
@@ -225,28 +450,118 @@ impl Tunnel {
         } else {
             self.col_center.val()
         };
+        (offset, base_hue)
+    }
 
-        // Resolve each animation's frame-constant state once. What an animation
-        // costs is mostly deciding which clock drives it, where that clock is,
-        // where its smoother has got to and what the amplitude works out to —
-        // none of which depends on the segment asking.
-        let anims: [(PreparedAnimation, AnimationTarget); N_ANIM] = std::array::from_fn(|i| {
-            (
-                self.anims[i]
-                    .animation
-                    .prepare(ctx.clocks, ctx.audio_envelope),
-                self.anims[i].target,
-            )
-        });
+    /// Render this tunnel as a filled figure.
+    ///
+    /// A figure is one shape rather than a run of them, so a target that means
+    /// the same thing everywhere on it — rotation, thickness, position — is
+    /// resolved here into a single number. What is left is the targets that
+    /// vary from point to point, which travel with the layer to wherever the
+    /// figure's own geometry is.
+    fn render_fill(
+        &self,
+        level_scale: UnipolarFloat,
+        as_mask: bool,
+        ctx: RenderContext,
+        anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
+    ) -> FillLayer {
+        let (offset, base_hue) = self.placement_and_hue(ctx);
+
+        // A figure has no segment index and no angle around a ring, so a
+        // uniform target is asked for its value at the start of its cycle.
+        let uniform = |target: AnimationTarget| -> f64 {
+            anims
+                .iter()
+                .filter(|a| a.target == target)
+                .map(|a| a.animation.value(Phase::ZERO, 0))
+                .sum()
+        };
+
+        let placement = Placement {
+            x: offset.x + uniform(AnimationTarget::PositionX),
+            y: offset.y + uniform(AnimationTarget::PositionY),
+            // The tunnel's ellipse formula, onto the figure's two half-extents.
+            // A size animation is not folded in here: on a figure it deforms
+            // the outline point by point rather than scaling the whole of it.
+            extent_x: self.size.val().val() * MAX_ASPECT_RATIO * self.aspect_ratio.val().val(),
+            extent_y: self.size.val().val(),
+            rot_angle: (self.curr_rot_angle + uniform(AnimationTarget::Rotation)).val(),
+        };
+
+        FillLayer {
+            sprite: self.sprite,
+            placement,
+            spin_speed: self.spin_speed.val(),
+            thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
+                .abs(),
+            draw_mode: self.draw_mode,
+            color: self.color_field(base_hue, level_scale, as_mask),
+            color_anims: fill_animations(anims, AnimationTarget::is_color),
+            warps: fill_animations(anims, |target| !target.is_color()),
+        }
+    }
+
+    /// The colour model this beam's shapes are resolved from.
+    ///
+    /// A mask paints opaque black, punching a hole in whatever lies under it,
+    /// so it carries no colour of its own however the colour knobs are set.
+    fn color_field(&self, base_hue: f64, level_scale: UnipolarFloat, as_mask: bool) -> ColorField {
+        if as_mask {
+            ColorField {
+                phase: self.color_phase,
+                cycles: 0.,
+                center: 0.,
+                width: 0.,
+                sat: 0.,
+                val: 0.,
+                level: 1.0,
+            }
+        } else {
+            ColorField {
+                phase: self.color_phase,
+                cycles: (COLOR_SPREAD_SCALE * self.col_spread.val()).floor(),
+                center: base_hue,
+                width: self.col_width.val(),
+                sat: self.col_sat.val(),
+                val: 1.0,
+                level: level_scale.val(),
+            }
+        }
+    }
+
+    /// Render this tunnel as a run of segments along a path.
+    fn render_segments(
+        &self,
+        segment_path: SegmentPath,
+        level_scale: UnipolarFloat,
+        as_mask: bool,
+        ctx: RenderContext,
+        anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
+    ) -> SegmentLayer {
+        // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
+        let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
+            self.segs + 1
+        } else {
+            self.segs
+        };
+
+        let mut arcs = Vec::new();
+
+        let marquee_interval = 1.0 / segs as f64;
+
+        let (offset, base_hue) = self.placement_and_hue(ctx);
+        let color_field = self.color_field(base_hue, level_scale, as_mask);
+        // A mask paints one colour whatever an animation adds, so it is
+        // resolved once here rather than per segment.
+        let mask = color_field
+            .is_mask()
+            .then(|| color_field.sample(Phase::ZERO, ColorAdjust::default()));
 
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
-            let should_draw_segment = if blacking > 0 {
-                (seg_num as i32) % blacking == 0
-            } else {
-                (seg_num as i32) % blacking != 0
-            };
-            if !should_draw_segment {
+            if !self.blacking.keeps(seg_num) {
                 continue;
             }
 
@@ -264,11 +579,11 @@ impl Tunnel {
             let mut marquee_angle_adjust = 0.;
             let mut spin_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
-            for (animation, target) in &anims {
-                let anim_value = animation.value(rel_angle, seg_num as usize);
+            for anim in anims {
+                let anim_value = anim.animation.value(rel_angle, seg_num as usize);
 
                 use AnimationTarget::*;
-                match target {
+                match anim.target {
                     Rotation => rot_angle_adjust += anim_value,
                     MarqueeRotation => marquee_angle_adjust += anim_value,
                     Thickness => thickness_adjust += anim_value,
@@ -289,8 +604,8 @@ impl Tunnel {
             let thickness_allowance = self.thickness.val() * THICKNESS_SCALE / 2.;
 
             // geometry calculations
-            let x_center = x_offset + x_adjust;
-            let y_center = y_offset + y_adjust;
+            let x_center = offset.x + x_adjust;
+            let y_center = offset.y + y_adjust;
 
             // compute path geometry parameters
             let (extent_x, extent_y) = match segment_path {
@@ -324,57 +639,34 @@ impl Tunnel {
             let rot_angle = self.curr_rot_angle + rot_angle_adjust;
             let spin_angle = self.curr_spin_angle + spin_angle_adjust;
 
-            let arc = if as_mask {
-                ShapeGeometry {
-                    level: 1.0,
-                    thickness: stroke_weight,
-                    hue: 0.0,
-                    sat: 0.0,
-                    val: 0.0,
+            // A segment's index around the path is what indexes the colour
+            // ramp, standing in for the coordinate a figure is sampled at.
+            let color = mask.unwrap_or_else(|| {
+                color_field.sample(
+                    rel_angle * color_field.cycles,
+                    ColorAdjust {
+                        center: col_center_adjust,
+                        width: col_width_adjust,
+                        sat: col_sat_adjust,
+                    },
+                )
+            });
+
+            arcs.push(ShapeGeometry {
+                color,
+                placement: Placement {
                     x: x_center,
                     y: y_center,
                     extent_x,
                     extent_y,
-                    start: start_angle.val(),
                     rot_angle: rot_angle.val(),
-                    spin_angle: spin_angle.val(),
-                }
-            } else {
-                let hue = Phase::new(
-                    (base_hue + col_center_adjust)
-                        + (0.5
-                            * (self.col_width.val() + col_width_adjust)
-                            * sawtooth(&WaveformArgs {
-                                phase_spatial: rel_angle
-                                    * ((COLOR_SPREAD_SCALE * self.col_spread.val()).floor()),
-                                phase_temporal: Phase::ZERO,
-                                smoothing: UnipolarFloat::ZERO,
-                                duty_cycle: UnipolarFloat::ONE,
-                                pulse: false,
-                                standing: false,
-                            })),
-                );
-
-                let sat = UnipolarFloat::new(self.col_sat.val() + col_sat_adjust);
-
-                ShapeGeometry {
-                    level: level_scale.val(),
-                    thickness: stroke_weight,
-                    hue: hue.val(),
-                    sat: sat.val(),
-                    val: 1.0,
-                    x: x_center,
-                    y: y_center,
-                    extent_x,
-                    extent_y,
-                    start: start_angle.val(),
-                    rot_angle: rot_angle.val(),
-                    spin_angle: spin_angle.val(),
-                }
-            };
-            arcs.push(arc);
+                },
+                thickness: stroke_weight,
+                start: start_angle.val(),
+                spin_angle: spin_angle.val(),
+            });
         }
-        Layer::new(self.render_mode, self.shape_mode, marquee_interval, arcs)
+        SegmentLayer::new(self.render_mode, segment_path, marquee_interval, arcs)
     }
 
     /// Emit the current value of all controllable tunnel state.
@@ -390,15 +682,14 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(ColorSpread(self.col_spread));
         emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat));
         emitter.emit_tunnel_state_change(PaletteSelection(self.palette_selection));
-        emitter.emit_tunnel_state_change(Segments(self.segs));
-        emitter.emit_tunnel_state_change(Blacking(self.blacking));
+        emitter.emit_tunnel_state_change(Segments(self.segments_control()));
+        emitter.emit_tunnel_state_change(Blacking(self.blacking_control()));
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
-        emitter.emit_tunnel_state_change(RenderMode(self.render_mode));
+        emitter.emit_tunnel_state_change(RenderModeButton(self.render_mode_control()));
         emitter.emit_tunnel_state_change(ColorPhase(self.color_phase));
         emitter.emit_tunnel_state_change(DrawMode(self.draw_mode));
-        emitter.emit_tunnel_state_change(Sprite(self.sprite));
         emitter.emit_tunnel_state_change(ShapeMode(self.shape_mode));
     }
 
@@ -461,15 +752,52 @@ impl Tunnel {
             ColorSpread(v) => self.col_spread = v,
             ColorSaturation(v) => self.col_sat = v,
             PaletteSelection(v) => self.palette_selection = v,
-            Segments(v) => self.segs = v,
-            Blacking(v) => self.blacking = v,
+            // One knob, two fields: a segment mode counts segments with it and a
+            // figure mode opens a family of the library with it.
+            Segments(v) => {
+                if self.shape_mode.draws_segments() {
+                    self.segs = SEGMENTS_MIN + v.min(KNOB_MAX);
+                } else {
+                    let index = self.slot().index;
+                    if let Some(family) = tunnels_sprites::family(Self::family_for_segments(v)) {
+                        // A family shorter than the position asked for gives up
+                        // its last figure rather than reaching into the next
+                        // one, so the two controls stay independent.
+                        self.sprite = SpriteId(family.member(index));
+                    }
+                    // The position within the family carried across, but the
+                    // knob that names it did not: a shorter family puts the
+                    // same position somewhere else in the travel.
+                    emitter.emit_tunnel_state_change(Blacking(self.blacking_control()));
+                }
+            }
+            // The other half of that pair: a segment mode blacks segments out with
+            // it and a figure mode picks within the open family.
+            Blacking(v) => {
+                if self.shape_mode.draws_segments() {
+                    self.blacking = BlackingInterval::for_knob(v);
+                } else if let Some(family) = tunnels_sprites::family(self.slot().family) {
+                    self.sprite = SpriteId(family.member(Self::selection_for_blacking(v, family)));
+                }
+            }
             PositionX(v) => self.x_offset.set_target(v),
             PositionY(v) => self.y_offset.set_target(v),
             SpinSpeed(v) => self.spin_speed = v,
-            RenderMode(v) => self.render_mode = v,
+            // One row of buttons, two fields: a segment mode picks how a
+            // segment is drawn with them and a figure mode picks how much of
+            // the figure is painted. A position past the end of the mode's own
+            // list names nothing, and changes nothing.
+            RenderModeButton(v) => {
+                if self.shape_mode.draws_segments() {
+                    if let Some(mode) = variant_at(v) {
+                        self.render_mode = mode;
+                    }
+                } else if let Some(mode) = variant_at(v) {
+                    self.draw_mode = mode;
+                }
+            }
             ColorPhase(v) => self.color_phase = v,
             DrawMode(v) => self.draw_mode = v,
-            Sprite(v) => self.sprite = v,
             ShapeMode(v) => {
                 self.shape_mode = v;
                 // Which controls apply depends on the mode, and a surface
@@ -481,6 +809,24 @@ impl Tunnel {
         };
         emitter.emit_tunnel_state_change(sc);
     }
+}
+
+/// The animations driving one half of a figure, resolved for this frame.
+///
+/// Split in the model rather than in the renderer because the two halves are
+/// answered in different places — the colour ones once per ramp texel, the
+/// rest once per point of the figure — and neither wants to walk past the
+/// other. An animation contributing nothing is dropped rather than asked for a
+/// zero tens of thousands of times.
+fn fill_animations(
+    anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
+    keep: impl Fn(AnimationTarget) -> bool,
+) -> Vec<TargetedAnimation<PreparedAnimation>> {
+    anims
+        .iter()
+        .filter(|a| a.animation.is_active() && a.target.varies_across_figure() && keep(a.target))
+        .cloned()
+        .collect()
 }
 
 /// Scale speeds with a quadratic curve.
@@ -497,15 +843,14 @@ fn scale_speed(speed: BipolarFloat) -> BipolarFloat {
 pub struct AnimationIdx(pub usize);
 typed_index!(AnimationIdx, TargetedAnimation);
 
-/// Combination of an animation and a tunnel parameter target for that animation.
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct TargetedAnimation {
-    pub animation: Animation,
-    pub target: AnimationTarget,
-}
-
 // TODO: move some of these into associated constants
 pub const N_ANIM: usize = 4;
+/// How many render-mode buttons a surface offers.
+///
+/// The row drives two settings and carries only a position, so it needs one
+/// button per variant of each. A surface offering a different number has a
+/// button that names nothing, or a setting no button can reach.
+pub const N_RENDER_MODE_BUTTONS: usize = RenderMode::VARIANTS.len();
 /// legacy tuning parameter; tunnel rotated this many radial units/frame at 30fps
 const ROT_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; marquee rotated this many radial units/frame at 30fps
@@ -513,6 +858,45 @@ const MARQUEE_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; spin rotated this many radial units/frame at 30fps
 const SPIN_SPEED_SCALE: f64 = 0.023;
 const COLOR_SPREAD_SCALE: f64 = 16.;
+/// The top of a knob's raw travel, and the position its detent sits at.
+///
+/// A surface reports a knob in seven bits, so a position is one of 128 and the
+/// centre is not the middle of them: the detent is the last position of the
+/// lower half, leaving that half one longer than the upper.
+pub const KNOB_MAX: u8 = 127;
+pub const KNOB_CENTRE: u8 = 64;
+/// The segment counts the segment knob's travel covers.
+///
+/// The knob counts from zero and the count from one, because a beam of no
+/// segments is not a beam.
+pub const SEGMENTS_MIN: u8 = 1;
+pub const SEGMENTS_MAX: u8 = SEGMENTS_MIN + KNOB_MAX;
+
+/// Where a variant sits in its own list of variants.
+///
+/// A control surface offers one button per variant in that order, so this is
+/// also the position of the button that names it.
+fn variant_index<T: VariantArray + PartialEq>(value: T) -> u8 {
+    T::VARIANTS
+        .iter()
+        .position(|variant| *variant == value)
+        .expect("a variant is in its own list of variants") as u8
+}
+
+/// The variant a button position names, or `None` if the row is longer than
+/// the list.
+fn variant_at<T: VariantArray + Copy>(button: u8) -> Option<T> {
+    T::VARIANTS.get(usize::from(button)).copied()
+}
+
+/// The largest family index this build carries, or `None` if there is nothing
+/// to choose between.
+fn family_span() -> Option<u32> {
+    match tunnels_sprites::families().len() {
+        0 | 1 => None,
+        n => Some(n as u32 - 1),
+    }
+}
 /// X nudge increment
 const X_NUDGE: f64 = 0.025;
 /// Y nudge increment
@@ -535,16 +919,21 @@ pub enum StateChange {
     ColorSpread(UnipolarFloat),
     ColorSaturation(UnipolarFloat),
     PaletteSelection(Option<ColorPaletteIdx>),
-    Segments(u8), // FIXME integer knob
-    Blacking(BipolarFloat),
+    /// Where the segment knob is standing, as the raw position a surface
+    /// sends. What it means is the mode's business, not the message's.
+    Segments(u8),
+    /// Where the blacking knob is standing, as the raw position a surface
+    /// sends. What it means is the mode's business, not the message's.
+    Blacking(u8),
     PositionX(f64),
     PositionY(f64),
     SpinSpeed(BipolarFloat),
-    RenderMode(RenderMode),
+    /// Which of the render-mode buttons is lit, as its position in the row.
+    /// What it means is the mode's business, not the message's.
+    RenderModeButton(u8),
     ShapeMode(ShapeMode),
     ColorPhase(ColorPhase),
     DrawMode(DrawMode),
-    Sprite(SpriteId),
 }
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -569,63 +958,451 @@ pub trait EmitStateChange {
 mod test {
     use super::*;
     use crate::clock_bank::ClockBank;
+    use crate::layer::DrawMode;
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use strum::VariantArray;
+
+    /// An emitter for a test that is about what the tunnel holds rather than
+    /// what it reports.
+    struct Silent;
+    impl EmitStateChange for Silent {
+        fn emit_tunnel_state_change(&mut self, _: StateChange) {}
+    }
+
+    /// An emitter that keeps what it was told, rendered.
+    #[derive(Default)]
+    struct Recorder(Vec<String>);
+    impl EmitStateChange for Recorder {
+        fn emit_tunnel_state_change(&mut self, sc: StateChange) {
+            self.0.push(format!("{sc:?}"));
+        }
+    }
 
     /// A surface blanks the controls a figure has no use for, so a mode that
     /// does use them has to hear their values again. Restating the whole
     /// tunnel is what leaves nothing dark that the new mode reads.
     #[test]
     fn changing_the_mode_restates_the_controls_a_mode_can_blank() {
-        struct Recorder(Vec<String>);
-        impl EmitStateChange for Recorder {
-            fn emit_tunnel_state_change(&mut self, sc: StateChange) {
-                self.0.push(format!("{sc:?}"));
-            }
-        }
-
-        let mut recorder = Recorder(Vec::new());
+        let mut recorder = Recorder::default();
         Tunnel::default()
             .handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut recorder);
 
         let heard = |name: &str| recorder.0.iter().any(|sc| sc.starts_with(name));
         assert!(heard("MarqueeSpeed"), "{:?}", recorder.0);
-        assert!(heard("RenderMode"), "{:?}", recorder.0);
+        assert!(heard("RenderModeButton"), "{:?}", recorder.0);
         assert!(heard("ShapeMode"), "{:?}", recorder.0);
+        // The segment and blacking controls read different fields in each
+        // mode, so a mode change has to restate them or the surface shows the
+        // other mode's values.
+        assert!(heard("Segments"), "{:?}", recorder.0);
+        assert!(heard("Blacking"), "{:?}", recorder.0);
+
+        // The render-mode buttons are the same story, and what they are
+        // restated as is the point: a figure mode reports the button that
+        // names its draw mode, not the one the segment mode left lit.
+        let mut recorder = Recorder::default();
+        Tunnel {
+            render_mode: RenderMode::Dot,
+            draw_mode: DrawMode::Both,
+            ..Default::default()
+        }
+        .handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut recorder);
+        let names_both = format!("RenderModeButton({})", variant_index(DrawMode::Both));
+        assert!(recorder.0.contains(&names_both), "{:?}", recorder.0);
     }
 
     /// A show runs in front of an audience, so a mode with nothing to draw
     /// draws nothing rather than stopping the frame.
     #[test]
-    fn a_figure_mode_draws_nothing_without_panicking() {
-        for shape_mode in [ShapeMode::Generated, ShapeMode::Sprite] {
-            let tunnel = Tunnel {
-                shape_mode,
+    fn a_generated_figure_draws_nothing_without_panicking() {
+        let tunnel = Tunnel {
+            shape_mode: ShapeMode::Generated,
+            ..Default::default()
+        };
+        assert!(
+            render_fixture(&tunnel).is_empty(),
+            "a generated figure has nothing to contribute yet"
+        );
+    }
+
+    /// A sprite's layer says where to draw a figure and how, and carries no
+    /// geometry: the figure itself is baked into the client.
+    #[test]
+    fn a_sprite_renders_a_placed_figure() {
+        let tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            sprite: SpriteId(7),
+            ..Default::default()
+        };
+        let Layer::Fill(fill) = render_fixture(&tunnel) else {
+            panic!("a sprite renders a figure, not segments");
+        };
+        assert_eq!(fill.sprite, SpriteId(7));
+        // The default half-extents are the ellipse formula's, so a figure and
+        // a tunnel at the same knob settings cover the same ground.
+        assert_eq!(fill.placement.extent_x, 0.5);
+        assert_eq!(fill.placement.extent_y, 0.5);
+        assert!(fill.color.is_uniform(), "the default colour is one colour");
+    }
+
+    /// The segment and blacking controls write the fields their mode reads and
+    /// leave the others alone, so work done in one mode survives a trip
+    /// through the other.
+    #[test]
+    fn the_figure_controls_are_routed_by_the_mode() {
+        let mut tunnel = Tunnel::default();
+        assert!(
+            tunnel.shape_mode.draws_segments(),
+            "the default draws segments"
+        );
+        // The middle of the band of positions naming its interval, so the
+        // position a surface is told to stand at is the one it was given.
+        let blacking = 88;
+        let segments = 36;
+
+        tunnel.handle_state_change(StateChange::Segments(segments), &mut Silent);
+        tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
+        let saucer = variant_index(RenderMode::Saucer);
+        tunnel.handle_state_change(StateChange::RenderModeButton(saucer), &mut Silent);
+        assert_eq!(tunnel.segs, segments + SEGMENTS_MIN);
+        assert_eq!(tunnel.render_mode, RenderMode::Saucer);
+        assert_eq!(
+            tunnel.draw_mode,
+            DrawMode::default(),
+            "the draw mode is untouched"
+        );
+        assert_eq!(
+            tunnel.render_mode_control(),
+            saucer,
+            "a segment mode reports the render mode"
+        );
+        assert_eq!(tunnel.blacking, BlackingInterval::for_knob(blacking));
+        assert_eq!(
+            tunnel.sprite,
+            SpriteId::default(),
+            "the figure is untouched"
+        );
+        assert_eq!(
+            tunnel.segments_control(),
+            segments,
+            "a segment mode reports segs"
+        );
+        assert_eq!(
+            tunnel.blacking_control(),
+            blacking,
+            "a segment mode reports blacking"
+        );
+
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut Silent);
+        tunnel.handle_state_change(StateChange::Segments(90), &mut Silent);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_MAX), &mut Silent);
+        let index = Tunnel::family_for_segments(90);
+        let family = tunnels_sprites::family(index).expect("the knob names a family");
+        assert_eq!(
+            tunnel.sprite,
+            SpriteId(family.member(family.len - 1)),
+            "the far end of the blacking knob is the last figure of the family"
+        );
+        assert_eq!(
+            tunnel.segs,
+            segments + SEGMENTS_MIN,
+            "the segment count is untouched"
+        );
+        assert_eq!(
+            tunnel.blacking,
+            BlackingInterval::for_knob(blacking),
+            "the blacking is untouched"
+        );
+        assert_eq!(
+            tunnel.segments_control(),
+            Tunnel::segments_for_family(index),
+            "a figure mode reports the family"
+        );
+
+        // The same three buttons, naming how much of a figure is painted.
+        let outline = variant_index(DrawMode::Outline);
+        tunnel.handle_state_change(StateChange::RenderModeButton(outline), &mut Silent);
+        assert_eq!(tunnel.draw_mode, DrawMode::Outline);
+        assert_eq!(
+            tunnel.render_mode,
+            RenderMode::Saucer,
+            "the render mode is untouched"
+        );
+        assert_eq!(
+            tunnel.render_mode_control(),
+            outline,
+            "a figure mode reports the draw mode as the button that names it"
+        );
+
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut Silent);
+        assert_eq!(
+            tunnel.segments_control(),
+            segments,
+            "the segment count came back unchanged"
+        );
+        assert_eq!(
+            tunnel.blacking_control(),
+            blacking,
+            "the blacking came back unchanged"
+        );
+        assert_eq!(
+            tunnel.render_mode_control(),
+            saucer,
+            "the render mode came back unchanged"
+        );
+    }
+
+    /// One row of buttons drives two lists, so the lists have to be the same
+    /// length and a position has to mean the same thing going in as coming
+    /// back out.
+    ///
+    /// Nothing converts between the two settings any more, so no exhaustive
+    /// match fails to build when a variant is added to one list and not the
+    /// other. This is what catches it instead: the row would have a position
+    /// that one mode reads and the other ignores.
+    #[test]
+    fn a_button_position_means_the_same_thing_to_both_modes() {
+        assert_eq!(
+            RenderMode::VARIANTS.len(),
+            DrawMode::VARIANTS.len(),
+            "one row of buttons drives both"
+        );
+
+        for button in 0..RenderMode::VARIANTS.len() as u8 {
+            for (mode, reads_render) in [(ShapeMode::Ellipse, true), (ShapeMode::Sprite, false)] {
+                let mut tunnel = Tunnel {
+                    shape_mode: mode,
+                    ..Default::default()
+                };
+                tunnel.handle_state_change(StateChange::RenderModeButton(button), &mut Silent);
+                assert_eq!(
+                    tunnel.render_mode_control(),
+                    button,
+                    "button {button} came back as another position in {mode:?}"
+                );
+                if reads_render {
+                    assert_eq!(
+                        tunnel.render_mode,
+                        RenderMode::VARIANTS[usize::from(button)]
+                    );
+                } else {
+                    assert_eq!(tunnel.draw_mode, DrawMode::VARIANTS[usize::from(button)]);
+                }
+            }
+        }
+    }
+
+    /// The knob positions reported for a figure select that figure, so an
+    /// operator who turns the knobs back to where the surface put them gets
+    /// the figure the surface named.
+    #[test]
+    fn the_reported_knob_positions_select_the_figure_they_name() {
+        for id in 0..tunnels_sprites::count() as u16 {
+            let mut tunnel = Tunnel {
+                shape_mode: ShapeMode::Sprite,
+                sprite: SpriteId(id),
                 ..Default::default()
             };
-            let layer = tunnel.render(
-                UnipolarFloat::ONE,
-                false,
-                RenderContext {
-                    clocks: &ClockBank::default().as_static(),
-                    palette: &ColorPalette::default(),
-                    positions: &PositionBank::default(),
-                    audio_envelope: UnipolarFloat::ZERO,
-                },
-            );
-            assert!(
-                layer.is_empty(),
-                "{shape_mode:?} has no segments to contribute"
+            let segs = tunnel.segments_control();
+            let blacking = tunnel.blacking_control();
+            assert!(segs <= KNOB_MAX, "figure {id}");
+
+            tunnel.sprite = SpriteId(0);
+            tunnel.handle_state_change(StateChange::Segments(segs), &mut Silent);
+            tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
+            assert_eq!(
+                tunnel.sprite,
+                SpriteId(id),
+                "the positions reported for figure {id} select another figure"
             );
         }
+    }
+
+    /// Both knobs' travel covers everything they choose between and reaches
+    /// both ends, because a knob that cannot get to the last one is found on
+    /// stage.
+    #[test]
+    fn the_figure_knobs_reach_every_family_and_every_figure_in_one() {
+        let families = tunnels_sprites::families();
+        assert_eq!(Tunnel::family_for_segments(0), 0, "the floor");
+        assert_eq!(
+            Tunnel::family_for_segments(KNOB_MAX),
+            families.len() as u16 - 1,
+            "the ceiling"
+        );
+        let mut reached: Vec<u16> = (0..=KNOB_MAX).map(Tunnel::family_for_segments).collect();
+        assert!(
+            reached.windows(2).all(|w| w[0] <= w[1]),
+            "turning the knob up went back to an earlier family"
+        );
+        reached.dedup();
+        assert_eq!(
+            reached.len(),
+            families.len(),
+            "the knob selects {} of {} families",
+            reached.len(),
+            families.len()
+        );
+
+        for family in families {
+            let ends = [0, KNOB_MAX].map(|v| Tunnel::selection_for_blacking(v, *family));
+            assert_eq!(ends, [0, family.len - 1], "the {} family", family.name);
+            let mut reached: Vec<u16> = (0..=KNOB_MAX)
+                .map(|v| Tunnel::selection_for_blacking(v, *family))
+                .collect();
+            assert!(
+                reached.windows(2).all(|w| w[0] <= w[1]),
+                "turning the knob up went back in the {} family",
+                family.name
+            );
+            reached.dedup();
+            assert_eq!(
+                reached.len(),
+                usize::from(family.len),
+                "the knob selects {} of {} figures in the {} family",
+                reached.len(),
+                family.len,
+                family.name
+            );
+        }
+    }
+
+    /// Every knob position gives the interval it names, over the whole travel,
+    /// and the position reported back for that interval names it again.
+    ///
+    /// The interval is a ratio of the knob's position to the span its half of
+    /// the travel covers, truncated. Stated here as that ratio, in floating
+    /// point, against the integer arithmetic that computes it — the two agree
+    /// for all 128 positions, and an interval is a count of segments, so a
+    /// position that landed a step either side of the ratio would black the
+    /// wrong ones.
+    ///
+    /// The round trip is what a surface sees: an interval is reported as a
+    /// position, and an operator who leaves that position alone must not have
+    /// the beam change under them.
+    #[test]
+    fn the_blacking_interval_is_the_ratio_the_knob_stands_at() {
+        for knob in 0..=KNOB_MAX {
+            let centre = f64::from(KNOB_CENTRE);
+            let span = if knob <= KNOB_CENTRE {
+                centre
+            } else {
+                f64::from(KNOB_MAX) - centre
+            };
+            let ratio = (17.0 * (f64::from(knob) - centre) / span) as i32;
+            let clamped = ratio.clamp(-16, 16);
+            let expected = if clamped >= -1 {
+                max(clamped, 1)
+            } else {
+                clamped
+            };
+
+            let interval = BlackingInterval::for_knob(knob);
+            assert_eq!(
+                interval,
+                BlackingInterval(expected as i8),
+                "knob position {knob} names the wrong interval"
+            );
+            assert_eq!(
+                BlackingInterval::for_knob(interval.knob()),
+                interval,
+                "the position reported for knob {knob} names another interval"
+            );
+        }
+    }
+
+    /// No knob position gives an interval of 0 or -1: the first is the divisor
+    /// of a remainder and cannot be zero, and the second takes out every
+    /// segment, leaving a beam indistinguishable from a broken one.
+    #[test]
+    fn no_knob_position_leaves_nothing_to_look_at() {
+        for knob in 0..=KNOB_MAX {
+            let interval = BlackingInterval::for_knob(knob).0;
+            assert!(
+                interval >= 1 || interval <= -2,
+                "knob position {knob} gives an interval of {interval}"
+            );
+        }
+    }
+
+    /// Opening another family keeps the position within it, and reports the
+    /// knob position that names where the figure now sits.
+    #[test]
+    fn changing_family_carries_the_position_within_it() {
+        let mut tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            ..Default::default()
+        };
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut Silent);
+        let index = tunnel.slot().index;
+        assert!(index > 0, "the middle of a family is not its first figure");
+
+        let mut recorder = Recorder::default();
+        tunnel.handle_state_change(StateChange::Segments(KNOB_MAX), &mut recorder);
+        let slot = tunnel.slot();
+        assert_eq!(slot.family, tunnels_sprites::families().len() as u16 - 1);
+        let family = tunnels_sprites::family(slot.family).expect("the last family");
+        assert_eq!(
+            slot.index,
+            index.min(family.len - 1),
+            "the position within the family did not carry across"
+        );
+        assert!(
+            recorder.0.iter().any(|sc| sc.starts_with("Blacking")),
+            "the surface was not told where the selection knob now sits: {:?}",
+            recorder.0
+        );
+    }
+
+    /// A masked figure paints opaque black, punching a hole in what is under
+    /// it — the same value a masked segment carries.
+    #[test]
+    fn a_masked_figure_is_opaque_black() {
+        let tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            col_width: UnipolarFloat::ONE,
+            col_spread: UnipolarFloat::ONE,
+            ..Default::default()
+        };
+        let Layer::Fill(fill) = tunnel.render(
+            UnipolarFloat::ONE,
+            true,
+            RenderContext {
+                clocks: &ClockBank::default().as_static(),
+                palette: &ColorPalette::default(),
+                positions: &PositionBank::default(),
+                audio_envelope: UnipolarFloat::ZERO,
+            },
+        ) else {
+            panic!("a sprite renders a figure, not segments");
+        };
+        assert_eq!(fill.color.val, 0.0);
+        assert_eq!(fill.color.level, 1.0);
+        assert!(
+            fill.color.is_uniform(),
+            "a mask is one colour however the colour knobs are set"
+        );
+    }
+
+    fn render_fixture(tunnel: &Tunnel) -> Layer {
+        tunnel.render(
+            UnipolarFloat::ONE,
+            false,
+            RenderContext {
+                clocks: &ClockBank::default().as_static(),
+                palette: &ColorPalette::default(),
+                positions: &PositionBank::default(),
+                audio_envelope: UnipolarFloat::ZERO,
+            },
+        )
     }
 }
 
 pub mod fixture {
-    use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::layer::{Layer, LayerCollection, RenderMode, ShapeMode};
+    use crate::layer::{ColorPhase, DrawMode, Layer, LayerCollection, RenderMode, ShapeMode};
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
     use crate::animation::{
@@ -666,7 +1443,7 @@ pub mod fixture {
     }
 
     fn snapshot(layer: Layer) -> LayerCollection {
-        vec![Arc::new(layer)]
+        vec![layer]
     }
 
     /// Configure a tunnel for stress testing.
@@ -687,7 +1464,7 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(StateChange::MarqueeSpeed(marquee_speed), &mut NoopEmitter);
-        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut NoopEmitter);
 
         for (i, anim) in tunnel.anims.iter_mut().enumerate() {
             anim.animation.control(
@@ -771,12 +1548,23 @@ pub mod fixture {
         snapshot(render_default(&tunnel))
     }
 
+    /// Set how many segments a beam draws, the way a control surface would.
+    ///
+    /// The knob counts from zero and a segment count from one, so a fixture
+    /// states the count it wants drawn and this finds the position for it.
+    fn set_segments(tunnel: &mut Tunnel, segments: u8) {
+        tunnel.handle_state_change(
+            StateChange::Segments(segments - SEGMENTS_MIN),
+            &mut NoopEmitter,
+        );
+    }
+
     fn saucer_tunnel(segs: u8, thickness: f64) -> Tunnel {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(segs), &mut NoopEmitter);
+        set_segments(&mut tunnel, segs);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(thickness)),
             &mut NoopEmitter,
@@ -864,7 +1652,7 @@ pub mod fixture {
     /// Create an arc tunnel with spin animation on the ellipse path.
     fn arc_spin_tunnel(segs: u8) -> Tunnel {
         let mut tunnel = Tunnel::default();
-        tunnel.handle_state_change(StateChange::Segments(segs), &mut NoopEmitter);
+        set_segments(&mut tunnel, segs);
         tunnel.anims[0].target = AnimationTarget::Spin;
         tunnel.anims[0].animation.control(
             AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
@@ -905,7 +1693,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
+        set_segments(&mut tunnel, 24);
         tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         snapshot(render_default(&tunnel))
     }
@@ -917,7 +1705,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
+        set_segments(&mut tunnel, 24);
         tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         snapshot(render_default(&tunnel))
     }
@@ -929,7 +1717,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
+        set_segments(&mut tunnel, 12);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(0.1)),
             &mut NoopEmitter,
@@ -944,7 +1732,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
+        set_segments(&mut tunnel, 126);
         tunnel.anims[0].target = AnimationTarget::Spin;
         tunnel.anims[0].animation.control(
             AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
@@ -965,7 +1753,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
+        set_segments(&mut tunnel, 12);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(0.1)),
             &mut NoopEmitter,
@@ -987,7 +1775,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
+        set_segments(&mut tunnel, 126);
         tunnel.anims[0].target = AnimationTarget::AspectRatio;
         tunnel.anims[0].animation.control(
             AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.25))),
@@ -1030,7 +1818,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(16), &mut NoopEmitter);
+        set_segments(&mut tunnel, 16);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(0.15)),
             &mut NoopEmitter,
@@ -1059,7 +1847,7 @@ pub mod fixture {
                     audio_envelope: UnipolarFloat::ZERO,
                 },
             );
-            snapshots.push(vec![Arc::new(arcs)]);
+            snapshots.push(vec![arcs]);
             for _ in 0..frames_per_snapshot {
                 tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
             }
@@ -1090,7 +1878,7 @@ pub mod fixture {
                 audio_envelope: UnipolarFloat::ZERO,
             },
         );
-        vec![Arc::new(arcs)]
+        vec![arcs]
     }
 
     /// Every target an animation can be pointed at, in the order slots are
@@ -1114,15 +1902,26 @@ pub mod fixture {
         AnimationTarget::Spin,
     ];
 
-    /// Every shape mode whose segments a renderer draws, in the order channels
-    /// are handed them.
+    /// Every shape mode that distributes segments along a path, in the order
+    /// channels are handed them.
     ///
     /// Unlike `TARGETS` and `WAVEFORMS` the length is written out rather than
-    /// taken from the enum: a mode that fills an area rather than drawing
-    /// segments contributes no geometry, and a channel spending its slot on
-    /// one would leave a fixture whose whole point is that every channel draws
-    /// something different with a channel that draws nothing.
+    /// taken from the enum: the modes that fill an area instead are configured
+    /// by `configure_figure`, which reads a different half of the controls.
     const SEGMENT_SHAPE_MODES: [ShapeMode; 2] = [ShapeMode::Ellipse, ShapeMode::Line];
+
+    /// Every way of painting a figure, in the order channels are handed them.
+    ///
+    /// Written out rather than taken from `DrawMode::VARIANTS` for the same
+    /// reason as `TARGETS`, and its length taken from the enum for the same
+    /// reason.
+    const DRAW_MODES: [DrawMode; DrawMode::VARIANTS.len()] =
+        [DrawMode::Fill, DrawMode::Outline, DrawMode::Both];
+
+    /// Every coordinate of a figure that can index its colour ramp, in the
+    /// order channels are handed them.
+    const COLOR_PHASES: [ColorPhase; ColorPhase::VARIANTS.len()] =
+        [ColorPhase::Angle, ColorPhase::Radius, ColorPhase::Linear];
 
     /// Every waveform an animation can be shaped by, in the order slots are
     /// handed them.
@@ -1148,8 +1947,8 @@ pub mod fixture {
     /// target and every waveform at least once.
     pub fn configure_max_variation(tunnel: &mut Tunnel, index: usize, of: usize, segments: u8) {
         let phase = index as f64 / of as f64;
-        tunnel.handle_state_change(StateChange::Segments(segments), &mut NoopEmitter);
-        tunnel.handle_state_change(StateChange::Blacking(BipolarFloat::ZERO), &mut NoopEmitter);
+        set_segments(tunnel, segments);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut NoopEmitter);
         tunnel.handle_state_change(
             StateChange::ColorSpread(UnipolarFloat::ONE),
             &mut NoopEmitter,
@@ -1179,11 +1978,76 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
-            StateChange::RenderMode(RenderMode::VARIANTS[index % RenderMode::VARIANTS.len()]),
+            StateChange::RenderModeButton((index % RenderMode::VARIANTS.len()) as u8),
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
             StateChange::ShapeMode(SEGMENT_SHAPE_MODES[index % SEGMENT_SHAPE_MODES.len()]),
+            &mut NoopEmitter,
+        );
+
+        for (i, anim) in tunnel.anims.iter_mut().enumerate() {
+            configure_varied_animation(anim, index * N_ANIM + i);
+        }
+    }
+
+    /// Configure a tunnel to draw a filled figure rather than a run of
+    /// segments, spread by `index` of `of` so that no two draw the same figure
+    /// the same way.
+    ///
+    /// Every control a figure reads and a run of segments does not is moved off
+    /// its default: which figure of the library, how much of it is painted,
+    /// which of its coordinates indexes the colour ramp, and both halves of the
+    /// animation split — the targets resolved into the layer and the targets
+    /// that travel with it unresolved.
+    pub fn configure_figure(tunnel: &mut Tunnel, index: usize, of: usize) {
+        let phase = index as f64 / of as f64;
+        tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut NoopEmitter);
+        // In a figure mode these two name a shelf of the library and a figure
+        // on it, so spreading them is what makes every channel draw a
+        // different figure.
+        tunnel.handle_state_change(
+            StateChange::Segments((f64::from(KNOB_MAX) * phase) as u8),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::Blacking((f64::from(KNOB_MAX) * phase) as u8),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::DrawMode(DRAW_MODES[index % DRAW_MODES.len()]),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorPhase(COLOR_PHASES[index % COLOR_PHASES.len()]),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorSpread(UnipolarFloat::ONE),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorWidth(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::ColorSaturation(UnipolarFloat::new(0.5)),
+            &mut NoopEmitter,
+        );
+        // Thin enough that an outline reads as a contour rather than as a
+        // second fill.
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(0.05)),
+            &mut NoopEmitter,
+        );
+        // The rotation and spin angles are integrated from these speeds and sit
+        // at exactly zero until the speeds do not, so both stay away from it.
+        tunnel.handle_state_change(
+            StateChange::RotationSpeed(BipolarFloat::new(0.25 + 0.5 * phase)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::SpinSpeed(BipolarFloat::new(-1.0 + 0.5 * phase)),
             &mut NoopEmitter,
         );
 
@@ -1264,5 +2128,189 @@ pub mod fixture {
                 );
             }
         }
+    }
+
+    /// The figures the render fixtures draw, by the id the build assigns them.
+    ///
+    /// The ids come from the shape directory's own order, so a test that
+    /// draws one should check the name it got: a figure added to a family
+    /// renumbers everything after it, and a golden image would otherwise
+    /// quietly become an image of something else.
+    pub const SNOWFLAKE: SpriteId = SpriteId(25);
+    pub const BULLSEYE: SpriteId = SpriteId(42);
+    /// A figure that carves its six sectors with one self-intersecting contour
+    /// returning to a single shared point, rather than with a subpath each.
+    /// That shared point is where a winding rule is most easily upset by a
+    /// coordinate that has moved, which is why this one is drawn.
+    pub const PINWHEEL: SpriteId = SpriteId(2);
+    /// A figure whose handle is one long straight contour passing close to the
+    /// origin, which is where a stroke's colour is hardest to get right.
+    pub const UMBRELLA: SpriteId = SpriteId(58);
+
+    /// A tunnel that draws a figure instead of a run of segments.
+    ///
+    /// Saturated, so a colour knob shows up at all: the default is white.
+    fn sprite_tunnel(sprite: SpriteId) -> Tunnel {
+        Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            sprite,
+            col_sat: UnipolarFloat::ONE,
+            col_center: UnipolarFloat::new(0.55),
+            ..Default::default()
+        }
+    }
+
+    /// A figure in one colour, which is the path that skips the ramp entirely.
+    pub fn sprite_flat_snapshot() -> LayerCollection {
+        snapshot(render_default(&sprite_tunnel(SNOWFLAKE)))
+    }
+
+    /// A figure with a colour sweep along one of its coordinates.
+    ///
+    /// Three cycles rather than one, so the ramp's wrap and the seam where
+    /// angular phase jumps are both in the picture.
+    pub fn sprite_color_snapshot(phase: ColorPhase) -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
+        tunnel.color_phase = phase;
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A colour animation over a figure that already carries a colour sweep.
+    ///
+    /// The two have to be independent: the sweep repeats across the figure as
+    /// many times as the spread knob asks, and the animation runs the number of
+    /// periods *it* was set to over the whole figure, the way an animation runs
+    /// over a whole beam. An animation whose period came out as the colour's
+    /// would put three saturation lobes here instead of one, and nothing else
+    /// in the suite would see it.
+    pub fn sprite_color_animation_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
+        tunnel.anims[0].target = AnimationTarget::ColorSaturation;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::ONE)),
+            &mut NoopEmitter,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure whose sectors all meet at one point.
+    ///
+    /// Six subpath runs share a single vertex, so every one of them is decided
+    /// by the winding at that vertex. A figure built this way is the first
+    /// thing to lose a region if the points it is tessellated from are not the
+    /// points the library holds.
+    pub fn sprite_shared_vertex_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(PINWHEEL);
+        tunnel.col_sat = UnipolarFloat::ZERO;
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure sheared by the spin knob: centre pinned, rim carrying the turn.
+    pub fn sprite_spin_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.spin_speed = BipolarFloat::new(0.25);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure deformed by a radial animation running around its angle,
+    /// which is what turns an outline into petals.
+    pub fn sprite_radial_animation_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(BULLSEYE);
+        // Small enough that the deformation stays inside the frame: a golden
+        // clipped by the viewport hides whatever it clipped.
+        tunnel.size = Smoother::new(
+            UnipolarFloat::new(0.3),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        tunnel.anims[0].target = AnimationTarget::Size;
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::NPeriods(6)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].animation.control(
+            AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.4))),
+            &mut NoopEmitter,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A masked figure stacked over a lit one, which intersects their
+    /// apertures the way stacking gobos does.
+    pub fn sprite_masked_stack_snapshot() -> LayerCollection {
+        let mut lit = sprite_tunnel(SNOWFLAKE);
+        lit.col_width = UnipolarFloat::ONE;
+        lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
+
+        let mut mask = sprite_tunnel(BULLSEYE);
+        mask.size = Smoother::new(
+            UnipolarFloat::new(0.35),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+
+        vec![render_default(&lit), render_masked(&mask)]
+    }
+
+    /// A stroked outline carrying a colour sweep.
+    ///
+    /// The umbrella's handle is a single straight contour running close to the
+    /// origin, where angular phase moves fastest — so if a stroke's colour
+    /// were taken from where its vertices landed rather than from the contour,
+    /// this is the figure it would show on.
+    pub fn sprite_outline_color_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(UMBRELLA);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.col_width = UnipolarFloat::ONE;
+        // The most cycles the knob can ask for, which is where a stroke
+        // sampled too coarsely along its length would band first.
+        tunnel.col_spread = UnipolarFloat::ONE;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure's contours stroked instead of its interior filled.
+    pub fn sprite_outline_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        snapshot(render_default(&tunnel))
+    }
+
+    fn render_masked(tunnel: &Tunnel) -> Layer {
+        tunnel.render(
+            UnipolarFloat::ONE,
+            true,
+            RenderContext {
+                clocks: &ClockBank::default().as_static(),
+                palette: &ColorPalette::default(),
+                positions: &PositionBank::default(),
+                audio_envelope: UnipolarFloat::ZERO,
+            },
+        )
     }
 }

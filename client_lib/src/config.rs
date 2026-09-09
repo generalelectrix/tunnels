@@ -33,6 +33,37 @@ pub struct ClientConfig {
     pub artnet_node: bool,
     /// Log at debug level?
     pub log_level_debug: bool,
+    /// Let a figure larger than the startup mesh table anticipated be given a
+    /// mesh matched to its size, built the first time it is drawn.
+    ///
+    /// Off, a figure that wants more density than the table holds is drawn
+    /// with the finest mesh the table does hold, and nothing is ever built
+    /// during a show. On, the two finer densities become available and are
+    /// built per figure on first use — a pause of about 7 ms typically and 17
+    /// at worst for the first, 28 and 64 for the second.
+    ///
+    /// It defaults off because the question it answers is whether the extra
+    /// density is visible at all, and that is a judgement to make by eye
+    /// rather than from the triangle count.
+    ///
+    /// Where the knobs cross those thresholds, at 1920x1200 — `critical_size`
+    /// is the smaller dimension, so 1200:
+    ///
+    /// - the default size of 0.5 sits inside the table, as it does at 1080;
+    /// - **size 0.528** is where a figure first wants more, with aspect ratio
+    ///   at its own default;
+    /// - the second threshold needs an extent of 1.056, which the size knob
+    ///   cannot reach alone since it stops at 1.0 — it takes aspect ratio
+    ///   above 0.528 as well.
+    ///
+    /// Those two lists line up in a way worth knowing before turning this on:
+    /// **the threshold that is easy to reach is the one that costs nothing,
+    /// and the one that costs enough to see is off the casual path.** A nudge
+    /// of the size knob crosses the first, and pays two frames at worst. The
+    /// second takes two knobs deliberately, and pays about eight — a
+    /// fifteenth of a second, which is visible. So the risk is not a knob
+    /// brushed past by accident.
+    pub refine_large_figures: bool,
 }
 
 impl ClientConfig {
@@ -64,6 +95,7 @@ impl ClientConfig {
             transformation,
             artnet_node,
             log_level_debug,
+            refine_large_figures: false,
         }
     }
 
@@ -98,7 +130,7 @@ impl ClientConfig {
             None
         };
 
-        Ok(ClientConfig::new(
+        let mut config = ClientConfig::new(
             video_channel,
             host,
             (x_resolution, y_resolution),
@@ -109,7 +141,11 @@ impl ClientConfig {
             // clients could serve one still loads.
             cfg["artnet_node"].as_bool().unwrap_or(false),
             flag("log_level_debug", "Bad log level flag.")?,
-        ))
+        );
+        // Absent means off, which is what a config written before figures
+        // existed should mean.
+        config.refine_large_figures = cfg["refine_large_figures"].as_bool().unwrap_or(false);
+        Ok(config)
     }
 }
 

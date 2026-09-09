@@ -1,0 +1,10 @@
+[package]
+name = "tunnels_sprites"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+
+[build-dependencies]
+usvg = "0.48"
+lyon_path = "1"

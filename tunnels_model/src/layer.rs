@@ -3,9 +3,11 @@
 //! This is the far end of the model: everything above it describes a show,
 //! and everything here describes shapes on a screen.
 
+use crate::animation::{PreparedAnimation, TargetedAnimation};
+use crate::waveforms::{WaveformArgs, sawtooth};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use strum::VariantArray;
+use tunnels_lib::number::{Phase, UnipolarFloat};
 
 /// Controls how a shape is rendered.
 #[derive(
@@ -58,14 +60,16 @@ impl ShapeMode {
 }
 
 /// The curve a run of segments is distributed along.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum SegmentPath {
     Ellipse,
     Line,
 }
 
 /// Which coordinate of a figure indexes the color ramp.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash, VariantArray,
+)]
 pub enum ColorPhase {
     /// The angle about the figure's center (default).
     #[default]
@@ -81,7 +85,9 @@ pub enum ColorPhase {
 }
 
 /// How much of a figure is painted.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash, VariantArray,
+)]
 pub enum DrawMode {
     /// The interior only (default).
     #[default]
@@ -92,37 +98,41 @@ pub enum DrawMode {
     Both,
 }
 
+impl DrawMode {
+    pub fn draws_fill(self) -> bool {
+        matches!(self, Self::Fill | Self::Both)
+    }
+
+    pub fn draws_outline(self) -> bool {
+        matches!(self, Self::Outline | Self::Both)
+    }
+}
+
 /// Identifies one figure baked into the build.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub struct SpriteId(pub u16);
 
-/// A command to draw a single shape, less the render mode and shape mode that
-/// the layer holding it fixes for all of its shapes at once.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+/// A command to draw a single shape, less the render mode and segment path
+/// that the layer holding it fixes for all of its shapes at once.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ShapeGeometry {
-    pub level: f64,
+    pub color: Hsva,
+    pub placement: Placement,
     pub thickness: f64,
-    pub hue: f64,
-    pub sat: f64,
-    pub val: f64,
-    pub x: f64,
-    pub y: f64,
-    pub extent_x: f64,
-    pub extent_y: f64,
+    /// Where the shape starts along the layer's path, in turns.
     pub start: f64,
-    pub rot_angle: f64,
     pub spin_angle: f64,
 }
 
 /// A run of shapes drawn the same way.
 ///
-/// The render mode and shape mode apply to every shape in the layer, which is
-/// what makes a layer the unit a renderer can dispatch on once instead of per
-/// shape.
+/// The render mode and segment path apply to every shape in the layer, which
+/// is what makes a layer the unit a renderer can dispatch on once instead of
+/// per shape.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct Layer {
+pub struct SegmentLayer {
     pub render_mode: RenderMode,
-    pub shape_mode: ShapeMode,
+    pub segment_path: SegmentPath,
     /// The angular width every segment in this layer spans, in turns.
     ///
     /// A segment's stop angle is its `start` plus this, so a segment that
@@ -132,24 +142,234 @@ pub struct Layer {
     pub shapes: Vec<ShapeGeometry>,
 }
 
-impl Layer {
+impl SegmentLayer {
     pub fn new(
         render_mode: RenderMode,
-        shape_mode: ShapeMode,
+        segment_path: SegmentPath,
         span: f64,
         shapes: Vec<ShapeGeometry>,
     ) -> Self {
         Self {
             render_mode,
-            shape_mode,
+            segment_path,
             span,
             shapes,
         }
     }
+}
 
-    pub fn is_empty(&self) -> bool {
-        self.shapes.is_empty()
+/// Where a shape sits, how large it is, and which way it is turned.
+///
+/// The half-extents mean whatever the shape they place reads them as: the two
+/// radii of an ellipse, the half-length and offset of a line, or the box a
+/// figure's own unit square is scaled into.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    pub x: f64,
+    pub y: f64,
+    pub extent_x: f64,
+    pub extent_y: f64,
+    pub rot_angle: f64,
+}
+
+/// How a figure's colour is resolved from a coordinate on it.
+///
+/// This is a tunnel's colour model with a figure's coordinate standing in for
+/// the segment index: `hue = center + 0.5 * width * sawtooth(phase * cycles)`.
+/// A closed figure has no segments, so [`ColorPhase`] picks what does the
+/// indexing.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct ColorField {
+    pub phase: ColorPhase,
+    /// Whole colour cycles across the figure, already floored.
+    pub cycles: f64,
+    pub center: f64,
+    pub width: f64,
+    pub sat: f64,
+    pub val: f64,
+    pub level: f64,
+}
+
+impl ColorField {
+    /// Whether every point of the figure resolves to the same colour.
+    ///
+    /// A uniform figure needs no ramp and no interpolation, which is also the
+    /// state a mask is in. An animation on the colour can still move that one
+    /// colour over time, so this is not on its own a reason to skip the ramp.
+    pub fn is_uniform(&self) -> bool {
+        self.width == 0.0 || self.cycles == 0.0
+    }
+
+    /// Whether this field masks: opaque black everywhere, whatever is asked of
+    /// it.
+    ///
+    /// Every channel a colour resolves to is scaled by the value, so a field
+    /// with no value paints black at any point and under any colour animation
+    /// -- hue and saturation are multiplied away before they can reach a
+    /// pixel. That is what lets a mask be resolved once instead of per point
+    /// or per texel.
+    ///
+    /// The three adjustments an animation makes -- centre, width, saturation
+    /// -- are what this rests on. A target that moved the value would break
+    /// it, and there is none.
+    pub fn is_mask(&self) -> bool {
+        self.val == 0.0
+    }
+
+    /// The colour at a point of one cycle.
+    ///
+    /// This is a tunnel's own hue expression with the cycle count taken out:
+    /// the count multiplies the coordinate rather than the table, so one cycle
+    /// is all a table has to hold and a figure's colour reads the same as a
+    /// beam's at the same knob settings.
+    pub fn sample(&self, phase: Phase, adjust: ColorAdjust) -> Hsva {
+        let hue = Phase::new(
+            (self.center + adjust.center)
+                + 0.5
+                    * (self.width + adjust.width)
+                    * sawtooth(&WaveformArgs {
+                        phase_spatial: phase,
+                        phase_temporal: Phase::ZERO,
+                        smoothing: UnipolarFloat::ZERO,
+                        duty_cycle: UnipolarFloat::ONE,
+                        pulse: false,
+                        standing: false,
+                    }),
+        );
+        Hsva {
+            hue: hue.val(),
+            sat: UnipolarFloat::new(self.sat + adjust.sat).val(),
+            val: self.val,
+            level: self.level,
+        }
     }
 }
 
-pub type LayerCollection = Vec<Arc<Layer>>;
+/// What animations add to a colour before it is resolved.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ColorAdjust {
+    pub center: f64,
+    pub width: f64,
+    pub sat: f64,
+}
+
+/// A resolved colour, and the level it is drawn at.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct Hsva {
+    pub hue: f64,
+    pub sat: f64,
+    pub val: f64,
+    /// Alpha, carrying the channel's own level.
+    pub level: f64,
+}
+
+/// A figure drawn as an area rather than as a run of segments.
+///
+/// Carries no geometry: the figure itself is baked into the build and the
+/// client looks it up, so what travels is where to put it and how to colour
+/// it.
+#[derive(Debug, Clone)]
+pub struct FillLayer {
+    pub sprite: SpriteId,
+    pub placement: Placement,
+    /// The beam's spin knob, as the operator set it.
+    pub spin_speed: f64,
+    /// Stroke width, in the same units a segment's thickness is.
+    pub thickness: f64,
+    pub draw_mode: DrawMode,
+    pub color: ColorField,
+    /// Animations resolved when the colour ramp is built, once per texel.
+    pub color_anims: Vec<TargetedAnimation<PreparedAnimation>>,
+    /// Animations resolved per point of the figure, displacing it.
+    pub warps: Vec<TargetedAnimation<PreparedAnimation>>,
+}
+
+/// What a beam expands into for one frame.
+#[derive(Debug, Clone)]
+pub enum Layer {
+    /// A run of segments along a path.
+    Segments(SegmentLayer),
+    /// A filled figure.
+    Fill(FillLayer),
+}
+
+impl Layer {
+    /// Whether this layer would draw nothing, and so can be dropped before it
+    /// reaches a renderer.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Segments(l) => l.shapes.is_empty(),
+            // A figure is one shape and is always there; whether the build
+            // carries the sprite it names is the renderer's question.
+            Self::Fill(_) => false,
+        }
+    }
+}
+
+pub type LayerCollection = Vec<Layer>;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// A mask is resolved once for the whole layer rather than once per point.
+    /// That is only sound if no adjustment an animation can make reaches the
+    /// result.
+    #[test]
+    fn no_adjustment_moves_what_a_mask_paints() {
+        let mask = ColorField {
+            phase: ColorPhase::Angle,
+            cycles: 0.,
+            center: 0.,
+            width: 0.,
+            sat: 0.,
+            val: 0.,
+            level: 1.,
+        };
+        assert!(mask.is_mask());
+
+        let flat = mask.sample(Phase::ZERO, ColorAdjust::default());
+        for adjust in [
+            ColorAdjust {
+                center: 0.4,
+                width: 0.,
+                sat: 0.,
+            },
+            ColorAdjust {
+                center: 0.,
+                width: 1.,
+                sat: 0.,
+            },
+            ColorAdjust {
+                center: 0.,
+                width: 0.,
+                sat: 1.,
+            },
+            ColorAdjust {
+                center: 0.9,
+                width: 1.,
+                sat: 1.,
+            },
+        ] {
+            for phase in [0., 0.25, 0.5, 0.75] {
+                let sampled = mask.sample(Phase::new(phase), adjust);
+                assert_eq!(
+                    sampled.val, flat.val,
+                    "a mask gained a value from {adjust:?}"
+                );
+                assert_eq!(
+                    sampled.level, flat.level,
+                    "a mask changed alpha under {adjust:?}"
+                );
+            }
+        }
+
+        // A field with a value does move, so the test above is not vacuous.
+        let lit = ColorField { val: 1., ..mask };
+        assert!(!lit.is_mask());
+        assert_ne!(
+            lit.sample(Phase::ZERO, ColorAdjust::default()).val,
+            flat.val
+        );
+    }
+}
