@@ -29,7 +29,6 @@ use graphics::types::Color;
 use graphics::{Context, Graphics, Transformed};
 use image::RgbaImage;
 use log::{error, info};
-use std::collections::HashSet;
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
 use tunnels_model::layer::{ColorAdjust, FillLayer, Layer, LayerCollection, SpriteId};
@@ -185,9 +184,6 @@ pub struct Renderer<T> {
     /// frame. Layers draw one after another and none of this outlives the
     /// draw that fills it, so one buffer serves all of them.
     verts: VertexBuffers,
-    /// Figures asked for that this build does not carry, so each is reported
-    /// once rather than every frame.
-    missing: HashSet<SpriteId>,
 }
 
 impl<T> Default for Renderer<T>
@@ -201,7 +197,6 @@ where
             meshes: MeshLibrary::default(),
             ramps: RampPool::new(),
             verts: VertexBuffers::default(),
-            missing: HashSet::new(),
         }
     }
 }
@@ -302,17 +297,10 @@ where
             meshes,
             ramps,
             verts,
-            missing,
         } = self;
 
+        // A figure this build does not carry draws nothing.
         let Some(sprite) = tunnels_sprites::sprite(fill.sprite.0) else {
-            if missing.insert(fill.sprite) {
-                error!(
-                    "This build carries no figure {}; it has {}.",
-                    fill.sprite.0,
-                    tunnels_sprites::count()
-                );
-            }
             return;
         };
 
