@@ -152,7 +152,7 @@ impl Show {
         // only when `refine_large_figures` is on, and are built per figure on
         // first use when they are.
         let mut renderer = Renderer::default();
-        renderer.precompute();
+        renderer.tessellate_library();
 
         Ok(Show {
             gl: GlGraphics::new(opengl),

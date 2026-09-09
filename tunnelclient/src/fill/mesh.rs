@@ -5,7 +5,9 @@
 //! cached across frames while the colour on it changes freely — including
 //! waveforms driven by a clock, which change every frame.
 
+use super::Frame;
 use super::geom::{IndexBatch, Triangle, TriangleList};
+use log::debug;
 use std::collections::HashMap;
 use tunnels_model::layer::FigureId;
 use tunnels_sprites::Point;
@@ -29,15 +31,15 @@ const MAX_DEPTH: u32 = 24;
 /// quarter-unit edge already gives a few hundred triangles.
 const COARSEST_LEVEL: i8 = -2;
 
-/// Finest density built before the show starts.
+/// Finest density a client refines to unless it is told otherwise.
 ///
 /// This is where a figure at the default size knob lands on a 1080-line
 /// projector, so it covers the common case and everything smaller. The two
 /// finer ones are reachable — a figure's extent runs to twice the size knob,
-/// crossing into the next at about 0.59 against a default of 0.5 — but they
-/// are built on first use rather than up front, because together they are 90%
-/// of both the time and the memory of building every density.
-const EAGER_LEVEL: i8 = -5;
+/// crossing into the next at about 0.59 against a default of 0.5 — and cost
+/// four and sixteen times the memory of this one for a difference visible
+/// only on a figure drawn larger than the knob's default.
+const DEFAULT_FINEST_LEVEL: i8 = -5;
 
 /// How many pixels a filled figure's mesh triangles should span on screen.
 ///
@@ -221,8 +223,8 @@ impl RefinedMesh {
 pub struct Level(i8);
 
 impl Level {
-    /// The finest density the startup table holds.
-    pub const IN_TABLE: Self = Self(EAGER_LEVEL);
+    /// The finest density a client refines to by default.
+    pub const DEFAULT_FINEST: Self = Self(DEFAULT_FINEST_LEVEL);
 
     /// The finest density there is.
     pub const FINEST: Self = Self(FINEST_LEVEL);
@@ -252,11 +254,6 @@ impl Level {
     pub fn target_edge(self) -> f32 {
         2f32.powi(i32::from(self.0))
     }
-
-    /// The densities built before the show starts, coarsest first.
-    pub fn eager() -> impl Iterator<Item = Self> {
-        (EAGER_LEVEL..=COARSEST_LEVEL).rev().map(Level)
-    }
 }
 
 /// Identifies one cached mesh.
@@ -271,61 +268,174 @@ pub struct MeshId {
     pub level: Level,
 }
 
-/// Meshes built so far, keyed by figure and density.
+/// How long a mesh nothing has drawn is kept, in frames.
 ///
-/// Nothing evicts, and nothing animated reaches the key: a mesh built for a
-/// figure at a density holds while the colour on it changes every frame.
+/// A figure goes dark and comes back all the time — a blackout, a mask
+/// closing over it, a level taken down and put back — and rebuilding it every
+/// time would be work done to save memory that was about to be wanted again.
+/// So a mesh outlives a gap of this long and no longer.
 ///
-/// **The set is bounded, because both libraries are tables.** Each names a
-/// fixed list of figures, so the key runs over those figures times the six
-/// densities and no further: 62 baked and 514 generated, 3,456 meshes, 176
-/// million triangles, **2.1 GB** if every one of them were ever drawn.
+/// Five seconds at the client's 120 frames a second, which is twenty times
+/// the longest the model spends smoothing a geometry change, so nothing the
+/// show itself does can drop a mesh still in use. **Being wrong either way is
+/// cheap, which is why the number does not have to be exact**: too short costs
+/// one rebuild, measured at 2.4 ms on the average figure and 13.9 at the
+/// worst against an 8.3 ms frame; too long costs the mesh's bytes until the
+/// next sweep.
+const MAX_AGE: u64 = 600;
+
+/// How often the held meshes are looked over, in frames.
 ///
-/// Bounded is not small, and where the two libraries sit in that number is
-/// worth knowing: the baked share is 239 MB of it and the generated share is
-/// the other 1.91 GB, because a generated figure carries an order of magnitude
-/// more triangles than a piece of artwork does. Most of that is the two finest
-/// densities, which only a figure drawn larger than the size knob's default
-/// reaches; the four coarser ones come to 168 MB between them.
+/// Reaping walks every mesh held, and almost every walk finds nothing to drop,
+/// so doing it per frame would put a scan in the draw path to no purpose. Once
+/// a second costs a walk of a few tens of entries and blunts [`MAX_AGE`] by at
+/// most a second, which a five-second age does not notice.
+const REAP_INTERVAL: u64 = 120;
+
+/// Most the held meshes may weigh before the least recently drawn are dropped,
+/// in bytes.
 ///
-/// **How much the narrow index saves depends on the density, and the coarse
-/// end is where it lands.** 2,947 of these meshes are addressed by a `u16`,
-/// but the 509 that are not carry most of the triangles at the two finest
-/// densities — so the four coarse densities fall by a third while the ceiling
-/// moves by an eighth. That is the useful way round: the coarse four are the
-/// densities built before the show, and the only ones a client reaches at all
-/// until it is told to refine large figures.
+/// **A backstop, not the working set.** Age is what returns memory in the
+/// ordinary case; this only catches growth faster than the reaper runs — an
+/// operator sweeping the figure knob builds a mesh per position and would
+/// otherwise hold every one of them until the sweep stopped.
 ///
-/// Nothing is evicted, and no cap is wanted, because a figure dropped is a
-/// figure tessellated again and the families holding the most triangles are
-/// the ones that cost the most to build. A bound on top of the table would
-/// trade memory for latency on exactly the figures whose latency is already
-/// worst.
-#[derive(Default)]
+/// Sized so no honest look can reach it. A mixer is at most two pages of eight
+/// channels, each channel drawing one figure, and a size knob moving across a
+/// bucket boundary holds two densities of it — so sixteen channels times two
+/// densities times the largest single mesh at the default finest density, 1.73
+/// MB, is 55 MB. This is the next power of two above that.
+///
+/// A client told to refine large figures reaches meshes four and sixteen times
+/// that size, and can hold a working set this does not cover; it evicts and
+/// rebuilds if so, which is the trade that switch already makes elsewhere.
+const BYTE_BUDGET: usize = 64 << 20;
+
+/// One mesh, and when a draw last wanted it.
+struct Held {
+    mesh: RefinedMesh,
+    last_used: Frame,
+}
+
+/// The meshes drawn recently, keyed by figure and density.
+///
+/// **Built on demand and dropped when nothing is drawing them.** A mesh costs
+/// a few milliseconds to refine and up to megabytes to hold, so the balance
+/// runs the opposite way to a tessellated interior: it is worth rebuilding and
+/// not worth keeping. What is held tracks what is on screen — order tens of
+/// megabytes for a look — rather than what the libraries could produce, which
+/// is 2.1 GB at every density and 168 MB at the four coarsest.
+///
+/// Nothing animated reaches the key, so a mesh built for a figure at a density
+/// holds while the colour on it changes every frame.
+///
+/// Two things bound it, and they have different jobs. [`MAX_AGE`] returns
+/// memory nobody is using, which is the common case and the one that matters:
+/// without it the process would sit at its high-water mark for the rest of the
+/// show, so an operator who swept the figure knob once during setup would have
+/// bought every figure they touched for the evening. [`BYTE_BUDGET`] catches
+/// growth arriving faster than the reaper runs, and is expected never to fire
+/// during a show.
 pub struct MeshLibrary {
-    built: HashMap<MeshId, RefinedMesh>,
+    built: HashMap<MeshId, Held>,
+    /// What `built` weighs, carried along rather than summed, so testing the
+    /// budget costs nothing on a path that runs per layer per frame.
+    bytes: usize,
+    budget: usize,
+    reaped: Frame,
+}
+
+impl Default for MeshLibrary {
+    fn default() -> Self {
+        Self {
+            built: HashMap::new(),
+            bytes: 0,
+            budget: BYTE_BUDGET,
+            reaped: Frame::default(),
+        }
+    }
 }
 
 impl MeshLibrary {
-    /// The mesh for this id, building it on first use.
-    pub fn get(&mut self, id: MeshId, source: &TriangleList) -> &RefinedMesh {
-        self.built
-            .entry(id)
-            .or_insert_with(|| refine(source, id.level.target_edge()))
+    /// The mesh for this id, building it on first use, and noting that this
+    /// frame wanted it.
+    pub fn get(&mut self, id: MeshId, source: &TriangleList, frame: Frame) -> &RefinedMesh {
+        if self.bytes > self.budget {
+            self.shed_to_budget();
+        }
+        let Self { built, bytes, .. } = self;
+        let held = built.entry(id).or_insert_with(|| {
+            let mesh = refine(source, id.level.target_edge());
+            *bytes += mesh.bytes();
+            Held {
+                mesh,
+                last_used: frame,
+            }
+        });
+        held.last_used = frame;
+        &held.mesh
+    }
+
+    /// Drop what nothing has drawn for [`MAX_AGE`], every [`REAP_INTERVAL`]
+    /// frames.
+    ///
+    /// Called once per drawn frame; it decides for itself whether this is one
+    /// of the frames that does the work.
+    pub fn reap(&mut self, frame: Frame) {
+        if frame.since(self.reaped) < REAP_INTERVAL {
+            return;
+        }
+        self.reaped = frame;
+        let mut freed = 0;
+        self.built.retain(|_, held| {
+            let keep = frame.since(held.last_used) < MAX_AGE;
+            if !keep {
+                freed += held.mesh.bytes();
+            }
+            keep
+        });
+        self.bytes -= freed;
+        if freed > 0 {
+            debug!(
+                "Reaped figure meshes; {} held, {:.0} MB.",
+                self.len(),
+                self.bytes() as f64 / 1e6
+            );
+        }
+    }
+
+    /// Drop the least recently drawn until the budget is met.
+    ///
+    /// Ordering the whole table is affordable because this runs only when the
+    /// budget is already exceeded, which a show is not expected to do at all.
+    fn shed_to_budget(&mut self) {
+        let mut ages: Vec<(Frame, MeshId)> = self
+            .built
+            .iter()
+            .map(|(id, held)| (held.last_used, *id))
+            .collect();
+        ages.sort_unstable_by_key(|(last_used, _)| *last_used);
+        for (_, id) in ages {
+            if self.bytes <= self.budget {
+                return;
+            }
+            if let Some(held) = self.built.remove(&id) {
+                self.bytes -= held.mesh.bytes();
+            }
+        }
     }
 
     /// Total triangles held, for reporting memory pressure.
     pub fn triangles(&self) -> usize {
-        self.built.values().map(RefinedMesh::triangle_count).sum()
+        self.built.values().map(|h| h.mesh.triangle_count()).sum()
     }
 
-    /// What the meshes held weigh, which is the number the docstrings above
-    /// quote and the one a client reports at startup.
+    /// What the meshes held weigh.
     pub fn bytes(&self) -> usize {
-        self.built.values().map(RefinedMesh::bytes).sum()
+        self.bytes
     }
 
-    /// How many meshes are held, against the table that bounds them.
+    /// How many meshes are held.
     pub fn len(&self) -> usize {
         self.built.len()
     }
@@ -420,7 +530,88 @@ mod test {
         assert_eq!(Level::for_screen(0.0, finest), Level(COARSEST_LEVEL));
         // And a caller that will not have finer meshes built gets the finest
         // it is willing to hold, however large the figure is.
-        assert_eq!(Level::for_screen(1e9, Level::IN_TABLE), Level::IN_TABLE);
+        assert_eq!(
+            Level::for_screen(1e9, Level::DEFAULT_FINEST),
+            Level::DEFAULT_FINEST
+        );
+    }
+
+    /// What is held tracks what is being drawn: a mesh survives a gap and not
+    /// an absence, and the budget catches growth arriving faster than the
+    /// reaper runs.
+    ///
+    /// Without the age, the process would sit at its high-water mark for the
+    /// rest of the show — one sweep of the figure knob during setup would buy
+    /// every figure it passed for the evening.
+    #[test]
+    fn a_mesh_outlives_a_gap_in_drawing_but_not_an_absence() {
+        let mut source = TriangleList::default();
+        source.push(Triangle::new(
+            Point::new(-1.0, -1.0),
+            Point::new(1.0, -1.0),
+            Point::new(0.0, 1.0),
+        ));
+        let id = |n: u16| MeshId {
+            figure: FigureId::Baked(SpriteId(n)),
+            level: Level::DEFAULT_FINEST,
+        };
+
+        let mut library = MeshLibrary::default();
+        library.get(id(0), &source, Frame(0));
+        assert_eq!(library.len(), 1);
+        assert!(library.bytes() > 0, "a mesh was held that weighs nothing");
+
+        // Drawn at every reap, so the gap never reaches the age however long
+        // the show runs.
+        for frame in (0..MAX_AGE * 4).step_by(REAP_INTERVAL as usize) {
+            library.get(id(0), &source, Frame(frame));
+            library.reap(Frame(frame));
+        }
+        assert_eq!(library.len(), 1, "a mesh drawn at every reap was dropped");
+
+        // Reaping is periodic, so a mesh that ages out between two sweeps
+        // survives until the next one rather than going the instant it is old.
+        let last_drawn = MAX_AGE * 4;
+        library.get(id(0), &source, Frame(last_drawn));
+        library.reap(Frame(last_drawn + MAX_AGE - 1));
+        assert_eq!(library.len(), 1, "dropped a mesh a frame before its age");
+        library.reap(Frame(last_drawn + MAX_AGE + 1));
+        assert_eq!(
+            library.len(),
+            1,
+            "swept again inside the interval instead of waiting for it"
+        );
+        library.reap(Frame(last_drawn + MAX_AGE + REAP_INTERVAL));
+        assert_eq!(library.len(), 0, "a mesh nothing drew was kept");
+        assert_eq!(
+            library.bytes(),
+            0,
+            "dropping the last mesh did not return its bytes"
+        );
+
+        // Budgeted at one mesh, so the third figure has to shed — and what
+        // goes is the one drawn least recently, not whichever comes to hand.
+        let one_mesh = {
+            let mut scratch = MeshLibrary::default();
+            scratch.get(id(0), &source, Frame(0));
+            scratch.bytes()
+        };
+        let mut library = MeshLibrary {
+            budget: one_mesh,
+            ..Default::default()
+        };
+        library.get(id(0), &source, Frame(0));
+        library.get(id(1), &source, Frame(1));
+        library.get(id(2), &source, Frame(2));
+        assert_eq!(library.len(), 2, "the budget shed the wrong number");
+        assert!(
+            !library.built.contains_key(&id(0)),
+            "the budget kept the mesh drawn longest ago"
+        );
+        assert!(
+            library.built.contains_key(&id(1)) && library.built.contains_key(&id(2)),
+            "the budget shed a mesh drawn more recently than one it kept"
+        );
     }
 
     /// The grid vertices are stored on reaches every figure either library can
