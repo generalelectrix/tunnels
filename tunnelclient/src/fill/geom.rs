@@ -103,22 +103,46 @@ impl TriangleList {
 ///
 /// A refined mesh shares vertices between the triangles that use them, so what
 /// gets batched is indices rather than points.
+///
+/// Both stored widths read back as `u32`, which is what keeps the choice of
+/// width inside the mesh: a draw addresses a vertex the same way whichever
+/// width the mesh it came from was narrow enough to use.
 #[derive(Copy, Clone)]
-pub struct IndexBatch<'a>(&'a [u32]);
+pub enum IndexBatch<'a> {
+    Narrow(&'a [u16]),
+    Wide(&'a [u32]),
+}
 
 impl<'a> IndexBatch<'a> {
-    pub(super) const fn new(indices: &'a [u32]) -> Self {
-        Self(indices)
-    }
-
     /// Each triangle's three vertex indices.
     pub fn triangles(self) -> impl Iterator<Item = [u32; 3]> + 'a {
-        self.0.as_chunks::<3>().0.iter().copied()
+        let (narrow, wide) = self.split();
+        narrow
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&[a, b, c]| [u32::from(a), u32::from(b), u32::from(c)])
+            .chain(wide.as_chunks::<3>().0.iter().copied())
     }
 
     /// Every index in the batch, for a draw that does not need the grouping.
-    pub fn indices(self) -> &'a [u32] {
-        self.0
+    pub fn indices(self) -> impl Iterator<Item = u32> + 'a {
+        let (narrow, wide) = self.split();
+        narrow
+            .iter()
+            .map(|&i| u32::from(i))
+            .chain(wide.iter().copied())
+    }
+
+    /// The batch as both widths, one of which is always empty.
+    ///
+    /// Reading it this way is what lets a walk over either width come back as
+    /// one iterator rather than two the caller has to match on.
+    fn split(self) -> (&'a [u16], &'a [u32]) {
+        match self {
+            Self::Narrow(i) => (i, &[]),
+            Self::Wide(i) => (&[], i),
+        }
     }
 }
 
