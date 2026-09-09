@@ -531,6 +531,11 @@ impl Tunnel {
     /// knobs are set — a mask because it punches a hole in whatever lies under
     /// it, a gobo because the black it lays down is everywhere its shapes are
     /// not.
+    ///
+    /// The level is not one of the colour knobs and is not discarded with
+    /// them. It is the alpha the black goes down at, so a beam in either black
+    /// mode comes in over its fader's travel the way a lit one does and hides
+    /// what is under it outright only at the top.
     fn color_field(
         &self,
         base_hue: f64,
@@ -545,7 +550,7 @@ impl Tunnel {
                 width: 0.,
                 sat: 0.,
                 val: 0.,
-                level: 1.0,
+                level: level_scale.val(),
             }
         } else {
             ColorField {
@@ -690,7 +695,14 @@ impl Tunnel {
                 spin_angle: spin_angle.val(),
             });
         }
-        SegmentLayer::new(self.render_mode, segment_path, mode, marquee_interval, arcs)
+        SegmentLayer {
+            render_mode: self.render_mode,
+            segment_path,
+            mode,
+            level: color_field.level,
+            span: marquee_interval,
+            shapes: arcs,
+        }
     }
 
     /// Emit the current value of all controllable tunnel state.
@@ -1714,34 +1726,79 @@ mod test {
         );
     }
 
-    /// A masked figure paints opaque black, punching a hole in what is under
-    /// it — the same value a masked segment carries.
+    /// A beam painting black carries no value however the colour knobs are
+    /// set, and carries its level as the alpha that black goes down at.
+    ///
+    /// The alpha is what makes a black mode come in over a fader's travel
+    /// rather than switching, and it has to reach a figure and a run of
+    /// segments alike. A run carries it on the layer as well as on each shape,
+    /// because the ground a gobo lays outside its shapes is not one of them.
+    ///
+    /// Fading one does not stop it being a mask: the value is what decides
+    /// that, so a faded mask is still resolved once for the whole layer rather
+    /// than per point.
     #[test]
-    fn a_masked_figure_is_opaque_black() {
-        let tunnel = Tunnel {
-            shape_mode: ShapeMode::Sprite,
+    fn a_beam_painting_black_carries_its_level_as_alpha() {
+        let render_at = |tunnel: &Tunnel, mode, level| {
+            tunnel.render(
+                level,
+                mode,
+                RenderContext {
+                    clocks: &ClockBank::default().as_static(),
+                    palette: &ColorPalette::default(),
+                    positions: &PositionBank::default(),
+                    audio_envelope: UnipolarFloat::ZERO,
+                },
+            )
+        };
+        let colorful = Tunnel {
             col_width: UnipolarFloat::ONE,
             col_spread: UnipolarFloat::ONE,
             ..Default::default()
         };
-        let Layer::Fill(fill) = tunnel.render(
-            UnipolarFloat::ONE,
-            PaintMode::Mask,
-            RenderContext {
-                clocks: &ClockBank::default().as_static(),
-                palette: &ColorPalette::default(),
-                positions: &PositionBank::default(),
-                audio_envelope: UnipolarFloat::ZERO,
-            },
-        ) else {
-            panic!("a sprite renders a figure, not segments");
+        let figure = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            ..colorful.clone()
         };
-        assert_eq!(fill.color.val, 0.0);
-        assert_eq!(fill.color.level, 1.0);
-        assert!(
-            fill.color.is_uniform(),
-            "a mask is one colour however the colour knobs are set"
-        );
+
+        for mode in [PaintMode::Mask, PaintMode::Gobo] {
+            for level in [0.25, 0.5, 1.0].map(UnipolarFloat::new) {
+                let Layer::Fill(fill) = render_at(&figure, mode, level) else {
+                    panic!("a sprite renders a figure, not segments");
+                };
+                assert_eq!(fill.color.val, 0.0, "{mode:?} at {level:?} kept a value");
+                assert_eq!(
+                    fill.color.level,
+                    level.val(),
+                    "{mode:?} did not paint at {level:?}"
+                );
+                assert!(
+                    fill.color.is_uniform() && fill.color.is_mask(),
+                    "{mode:?} at {level:?} is no longer one colour resolved once"
+                );
+
+                let Layer::Segments(run) = render_at(&colorful, mode, level) else {
+                    panic!("an ellipse renders segments, not a figure");
+                };
+                assert_eq!(
+                    run.level,
+                    level.val(),
+                    "a run in {mode:?} did not carry {level:?} for its ground"
+                );
+                assert!(
+                    !run.shapes.is_empty(),
+                    "a run drew no segments, so nothing below is checked"
+                );
+                for shape in &run.shapes {
+                    assert_eq!(shape.color.val, 0.0, "{mode:?} kept a value on a segment");
+                    assert_eq!(
+                        shape.color.level,
+                        level.val(),
+                        "a segment in {mode:?} did not paint at {level:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// A position animation is answered at the placement, and where it varies
@@ -2974,6 +3031,34 @@ pub mod fixture {
         (lit, gobo)
     }
 
+    /// A masked figure over a lit one, the mask at a level short of the top.
+    ///
+    /// The same two beams as `sprite_masked_stack_snapshot` with the upper one
+    /// part way up its fader. A mask's black goes down at the alpha its level
+    /// asks for, so the rings the mask covers dim the figure under them by
+    /// that much instead of taking it away.
+    pub fn sprite_mask_at_level_snapshot(level: UnipolarFloat) -> LayerCollection {
+        let (lit, mask) = gobo_stack();
+        vec![
+            render_default(&lit),
+            render_in_at(&mask, PaintMode::Mask, level),
+        ]
+    }
+
+    /// A gobo over a lit figure, the gobo at a level short of the top.
+    ///
+    /// The inversion of `sprite_mask_at_level_snapshot`: the ground outside
+    /// the window is the part laid down at that alpha, so what the window does
+    /// not reach dims rather than goes out, and the window itself is as bright
+    /// as it is at the top of the fader.
+    pub fn sprite_gobo_at_level_snapshot(level: UnipolarFloat) -> LayerCollection {
+        let (lit, gobo) = gobo_stack();
+        vec![
+            render_default(&lit),
+            render_in_at(&gobo, PaintMode::Gobo, level),
+        ]
+    }
+
     /// A stroked outline carrying a colour sweep.
     ///
     /// The umbrella's handle is a single straight contour running close to the
@@ -3130,8 +3215,13 @@ pub mod fixture {
 
     /// A tunnel drawn in a mode imposed on it rather than its own.
     fn render_in(tunnel: &Tunnel, mode: PaintMode) -> Layer {
+        render_in_at(tunnel, mode, UnipolarFloat::ONE)
+    }
+
+    /// A tunnel drawn in an imposed mode, at a level short of the top.
+    fn render_in_at(tunnel: &Tunnel, mode: PaintMode, level: UnipolarFloat) -> Layer {
         tunnel.render(
-            UnipolarFloat::ONE,
+            level,
             mode,
             RenderContext {
                 clocks: &ClockBank::default().as_static(),

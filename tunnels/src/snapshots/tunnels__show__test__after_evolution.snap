@@ -5,6 +5,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:
@@ -1774,6 +1775,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:
@@ -3543,6 +3545,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:
@@ -5312,6 +5315,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:
@@ -7081,6 +7085,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:
@@ -8850,6 +8855,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:
@@ -10619,6 +10625,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:
@@ -12388,6 +12395,7 @@ expression: "check_render(&show, show.state.mixer.channel_count())"
 - render_mode: Arc
   segment_path: Ellipse
   mode: Normal
+  level: 1
   span: 0.007936507936507936
   shapes:
     - color:

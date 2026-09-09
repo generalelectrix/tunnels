@@ -558,6 +558,11 @@ mod tests {
                         "{label}: layer {i} segment path"
                     );
                     assert_eq!(
+                        e.level.to_bits(),
+                        a.level.to_bits(),
+                        "{label}: layer {i} level"
+                    );
+                    assert_eq!(
                         e.span.to_bits(),
                         a.span.to_bits(),
                         "{label}: layer {i} span"

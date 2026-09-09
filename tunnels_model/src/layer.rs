@@ -143,12 +143,16 @@ impl DrawMode {
 
 /// What a beam's shapes do to the frame they are drawn into.
 ///
-/// A beam either paints in its own colours, or paints opaque black on one side
-/// or the other of the shapes it draws. The two black modes are the same
-/// operation about opposite sides of the same outline: a mask blacks the
-/// inside, so what is under it is hidden where the shapes fall; a gobo blacks
-/// the outside, so what is under it survives only where the shapes fall and the
-/// beam becomes a window rather than a hole.
+/// A beam either paints in its own colours, or paints black on one side or the
+/// other of the shapes it draws. The two black modes are the same operation
+/// about opposite sides of the same outline: a mask blacks the inside, so what
+/// is under it is hidden where the shapes fall; a gobo blacks the outside, so
+/// what is under it survives only where the shapes fall and the beam becomes a
+/// window rather than a hole.
+///
+/// The black goes down at the channel's own level, so what a black mode hides
+/// it hides gradually: half way up the fader it half darkens what is under it,
+/// and only the top of the fader hides it outright.
 ///
 /// Black is painted rather than clipped, so what the mode does is done by the
 /// time the next beam draws. A beam drawn after a gobo paints over its black
@@ -158,9 +162,9 @@ pub enum PaintMode {
     /// The beam's own colours (default).
     #[default]
     Normal,
-    /// Opaque black where the beam's shapes are.
+    /// Black where the beam's shapes are.
     Mask,
-    /// Opaque black everywhere the beam's shapes are not.
+    /// Black everywhere the beam's shapes are not.
     Gobo,
 }
 
@@ -178,7 +182,7 @@ impl PaintMode {
         }
     }
 
-    /// Whether this mode paints opaque black rather than the beam's colours.
+    /// Whether this mode paints black rather than the beam's colours.
     pub fn paints_black(self) -> bool {
         !matches!(self, Self::Normal)
     }
@@ -266,6 +270,12 @@ pub struct SegmentLayer {
     pub render_mode: RenderMode,
     pub segment_path: SegmentPath,
     pub mode: PaintMode,
+    /// The alpha every mark this layer makes is drawn at.
+    ///
+    /// Each shape's own colour carries this too. The layer carries it because
+    /// the black a gobo lays down outside its shapes is not one of them, and a
+    /// run that blacking has emptied has no shape left to read it from.
+    pub level: f64,
     /// The angular width every segment in this layer spans, in turns.
     ///
     /// A segment's stop angle is its `start` plus this, so a segment that
@@ -273,24 +283,6 @@ pub struct SegmentLayer {
     /// can make without subtracting two nearly equal angles.
     pub span: f64,
     pub shapes: Vec<ShapeGeometry>,
-}
-
-impl SegmentLayer {
-    pub fn new(
-        render_mode: RenderMode,
-        segment_path: SegmentPath,
-        mode: PaintMode,
-        span: f64,
-        shapes: Vec<ShapeGeometry>,
-    ) -> Self {
-        Self {
-            render_mode,
-            segment_path,
-            mode,
-            span,
-            shapes,
-        }
-    }
 }
 
 /// Where a shape sits, how large it is, and which way it is turned.
@@ -335,14 +327,15 @@ impl ColorField {
         self.width == 0.0 || self.cycles == 0.0
     }
 
-    /// Whether this field masks: opaque black everywhere, whatever is asked of
-    /// it.
+    /// Whether this field masks: black everywhere, whatever is asked of it.
     ///
     /// Every channel a colour resolves to is scaled by the value, so a field
     /// with no value paints black at any point and under any colour animation
     /// -- hue and saturation are multiplied away before they can reach a
-    /// pixel. That is what lets a mask be resolved once instead of per point
-    /// or per texel.
+    /// pixel. The alpha that black goes down at belongs to the field rather
+    /// than to a point on it, so it does not vary across the figure either.
+    /// That is what lets a mask be resolved once instead of per point or per
+    /// texel.
     ///
     /// The three adjustments an animation makes -- centre, width, saturation
     /// -- are what this rests on. A target that moved the value would break
@@ -458,12 +451,24 @@ impl Layer {
         }
     }
 
+    /// The alpha this layer's marks are drawn at.
+    ///
+    /// One number for the whole layer, because level is a channel's fader and
+    /// a fader moves everything the channel draws at once.
+    pub fn level(&self) -> f64 {
+        match self {
+            Self::Segments(l) => l.level,
+            Self::Fill(l) => l.color.level,
+        }
+    }
+
     /// Whether this layer would draw nothing, and so can be dropped before it
     /// reaches a renderer.
     ///
     /// A gobo is never this. What it draws is black everywhere its shapes are
-    /// not, so a run left with no shapes blacks the frame entire — the most it
-    /// can draw rather than the least, and not something to drop.
+    /// not, so a run left with no shapes lays its ground over the whole frame
+    /// — the most it can draw rather than the least, and not something to
+    /// drop.
     ///
     /// A run reaches that state by blacking taking every segment away. It is
     /// not how a thickness animation closes a gobo's window: thickness is a
@@ -490,7 +495,7 @@ mod test {
     use super::*;
 
     /// An empty run draws nothing and is dropped, unless it is a gobo — a gobo
-    /// with no shapes blacks the frame entire rather than drawing nothing.
+    /// with no shapes covers the whole frame rather than drawing nothing.
     ///
     /// A run is emptied by blacking, not by a thickness animation, which
     /// leaves its shapes in place carrying no thickness. So this covers only
@@ -500,13 +505,14 @@ mod test {
     #[test]
     fn an_empty_run_is_dropped_unless_it_is_a_gobo() {
         let run = |mode| {
-            Layer::Segments(SegmentLayer::new(
-                RenderMode::default(),
-                SegmentPath::Ellipse,
+            Layer::Segments(SegmentLayer {
+                render_mode: RenderMode::default(),
+                segment_path: SegmentPath::Ellipse,
                 mode,
-                1.0,
-                Vec::new(),
-            ))
+                level: 1.0,
+                span: 1.0,
+                shapes: Vec::new(),
+            })
         };
         for mode in [PaintMode::Normal, PaintMode::Mask] {
             assert!(

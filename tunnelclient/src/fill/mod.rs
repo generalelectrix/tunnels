@@ -270,12 +270,15 @@ where
         }
     }
 
-    /// Black the frame everywhere this layer's shapes are not.
+    /// Lay black over the frame everywhere this layer's shapes are not.
     ///
     /// The shapes are drawn into the stencil plane instead of into the frame,
-    /// and the black then goes down everywhere the plane was not marked. What
-    /// is under the layer survives only inside its shapes, which is what makes
-    /// the layer a window.
+    /// and the black then goes down everywhere the plane was not marked, at
+    /// the alpha the layer's level asks for. What is under the layer comes
+    /// through untouched inside its shapes and dimmed outside them — put out
+    /// entirely at the top of the fader, left alone at the bottom — which is
+    /// what makes the layer a window and what lets the window open rather than
+    /// appear.
     ///
     /// The plane is cleared on the way in as well as on the way out, so a gobo
     /// neither inherits marks nor leaves any. That is the whole of what keeps
@@ -284,11 +287,12 @@ where
     /// beam drawn over it paints over that black exactly as it paints over a
     /// mask's.
     ///
-    /// A layer whose shapes draw nothing blacks the frame entire, which is the
-    /// aperture shut rather than a step skipped. A thickness animation winds a
-    /// gobo's shapes down until they tessellate to nothing and mark nothing,
-    /// and the ground then goes down everywhere. That is played, and what it
-    /// plays is the light going out.
+    /// A layer whose shapes draw nothing lays the ground over the whole frame,
+    /// which is the aperture shut rather than a step skipped. A thickness
+    /// animation winds a gobo's shapes down until they tessellate to nothing
+    /// and mark nothing, and the ground then goes down everywhere. That is
+    /// played, and what it plays is the light going out — as far out as the
+    /// fader is up.
     ///
     /// A channel the operator has taken off its upfader is a different thing
     /// and never reaches here, because a channel at zero level emits no layer.
@@ -302,7 +306,12 @@ where
         settle(gl);
         gl.clear_stencil(STENCIL_CLEAR);
         self.draw_shapes(layer, &DrawState::new_clip(), c, gl, cfg);
-        Polygon::new(GOBO_BLACK).draw(&ground(cfg), &DrawState::new_outside(), c.transform, gl);
+        Polygon::new(gobo_black(layer.level())).draw(
+            &ground(cfg),
+            &DrawState::new_outside(),
+            c.transform,
+            gl,
+        );
         settle(gl);
         gl.clear_stencil(STENCIL_CLEAR);
     }
@@ -563,12 +572,16 @@ fn ground(cfg: &ClientConfig) -> [[f64; 2]; 3] {
     [[-w, -h], [(REACH - 1.0) * w, -h], [-w, (REACH - 1.0) * h]]
 }
 
-/// The ground a gobo lays down outside its shapes.
+/// The ground a gobo lays down outside its shapes, at its level.
 ///
-/// Opaque black, which is the same thing a mask paints inside its own shapes
-/// and the same thing the frame is cleared to. A gobo is the frame's own black
-/// put back everywhere the window does not reach.
-const GOBO_BLACK: Color = [0.0, 0.0, 0.0, 1.0];
+/// Black, which is the same thing a mask paints inside its own shapes and the
+/// same thing the frame is cleared to. At full level a gobo is the frame's own
+/// black put back everywhere the window does not reach; below it the black is
+/// laid on thinly enough to see through, and what the window does not reach is
+/// dimmed rather than erased.
+fn gobo_black(level: f64) -> Color {
+    [0.0, 0.0, 0.0, level as f32]
+}
 
 /// The stencil value that marks no shape.
 ///
