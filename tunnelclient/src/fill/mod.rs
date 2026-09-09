@@ -250,7 +250,9 @@ where
     ) {
         self.frame.advance();
         self.meshes.reap(self.frame);
-        self.gpu.reap(self.frame);
+        // A buffer mirrors one refined mesh, so the library that dropped the
+        // mesh is what says the buffer has gone with it.
+        self.gpu.release(self.meshes.dropped());
         for layer in layers {
             match layer {
                 Layer::Segments(segments) => draw_segments(segments, c, gl, cfg),
@@ -430,7 +432,7 @@ where
             let shaded = *shader_fill
                 && match draw::shader_uniforms(&work, placed.m, texture.is_none().then_some(color))
                 {
-                    Some(uniforms) => gl.shader_fill(gpu, id, mesh, *frame, &uniforms, texture),
+                    Some(uniforms) => gl.shader_fill(gpu, id, mesh, &uniforms, texture),
                     None => false,
                 };
             if !shaded {

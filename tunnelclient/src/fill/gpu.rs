@@ -21,7 +21,6 @@
 //! caches are invalidated afterwards so it rebinds from scratch rather than
 //! trusting what it remembers. See [`Boundary`].
 
-use super::Frame;
 use super::geom::IndexBatch;
 use super::mesh::{MeshId, RefinedMesh};
 use gl::types::{GLchar, GLenum, GLint, GLsizeiptr, GLuint};
@@ -51,18 +50,6 @@ const _: () = assert!(
 /// Bytes one vertex of the fill buffer occupies: the figure-space point and the
 /// whole turns that put it on its triangle's angular branch.
 const VERTEX_STRIDE: i32 = 12;
-
-/// How long a buffer nothing has drawn is kept, in frames.
-///
-/// Matched to what a refined mesh is kept for, because the two hold the same
-/// figure at the same density and one is built from the other: a buffer that
-/// outlived its mesh would be rebuilt from a mesh that had to be refined again,
-/// and a mesh that outlived its buffer would be re-uploaded on the frame it was
-/// next drawn.
-const MAX_AGE: u64 = 600;
-
-/// Frames between sweeps of the buffers.
-const REAP_INTERVAL: u64 = 120;
 
 /// What a slot drives, as the shader numbers it. Zero is a slot the layer does
 /// not fill, or one whose target a figure's geometry does not answer.
@@ -291,13 +278,12 @@ impl Locations {
     }
 }
 
-/// One mesh resident on the GPU, and when a draw last wanted it.
+/// One mesh resident on the GPU.
 struct Held {
     vao: GLuint,
     vbo: GLuint,
     ibo: GLuint,
     index_count: GLint,
-    last_used: Frame,
 }
 
 impl Held {
@@ -338,7 +324,6 @@ enum Compiled {
 pub struct GpuFill {
     program: Compiled,
     meshes: HashMap<MeshId, Held>,
-    reaped: Frame,
     shaded: usize,
 }
 
@@ -353,25 +338,27 @@ impl GpuFill {
         self.shaded
     }
 
-    /// Drop the buffers nothing has drawn for [`MAX_AGE`], every
-    /// [`REAP_INTERVAL`] frames.
-    pub fn reap(&mut self, frame: Frame) {
-        if frame.since(self.reaped) < REAP_INTERVAL {
-            return;
-        }
-        self.reaped = frame;
-        let before = self.meshes.len();
-        self.meshes.retain(|_, held| {
-            let keep = frame.since(held.last_used) < MAX_AGE;
-            if !keep {
+    /// Give back the buffers for meshes that have gone.
+    ///
+    /// This holds no policy about when a buffer's life ends. A buffer mirrors
+    /// one refined mesh, so it lives exactly as long as that mesh does and the
+    /// library holding the mesh is what says when that was.
+    ///
+    /// Must be called with a context current, which is why it takes the same
+    /// path a draw does rather than running when this is dropped: a context is
+    /// commonly torn down before the things drawn through it, and a GL call
+    /// after that is a segmentation fault rather than an error.
+    pub fn release(&mut self, gone: impl Iterator<Item = MeshId>) {
+        let mut released = 0;
+        for id in gone {
+            if let Some(held) = self.meshes.remove(&id) {
                 held.release();
+                released += 1;
             }
-            keep
-        });
-        if self.meshes.len() < before {
+        }
+        if released > 0 {
             info!(
-                "Released {} figure vertex buffers; {} held.",
-                before - self.meshes.len(),
+                "Released {released} figure vertex buffers; {} held.",
                 self.meshes.len()
             );
         }
@@ -390,7 +377,6 @@ impl GpuFill {
         gl: &mut GlGraphics,
         id: MeshId,
         mesh: &RefinedMesh,
-        frame: Frame,
         uniforms: &Uniforms,
         ramp: Option<&Texture>,
     ) -> bool {
@@ -411,8 +397,7 @@ impl GpuFill {
             return false;
         };
 
-        let held = self.meshes.entry(id).or_insert_with(|| upload(mesh, frame));
-        held.last_used = frame;
+        let held = self.meshes.entry(id).or_insert_with(|| upload(mesh));
         if held.index_count == 0 {
             return true;
         }
@@ -499,7 +484,6 @@ pub trait FillBackend: Graphics {
         _gpu: &mut GpuFill,
         _id: MeshId,
         _mesh: &RefinedMesh,
-        _frame: Frame,
         _uniforms: &Uniforms,
         _ramp: Option<&Self::Texture>,
     ) -> bool {
@@ -513,11 +497,10 @@ impl FillBackend for GlGraphics {
         gpu: &mut GpuFill,
         id: MeshId,
         mesh: &RefinedMesh,
-        frame: Frame,
         uniforms: &Uniforms,
         ramp: Option<&Texture>,
     ) -> bool {
-        gpu.draw(self, id, mesh, frame, uniforms, ramp)
+        gpu.draw(self, id, mesh, uniforms, ramp)
     }
 }
 
@@ -571,7 +554,7 @@ impl Drop for Boundary<'_> {
 }
 
 /// Build the vertex and index buffers for a mesh and hand them to the driver.
-fn upload(mesh: &RefinedMesh, frame: Frame) -> Held {
+fn upload(mesh: &RefinedMesh) -> Held {
     let (verts, indices) = unwrapped(mesh);
     let mut vao = 0;
     let mut vbo = 0;
@@ -619,7 +602,6 @@ fn upload(mesh: &RefinedMesh, frame: Frame) -> Held {
         vbo,
         ibo,
         index_count: indices.len() as GLint,
-        last_used: frame,
     }
 }
 

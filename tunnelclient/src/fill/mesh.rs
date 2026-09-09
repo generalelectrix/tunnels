@@ -237,6 +237,8 @@ struct Held {
 /// during a show.
 pub struct MeshLibrary {
     built: HashMap<MeshId, Held>,
+    /// Meshes dropped since the list was last taken.
+    dropped: Vec<MeshId>,
     /// What `built` weighs, carried along rather than summed, so testing the
     /// budget costs nothing on a path that runs per layer per frame.
     bytes: usize,
@@ -248,6 +250,7 @@ impl Default for MeshLibrary {
     fn default() -> Self {
         Self {
             built: HashMap::new(),
+            dropped: Vec::new(),
             bytes: 0,
             budget: BYTE_BUDGET,
             reaped: Frame::default(),
@@ -286,10 +289,12 @@ impl MeshLibrary {
         }
         self.reaped = frame;
         let mut freed = 0;
-        self.built.retain(|_, held| {
+        let dropped = &mut self.dropped;
+        self.built.retain(|id, held| {
             let keep = frame.since(held.last_used) < MAX_AGE;
             if !keep {
                 freed += held.mesh.bytes();
+                dropped.push(*id);
             }
             keep
         });
@@ -320,8 +325,21 @@ impl MeshLibrary {
             }
             if let Some(held) = self.built.remove(&id) {
                 self.bytes -= held.mesh.bytes();
+                self.dropped.push(id);
             }
         }
+    }
+
+    /// The meshes dropped since this was last asked, each named once.
+    ///
+    /// A refined mesh's life begins and ends in this library and nowhere else,
+    /// so this is the whole account of one ending. A copy of a mesh held
+    /// somewhere a mesh cannot go — in a driver's memory, say — takes its
+    /// lifetime from this rather than working out for itself when the mesh it
+    /// mirrors has gone: two answers to that question drift, and the copy
+    /// outlives what it stands for.
+    pub fn dropped(&mut self) -> impl Iterator<Item = MeshId> + '_ {
+        self.dropped.drain(..)
     }
 
     /// Total triangles held, for reporting memory pressure.
@@ -469,6 +487,11 @@ mod test {
             library.reap(Frame(frame));
         }
         assert_eq!(library.len(), 1, "a mesh drawn at every reap was dropped");
+        assert_eq!(
+            library.dropped().count(),
+            0,
+            "a mesh nothing dropped was reported as dropped"
+        );
 
         // Reaping is periodic, so a mesh that ages out between two sweeps
         // survives until the next one rather than going the instant it is old.
@@ -488,6 +511,18 @@ mod test {
             library.bytes(),
             0,
             "dropping the last mesh did not return its bytes"
+        );
+        // What a mesh's ending is reported as, since anything mirroring one
+        // takes its lifetime from this and has no other way to learn of it.
+        assert_eq!(
+            library.dropped().collect::<Vec<_>>(),
+            vec![id(0)],
+            "aging a mesh out did not report it as dropped"
+        );
+        assert_eq!(
+            library.dropped().count(),
+            0,
+            "a mesh was reported as dropped twice"
         );
 
         // Budgeted at one mesh, so the third figure has to shed — and what
@@ -512,6 +547,11 @@ mod test {
         assert!(
             library.built.contains_key(&id(1)) && library.built.contains_key(&id(2)),
             "the budget shed a mesh drawn more recently than one it kept"
+        );
+        assert_eq!(
+            library.dropped().collect::<Vec<_>>(),
+            vec![id(0)],
+            "shedding to the budget did not report what it shed"
         );
     }
 
