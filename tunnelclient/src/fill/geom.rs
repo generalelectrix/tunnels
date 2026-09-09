@@ -103,9 +103,10 @@ impl TriangleList {
 /// A vertex is a pair of `i16`, which is half what a pair of `f32` weighs.
 /// This is the whole of the mapping: the pair spans **±4 figure units**, a
 /// power of two and so exact both ways, and every figure either library can
-/// draw sits inside it — a contour reaches 2.4314 at the furthest and a
-/// stroked vertex 3.2258, since a stroke sits up to half its reference width
-/// outside the contour it follows. Past the range it
+/// draw sits inside it — a contour reaches 2.7259 at the furthest and a
+/// stroked vertex 3.2259, since a stroke sits up to half its reference width
+/// outside the contour it follows. So the range is 1.47 times wider than a
+/// contour and 1.24 times wider than an outline of one. Past the range it
 /// clamps rather than wrapping, which turns a figure that overran into one
 /// folded onto the edge instead of one appearing on the far side. That no
 /// figure overruns is a property of the libraries and not of this number, so
