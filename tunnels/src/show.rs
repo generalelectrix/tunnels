@@ -750,6 +750,7 @@ mod test {
             use crate::mixer::{
                 ChannelIdx, ChannelStateChange as CS, StateChange as MS, VideoChannel,
             };
+            use tunnels_model::layer::PaintMode;
             let mut m = |name, sc| changes.push((name, StateChange::Mixer(sc)));
             // Page 0, channel 0.
             m(
@@ -770,7 +771,21 @@ mod test {
                 "mixer/p0_ch0_mask_on",
                 MS {
                     channel: ChannelIdx(0),
-                    change: CS::Mask(true),
+                    change: CS::Mode(PaintMode::Mask),
+                },
+            );
+            m(
+                "mixer/p0_ch0_gobo_on",
+                MS {
+                    channel: ChannelIdx(0),
+                    change: CS::Mode(PaintMode::Gobo),
+                },
+            );
+            m(
+                "mixer/p0_ch0_mode_normal",
+                MS {
+                    channel: ChannelIdx(0),
+                    change: CS::Mode(PaintMode::Normal),
                 },
             );
             m(

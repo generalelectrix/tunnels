@@ -399,18 +399,22 @@ fn same_branch(reference: f32, u: f32, period: f32) -> f32 {
 /// Needed because a warped layer cannot take the unrefined fast path even when
 /// its colour is uniform: the displacement lives on the refined mesh's
 /// vertices.
+///
+/// Says whether it drew, which a caller inverting the frame around this mesh
+/// needs to know: a mesh with no triangles marks nothing to invert around.
 pub fn draw_flat<G: Graphics>(
     positions: &[Point],
     indices: &Indices,
     color: [f32; 4],
+    draw_state: &DrawState,
     m: Matrix2d,
     gl: &mut G,
-) {
+) -> bool {
     if indices.len() == 0 {
-        return;
+        return false;
     }
     let mut pos = Vec::with_capacity(CHUNK);
-    gl.tri_list(&DrawState::default(), &color, |f| {
+    gl.tri_list(draw_state, &color, |f| {
         for batch in indices.batches(CHUNK) {
             pos.clear();
             // A flat colour interpolates nothing, so the grouping into
@@ -423,27 +427,31 @@ pub fn draw_flat<G: Graphics>(
             f(&pos);
         }
     });
+    true
 }
 
 /// Draw a refined mesh, taking its colour from a ramp texture indexed by phase.
 ///
 /// The sampler resolves the waveform per fragment, so the sawtooth's jump lands
 /// exactly where it belongs however coarse the mesh is.
+///
+/// Says whether it drew, on the same terms as [`draw_flat`].
 pub fn draw_textured<G: Graphics>(
     indices: &Indices,
     verts: &VertexBuffers,
     period: Option<f32>,
     texture: &G::Texture,
+    draw_state: &DrawState,
     m: Matrix2d,
     gl: &mut G,
-) {
+) -> bool {
     if indices.len() == 0 {
-        return;
+        return false;
     }
     let mut pos = Vec::with_capacity(CHUNK);
     let mut uv = Vec::with_capacity(CHUNK);
 
-    gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
+    gl.tri_list_uv(draw_state, &[1.0; 4], texture, |f| {
         for batch in indices.batches(CHUNK) {
             pos.clear();
             uv.clear();
@@ -477,6 +485,7 @@ pub fn draw_textured<G: Graphics>(
             f(&pos, &uv);
         }
     });
+    true
 }
 
 /// Apply a 2D affine matrix to a point, leaving figure space for the backend's.

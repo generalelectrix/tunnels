@@ -1,4 +1,4 @@
-use crate::layer::{Layer, LayerCollection};
+use crate::layer::{Layer, LayerCollection, PaintMode};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
@@ -75,7 +75,7 @@ impl Mixer {
                 continue;
             }
             rendered.clear();
-            channel.render(UnipolarFloat::ONE, false, ctx, &mut rendered);
+            channel.render(UnipolarFloat::ONE, PaintMode::Normal, ctx, &mut rendered);
             for layer in rendered.drain(..) {
                 if layer.is_empty() {
                     continue;
@@ -97,7 +97,7 @@ impl Mixer {
             };
             emit(ChannelStateChange::Level(channel.level));
             emit(ChannelStateChange::Bump(channel.bump));
-            emit(ChannelStateChange::Mask(channel.mask));
+            emit(ChannelStateChange::Mode(channel.mode));
             emit(ChannelStateChange::ContainsLook(matches!(
                 channel.beam,
                 Beam::Look(_)
@@ -124,12 +124,17 @@ impl Mixer {
                 },
                 emitter,
             ),
-            ToggleMask => {
-                let toggled = !self.channels[msg.channel].mask;
+            ToggleMode(mode) => {
+                let current = self.channels[msg.channel].mode;
+                let toggled = if current == mode {
+                    PaintMode::Normal
+                } else {
+                    mode
+                };
                 self.handle_state_change(
                     StateChange {
                         channel: msg.channel,
-                        change: ChannelStateChange::Mask(toggled),
+                        change: ChannelStateChange::Mode(toggled),
                     },
                     emitter,
                 )
@@ -152,7 +157,7 @@ impl Mixer {
         match sc.change {
             Level(v) => self.channels[sc.channel].level = v,
             Bump(v) => self.channels[sc.channel].bump = v,
-            Mask(v) => self.channels[sc.channel].mask = v,
+            Mode(v) => self.channels[sc.channel].mode = v,
             VideoChannel((vc, active)) => {
                 if active {
                     self.channels[sc.channel].video_outs.insert(vc);
@@ -174,7 +179,7 @@ pub struct Channel {
     pub beam: Beam,
     pub level: UnipolarFloat,
     pub bump: bool,
-    pub mask: bool,
+    pub mode: PaintMode,
     pub video_outs: BTreeSet<VideoChannel>,
 }
 
@@ -186,7 +191,7 @@ impl Channel {
             beam,
             level: UnipolarFloat::ZERO,
             bump: false,
-            mask: false,
+            mode: PaintMode::Normal,
             video_outs,
         }
     }
@@ -200,7 +205,7 @@ impl Channel {
     pub fn render(
         &self,
         level_scale: UnipolarFloat,
-        mask: bool,
+        mode: PaintMode,
         ctx: RenderContext,
         out: &mut Vec<Layer>,
     ) {
@@ -214,7 +219,7 @@ impl Channel {
         if level == 0. {
             return;
         }
-        self.beam.render(level, self.mask || mask, ctx, out);
+        self.beam.render(level, mode.over(self.mode), ctx, out);
     }
 }
 
@@ -235,7 +240,14 @@ pub struct ControlMessage {
 #[derive(Debug)]
 pub enum ChannelControlMessage {
     Set(ChannelStateChange),
-    ToggleMask,
+    /// Put the channel into this mode, or back to normal if it is there
+    /// already.
+    ///
+    /// Naming the mode rather than stepping through them is what lets a
+    /// control surface give each mode its own button and its own lamp: a
+    /// button reads its channel's mode off its lamp, and one press of it
+    /// reaches that mode from any other.
+    ToggleMode(PaintMode),
     ToggleVideoChannel(VideoChannel),
 }
 
@@ -248,7 +260,7 @@ pub struct StateChange {
 pub enum ChannelStateChange {
     Level(UnipolarFloat),
     Bump(bool),
-    Mask(bool),
+    Mode(PaintMode),
     VideoChannel((VideoChannel, bool)),
     ContainsLook(bool),
 }

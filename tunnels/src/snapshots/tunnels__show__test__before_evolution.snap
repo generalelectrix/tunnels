@@ -4,6 +4,7 @@ expression: "check_render(&show, 1)"
 ---
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:
@@ -1772,6 +1773,7 @@ expression: "check_render(&show, 1)"
       spin_angle: 0
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:
@@ -3540,6 +3542,7 @@ expression: "check_render(&show, 1)"
       spin_angle: 0
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:
@@ -5308,6 +5311,7 @@ expression: "check_render(&show, 1)"
       spin_angle: 0
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:
@@ -7076,6 +7080,7 @@ expression: "check_render(&show, 1)"
       spin_angle: 0
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:
@@ -8844,6 +8849,7 @@ expression: "check_render(&show, 1)"
       spin_angle: 0
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:
@@ -10612,6 +10618,7 @@ expression: "check_render(&show, 1)"
       spin_angle: 0
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:
@@ -12380,6 +12387,7 @@ expression: "check_render(&show, 1)"
       spin_angle: 0
 - render_mode: Arc
   segment_path: Ellipse
+  mode: Normal
   span: 0.007936507936507936
   shapes:
     - color:

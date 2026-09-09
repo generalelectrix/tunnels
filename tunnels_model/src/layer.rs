@@ -141,6 +141,49 @@ impl DrawMode {
     }
 }
 
+/// What a beam's shapes do to the frame they are drawn into.
+///
+/// A beam either paints in its own colours, or paints opaque black on one side
+/// or the other of the shapes it draws. The two black modes are the same
+/// operation about opposite sides of the same outline: a mask blacks the
+/// inside, so what is under it is hidden where the shapes fall; a gobo blacks
+/// the outside, so what is under it survives only where the shapes fall and the
+/// beam becomes a window rather than a hole.
+///
+/// Black is painted rather than clipped, so what the mode does is done by the
+/// time the next beam draws. A beam drawn after a gobo paints over its black
+/// exactly as it paints over a mask's.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+pub enum PaintMode {
+    /// The beam's own colours (default).
+    #[default]
+    Normal,
+    /// Opaque black where the beam's shapes are.
+    Mask,
+    /// Opaque black everywhere the beam's shapes are not.
+    Gobo,
+}
+
+impl PaintMode {
+    /// This mode standing in for another's.
+    ///
+    /// A beam drawn in black draws everything inside it in black too, so a
+    /// composition put into one of the black modes paints that way throughout
+    /// rather than letting its parts each decide. `Normal` is the absence of
+    /// such an imposition, and yields to whatever the inner beam asks for.
+    pub fn over(self, inner: Self) -> Self {
+        match self {
+            Self::Normal => inner,
+            imposed => imposed,
+        }
+    }
+
+    /// Whether this mode paints opaque black rather than the beam's colours.
+    pub fn paints_black(self) -> bool {
+        !matches!(self, Self::Normal)
+    }
+}
+
 /// Identifies one figure baked into the build.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub struct SpriteId(pub u16);
@@ -222,6 +265,7 @@ pub struct ShapeGeometry {
 pub struct SegmentLayer {
     pub render_mode: RenderMode,
     pub segment_path: SegmentPath,
+    pub mode: PaintMode,
     /// The angular width every segment in this layer spans, in turns.
     ///
     /// A segment's stop angle is its `start` plus this, so a segment that
@@ -235,12 +279,14 @@ impl SegmentLayer {
     pub fn new(
         render_mode: RenderMode,
         segment_path: SegmentPath,
+        mode: PaintMode,
         span: f64,
         shapes: Vec<ShapeGeometry>,
     ) -> Self {
         Self {
             render_mode,
             segment_path,
+            mode,
             span,
             shapes,
         }
@@ -367,6 +413,7 @@ pub struct FillLayer {
     /// units a segment's thickness is.
     pub thickness: f64,
     pub draw_mode: DrawMode,
+    pub mode: PaintMode,
     pub color: ColorField,
     /// Animations resolved when the colour ramp is built, once per texel.
     pub color_anims: Vec<TargetedAnimation<PreparedAnimation>>,
@@ -403,8 +450,20 @@ pub enum Layer {
 }
 
 impl Layer {
+    /// What this layer's shapes do to the frame they are drawn into.
+    pub fn mode(&self) -> PaintMode {
+        match self {
+            Self::Segments(l) => l.mode,
+            Self::Fill(l) => l.mode,
+        }
+    }
+
     /// Whether this layer would draw nothing, and so can be dropped before it
     /// reaches a renderer.
+    ///
+    /// Dropping is what an empty layer means in every mode, gobos included. A
+    /// gobo with no shapes has no window to open, and opens none rather than
+    /// blacking the frame entire.
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Segments(l) => l.shapes.is_empty(),
@@ -420,6 +479,34 @@ pub type LayerCollection = Vec<Layer>;
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A composition drawn in a black mode imposes it on everything inside it,
+    /// and `Normal` imposes nothing.
+    ///
+    /// This is what makes each channel of a gobo'd look a gobo in its own
+    /// right, and so what makes such a look come out as the intersection of
+    /// its figures rather than their union.
+    #[test]
+    fn an_imposed_mode_overrides_a_beams_own() {
+        use PaintMode::{Gobo, Mask, Normal};
+        for inner in [Normal, Mask, Gobo] {
+            assert_eq!(
+                Normal.over(inner),
+                inner,
+                "a look in no particular mode leaves {inner:?} alone"
+            );
+            for imposed in [Mask, Gobo] {
+                assert_eq!(
+                    imposed.over(inner),
+                    imposed,
+                    "a {imposed:?} look draws a {inner:?} channel as {imposed:?}"
+                );
+            }
+        }
+        assert!(!Normal.paints_black());
+        assert!(Mask.paints_black());
+        assert!(Gobo.paints_black());
+    }
 
     /// A mask is resolved once for the whole layer rather than once per point.
     /// That is only sound if no adjustment an animation can make reaches the

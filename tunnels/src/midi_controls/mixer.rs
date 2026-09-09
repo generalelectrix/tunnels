@@ -9,6 +9,7 @@ use crate::{
     },
     show::ControlMessage as ShowControlMessage,
 };
+use tunnels_model::layer::PaintMode;
 
 use super::{unipolar_from_midi, unipolar_to_midi};
 
@@ -22,6 +23,15 @@ const FADER: u8 = 0x7;
 const BUMP: u8 = 0x32;
 const MASK: u8 = 0x31;
 const LOOK: u8 = 0x30;
+
+/// The note a channel's gobo button sends, and lights its lamp from.
+///
+/// The APC40's Track Select button, which the protocol document places at 0x34
+/// on the track's own midi channel alongside the four buttons above it. Nothing
+/// else reads it. **Taken from the protocol document rather than measured off
+/// the hardware**, so a surface that turns out to send something else here
+/// needs this number changed and nothing else.
+const GOBO: u8 = 0x34;
 
 /// The midi note value for the 0th video channel selector.
 const VIDEO_CHAN_0: u8 = 66;
@@ -48,7 +58,8 @@ pub fn interpret(event: &Event, page: usize) -> Option<ShowControlMessage> {
         EventType::ControlChange if control == FADER => mkmsg(Set(Level(unipolar_from_midi(v)))),
         EventType::NoteOn if control == BUMP => mkmsg(Set(Bump(true))),
         EventType::NoteOff if control == BUMP => mkmsg(Set(Bump(false))),
-        EventType::NoteOn if control == MASK => mkmsg(ToggleMask),
+        EventType::NoteOn if control == MASK => mkmsg(ToggleMode(PaintMode::Mask)),
+        EventType::NoteOn if control == GOBO => mkmsg(ToggleMode(PaintMode::Gobo)),
         EventType::NoteOn
             if control >= VIDEO_CHAN_0
                 && control < VIDEO_CHAN_0 + Mixer::N_VIDEO_CHANNELS as u8 =>
@@ -84,7 +95,18 @@ pub fn update_mixer_control(sc: StateChange, manager: &mut impl MidiOutput) {
     match sc.change {
         Level(v) => send(event(cc(midi_channel, FADER), unipolar_to_midi(v))),
         Bump(v) => send(event(note_on(midi_channel, BUMP), v as u8)),
-        Mask(v) => send(event(note_on(midi_channel, MASK), v as u8)),
+        // A mode lights one lamp and darkens the other, so a channel's mode
+        // is legible from the surface whichever of the two it is in.
+        Mode(v) => {
+            send(event(
+                note_on(midi_channel, MASK),
+                (v == PaintMode::Mask) as u8,
+            ));
+            send(event(
+                note_on(midi_channel, GOBO),
+                (v == PaintMode::Gobo) as u8,
+            ));
+        }
         ContainsLook(v) => send(event(note_on(midi_channel, LOOK), v as u8)),
         VideoChannel((vc, v)) => send(event(
             note_on(midi_channel, vc.0 as u8 + VIDEO_CHAN_0),

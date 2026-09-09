@@ -7,8 +7,8 @@ use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::fill::Renderer;
 use tunnels_model::layer::{
-    Hsva, Layer, LayerCollection, PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath,
-    ShapeGeometry,
+    Hsva, Layer, LayerCollection, PaintMode, PhaseAxis, Placement, RenderMode, SegmentLayer,
+    SegmentPath, ShapeGeometry,
 };
 use tunnels_model::tunnel::fixture;
 
@@ -155,9 +155,15 @@ fn assert_images_match_with_limit(
 /// Wrap shapes in a layer drawn with the default render mode and path shape,
 /// every segment spanning `span` turns.
 fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
+    layer_in_mode(PaintMode::Normal, span, shapes)
+}
+
+/// A default-shaped layer that paints in the given mode.
+fn layer_in_mode(mode: PaintMode, span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
     Layer::Segments(SegmentLayer::new(
         RenderMode::default(),
         SegmentPath::Ellipse,
+        mode,
         span,
         shapes,
     ))
@@ -460,6 +466,7 @@ fn snapshot_from_groups(
             Layer::Segments(SegmentLayer::new(
                 render_mode,
                 SegmentPath::Line,
+                PaintMode::Normal,
                 span,
                 shapes,
             ))
@@ -686,6 +693,31 @@ fn sprite_noise_warp_outline() {
 fn sprite_masked_stack() {
     let image = render_snapshot(&fixture::sprite_masked_stack_snapshot(), &test_config());
     compare_fill_to_fixture(&image, "sprite_masked_stack.png");
+}
+
+/// A gobo over a lit figure is the mask above inverted: the lit figure
+/// survives inside the upper figure and is blacked everywhere else, where the
+/// mask blacks the inside and leaves the rest.
+#[test]
+fn sprite_gobo_stack() {
+    let image = render_snapshot(&fixture::sprite_gobo_stack_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "sprite_gobo_stack.png");
+}
+
+/// A gobo blacks the frame rather than clipping it, so a beam drawn after one
+/// lands whole rather than being confined to the window.
+#[test]
+fn sprite_gobo_then_lit() {
+    let image = render_snapshot(&fixture::sprite_gobo_then_lit_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "sprite_gobo_then_lit.png");
+}
+
+/// A look drawn as a gobo makes each of its channels a gobo in its own right,
+/// and what survives all of them is what lies inside all of them.
+#[test]
+fn look_gobo_intersection() {
+    let image = render_snapshot(&fixture::look_gobo_intersection_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "look_gobo_intersection.png");
 }
 
 /// A stroked outline takes its colour from the contour it follows, not from

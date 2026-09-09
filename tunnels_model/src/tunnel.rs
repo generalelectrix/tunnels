@@ -1,8 +1,8 @@
 use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
     ColorAdjust, ColorField, DrawMode, FigureId, FigureLibrary, FillLayer, GeneratedId, Layer,
-    PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode,
-    SpriteId,
+    PaintMode, PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry,
+    ShapeMode, SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
@@ -390,7 +390,7 @@ impl Tunnel {
     }
 
     /// Render the current state of the tunnel.
-    pub fn render(&self, level_scale: UnipolarFloat, as_mask: bool, ctx: RenderContext) -> Layer {
+    pub fn render(&self, level_scale: UnipolarFloat, mode: PaintMode, ctx: RenderContext) -> Layer {
         // Resolve each animation's frame-constant state once. What an animation
         // costs is mostly deciding which clock drives it, where that clock is,
         // where its smoother has got to and what the amplitude works out to —
@@ -402,28 +402,28 @@ impl Tunnel {
             ShapeMode::Ellipse => Layer::Segments(self.render_segments(
                 SegmentPath::Ellipse,
                 level_scale,
-                as_mask,
+                mode,
                 ctx,
                 &anims,
             )),
             ShapeMode::Line => Layer::Segments(self.render_segments(
                 SegmentPath::Line,
                 level_scale,
-                as_mask,
+                mode,
                 ctx,
                 &anims,
             )),
             ShapeMode::Sprite => Layer::Fill(self.render_fill(
                 FigureId::Baked(self.sprite),
                 level_scale,
-                as_mask,
+                mode,
                 ctx,
                 &anims,
             )),
             ShapeMode::Generated => Layer::Fill(self.render_fill(
                 FigureId::Generated(self.generated),
                 level_scale,
-                as_mask,
+                mode,
                 ctx,
                 &anims,
             )),
@@ -474,7 +474,7 @@ impl Tunnel {
         &self,
         figure: FigureId,
         level_scale: UnipolarFloat,
-        as_mask: bool,
+        mode: PaintMode,
         ctx: RenderContext,
         anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     ) -> FillLayer {
@@ -515,7 +515,8 @@ impl Tunnel {
             // one already spent.
             thickness: self.thickness.val().val(),
             draw_mode: self.draw_mode,
-            color: self.color_field(base_hue, level_scale, as_mask),
+            mode,
+            color: self.color_field(base_hue, level_scale, mode),
             color_anims: fill_animations(anims, AnimationTarget::is_color),
             warps: fill_animations(anims, |target| {
                 !target.is_color() && target != AnimationTarget::Thickness
@@ -526,10 +527,17 @@ impl Tunnel {
 
     /// The colour model this beam's shapes are resolved from.
     ///
-    /// A mask paints opaque black, punching a hole in whatever lies under it,
-    /// so it carries no colour of its own however the colour knobs are set.
-    fn color_field(&self, base_hue: f64, level_scale: UnipolarFloat, as_mask: bool) -> ColorField {
-        if as_mask {
+    /// A beam painting black carries no colour of its own however the colour
+    /// knobs are set — a mask because it punches a hole in whatever lies under
+    /// it, a gobo because the black it lays down is everywhere its shapes are
+    /// not.
+    fn color_field(
+        &self,
+        base_hue: f64,
+        level_scale: UnipolarFloat,
+        mode: PaintMode,
+    ) -> ColorField {
+        if mode.paints_black() {
             ColorField {
                 phase: self.phase_axis,
                 cycles: 0.,
@@ -557,7 +565,7 @@ impl Tunnel {
         &self,
         segment_path: SegmentPath,
         level_scale: UnipolarFloat,
-        as_mask: bool,
+        mode: PaintMode,
         ctx: RenderContext,
         anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     ) -> SegmentLayer {
@@ -568,7 +576,7 @@ impl Tunnel {
         let marquee_interval = 1.0 / segs as f64;
 
         let (offset, base_hue) = self.placement_and_hue(ctx);
-        let color_field = self.color_field(base_hue, level_scale, as_mask);
+        let color_field = self.color_field(base_hue, level_scale, mode);
         // A mask paints one colour whatever an animation adds, so it is
         // resolved once here rather than per segment.
         let mask = color_field
@@ -682,7 +690,7 @@ impl Tunnel {
                 spin_angle: spin_angle.val(),
             });
         }
-        SegmentLayer::new(self.render_mode, segment_path, marquee_interval, arcs)
+        SegmentLayer::new(self.render_mode, segment_path, mode, marquee_interval, arcs)
     }
 
     /// Emit the current value of all controllable tunnel state.
@@ -1644,7 +1652,7 @@ mod test {
         };
         let Layer::Fill(fill) = tunnel.render(
             UnipolarFloat::ONE,
-            true,
+            PaintMode::Mask,
             RenderContext {
                 clocks: &ClockBank::default().as_static(),
                 palette: &ColorPalette::default(),
@@ -1797,7 +1805,7 @@ mod test {
     fn render_fixture(tunnel: &Tunnel) -> Layer {
         tunnel.render(
             UnipolarFloat::ONE,
-            false,
+            PaintMode::Normal,
             RenderContext {
                 clocks: &ClockBank::default().as_static(),
                 palette: &ColorPalette::default(),
@@ -1818,9 +1826,13 @@ pub mod fixture {
         ControlMessage as AnimControlMessage, StateChange as AnimStateChange, Waveform,
     };
     use crate::animation_target::AnimationTarget;
+    use crate::beam::Beam;
     use crate::clock_bank::{ClockBank, ClockIdx};
+    use crate::look::Look;
+    use crate::mixer::Channel;
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use std::collections::BTreeSet;
     use strum::VariantArray;
 
     use super::*;
@@ -1838,7 +1850,7 @@ pub mod fixture {
     fn render_default(tunnel: &Tunnel) -> Layer {
         tunnel.render(
             UnipolarFloat::ONE,
-            false,
+            PaintMode::Normal,
             RenderContext {
                 clocks: &ClockBank::default().as_static(),
 
@@ -2245,7 +2257,7 @@ pub mod fixture {
         for _ in 0..n_snapshots {
             let arcs = tunnel.render(
                 UnipolarFloat::ONE,
-                false,
+                PaintMode::Normal,
                 RenderContext {
                     clocks: &ClockBank::default().as_static(),
 
@@ -2276,7 +2288,7 @@ pub mod fixture {
         }
         let arcs = tunnel.render(
             UnipolarFloat::ONE,
-            false,
+            PaintMode::Normal,
             RenderContext {
                 clocks: &ClockBank::default().as_static(),
 
@@ -2779,7 +2791,113 @@ pub mod fixture {
             SmoothMode::Linear,
         );
 
-        vec![render_default(&lit), render_masked(&mask)]
+        vec![render_default(&lit), render_in(&mask, PaintMode::Mask)]
+    }
+
+    /// A gobo stacked over a lit figure, which is the mask above inverted.
+    ///
+    /// The same two beams at the same sizes as `sprite_masked_stack_snapshot`,
+    /// with the upper one in the other black mode. Every pixel one of the two
+    /// leaves lit the other blacks, so the pair reads as a check on what a
+    /// gobo means as much as on how it draws.
+    pub fn sprite_gobo_stack_snapshot() -> LayerCollection {
+        let (lit, gobo) = gobo_stack();
+        vec![render_default(&lit), render_in(&gobo, PaintMode::Gobo)]
+    }
+
+    /// A lit figure drawn after a gobo, which paints over its black.
+    ///
+    /// A gobo blacks the frame rather than clipping it, so what it did is
+    /// finished by the time the next beam draws and that beam is not confined
+    /// to the window. The pinwheel lands whole, across the boundary between
+    /// the window and the black around it.
+    pub fn sprite_gobo_then_lit_snapshot() -> LayerCollection {
+        let (lit, gobo) = gobo_stack();
+        let mut over = sprite_tunnel(PINWHEEL);
+        over.size = Smoother::new(
+            UnipolarFloat::new(0.55),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        vec![
+            render_default(&lit),
+            render_in(&gobo, PaintMode::Gobo),
+            render_default(&over),
+        ]
+    }
+
+    /// A look of two figures drawn as a gobo, over a lit figure.
+    ///
+    /// A look imposes its mode on every channel in it, so each of the two
+    /// becomes a gobo in its own right and each blacks everything outside
+    /// itself. What survives both is what lies inside both, which is why a
+    /// gobo'd look reads as the intersection of its figures rather than their
+    /// union.
+    pub fn look_gobo_intersection_snapshot() -> LayerCollection {
+        let mut lit = sprite_tunnel(SNOWFLAKE);
+        lit.col_width = UnipolarFloat::ONE;
+        lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
+        lit.size = Smoother::new(
+            UnipolarFloat::new(0.6),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+
+        let mut rings = sprite_tunnel(BULLSEYE);
+        rings.size = Smoother::new(
+            UnipolarFloat::new(0.45),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+
+        let mut arms = sprite_tunnel(PINWHEEL);
+        arms.size = Smoother::new(
+            UnipolarFloat::new(0.45),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+
+        let look = Look::from_channels(
+            [rings, arms]
+                .into_iter()
+                .map(|tunnel| Channel {
+                    beam: Beam::Tunnel(tunnel),
+                    level: UnipolarFloat::ONE,
+                    bump: false,
+                    mode: PaintMode::Normal,
+                    video_outs: BTreeSet::new(),
+                })
+                .collect(),
+        );
+
+        let mut layers = vec![render_default(&lit)];
+        look.render(
+            UnipolarFloat::ONE,
+            PaintMode::Gobo,
+            RenderContext {
+                clocks: &ClockBank::default().as_static(),
+                palette: &ColorPalette::default(),
+                positions: &PositionBank::default(),
+                audio_envelope: UnipolarFloat::ZERO,
+            },
+            &mut layers,
+        );
+        layers
+    }
+
+    /// A colour-swept figure and a smaller one to open a window in it.
+    fn gobo_stack() -> (Tunnel, Tunnel) {
+        let mut lit = sprite_tunnel(SNOWFLAKE);
+        lit.col_width = UnipolarFloat::ONE;
+        lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
+
+        let mut gobo = sprite_tunnel(BULLSEYE);
+        gobo.size = Smoother::new(
+            UnipolarFloat::new(0.35),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        (lit, gobo)
     }
 
     /// A stroked outline carrying a colour sweep.
@@ -2936,10 +3054,11 @@ pub mod fixture {
         snapshot(render_default(&tunnel))
     }
 
-    fn render_masked(tunnel: &Tunnel) -> Layer {
+    /// A tunnel drawn in a mode imposed on it rather than its own.
+    fn render_in(tunnel: &Tunnel, mode: PaintMode) -> Layer {
         tunnel.render(
             UnipolarFloat::ONE,
-            true,
+            mode,
             RenderContext {
                 clocks: &ClockBank::default().as_static(),
                 palette: &ColorPalette::default(),

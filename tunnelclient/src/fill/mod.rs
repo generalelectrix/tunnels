@@ -23,15 +23,16 @@ use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampSpan;
 use crate::draw::{draw_segments, hsv_to_rgb, place, thickness_px};
 use client_lib::config::ClientConfig;
+use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
 use graphics::types::Color;
-use graphics::{Context, Graphics, Transformed};
+use graphics::{Context, Graphics, Polygon, Transformed};
 use image::RgbaImage;
 use log::{error, info};
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
 use tunnels_model::layer::{
-    ColorAdjust, FigureId, FillLayer, GeneratedId, Layer, LayerCollection, SpriteId,
+    ColorAdjust, FigureId, FillLayer, GeneratedId, Layer, LayerCollection, PaintMode, SpriteId,
 };
 
 /// How many frames a texture may still be read after the last draw that used
@@ -243,11 +244,66 @@ where
         self.frame.advance();
         self.meshes.reap(self.frame);
         for layer in layers {
-            match layer {
-                Layer::Segments(segments) => draw_segments(segments, c, gl, cfg),
-                Layer::Fill(fill) => self.draw_fill(fill, c, gl, cfg),
+            match layer.mode() {
+                PaintMode::Gobo => self.draw_gobo(layer, c, gl, cfg),
+                // A mask carries its black in the colour it draws in, so it
+                // and an ordinary beam reach the frame the same way.
+                PaintMode::Normal | PaintMode::Mask => {
+                    self.draw_shapes(layer, &DrawState::default(), c, gl, cfg);
+                }
             }
         }
+    }
+
+    /// Draw a layer's own geometry under the given draw state, and say whether
+    /// any of it reached the frame.
+    fn draw_shapes<G: Graphics<Texture = T>>(
+        &mut self,
+        layer: &Layer,
+        draw_state: &DrawState,
+        c: &Context,
+        gl: &mut G,
+        cfg: &ClientConfig,
+    ) -> bool {
+        match layer {
+            Layer::Segments(segments) => draw_segments(segments, draw_state, c, gl, cfg),
+            Layer::Fill(fill) => self.draw_fill(fill, draw_state, c, gl, cfg),
+        }
+    }
+
+    /// Black the frame everywhere this layer's shapes are not.
+    ///
+    /// The shapes are drawn into the stencil plane instead of into the frame,
+    /// and the black then goes down everywhere the plane was not marked. What
+    /// is under the layer survives only inside its shapes, which is what makes
+    /// the layer a window.
+    ///
+    /// The plane is cleared on the way in as well as on the way out, so a gobo
+    /// neither inherits marks nor leaves any. That is the whole of what keeps
+    /// the window from reaching past the layer that opened it: by the time the
+    /// next layer draws, the inversion is ordinary black in the frame, and a
+    /// beam drawn over it paints over that black exactly as it paints over a
+    /// mask's.
+    ///
+    /// A layer that marks nothing lays down no black. There is no window to
+    /// invert, and a beam that failed to draw — a figure this build does not
+    /// carry, a size knob wound to nothing — should go unseen rather than take
+    /// the frame with it.
+    fn draw_gobo<G: Graphics<Texture = T>>(
+        &mut self,
+        layer: &Layer,
+        c: &Context,
+        gl: &mut G,
+        cfg: &ClientConfig,
+    ) {
+        settle(gl);
+        gl.clear_stencil(STENCIL_CLEAR);
+        if !self.draw_shapes(layer, &DrawState::new_clip(), c, gl, cfg) {
+            return;
+        }
+        Polygon::new(GOBO_BLACK).draw(&ground(cfg), &DrawState::new_outside(), c.transform, gl);
+        settle(gl);
+        gl.clear_stencil(STENCIL_CLEAR);
     }
 
     /// Tessellate every figure both libraries hold, before the show starts.
@@ -300,13 +356,17 @@ where
         self.meshes.triangles()
     }
 
+    ///
+    /// Says whether any of the figure reached the frame, which a caller
+    /// inverting the frame around it needs to know.
     fn draw_fill<G: Graphics<Texture = T>>(
         &mut self,
         fill: &FillLayer,
+        draw_state: &DrawState,
         c: &Context,
         gl: &mut G,
         cfg: &ClientConfig,
-    ) {
+    ) -> bool {
         let Self {
             figures,
             fills,
@@ -319,13 +379,13 @@ where
 
         // A figure this build does not carry draws nothing.
         let Some(contours) = figures.get(fill.figure) else {
-            return;
+            return false;
         };
 
         let placed = Placed::of(fill, c, cfg);
         if placed.px_per_unit <= 0.0 {
             // Scaled to nothing. Nothing to draw, and no density to draw it at.
-            return;
+            return false;
         }
         let level = Level::for_screen(
             placed.px_per_unit,
@@ -368,7 +428,7 @@ where
         } else {
             match ramps.texture_for(fill, span, *frame) {
                 Some(texture) => Some(texture),
-                None => return,
+                None => return false,
             }
         };
         let field = PhaseField {
@@ -389,11 +449,19 @@ where
         // outline never takes that path: it is stroked at one width for every
         // beam and reaches its own by being narrowed per vertex, so it goes
         // through the pass however still the figure is.
+        let mut drew = false;
         if flat
             && !warping
             && let Some(interior) = interior
         {
-            draw_flat(interior.points(), interior.indices(), color, placed.m, gl);
+            drew |= draw_flat(
+                interior.points(),
+                interior.indices(),
+                color,
+                draw_state,
+                placed.m,
+                gl,
+            );
         } else if let Some(interior) = interior {
             let mesh = meshes.get(
                 MeshId {
@@ -409,45 +477,109 @@ where
             // positions and ramp coordinates together, because both want the
             // same polar coordinates for a point.
             verts.vertex_pass(mesh, work);
-            match texture {
-                Some(texture) => {
-                    draw_textured(
-                        mesh.indices(),
-                        verts,
-                        field.wrap_period(),
-                        texture,
-                        placed.m,
-                        gl,
-                    );
-                }
-                None => draw_flat(verts.positions(), mesh.indices(), color, placed.m, gl),
-            }
+            drew |= match texture {
+                Some(texture) => draw_textured(
+                    mesh.indices(),
+                    verts,
+                    field.wrap_period(),
+                    texture,
+                    draw_state,
+                    placed.m,
+                    gl,
+                ),
+                None => draw_flat(
+                    verts.positions(),
+                    mesh.indices(),
+                    color,
+                    draw_state,
+                    placed.m,
+                    gl,
+                ),
+            };
         }
 
-        if let Some(outline) = outline {
+        if let Some(outline) = outline
             // An outline is never meshed. Its colour comes from the contour, so
             // nothing varies across a ribbon that a finer mesh could resolve,
             // and the tessellator's own triangles are drawn as they come.
-            if outline.is_empty() {
-                return;
-            }
+            && !outline.is_empty()
+        {
             verts.stroke_vertex_pass(outline, work);
-            match texture {
-                Some(texture) => {
-                    draw_textured(
-                        outline.indices(),
-                        verts,
-                        field.wrap_period(),
-                        texture,
-                        placed.m,
-                        gl,
-                    );
-                }
-                None => draw_flat(verts.positions(), outline.indices(), color, placed.m, gl),
-            }
+            drew |= match texture {
+                Some(texture) => draw_textured(
+                    outline.indices(),
+                    verts,
+                    field.wrap_period(),
+                    texture,
+                    draw_state,
+                    placed.m,
+                    gl,
+                ),
+                None => draw_flat(
+                    verts.positions(),
+                    outline.indices(),
+                    color,
+                    draw_state,
+                    placed.m,
+                    gl,
+                ),
+            };
         }
+        drew
     }
 }
+
+/// Put every draw already asked for onto the frame before the stencil moves.
+///
+/// A backend is free to hold vertices back and draw them in a batch, and only
+/// the draw state they were given decides when it must stop holding them: a run
+/// under one state cannot be drawn under another. Clearing the stencil is not a
+/// draw and so does not end a run, which would let a gobo's black reach the
+/// frame after the marks it was to be tested against had been wiped — and a
+/// test against nothing passes everywhere.
+///
+/// Asking for a run under the ordinary state settles whatever is outstanding.
+/// It is drawing nothing, so it costs a backend that draws as it goes nothing
+/// at all.
+fn settle<G: Graphics>(gl: &mut G) {
+    gl.tri_list(&DrawState::default(), &[0.0; 4], |_| {});
+}
+
+/// One triangle covering the frame, which is the ground a gobo blacks with.
+///
+/// A rectangle would be two triangles meeting along a diagonal, and a
+/// rasteriser is free to award a pixel that falls exactly on that shared edge
+/// to neither of them — which shows up as a hairline of un-blacked frame
+/// running corner to corner. One triangle has no interior edge to lose a pixel
+/// to, so the ground is whole by construction rather than by trusting a fill
+/// rule.
+///
+/// It reaches well past the frame on every side so that no pixel of the frame
+/// lies on an edge of it either. The overhang is not drawn: a rasteriser walks
+/// the triangle's bounds clipped to the frame, so what is covered costs what
+/// the frame costs and no more.
+fn ground(cfg: &ClientConfig) -> [[f64; 2]; 3] {
+    // The far corner of the frame sits at 4 in the units below, so any reach
+    // past that clears it. Six leaves the margin visible in the numbers.
+    const REACH: f64 = 6.0;
+    let w = f64::from(cfg.x_resolution);
+    let h = f64::from(cfg.y_resolution);
+    [[-w, -h], [(REACH - 1.0) * w, -h], [-w, (REACH - 1.0) * h]]
+}
+
+/// The ground a gobo lays down outside its shapes.
+///
+/// Opaque black, which is the same thing a mask paints inside its own shapes
+/// and the same thing the frame is cleared to. A gobo is the frame's own black
+/// put back everywhere the window does not reach.
+const GOBO_BLACK: Color = [0.0, 0.0, 0.0, 1.0];
+
+/// The stencil value that marks no shape.
+///
+/// `DrawState::new_clip` writes 255 and `DrawState::new_outside` tests against
+/// 255, so anything else stands for unmarked. Zero is what a freshly cleared
+/// plane holds.
+const STENCIL_CLEAR: u8 = 0;
 
 /// The single colour a figure draws in when nothing varies across it.
 fn flat_color(fill: &FillLayer) -> Color {
@@ -584,6 +716,7 @@ mod test {
             spin_speed: 0.,
             thickness: 0.,
             draw_mode: DrawMode::Fill,
+            mode: PaintMode::Normal,
             color: ColorField {
                 phase: PhaseAxis::Angle,
                 cycles: 3.,

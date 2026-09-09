@@ -3,7 +3,7 @@
 //! Simplified: no rayon, no glyphs — flat, per-vertex-colored and textured
 //! triangle rasterization.
 
-use graphics::draw_state::DrawState;
+use graphics::draw_state::{DrawState, Stencil};
 use graphics::types::Color;
 use graphics::{Graphics, ImageSize};
 use image::{Rgba, RgbaImage};
@@ -11,18 +11,26 @@ use texture::{CreateTexture, Format, TextureOp, TextureSettings, UpdateTexture};
 
 pub struct RenderBuffer {
     inner: RgbaImage,
+    /// One mark per pixel, which a draw state may write, read, or ignore.
+    ///
+    /// Held beside the colour rather than inside it because it is not a colour:
+    /// nothing samples it, nothing blends it, and clearing it leaves the
+    /// picture alone.
+    stencil: Vec<u8>,
 }
 
 impl RenderBuffer {
     pub fn new(width: u32, height: u32) -> Self {
-        RenderBuffer {
-            inner: RgbaImage::new(width, height),
-        }
+        Self::from_image(RgbaImage::new(width, height))
     }
 
     /// Wrap an existing image, so a color ramp can serve as a texture.
     pub fn from_image(inner: RgbaImage) -> Self {
-        RenderBuffer { inner }
+        let (width, height) = inner.dimensions();
+        RenderBuffer {
+            stencil: vec![0; (width as usize) * (height as usize)],
+            inner,
+        }
     }
 
     pub fn into_image(self) -> RgbaImage {
@@ -100,6 +108,39 @@ fn triangle_contains(tri: &[[f32; 2]], point: [f32; 2]) -> bool {
     (b1 && b2 && b3) || (!b1 && !b2 && !b3)
 }
 
+/// What the stencil plane does to one run of triangles.
+///
+/// The four settings a `DrawState` can carry, plus the absence of one. Marking
+/// and incrementing paint nothing: the hardware runs those as a test that
+/// always fails and an operation applied on failure, so the mark lands and the
+/// fragment is discarded.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum StencilPass {
+    /// The plane is neither read nor written, and every covered pixel paints.
+    Off,
+    /// Mark covered pixels with a value, painting none of them.
+    Mark(u8),
+    /// Paint covered pixels carrying the value.
+    Inside(u8),
+    /// Paint covered pixels not carrying the value.
+    Outside(u8),
+    /// Raise covered pixels' marks by one, painting none of them. A mark
+    /// already at the top stays there, as the hardware's increment does.
+    Increment,
+}
+
+impl StencilPass {
+    fn of(draw_state: &DrawState) -> Self {
+        match draw_state.stencil {
+            None => Self::Off,
+            Some(Stencil::Clip(v)) => Self::Mark(v),
+            Some(Stencil::Inside(v)) => Self::Inside(v),
+            Some(Stencil::Outside(v)) => Self::Outside(v),
+            Some(Stencil::Increment) => Self::Increment,
+        }
+    }
+}
+
 /// A triangle's corners, paired with a per-corner attribute.
 type Attributed<T> = ([[f32; 2]; 3], [T; 3]);
 
@@ -130,13 +171,36 @@ fn interpolate<const N: usize>(w: [f32; 3], corners: &[[f32; N]; 3]) -> [f32; N]
 }
 
 impl RenderBuffer {
+    /// Apply a stencil pass at one covered pixel, and say whether it paints.
+    fn stencil_step(&mut self, x: u32, y: u32, pass: StencilPass) -> bool {
+        let i = (y as usize) * (self.inner.width() as usize) + (x as usize);
+        match pass {
+            StencilPass::Off => true,
+            StencilPass::Mark(v) => {
+                self.stencil[i] = v;
+                false
+            }
+            StencilPass::Increment => {
+                self.stencil[i] = self.stencil[i].saturating_add(1);
+                false
+            }
+            StencilPass::Inside(v) => self.stencil[i] == v,
+            StencilPass::Outside(v) => self.stencil[i] != v,
+        }
+    }
+
     /// Rasterise one triangle, asking `shade` for the color at each covered
     /// pixel given its barycentric weights.
     ///
     /// Kept apart from `tri_list`'s own loop: that one decides coverage by
     /// signed area, and the golden images rest on exactly which edge pixels it
     /// claims.
-    fn raster(&mut self, tri: &[[f32; 2]; 3], mut shade: impl FnMut([f32; 3]) -> [f32; 4]) {
+    fn raster(
+        &mut self,
+        tri: &[[f32; 2]; 3],
+        pass: StencilPass,
+        mut shade: impl FnMut([f32; 3]) -> [f32; 4],
+    ) {
         let mut tl = [f32::MAX, f32::MAX];
         let mut br = [f32::MIN, f32::MIN];
         for v in tri {
@@ -155,6 +219,9 @@ impl RenderBuffer {
                 let Some(w) = barycentric(tri, [x as f32, y as f32]) else {
                     continue;
                 };
+                if !self.stencil_step(x as u32, y as u32, pass) {
+                    continue;
+                }
                 let over = shade(w);
                 let under = color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
                 let blended = layer_color(&over, &under);
@@ -174,12 +241,15 @@ impl Graphics for RenderBuffer {
         }
     }
 
-    fn clear_stencil(&mut self, _value: u8) {}
+    fn clear_stencil(&mut self, value: u8) {
+        self.stencil.fill(value);
+    }
 
-    fn tri_list<F>(&mut self, _draw_state: &DrawState, color: &[f32; 4], mut f: F)
+    fn tri_list<F>(&mut self, draw_state: &DrawState, color: &[f32; 4], mut f: F)
     where
         F: FnMut(&mut dyn FnMut(&[[f32; 2]])),
     {
+        let pass = StencilPass::of(draw_state);
         f(&mut |vertices| {
             for tri in vertices.chunks(3) {
                 if tri.len() < 3 {
@@ -202,6 +272,9 @@ impl Graphics for RenderBuffer {
                 for x in x0..x1 {
                     for y in y0..y1 {
                         if triangle_contains(tri, [x as f32, y as f32]) {
+                            if !self.stencil_step(x as u32, y as u32, pass) {
+                                continue;
+                            }
                             let under = color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
                             let blended = layer_color(color, &under);
                             self.inner
@@ -215,13 +288,14 @@ impl Graphics for RenderBuffer {
 
     fn tri_list_uv<F>(
         &mut self,
-        _draw_state: &DrawState,
+        draw_state: &DrawState,
         color: &[f32; 4],
         texture: &Self::Texture,
         mut f: F,
     ) where
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]])),
     {
+        let pass = StencilPass::of(draw_state);
         let tint = *color;
         let mut tris: Vec<Attributed<[f32; 2]>> = Vec::new();
         f(&mut |vertices, coords| {
@@ -232,7 +306,7 @@ impl Graphics for RenderBuffer {
             }
         });
         for (tri, uv) in tris {
-            self.raster(&tri, |w| {
+            self.raster(&tri, pass, |w| {
                 let [u, v] = interpolate(w, &uv);
                 let mut over = texture.sample(u, v);
                 for (ch, t) in over.iter_mut().zip(tint) {
@@ -243,10 +317,11 @@ impl Graphics for RenderBuffer {
         }
     }
 
-    fn tri_list_c<F>(&mut self, _draw_state: &DrawState, mut f: F)
+    fn tri_list_c<F>(&mut self, draw_state: &DrawState, mut f: F)
     where
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 4]])),
     {
+        let pass = StencilPass::of(draw_state);
         let mut tris: Vec<Attributed<[f32; 4]>> = Vec::new();
         f(&mut |vertices, colors| {
             for (v, c) in vertices.chunks(3).zip(colors.chunks(3)) {
@@ -256,14 +331,15 @@ impl Graphics for RenderBuffer {
             }
         });
         for (tri, cols) in tris {
-            self.raster(&tri, |w| interpolate(w, &cols));
+            self.raster(&tri, pass, |w| interpolate(w, &cols));
         }
     }
 
-    fn tri_list_uv_c<F>(&mut self, _draw_state: &DrawState, texture: &Self::Texture, mut f: F)
+    fn tri_list_uv_c<F>(&mut self, draw_state: &DrawState, texture: &Self::Texture, mut f: F)
     where
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]], &[[f32; 4]])),
     {
+        let pass = StencilPass::of(draw_state);
         let mut tris: Vec<Tinted> = Vec::new();
         f(&mut |vertices, coords, colors| {
             for ((v, t), c) in vertices
@@ -277,7 +353,7 @@ impl Graphics for RenderBuffer {
             }
         });
         for ((tri, uv), cols) in tris {
-            self.raster(&tri, |w| {
+            self.raster(&tri, pass, |w| {
                 let [u, v] = interpolate(w, &uv);
                 let mut over = texture.sample(u, v);
                 for (ch, t) in over.iter_mut().zip(interpolate(w, &cols)) {

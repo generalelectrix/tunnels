@@ -1,6 +1,7 @@
 use client_lib::config::ClientConfig;
 use client_lib::transform::{Transform, TransformDirection};
 use graphics::Context;
+use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
 use graphics::types::Color;
 use graphics::{CircleArc, Graphics, Transformed, ellipse, line, rectangle};
@@ -38,23 +39,20 @@ pub(crate) fn hsv_to_rgb(c: &Hsva) -> Color {
 }
 
 /// Draw a run of segments, each at its own placement along the layer's path.
+///
+/// Says whether the run had any segments to draw, which a caller inverting the
+/// frame around them needs to know.
 pub(crate) fn draw_segments<G: Graphics>(
     layer: &SegmentLayer,
+    draw_state: &DrawState,
     c: &Context,
     gl: &mut G,
     cfg: &ClientConfig,
-) {
+) -> bool {
     for shape in &layer.shapes {
-        draw_shape(
-            shape,
-            layer.render_mode,
-            layer.segment_path,
-            layer.span,
-            c,
-            gl,
-            cfg,
-        );
+        draw_shape(layer, shape, draw_state, c, gl, cfg);
     }
+    !layer.shapes.is_empty()
 }
 
 /// The viewport transform placing a shape where its placement says.
@@ -91,18 +89,21 @@ pub(crate) fn thickness_px(thickness: f64, cfg: &ClientConfig) -> f64 {
 }
 
 /// Everything a path renderer needs about a shape beyond its own geometry.
-struct ShapeStyle {
+struct ShapeStyle<'a> {
     color: Color,
     thickness: f64,
     spin_rad: f64,
     transform: graphics::math::Matrix2d,
+    /// The blending, clipping and stencil settings every shape in the run is
+    /// drawn under, which is how a run becomes a window rather than a mark.
+    draw_state: &'a DrawState,
 }
 
+/// Draw one segment of a run, in the path shape and mode the run is drawn in.
 fn draw_shape<G: Graphics>(
+    layer: &SegmentLayer,
     shape: &ShapeGeometry,
-    render_mode: RenderMode,
-    segment_path: SegmentPath,
-    span: f64,
+    draw_state: &DrawState,
     c: &Context,
     gl: &mut G,
     cfg: &ClientConfig,
@@ -117,8 +118,10 @@ fn draw_shape<G: Graphics>(
         thickness,
         spin_rad,
         transform,
+        draw_state,
     };
-    match segment_path {
+    let (render_mode, span) = (layer.render_mode, layer.span);
+    match layer.segment_path {
         SegmentPath::Ellipse => draw_ellipse(shape, render_mode, span, &style, gl, cfg),
         SegmentPath::Line => draw_line(shape, render_mode, span, &style, gl, cfg),
     }
@@ -137,6 +140,7 @@ fn draw_ellipse<G: Graphics>(
         thickness,
         spin_rad,
         transform,
+        draw_state,
     } = *style;
     match render_mode {
         RenderMode::Arc => {
@@ -148,12 +152,8 @@ fn draw_ellipse<G: Graphics>(
 
             if span >= 1.0 {
                 // Full circle: no meaningful centroid to spin around.
-                CircleArc::new(color, thickness, start, stop).draw(
-                    bound,
-                    &Default::default(),
-                    transform,
-                    gl,
-                );
+                CircleArc::new(color, thickness, start, stop)
+                    .draw(bound, draw_state, transform, gl);
             } else {
                 // Compute centroid of this arc segment on the ellipse.
                 let mid_angle = (start + stop) / 2.0;
@@ -167,7 +167,7 @@ fn draw_ellipse<G: Graphics>(
                 let offset_bound = rectangle::centered([-cx, -cy, x_size, y_size]);
                 CircleArc::new(color, thickness, start, stop).draw(
                     offset_bound,
-                    &Default::default(),
+                    draw_state,
                     local,
                     gl,
                 );
@@ -178,7 +178,7 @@ fn draw_ellipse<G: Graphics>(
             let cx = shape.placement.extent_x * cfg.critical_size * mid_angle.cos();
             let cy = shape.placement.extent_y * cfg.critical_size * mid_angle.sin();
             let bound = rectangle::centered([cx, cy, thickness, thickness]);
-            ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
+            ellipse::Ellipse::new(color).draw(bound, draw_state, transform, gl);
         }
         RenderMode::Saucer => {
             let mid_angle = (shape.start + span / 2.0) * TAU;
@@ -199,7 +199,7 @@ fn draw_ellipse<G: Graphics>(
 
             let bound = rectangle::centered([0.0, 0.0, chord_len, thickness]);
             let local_transform = transform.trans(cx, cy).rot_rad(tangent_angle + spin_rad);
-            ellipse::Ellipse::new(color).draw(bound, &Default::default(), local_transform, gl);
+            ellipse::Ellipse::new(color).draw(bound, draw_state, local_transform, gl);
         }
     }
 }
@@ -253,6 +253,7 @@ fn draw_line<G: Graphics>(
         thickness,
         spin_rad,
         transform,
+        draw_state,
     } = *style;
     let half_length = shape.placement.extent_x * cfg.critical_size;
     let y_offset = shape.placement.extent_y * cfg.critical_size;
@@ -276,7 +277,7 @@ fn draw_line<G: Graphics>(
                 line::Line::new(color, thickness).draw_from_to(
                     [-seg_half_len, 0.0],
                     [seg_half_len, 0.0],
-                    &Default::default(),
+                    draw_state,
                     local,
                     gl,
                 );
@@ -305,19 +306,19 @@ fn draw_line<G: Graphics>(
                 let r = thickness * cf.inside_fraction;
                 if r > 0.0 {
                     let bound = rectangle::centered([cf.inside_mid, y_offset, r, r]);
-                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
+                    ellipse::Ellipse::new(color).draw(bound, draw_state, transform, gl);
                 }
                 let mirror_r = thickness * (1.0 - cf.inside_fraction);
                 if mirror_r > 0.0 {
                     let bound =
                         rectangle::centered([cf.overflow_mid, y_offset, mirror_r, mirror_r]);
-                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
+                    ellipse::Ellipse::new(color).draw(bound, draw_state, transform, gl);
                 }
             } else {
                 // Fully inside — draw at full size.
                 let mid_pos = (start_pos + end_pos) / 2.0;
                 let bound = rectangle::centered([mid_pos, y_offset, thickness, thickness]);
-                ellipse::Ellipse::new(color).draw(bound, &Default::default(), transform, gl);
+                ellipse::Ellipse::new(color).draw(bound, draw_state, transform, gl);
             }
         }
         RenderMode::Saucer => {
@@ -329,13 +330,13 @@ fn draw_line<G: Graphics>(
                 if major > 0.0 {
                     let bound = rectangle::centered([0.0, 0.0, major, thickness]);
                     let local = transform.trans(cf.inside_mid, y_offset).rot_rad(spin_rad);
-                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
+                    ellipse::Ellipse::new(color).draw(bound, draw_state, local, gl);
                 }
                 let mirror_major = seg_len / 2.0 * (1.0 - cf.inside_fraction);
                 if mirror_major > 0.0 {
                     let bound = rectangle::centered([0.0, 0.0, mirror_major, thickness]);
                     let local = transform.trans(cf.overflow_mid, y_offset).rot_rad(spin_rad);
-                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
+                    ellipse::Ellipse::new(color).draw(bound, draw_state, local, gl);
                 }
             } else {
                 // Fully inside — draw at full size.
@@ -344,7 +345,7 @@ fn draw_line<G: Graphics>(
                 if major > 0.0 {
                     let bound = rectangle::centered([0.0, 0.0, major, thickness]);
                     let local = transform.trans(mid_pos, y_offset).rot_rad(spin_rad);
-                    ellipse::Ellipse::new(color).draw(bound, &Default::default(), local, gl);
+                    ellipse::Ellipse::new(color).draw(bound, draw_state, local, gl);
                 }
             }
         }
