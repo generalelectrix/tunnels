@@ -48,10 +48,31 @@ use tunnels_model::layer::{
 /// which is what rotating three buffers amounts to.
 const FRAMES_IN_FLIGHT: u64 = 3;
 
+/// How many frames a renderer has drawn.
+///
+/// One count serves every cache that acts on how long ago something was used,
+/// so "three frames ago" means the same to all of them and none keeps a clock
+/// of its own. It advances once per drawn frame and never runs backwards,
+/// which is the whole of what those caches ask of it.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub struct Frame(u64);
+
+impl Frame {
+    fn advance(&mut self) {
+        self.0 += 1;
+    }
+
+    /// Frames passed since `then`, saturating at zero for a count that has not
+    /// happened yet.
+    fn since(self, then: Self) -> u64 {
+        self.0.saturating_sub(then.0)
+    }
+}
+
 /// One colour ramp on the GPU, and when it was last drawn with.
 struct RampEntry<T> {
     texture: T,
-    last_used: u64,
+    last_used: Frame,
     /// A texture is created at a width and keeps it, so an entry can only be
     /// taken back for a ramp of the same span.
     texels: u32,
@@ -89,7 +110,6 @@ struct RampPool<T> {
     cycle_scratch: RgbaImage,
     figure_scratch: RgbaImage,
     settings: TextureSettings,
-    frame: u64,
 }
 
 impl<T> RampPool<T>
@@ -109,7 +129,6 @@ where
                 .filter(Filter::Linear)
                 .wrap_u(Wrap::Repeat)
                 .wrap_v(Wrap::Repeat),
-            frame: 0,
         }
     }
 
@@ -117,13 +136,12 @@ where
     ///
     /// `None` only if the backend refused to give up a texture, which is a
     /// reason to skip a figure rather than to stop the show.
-    fn texture_for(&mut self, fill: &FillLayer, span: RampSpan) -> Option<&T> {
+    fn texture_for(&mut self, fill: &FillLayer, span: RampSpan, frame: Frame) -> Option<&T> {
         let Self {
             entries,
             cycle_scratch,
             figure_scratch,
             settings,
-            frame,
         } = self;
         let scratch = match span {
             RampSpan::Cycle => cycle_scratch,
@@ -134,7 +152,7 @@ where
 
         let free = entries
             .iter()
-            .position(|e| e.texels == width && e.last_used + FRAMES_IN_FLIGHT <= *frame);
+            .position(|e| e.texels == width && frame.since(e.last_used) >= FRAMES_IN_FLIGHT);
         let index = match free {
             Some(index) => index,
             None => {
@@ -147,7 +165,7 @@ where
                 ) {
                     Ok(texture) => entries.push(RampEntry {
                         texture,
-                        last_used: *frame,
+                        last_used: frame,
                         texels: width,
                     }),
                     Err(e) => {
@@ -170,7 +188,7 @@ where
             error!("Could not update a colour ramp texture: {e:?}");
             return None;
         }
-        entry.last_used = *frame;
+        entry.last_used = frame;
         Some(&entry.texture)
     }
 }
@@ -185,6 +203,8 @@ pub struct Renderer<T> {
     outlines: StrokeGeometry,
     meshes: MeshLibrary,
     ramps: RampPool<T>,
+    /// What the caches measure age against.
+    frame: Frame,
     /// Scratch for the per-vertex pass, reused across every layer and every
     /// frame. Layers draw one after another and none of this outlives the
     /// draw that fills it, so one buffer serves all of them.
@@ -202,6 +222,7 @@ where
             outlines: StrokeGeometry::default(),
             meshes: MeshLibrary::default(),
             ramps: RampPool::new(),
+            frame: Frame::default(),
             verts: VertexBuffers::default(),
         }
     }
@@ -222,7 +243,8 @@ where
         gl: &mut G,
         cfg: &ClientConfig,
     ) {
-        self.ramps.frame += 1;
+        self.frame.advance();
+        self.meshes.reap(self.frame);
         for layer in layers {
             match layer {
                 Layer::Segments(segments) => draw_segments(segments, c, gl, cfg),
@@ -231,59 +253,49 @@ where
         }
     }
 
-    /// Build the figure meshes a show is likely to want, before it starts.
+    /// Tessellate every figure both libraries hold, before the show starts.
     ///
-    /// Every figure both libraries hold, at the four coarsest densities: 62
-    /// baked and 514 generated, **2,304 meshes, 19 million triangles, 333 MB,
-    /// 3.2 s**. It covers a figure at the default size on a 1080-line
-    /// projector and everything smaller.
+    /// **What is expensive to build is built once; what is expensive to hold
+    /// is held only while it is used.** Those are two different things, and
+    /// one word used to cover both. Turning a figure's contours into triangles
+    /// is slow and small — 1.5 ms on the average figure and 49 ms at the
+    /// worst, against 29.7 MB for all 576 of them — and the answer does not
+    /// depend on how densely the figure will be drawn, so it is worth paying
+    /// for up front and keeping for the run. Refining those triangles to a
+    /// density is the opposite: a couple of milliseconds, and megabytes that
+    /// quadruple with every level. That is built on demand and reaped when
+    /// nothing is drawing it.
     ///
-    /// The generated figures are 307 MB of that against the baked library's
-    /// 26 MB, on eight times as many figures, because a family computes its
-    /// contours to the tessellator's tolerance where a piece of artwork was
-    /// drawn with as few points as a hand needed.
+    /// So this builds no meshes. It costs **29.7 MB and 1.5 s**, and what it
+    /// buys is that no figure a show reaches has to be tessellated while the
+    /// show is running: a look recall clobbers every mixer channel at once,
+    /// and the eight most expensive figures tessellated on one frame is a
+    /// third of a second of frozen frames.
     ///
-    /// The two finest densities are reachable but not built here, and they are
-    /// most of what the caches could ever hold — 2.9 GB against this 333 MB.
-    /// A show pays for them only if it reaches them, and the cost when it does
-    /// is **per figure, not per density**: tens of milliseconds for the one
-    /// figure that grew, rather than the seconds a whole density costs. A
-    /// reader looking at the level table will assume otherwise, which is why it
-    /// is written here.
-    ///
-    /// All of it is vertex and index data on the CPU, not textures. It does
-    /// not compete for the share of system memory an integrated GPU takes,
-    /// which is why a few hundred megabytes is comfortable on these machines
-    /// where the same figure in textures would not be.
+    /// **Most of that 29.7 MB is figures nobody touches**, and it is worth
+    /// knowing that before deciding it is worth paying: an interior averages
+    /// 52 kB, so a show that draws twenty figures would accumulate about 1 MB
+    /// of them on demand. What the eager pass buys is not the memory, which is
+    /// cheaper the other way, but the absence of a stall on the one frame
+    /// where every channel changes at once.
     ///
     /// Called once at startup, where seconds are free — the bootstrapper
     /// pushes a client and waits for it.
-    pub fn precompute(&mut self) {
-        let Self {
-            figures,
-            fills,
-            meshes,
-            ..
-        } = self;
+    pub fn tessellate_library(&mut self) {
+        let Self { figures, fills, .. } = self;
         let baked = (0..tunnels_sprites::count())
             .filter_map(|id| u16::try_from(id).ok())
             .map(|id| FigureId::Baked(SpriteId(id)));
         let generated = GeneratedId::library().map(FigureId::Generated);
+        let mut tessellated = 0;
         for figure in baked.chain(generated) {
             let Some(contours) = figures.get(figure) else {
                 continue;
             };
-            let fill = fills.get(figure, contours);
-            for level in Level::eager() {
-                meshes.get(MeshId { figure, level }, fill);
-            }
+            fills.get(figure, contours);
+            tessellated += 1;
         }
-        info!(
-            "Built {} figure meshes, {} triangles, {} MB.",
-            meshes.len(),
-            meshes.triangles(),
-            meshes.bytes() / 1_000_000
-        );
+        info!("Tessellated {tessellated} figure interiors.");
     }
 
     /// Total triangles held in refined meshes, for reporting memory pressure.
@@ -304,6 +316,7 @@ where
             outlines,
             meshes,
             ramps,
+            frame,
             verts,
         } = self;
 
@@ -322,7 +335,7 @@ where
             if cfg.refine_large_figures {
                 Level::FINEST
             } else {
-                Level::IN_TABLE
+                Level::DEFAULT_FINEST
             },
         );
 
@@ -356,7 +369,7 @@ where
         let texture = if flat {
             None
         } else {
-            match ramps.texture_for(fill, span) {
+            match ramps.texture_for(fill, span, *frame) {
                 Some(texture) => Some(texture),
                 None => return,
             }
@@ -391,6 +404,7 @@ where
                     level,
                 },
                 interior,
+                *frame,
             );
             // Phase comes from the undeformed position, so a colour pattern
             // stays glued to the figure while a warp moves it rather than
@@ -462,32 +476,44 @@ mod test {
     use texture::TextureOp;
     use tunnels_model::layer::{ColorField, DrawMode, PhaseAxis, Placement, SpriteId};
 
-    /// The precompute holds every figure either library names, at every
-    /// density it builds before the show — which is the whole of what these
-    /// caches are ever asked for.
+    /// The warm-up tessellates every figure either library names, and refines
+    /// none of them.
     ///
-    /// A figure left out is one the operator reaches and waits for. A figure
-    /// built that no knob names is work done for nothing. Counting the meshes
-    /// catches both, because the key is a figure and a density and the
-    /// enumeration visits each figure once.
+    /// Both halves matter. A figure left untessellated is one the operator
+    /// reaches and waits tens of milliseconds for, in the middle of a show. A
+    /// mesh built here would be speculative: a density guessed at before any
+    /// screen has been measured, and the guess costs four times as much for
+    /// each level it is wrong by.
     #[test]
-    fn the_precompute_covers_both_libraries() {
+    fn the_warm_up_tessellates_every_figure_and_refines_none() {
         let mut renderer = Renderer::<FakeTexture>::default();
-        renderer.precompute();
+        renderer.tessellate_library();
         let figures = tunnels_sprites::count() + GeneratedId::library().count();
         assert_eq!(
-            renderer.meshes.len(),
-            figures * Level::eager().count(),
-            "the precompute does not cover both libraries at every eager density"
+            renderer.fills.held(),
+            figures,
+            "the warm-up does not tessellate both libraries"
         );
-        // Outlines are not precomputed. One is 47,554 vertices on the
+        // What that comes to is the number the docstring quotes, and the whole
+        // of what a client holds before it has drawn anything.
+        let mb = renderer.fills.bytes() as f64 / 1e6;
+        assert!(
+            (25.0..35.0).contains(&mb),
+            "the interiors weigh {mb:.1} MB, not the 29.7 the docstring quotes"
+        );
+        assert_eq!(
+            renderer.meshes.len(),
+            0,
+            "the warm-up refines meshes at a density nothing has asked for"
+        );
+        // Outlines are not warmed either. One is 47,554 vertices on the
         // average figure, so the whole library would be 305 MB against the
-        // 37 MB of interiors beside it — and a show draws a handful of figures
-        // rather than four hundred.
+        // 30 MB of interiors beside it — and a show draws a handful of figures
+        // rather than five hundred.
         assert_eq!(
             renderer.outlines.held(),
             0,
-            "the precompute strokes outlines it has no reason to build"
+            "the warm-up strokes outlines it has no reason to build"
         );
     }
 
@@ -571,16 +597,15 @@ mod test {
         // One layer, one colour, many frames. The ramp is rebuilt every frame
         // — that is the point of dropping the content cache — so what matters
         // is only which texture it is written into.
-        for frame in 1..40 {
-            pool.frame = frame;
+        for n in 1..40 {
             let id = pool
-                .texture_for(&fill(0.25), RampSpan::Cycle)
+                .texture_for(&fill(0.25), RampSpan::Cycle, Frame(n))
                 .expect("a texture")
                 .id;
-            if let Some(previous) = last_written.insert(id, frame) {
+            if let Some(previous) = last_written.insert(id, n) {
                 assert!(
-                    frame - previous >= FRAMES_IN_FLIGHT,
-                    "texture {id} was written at frame {previous} and again at {frame}, \
+                    n - previous >= FRAMES_IN_FLIGHT,
+                    "texture {id} was written at frame {previous} and again at {n}, \
                      inside the {FRAMES_IN_FLIGHT} frames a draw may still be reading it"
                 );
             }
@@ -595,10 +620,10 @@ mod test {
         let mut pool: RampPool<FakeTexture> = RampPool::new();
         // Four figures in one frame. None may be handed a texture another has
         // already been drawn with, whatever their colours are.
-        pool.frame = 1;
+        let frame = Frame(1);
         let ids: Vec<usize> = (0..4)
             .map(|i| {
-                pool.texture_for(&fill(f64::from(i) * 0.2), RampSpan::Cycle)
+                pool.texture_for(&fill(f64::from(i) * 0.2), RampSpan::Cycle, frame)
                     .expect("a texture")
                     .id
             })
@@ -627,9 +652,9 @@ mod test {
         };
         let before = buffers(&pool);
         for frame in 1..20 {
-            pool.frame = frame;
+            let frame = Frame(frame);
             for span in [RampSpan::Cycle, RampSpan::Figure] {
-                assert!(pool.texture_for(&fill(0.25), span).is_some());
+                assert!(pool.texture_for(&fill(0.25), span, frame).is_some());
             }
         }
         assert_eq!(
@@ -647,11 +672,13 @@ mod test {
     fn the_pool_settles_at_frames_in_flight_per_layer() {
         for layers in [1u32, 3] {
             let mut pool: RampPool<FakeTexture> = RampPool::new();
-            for frame in 1..500u64 {
-                pool.frame = frame;
+            for n in 1..500u64 {
                 for layer in 0..layers {
-                    let center = (frame as f64 * 0.01 + f64::from(layer) * 0.1).rem_euclid(1.0);
-                    assert!(pool.texture_for(&fill(center), RampSpan::Cycle).is_some());
+                    let center = (n as f64 * 0.01 + f64::from(layer) * 0.1).rem_euclid(1.0);
+                    assert!(
+                        pool.texture_for(&fill(center), RampSpan::Cycle, Frame(n))
+                            .is_some()
+                    );
                 }
             }
             let bound = FRAMES_IN_FLIGHT as usize * layers as usize;
