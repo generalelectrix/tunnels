@@ -23,10 +23,26 @@ use tunnels_shapes::presets;
 /// in a trigonometric result.
 const TOLERANCE: f64 = 0.006;
 
+/// Figures this library draws differently from the Python, deliberately.
+///
+/// The Python is the ancestor of these families rather than the specification
+/// for them, and a run of bars is where the two part. The Python pitches its
+/// bars from one edge of the frame, which runs the pattern out before it
+/// reaches the other and leaves the marks against the two edges unlike: one set
+/// is cut in half by the frame where the other stands whole. Both families here
+/// pitch their bars between the edges instead, so a run reads the same either
+/// way up.
+///
+/// Naming them is what keeps the departure a decision. Each is checked to
+/// *disagree* with the Python, so a figure that comes back into line is a
+/// failure here rather than a quiet return to the other shape.
+const DIVERGED: [&str; 5] = ["slats_8", "slats_16", "slats_v_8", "grid_6", "grid_12"];
+
 #[derive(Default)]
 struct FamilyReport {
     exact: usize,
     within_tolerance: usize,
+    diverged: usize,
     worst_deviation: f64,
     mismatches: Vec<String>,
 }
@@ -45,6 +61,7 @@ fn matches_the_python_generator() {
 
     let mut families: BTreeMap<&'static str, FamilyReport> = BTreeMap::new();
     for preset in presets::all() {
+        let diverged = DIVERGED.contains(&preset.name.as_str());
         let report = families.entry(preset.params.family().name()).or_default();
         let path = dir.join(format!("{}.svg", preset.name));
         let svg = match std::fs::read_to_string(&path) {
@@ -55,13 +72,18 @@ fn matches_the_python_generator() {
             }
         };
         let figure = preset.params.generate();
-        match compare(&svg, &figure) {
-            Ok(Comparison::Exact) => report.exact += 1,
-            Ok(Comparison::Close(deviation)) => {
+        match (compare(&svg, &figure), diverged) {
+            (Err(_), true) => report.diverged += 1,
+            (Ok(_), true) => report.mismatches.push(format!(
+                "{}: draws what the Python draws, but is named as diverging from it",
+                preset.name
+            )),
+            (Ok(Comparison::Exact), false) => report.exact += 1,
+            (Ok(Comparison::Close(deviation)), false) => {
                 report.within_tolerance += 1;
                 report.worst_deviation = report.worst_deviation.max(deviation);
             }
-            Err(reason) => report.mismatches.push(format!("{}: {reason}", preset.name)),
+            (Err(reason), false) => report.mismatches.push(format!("{}: {reason}", preset.name)),
         }
     }
 
@@ -72,14 +94,15 @@ fn matches_the_python_generator() {
         ));
     }
     println!(
-        "\n{:<14} {:>6} {:>8} {:>10}  mismatches",
-        "family", "exact", "within", "worst dev"
+        "\n{:<14} {:>6} {:>8} {:>9} {:>10}  mismatches",
+        "family", "exact", "within", "diverged", "worst dev"
     );
     for (family, report) in &families {
         println!(
-            "{family:<14} {:>6} {:>8} {:>10.5}  {}",
+            "{family:<14} {:>6} {:>8} {:>9} {:>10.5}  {}",
             report.exact,
             report.within_tolerance,
+            report.diverged,
             report.worst_deviation,
             report.mismatches.len()
         );
@@ -254,8 +277,24 @@ fn matches_the_recorded_python_output() {
             failures.push(format!("{}: not in the manifest", preset.name));
             continue;
         };
-        if let Err(reason) = check_recorded(&preset.params.generate(), expected) {
-            failures.push(format!("{}: {reason}", preset.name));
+        let diverged = DIVERGED.contains(&preset.name.as_str());
+        match (
+            check_recorded(&preset.params.generate(), expected),
+            diverged,
+        ) {
+            (Ok(()), false) | (Err(_), true) => (),
+            (Err(reason), false) => failures.push(format!("{}: {reason}", preset.name)),
+            (Ok(()), true) => failures.push(format!(
+                "{}: draws what the Python drew, but is named as diverging from it",
+                preset.name
+            )),
+        }
+    }
+    for name in DIVERGED {
+        if !presets.iter().any(|preset| preset.name == name) {
+            failures.push(format!(
+                "{name}: named as diverging, but no preset builds it"
+            ));
         }
     }
     assert!(

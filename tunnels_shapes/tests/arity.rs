@@ -8,9 +8,19 @@
 
 use tunnels_shapes::arity::{Arity, Secondary};
 use tunnels_shapes::families::{ShapeFamily, ShapeParams};
+use tunnels_shapes::geom::{EXTENT, Figure, Point};
 
 /// Positions across the secondary control, including both ends.
 const SECONDARIES: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+/// How far apart two coordinates may sit and still be the same edge.
+///
+/// A frame spans a thousand units and is projected onto about a thousand lines,
+/// so a thousandth of a unit is a millionth of the figure and far below
+/// anything an eye or a rasteriser resolves. It is the slack a pitch divided by
+/// a count that does not divide the frame evenly leaves behind, not a tolerance
+/// on the property itself.
+const COINCIDENT: f64 = 1e-3;
 
 fn sweep(mut visit: impl FnMut(ShapeFamily, Arity, ShapeParams)) {
     for family in ShapeFamily::ALL {
@@ -136,6 +146,87 @@ fn nothing_the_controls_reach_cancels_itself() {
                 );
             }
             _ => {}
+        }
+    });
+}
+
+/// Where each bar of a run begins and ends across its own width.
+///
+/// A bar spans the frame along its length whichever way the run is pitched, so
+/// the width is the shorter of its two extents and the only one that says where
+/// the run sits.
+fn widths(figure: &Figure) -> Vec<(f64, f64)> {
+    figure
+        .contours
+        .iter()
+        .map(|contour| {
+            let extent = |of: fn(&Point) -> f64| {
+                let values = contour.points().iter().map(of);
+                values.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                    (lo.min(v), hi.max(v))
+                })
+            };
+            let across = extent(|p| p.x);
+            let down = extent(|p| p.y);
+            if across.1 - across.0 < down.1 - down.0 {
+                across
+            } else {
+                down
+            }
+        })
+        .collect()
+}
+
+/// Every coordinate has a partner the same distance from the opposite edge.
+fn assert_mirrored(values: &[f64], at: &str, axis: &str) {
+    for (&low, &high) in values.iter().zip(values.iter().rev()) {
+        assert!(
+            (low + high - EXTENT).abs() < COINCIDENT,
+            "{at}: {low} and {high} are not the same distance from the two {axis} edges"
+        );
+    }
+}
+
+/// A run of bars reads the same from either edge of the frame.
+///
+/// Pitching bars from one edge runs the pattern out before it reaches the
+/// other, and the marks against the two edges then differ: one set is cut in
+/// half by the frame where the other stands whole. These families are as much a
+/// border as a fill, and a border that disagrees with itself across the figure
+/// reads as a fault rather than as pattern.
+///
+/// Which edge the pattern ends on is the part that differs between them. Slats
+/// close on a bar at both ends, so the figure fills the frame exactly and the
+/// pattern never trails off into a gap. A grid holds every bar clear of the
+/// frame instead, so all four of its borders end in a whole mark and the border
+/// reads as hatch.
+#[test]
+fn a_run_of_bars_reads_the_same_from_either_edge() {
+    sweep(|family, arity, params| {
+        let bars = matches!(params, ShapeParams::Slats(_) | ShapeParams::Grid(_));
+        if !bars {
+            return;
+        }
+
+        let at = format!("{} at arity {}", family.name(), arity.get());
+        let widths = widths(&params.generate());
+
+        let mut sides: Vec<f64> = widths.iter().flat_map(|&(lo, hi)| [lo, hi]).collect();
+        sides.sort_by(f64::total_cmp);
+        sides.dedup_by(|a, b| (*a - *b).abs() < COINCIDENT);
+        assert_mirrored(&sides, &at, "opposite");
+
+        let (near, far) = (sides[0], sides[sides.len() - 1]);
+        match params {
+            ShapeParams::Slats(_) => assert!(
+                near.abs() < COINCIDENT && (far - EXTENT).abs() < COINCIDENT,
+                "{at}: the bars run from {near} to {far}, leaving a gap at one end of the frame"
+            ),
+            _ => assert!(
+                near > COINCIDENT && far < EXTENT - COINCIDENT,
+                "{at}: the bars run from {near} to {far}, \
+                 so the frame cuts the marks at its edge in half"
+            ),
         }
     });
 }

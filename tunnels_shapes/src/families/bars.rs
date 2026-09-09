@@ -9,7 +9,64 @@ pub enum Direction {
     Vertical,
 }
 
-/// Parallel bars across the frame.
+/// How a run of bars meets the two edges it runs between.
+///
+/// A run is pitched between two edges rather than laid from one of them, so
+/// both edges are treated alike and the figure reads the same either way up.
+/// Which of the two treatments a family takes is what its border looks like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ends {
+    /// A bar closes on each edge, so the run fills the frame exactly.
+    Closed,
+    /// Every bar stands clear of the frame, so the run ends in a gap at each
+    /// edge and the outermost marks are whole.
+    Clear,
+}
+
+/// Where each bar begins and ends along the axis it is pitched across.
+fn spans(count: u32, duty: f64, ends: Ends) -> Vec<(f64, f64)> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let (pitch, first) = match ends {
+        // The last bar closes on the far edge, so what the pitch divides is the
+        // frame less that bar's own width: `count - 1` gaps and `duty` of one
+        // more pitch.
+        Ends::Closed => (EXTENT / (count as f64 - 1.0 + duty), 0.0),
+        // Half a gap at each end, which is what centres a whole number of
+        // pitches in the frame.
+        Ends::Clear => {
+            let pitch = EXTENT / count as f64;
+            (pitch, pitch * (1.0 - duty) / 2.0)
+        }
+    };
+    (0..count)
+        .map(|i| {
+            let near = first + i as f64 * pitch;
+            (near, near + pitch * duty)
+        })
+        .collect()
+}
+
+/// A run of bars as fillable contours.
+fn bars(count: u32, duty: f64, direction: Direction, ends: Ends) -> Vec<Contour> {
+    spans(count, duty, ends)
+        .into_iter()
+        .map(|(near, far)| {
+            let corners = match direction {
+                Direction::Horizontal => [(0.0, near), (EXTENT, near), (EXTENT, far), (0.0, far)],
+                Direction::Vertical => [(near, 0.0), (near, EXTENT), (far, EXTENT), (far, 0.0)],
+            };
+            corners.into_iter().map(|(x, y)| Point::new(x, y)).collect()
+        })
+        .collect()
+}
+
+/// Parallel bars across the frame, closing on a bar at both ends.
+///
+/// The run fills the frame exactly, so the pattern is a bar at each edge rather
+/// than a bar at one and a gap at the other, and it reads the same turned
+/// through half a turn as it does the right way up.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Slats {
     /// Bars across the frame.
@@ -29,34 +86,16 @@ impl Slats {
     }
 
     pub fn generate(&self) -> Figure {
-        Figure::even_odd(self.contours())
-    }
-
-    fn contours(&self) -> Vec<Contour> {
-        if self.count == 0 {
-            return Vec::new();
-        }
-        let pitch = EXTENT / self.count as f64;
-        (0..self.count)
-            .map(|i| {
-                let near = i as f64 * pitch;
-                let far = near + pitch * self.duty;
-                let corners = match self.direction {
-                    Direction::Horizontal => {
-                        [(0.0, near), (EXTENT, near), (EXTENT, far), (0.0, far)]
-                    }
-                    Direction::Vertical => [(near, 0.0), (near, EXTENT), (far, EXTENT), (far, 0.0)],
-                };
-                corners.into_iter().map(|(x, y)| Point::new(x, y)).collect()
-            })
-            .collect()
+        Figure::even_odd(bars(self.count, self.duty, self.direction, Ends::Closed))
     }
 }
 
-/// Two sets of bars at a right angle.
+/// Two sets of bars at a right angle, every bar clear of the frame.
 ///
 /// The bars cancel where they cross, so the figure is a lattice of holes rather
-/// than a mesh of solid crossings.
+/// than a mesh of solid crossings. Holding the run clear of the frame at both
+/// ends leaves a whole mark against all four edges, so the border reads as more
+/// of the same hatch rather than as a line drawn round it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Grid {
     /// Bars in each direction.
@@ -71,8 +110,13 @@ impl Grid {
     }
 
     pub fn generate(&self) -> Figure {
-        let mut contours = Slats::new(self.count, Direction::Horizontal, self.duty).contours();
-        contours.extend(Slats::new(self.count, Direction::Vertical, self.duty).contours());
+        let mut contours = bars(self.count, self.duty, Direction::Horizontal, Ends::Clear);
+        contours.extend(bars(
+            self.count,
+            self.duty,
+            Direction::Vertical,
+            Ends::Clear,
+        ));
         Figure::even_odd(contours)
     }
 }
