@@ -282,6 +282,12 @@ pub struct MeshId {
 /// one rebuild, measured at 2.4 ms on the average figure and 13.9 at the
 /// worst against an 8.3 ms frame; too long costs the mesh's bytes until the
 /// next sweep.
+///
+/// **Lengthening this decides how slowly a client comes down from a high-water
+/// mark, not how high the mark can be** — [`BYTE_BUDGET`] caps that however
+/// long this is. What it does decide is how much a client carries between
+/// looks, and carrying is the axis worth keeping light: a budget is permitted,
+/// where this is occupied.
 const MAX_AGE: u64 = 600;
 
 /// How often the held meshes are looked over, in frames.
@@ -300,16 +306,26 @@ const REAP_INTERVAL: u64 = 120;
 /// operator sweeping the figure knob builds a mesh per position and would
 /// otherwise hold every one of them until the sweep stopped.
 ///
-/// Sized so no honest look can reach it. A mixer is at most two pages of eight
+/// What an honest look needs is 55 MB: a mixer is at most two pages of eight
 /// channels, each channel drawing one figure, and a size knob moving across a
-/// bucket boundary holds two densities of it — so sixteen channels times two
-/// densities times the largest single mesh at the default finest density, 1.73
-/// MB, is 55 MB. This is the next power of two above that.
+/// bucket boundary holds two densities of it — sixteen channels times two
+/// densities times the largest single mesh at the default finest density,
+/// 1.73 MB. **This sits at more than twice that on purpose**, because it is a
+/// ceiling and not an occupancy: a bound that does not fire is permitted
+/// rather than spent, and setting it tight buys nothing while costing a storm
+/// of rebuilds during a sweep.
+///
+/// **[`MAX_AGE`] is the other kind of number and does not get the same
+/// latitude.** It decides how much of recent history a client is still
+/// holding, so it is paid continuously rather than merely permitted, and a
+/// console runs one client per video channel — whatever each holds is
+/// multiplied by eight. Generous where a number is only a cap, tight where it
+/// is what a client actually carries.
 ///
 /// A client told to refine large figures reaches meshes four and sixteen times
 /// that size, and can hold a working set this does not cover; it evicts and
 /// rebuilds if so, which is the trade that switch already makes elsewhere.
-const BYTE_BUDGET: usize = 64 << 20;
+const BYTE_BUDGET: usize = 128 << 20;
 
 /// One mesh, and when a draw last wanted it.
 struct Held {
