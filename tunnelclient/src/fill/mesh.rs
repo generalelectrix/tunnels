@@ -7,7 +7,7 @@
 
 use super::geom::{IndexBatch, Triangle, TriangleList};
 use std::collections::HashMap;
-use tunnels_model::layer::SpriteId;
+use tunnels_model::layer::FigureId;
 use tunnels_sprites::Point;
 
 /// How much finer triangles get as they approach the origin.
@@ -154,17 +154,32 @@ impl Level {
 /// out of this key.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct MeshId {
-    pub sprite: SpriteId,
+    pub figure: FigureId,
     pub level: Level,
 }
 
 /// Meshes built so far, keyed by figure and density.
 ///
-/// Never evicts, and nothing animated reaches the key: a figure is drawn at
-/// one of six densities and a show touches a handful of figures, so the set
-/// converges within seconds and nothing rebuilds mid-show. Building every
-/// level of every figure up front would instead cost millions of triangles for
-/// meshes that are never drawn.
+/// Nothing evicts, and nothing animated reaches the key: a mesh built for a
+/// figure at a density holds while the colour on it changes every frame.
+///
+/// **The set is bounded, because both libraries are tables.** Each names a
+/// fixed list of figures, so the key runs over those figures times the six
+/// densities and no further: 62 baked and 514 generated, 3,456 meshes, 175
+/// million triangles, **2.9 GB** if every one of them were ever drawn.
+///
+/// Bounded is not small, and where the two libraries sit in that number is
+/// worth knowing: the baked share is 316 MB of it and the generated share is
+/// the other 2.6 GB, because a generated figure carries an order of magnitude
+/// more triangles than a piece of artwork does. Most of that is the two finest
+/// densities, which only a figure drawn larger than the size knob's default
+/// reaches; the four coarser ones come to 333 MB between them.
+///
+/// Nothing is evicted, and no cap is wanted, because a figure dropped is a
+/// figure tessellated again and the families holding the most triangles are
+/// the ones that cost the most to build. A bound on top of the table would
+/// trade memory for latency on exactly the figures whose latency is already
+/// worst.
 #[derive(Default)]
 pub struct MeshLibrary {
     built: HashMap<MeshId, RefinedMesh>,
@@ -181,6 +196,25 @@ impl MeshLibrary {
     /// Total triangles held, for reporting memory pressure.
     pub fn triangles(&self) -> usize {
         self.built.values().map(RefinedMesh::triangle_count).sum()
+    }
+
+    /// Vertex and index data held, in bytes.
+    ///
+    /// The payload only: a vertex is two floats and an index is one, which is
+    /// what a mesh costs to keep and what it costs to hand to a driver.
+    pub fn bytes(&self) -> usize {
+        self.built
+            .values()
+            .map(|mesh| {
+                mesh.verts.len() * std::mem::size_of::<Point>()
+                    + mesh.indices.len() * std::mem::size_of::<u32>()
+            })
+            .sum()
+    }
+
+    /// How many meshes are held, against the table that bounds them.
+    pub fn len(&self) -> usize {
+        self.built.len()
     }
 }
 

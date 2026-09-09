@@ -1,9 +1,21 @@
-//! Turning a baked figure's contours into triangles.
+//! Turning a figure's contours into triangles.
 //!
-//! The build ships loops, not triangles, because a figure's winding rule
+//! A library ships loops, not triangles, because a figure's winding rule
 //! decides which side of a loop fills — on a ring, the difference between a
 //! band and a disc. Resolving that is this module's job, and doing it here
 //! means the stroke gets the same loops for free.
+//!
+//! What a figure costs here is decided by how much of it crosses itself and
+//! not by how many points it carries, because a crossing is a vertex that has
+//! to be found and finding them is the work. Most figures are a few
+//! milliseconds whether they were baked or built from a family, so a figure
+//! computed while the show runs is not on its own the expensive case.
+//!
+//! Dense chords under an even-odd rule are the expensive case. A modular chord
+//! figure rises smoothly with its chord count, to 42 ms at the top of its
+//! range. A Maurer rose is worst at the *bottom* of its range, at 155 ms for
+//! two petals, where a large step drives 360 chords through a small figure —
+//! the end of a range nobody checks, because cost is looked for at the top.
 
 use super::geom::{Triangle, TriangleList};
 use lyon_path::Path;
@@ -13,8 +25,8 @@ use lyon_tessellation::{
     LineJoin, StrokeOptions, StrokeTessellator, StrokeVertex, VertexBuffers,
 };
 use std::collections::HashMap;
-use tunnels_model::layer::SpriteId;
-use tunnels_sprites::{FillRule, Point, Sprite};
+use tunnels_model::layer::FigureId;
+use tunnels_sprites::{Figure, FillRule, Point};
 
 /// How finely the tessellator may deviate, in figure units.
 ///
@@ -45,7 +57,7 @@ const STROKE_SEGMENT: f32 = 0.025;
 /// names the geometry it stands for and nothing else has to be checked.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 struct StrokeId {
-    sprite: SpriteId,
+    figure: FigureId,
     thickness_bits: u32,
 }
 
@@ -65,18 +77,19 @@ const STROKE_CAP: usize = 256;
 
 /// Figure interiors tessellated so far, before any refinement.
 ///
-/// Bounded by its own key and so never emptied: an interior does not depend on
-/// how densely it will be drawn, so a figure has one however the knobs move,
-/// and this converges on the library the build ships.
+/// Never emptied, and never needs to be: an interior does not depend on how
+/// densely it will be drawn, so a figure has exactly one however the knobs
+/// move, and the knobs reach a table. 401 interiors is the whole of it — every
+/// figure the build ships and every figure the generated library names.
 #[derive(Default)]
-pub struct FillGeometry(HashMap<SpriteId, TriangleList>);
+pub struct FillGeometry(HashMap<FigureId, TriangleList>);
 
 impl FillGeometry {
     /// The figure's interior, tessellated on first use.
-    pub fn get(&mut self, id: SpriteId, sprite: &Sprite) -> &TriangleList {
+    pub fn get(&mut self, id: FigureId, figures: &[Figure]) -> &TriangleList {
         self.0.entry(id).or_insert_with(|| {
             let mut out = TriangleList::default();
-            for figure in &sprite.figures {
+            for figure in figures {
                 let rule = match figure.rule {
                     FillRule::NonZero => LyonFillRule::NonZero,
                     FillRule::EvenOdd => LyonFillRule::EvenOdd,
@@ -114,9 +127,9 @@ pub struct StrokeGeometry(HashMap<StrokeId, StrokeMesh>);
 
 impl StrokeGeometry {
     /// The figure's outline stroked at `thickness`, tessellated on first use.
-    pub fn get(&mut self, id: SpriteId, sprite: &Sprite, thickness: Thickness) -> &StrokeMesh {
+    pub fn get(&mut self, id: FigureId, figures: &[Figure], thickness: Thickness) -> &StrokeMesh {
         let key = StrokeId {
-            sprite: id,
+            figure: id,
             thickness_bits: thickness.key(),
         };
         if self.0.len() >= STROKE_CAP && !self.0.contains_key(&key) {
@@ -128,7 +141,7 @@ impl StrokeGeometry {
                 .with_line_join(LineJoin::Round)
                 .with_line_cap(LineCap::Round);
             let mut out = StrokeMesh::default();
-            for figure in &sprite.figures {
+            for figure in figures {
                 let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
                 let mut builder =
                     BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
@@ -266,8 +279,8 @@ impl Thickness {
     }
 }
 
-/// One `<path>` element's subpaths as a lyon path, every loop closed.
-fn path_of(figure: &tunnels_sprites::Figure) -> Path {
+/// One figure's subpaths as a lyon path, every loop closed.
+fn path_of(figure: &Figure) -> Path {
     path_of_capped(figure, f32::MAX)
 }
 
@@ -280,7 +293,7 @@ fn path_of(figure: &tunnels_sprites::Figure) -> Path {
 /// longer coincides with the others meeting it. Where several subpaths return
 /// to one shared vertex, that is the difference between a winding rule seeing
 /// one point and seeing a cluster of nearly-identical ones.
-fn path_of_capped(figure: &tunnels_sprites::Figure, max: f32) -> Path {
+fn path_of_capped(figure: &Figure, max: f32) -> Path {
     let mut builder = Path::builder();
     for subpath in &figure.subpaths {
         let Some((first, rest)) = subpath.points().split_first() else {
@@ -372,23 +385,21 @@ mod test {
     /// to have a ceiling. A sweep of the knob is what puts it there.
     #[test]
     fn a_swept_thickness_does_not_grow_the_outline_map_without_limit() {
-        use tunnels_sprites::{Contour, Figure};
+        use tunnels_model::layer::SpriteId;
+        use tunnels_sprites::Contour;
 
-        let sprite = Sprite {
-            name: "square",
-            figures: vec![Figure {
-                rule: FillRule::NonZero,
-                subpaths: vec![
-                    Contour::new(vec![
-                        Point::new(-1.0, -1.0),
-                        Point::new(1.0, -1.0),
-                        Point::new(1.0, 1.0),
-                        Point::new(-1.0, 1.0),
-                    ])
-                    .expect("four corners is a loop"),
-                ],
-            }],
-        };
+        let square = [Figure {
+            rule: FillRule::NonZero,
+            subpaths: vec![
+                Contour::new(vec![
+                    Point::new(-1.0, -1.0),
+                    Point::new(1.0, -1.0),
+                    Point::new(1.0, 1.0),
+                    Point::new(-1.0, 1.0),
+                ])
+                .expect("four corners is a loop"),
+            ],
+        }];
         let scale = Scale {
             px_per_unit: 200.0,
             nominal_px_per_unit: 200.0,
@@ -397,7 +408,7 @@ mod test {
         let mut outlines = StrokeGeometry::default();
         for step in 0..4 * STROKE_CAP {
             let thickness = Thickness::bucketed(step as f64 * 0.5, scale);
-            outlines.get(SpriteId(0), &sprite, thickness);
+            outlines.get(FigureId::Baked(SpriteId(0)), &square, thickness);
             assert!(
                 outlines.0.len() <= STROKE_CAP,
                 "{} outlines held after {step} distinct thicknesses",
@@ -409,7 +420,8 @@ mod test {
     /// A ring is two loops, and the rule between them is what makes it a ring.
     #[test]
     fn the_winding_rule_decides_whether_a_ring_has_a_hole() {
-        use tunnels_sprites::{Contour, Figure};
+        use tunnels_model::layer::SpriteId;
+        use tunnels_sprites::Contour;
 
         let square = |half: f32| {
             Contour::new(vec![
@@ -420,12 +432,11 @@ mod test {
             ])
             .expect("four corners is a loop")
         };
-        let ring = |rule| Sprite {
-            name: "ring",
-            figures: vec![Figure {
+        let ring = |rule| {
+            [Figure {
                 rule,
                 subpaths: vec![square(1.0), square(0.5)],
-            }],
+            }]
         };
 
         let area = |tris: &TriangleList| -> f32 {
@@ -439,8 +450,8 @@ mod test {
         };
 
         let mut interiors = FillGeometry::default();
-        let hollow = area(interiors.get(SpriteId(0), &ring(FillRule::EvenOdd)));
-        let solid = area(interiors.get(SpriteId(1), &ring(FillRule::NonZero)));
+        let hollow = area(interiors.get(FigureId::Baked(SpriteId(0)), &ring(FillRule::EvenOdd)));
+        let solid = area(interiors.get(FigureId::Baked(SpriteId(1)), &ring(FillRule::NonZero)));
 
         // The outer square is 4 units of area, the inner 1.
         assert!((solid - 4.0).abs() < 0.01, "nonzero filled {solid}, not 4");

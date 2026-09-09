@@ -8,6 +8,7 @@ use crate::waveforms::{WaveformArgs, sawtooth};
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use tunnels_lib::number::{Phase, UnipolarFloat};
+use tunnels_shapes::{Arity, Secondary, ShapeFamily};
 
 /// Controls how a shape is rendered.
 #[derive(
@@ -50,13 +51,40 @@ impl ShapeMode {
         }
     }
 
+    /// The library this mode's figure comes from, or `None` if it draws
+    /// segments instead of filling an area.
+    ///
+    /// The other half of the pair [`ShapeMode::segment_path`] opens: a mode
+    /// either distributes marks along a path or names a figure in a library,
+    /// and which of the two it does decides what every geometry control means.
+    pub fn figure_library(self) -> Option<FigureLibrary> {
+        match self {
+            Self::Ellipse | Self::Line => None,
+            Self::Sprite => Some(FigureLibrary::Baked),
+            Self::Generated => Some(FigureLibrary::Generated),
+        }
+    }
+
     /// Whether this mode draws a run of segments.
     ///
-    /// The controls that act on segments -- the marquee and the render mode
-    /// -- mean nothing to a mode that draws none.
+    /// The controls that act on segments — the marquee and the render mode —
+    /// mean nothing to a mode that draws none.
     pub fn draws_segments(self) -> bool {
         self.segment_path().is_some()
     }
+}
+
+/// Where a figure mode's figures come from.
+///
+/// The two libraries are shaped alike for a control to walk — a list of
+/// families, each a run of figures — which is what lets one pair of knobs
+/// address either.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum FigureLibrary {
+    /// Figures baked into the build from artwork.
+    Baked,
+    /// Figures built from a family and the two numbers that place one in it.
+    Generated,
 }
 
 /// The curve a run of segments is distributed along.
@@ -111,6 +139,62 @@ impl DrawMode {
 /// Identifies one figure baked into the build.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub struct SpriteId(pub u16);
+
+/// Identifies one figure computed on demand.
+///
+/// A family and the two numbers that place a figure inside it, which is the
+/// whole of what builds one. Every other number a family carries follows from
+/// these, so this is the figure and not a handle to it.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct GeneratedId {
+    pub family: ShapeFamily,
+    pub arity: Arity,
+    pub secondary: Secondary,
+}
+
+impl GeneratedId {
+    /// Every figure the generated library holds.
+    ///
+    /// Each family's offered arities at the one secondary that family is drawn
+    /// at, which is the same set the two figure knobs address. Naming it is
+    /// what lets a client build the whole of it before a show rather than
+    /// tessellating each figure the first time an operator lands on it.
+    pub fn library() -> impl Iterator<Item = Self> {
+        ShapeFamily::ALL.into_iter().flat_map(|family| {
+            family.arities().iter().map(move |&arity| Self {
+                family,
+                arity,
+                secondary: family.secondary(),
+            })
+        })
+    }
+}
+
+impl Default for GeneratedId {
+    /// The first figure of the first family, which is what a beam draws before
+    /// any knob has named another.
+    fn default() -> Self {
+        let family = ShapeFamily::ALL[0];
+        Self {
+            family,
+            arity: family.arities().first().copied().unwrap_or(Arity::new(0)),
+            secondary: family.secondary(),
+        }
+    }
+}
+
+/// Identifies one figure, however it came to exist.
+///
+/// A figure is drawn the same way whichever half of the library it came from,
+/// so this is what the caches between the model and the screen are keyed on:
+/// one figure, one set of contours, one mesh per density.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum FigureId {
+    /// A figure baked into the build from artwork.
+    Baked(SpriteId),
+    /// A figure built from a family and its two parameters.
+    Generated(GeneratedId),
+}
 
 /// A command to draw a single shape, less the render mode and segment path
 /// that the layer holding it fixes for all of its shapes at once.
@@ -265,12 +349,12 @@ pub struct Hsva {
 
 /// A figure drawn as an area rather than as a run of segments.
 ///
-/// Carries no geometry: the figure itself is baked into the build and the
-/// client looks it up, so what travels is where to put it and how to colour
-/// it.
+/// Carries no geometry: a figure is named rather than described, and the client
+/// is where the name becomes contours, so what travels is where to put it and
+/// how to colour it.
 #[derive(Debug, Clone)]
 pub struct FillLayer {
-    pub sprite: SpriteId,
+    pub figure: FigureId,
     pub placement: Placement,
     /// The beam's spin knob, as the operator set it.
     pub spin_speed: f64,
@@ -300,7 +384,7 @@ impl Layer {
         match self {
             Self::Segments(l) => l.shapes.is_empty(),
             // A figure is one shape and is always there; whether the build
-            // carries the sprite it names is the renderer's question.
+            // carries the figure it names is the renderer's question.
             Self::Fill(_) => false,
         }
     }
@@ -371,5 +455,58 @@ mod test {
             lit.sample(Phase::ZERO, ColorAdjust::default()).val,
             flat.val
         );
+    }
+
+    /// A figure reaches a render client as its name and nothing else, so the
+    /// name has to arrive as it left.
+    ///
+    /// A generated name is a family and two numbers rather than an index, and
+    /// one of the two is a position read back through the constructor that
+    /// bounds it — written as two halves that have to agree. A name that
+    /// decoded to another name would draw another figure, and the encoding
+    /// carries no schema that would notice.
+    #[test]
+    fn a_figure_name_arrives_as_it_left() {
+        for id in [
+            FigureId::Baked(SpriteId(0)),
+            FigureId::Baked(SpriteId(37)),
+            FigureId::Generated(GeneratedId::default()),
+            FigureId::Generated(GeneratedId {
+                family: ShapeFamily::MoireWeave,
+                arity: Arity::new(11),
+                secondary: Secondary::new(0.375),
+            }),
+            FigureId::Generated(GeneratedId {
+                family: ShapeFamily::StarLattice85,
+                arity: Arity::new(1),
+                secondary: Secondary::new(1.0),
+            }),
+        ] {
+            let bytes = postcard::to_allocvec(&id).expect("a figure name encodes");
+            let back: FigureId = postcard::from_bytes(&bytes).expect("a figure name decodes");
+            assert_eq!(back, id, "{id:?} came back as {back:?}");
+        }
+    }
+
+    /// A position off the wire is bounded like any other.
+    ///
+    /// The encoding carries no schema, so what arrives is whatever bytes
+    /// arrived, and a family resolves its second degree of freedom against a
+    /// position between zero and one. Bytes naming anything else are brought
+    /// back into that range rather than reaching a generator.
+    #[test]
+    fn a_position_from_the_wire_is_still_a_position() {
+        for (bytes, expected) in [
+            (4.5f64, Secondary::new(1.0)),
+            (-2.0, Secondary::new(0.0)),
+            (f64::NAN, Secondary::new(0.0)),
+        ] {
+            let encoded = postcard::to_allocvec(&bytes).expect("a float encodes");
+            let position: Secondary = postcard::from_bytes(&encoded).expect("a position decodes");
+            assert_eq!(
+                position, expected,
+                "{bytes} came off the wire as {position:?}"
+            );
+        }
     }
 }
