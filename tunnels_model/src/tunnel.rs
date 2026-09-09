@@ -1,7 +1,8 @@
 use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::layer::{
-    ColorAdjust, ColorField, ColorPhase, DrawMode, FigureId, FigureLibrary, FillLayer, GeneratedId,
-    Layer, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode, SpriteId,
+    ColorAdjust, ColorField, DrawMode, FigureId, FigureLibrary, FillLayer, GeneratedId, Layer,
+    PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode,
+    SpriteId,
 };
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
@@ -129,7 +130,7 @@ pub struct Tunnel {
     /// Which coordinate of a figure indexes the color ramp.
     ///
     /// No control surface carries it, so it stays wherever it is set.
-    color_phase: ColorPhase,
+    color_phase: PhaseAxis,
     /// How much of a figure is painted.
     ///
     /// No control surface carries it, so it stays wherever it is set.
@@ -189,7 +190,7 @@ impl Default for Tunnel {
             anims: Default::default(),
             render_mode: RenderMode::default(),
             shape_mode: ShapeMode::default(),
-            color_phase: ColorPhase::default(),
+            color_phase: PhaseAxis::default(),
             draw_mode: DrawMode::default(),
             sprite: SpriteId::default(),
             generated: GeneratedId::default(),
@@ -693,7 +694,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
         emitter.emit_tunnel_state_change(RenderModeButton(self.render_mode_control()));
-        emitter.emit_tunnel_state_change(ColorPhase(self.color_phase));
+        emitter.emit_tunnel_state_change(PhaseAxis(self.color_phase));
         emitter.emit_tunnel_state_change(DrawMode(self.draw_mode));
         emitter.emit_tunnel_state_change(ShapeMode(self.shape_mode));
     }
@@ -797,7 +798,7 @@ impl Tunnel {
                     self.draw_mode = mode;
                 }
             }
-            ColorPhase(v) => self.color_phase = v,
+            PhaseAxis(v) => self.color_phase = v,
             DrawMode(v) => self.draw_mode = v,
             ShapeMode(v) => {
                 self.shape_mode = v;
@@ -1070,7 +1071,7 @@ pub enum StateChange {
     /// What it means is the mode's business, not the message's.
     RenderModeButton(u8),
     ShapeMode(ShapeMode),
-    ColorPhase(ColorPhase),
+    PhaseAxis(PhaseAxis),
     DrawMode(DrawMode),
 }
 #[derive(Debug)]
@@ -1800,7 +1801,7 @@ mod test {
 pub mod fixture {
     use std::time::Duration;
 
-    use crate::layer::{ColorPhase, DrawMode, Layer, LayerCollection, RenderMode, ShapeMode};
+    use crate::layer::{DrawMode, Layer, LayerCollection, PhaseAxis, RenderMode, ShapeMode};
     use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
 
     use crate::animation::{
@@ -2318,8 +2319,8 @@ pub mod fixture {
 
     /// Every coordinate of a figure that can index its colour ramp, in the
     /// order channels are handed them.
-    const COLOR_PHASES: [ColorPhase; ColorPhase::VARIANTS.len()] =
-        [ColorPhase::Angle, ColorPhase::Radius, ColorPhase::Linear];
+    const COLOR_PHASES: [PhaseAxis; PhaseAxis::VARIANTS.len()] =
+        [PhaseAxis::Angle, PhaseAxis::Radius, PhaseAxis::Linear];
 
     /// Every waveform an animation can be shaped by, in the order slots are
     /// handed them.
@@ -2428,7 +2429,7 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
-            StateChange::ColorPhase(COLOR_PHASES[index % COLOR_PHASES.len()]),
+            StateChange::PhaseAxis(COLOR_PHASES[index % COLOR_PHASES.len()]),
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
@@ -2578,7 +2579,7 @@ pub mod fixture {
     ///
     /// Three cycles rather than one, so the ramp's wrap and the seam where
     /// angular phase jumps are both in the picture.
-    pub fn sprite_color_snapshot(phase: ColorPhase) -> LayerCollection {
+    pub fn sprite_color_snapshot(phase: PhaseAxis) -> LayerCollection {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
         tunnel.col_width = UnipolarFloat::ONE;
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
@@ -2690,7 +2691,7 @@ pub mod fixture {
         );
         // Along the figure rather than around it, so the displacement is
         // across the direction it is applied in and reads as a shear.
-        tunnel.color_phase = ColorPhase::Linear;
+        tunnel.color_phase = PhaseAxis::Linear;
         tunnel.anims[0].target = AnimationTarget::PositionX;
         for sc in [
             AnimStateChange::Waveform(Waveform::Sine),

@@ -460,7 +460,7 @@ mod test {
     use super::*;
     use graphics::ImageSize;
     use texture::TextureOp;
-    use tunnels_model::layer::{ColorField, ColorPhase, DrawMode, Placement, SpriteId};
+    use tunnels_model::layer::{ColorField, DrawMode, PhaseAxis, Placement, SpriteId};
 
     /// The precompute holds every figure either library names, at every
     /// density it builds before the show — which is the whole of what these
@@ -548,7 +548,7 @@ mod test {
             thickness: 0.,
             draw_mode: DrawMode::Fill,
             color: ColorField {
-                phase: ColorPhase::Angle,
+                phase: PhaseAxis::Angle,
                 cycles: 3.,
                 center,
                 width: 1.,
