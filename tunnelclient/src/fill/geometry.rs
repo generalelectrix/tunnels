@@ -17,7 +17,7 @@
 //! two petals, where a large step drives 360 chords through a small figure —
 //! the end of a range nobody checks, because cost is looked for at the top.
 
-use super::geom::{Indices, Triangle, TriangleList};
+use super::geom::{Indices, StoredPoint, Triangle, TriangleList};
 use lyon_path::Path;
 use lyon_path::math::point;
 use lyon_tessellation::{
@@ -126,10 +126,10 @@ impl FillGeometry {
 /// so a count of outlines says almost nothing about what they weigh — and once
 /// vertices are shared, a count of them does not either, since how many
 /// triangles each one serves varies with the figure. Sixty-four megabytes is
-/// 228 figures at the mean or 28 at the largest, and either way it is
-/// sixty-four megabytes.
+/// 352 figures at the mean of 190 kB, or 31 at the largest, and either way it
+/// is sixty-four megabytes.
 ///
-/// The whole library at once is 168.9 MB, against the 29.7 MB its interiors
+/// The whole library at once is 109.6 MB, against the 29.7 MB its interiors
 /// come to. Outlines outweigh the interiors they follow because what a stroke
 /// costs is set by how finely the contour is sampled — [`STROKE_SEGMENT`] puts
 /// a join every 0.025 units along it — and hardly at all by how wide it is.
@@ -169,7 +169,7 @@ impl StrokeGeometry {
                 self.outlines.clear();
                 self.bytes = 0;
             }
-            let mesh = stroke(figures, REFERENCE_WIDTH);
+            let mesh = StrokeMesh::of(stroke(figures, REFERENCE_WIDTH));
             self.bytes += mesh.bytes();
             self.outlines.insert(id, mesh);
         }
@@ -193,12 +193,12 @@ impl StrokeGeometry {
 ///
 /// The cap is set for completeness and never reached: `path_of_capped` closes
 /// every subpath, so an outline is all joins and has no ends to cap.
-fn stroke(figures: &[Figure], width: f32) -> StrokeMesh {
+fn stroke(figures: &[Figure], width: f32) -> TessellatedStroke {
     let options = StrokeOptions::tolerance(TOLERANCE)
         .with_line_width(width)
         .with_line_join(LineJoin::Round)
         .with_line_cap(LineCap::Round);
-    let mut out = StrokeMesh::default();
+    let mut out = TessellatedStroke::default();
     let mut flat = Vec::new();
     for figure in figures {
         let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
@@ -264,16 +264,33 @@ pub struct StrokeVertexPair {
 /// there is nothing for a finer mesh to resolve.
 #[derive(Default)]
 pub struct StrokeMesh {
+    positions: Vec<StoredPoint>,
+    on_path: Vec<StoredPoint>,
+    indices: Indices,
+}
+
+/// A stroked outline as the tessellator produced it, before anything is
+/// decided about keeping it.
+///
+/// **Separate from [`StrokeMesh`] because exactness is a property of the
+/// tessellator and precision is a property of the store, and only one of them
+/// is worth testing.** What earns the stroke-once design is that lyon's round
+/// join puts every offset linear in the width, so scaling one stroke lands
+/// where stroking at that width would — a claim about the tessellator, which
+/// nothing downstream can weaken. Snapping happens on the way into the table,
+/// so that claim stays testable on the numbers lyon actually produced.
+#[derive(Default)]
+pub struct TessellatedStroke {
     positions: Vec<Point>,
     on_path: Vec<Point>,
     indices: Indices,
 }
 
-impl StrokeMesh {
+impl TessellatedStroke {
     /// Take the tessellator's indexed output, splitting each vertex into the
     /// two runs and keeping the indices that address them.
     ///
-    /// A figure's contours are stroked one at a time into a single mesh, so
+    /// A figure's contours are stroked one at a time into a single stroke, so
     /// each set of indices is shifted past the vertices already held.
     fn extend(&mut self, buffers: &VertexBuffers<StrokeVertexPair, u32>, flat: &mut Vec<u32>) {
         let base = u32::try_from(self.positions.len()).unwrap_or(u32::MAX);
@@ -292,6 +309,40 @@ impl StrokeMesh {
         }
     }
 
+    /// Each vertex, paired with the contour point it was offset from, at the
+    /// precision the tessellator produced.
+    #[cfg(test)]
+    pub fn vertices(&self) -> impl Iterator<Item = StrokeVertexPair> + '_ {
+        self.positions
+            .iter()
+            .zip(self.on_path.iter())
+            .map(|(&position, &on_path)| StrokeVertexPair { position, on_path })
+    }
+}
+
+impl StrokeMesh {
+    /// Keep a tessellated stroke, snapped to the grid stored vertices sit on.
+    fn of(stroke: TessellatedStroke) -> Self {
+        let mut snapped = Self {
+            positions: stroke
+                .positions
+                .iter()
+                .copied()
+                .map(StoredPoint::of)
+                .collect(),
+            on_path: stroke
+                .on_path
+                .iter()
+                .copied()
+                .map(StoredPoint::of)
+                .collect(),
+            indices: stroke.indices,
+        };
+        snapped.positions.shrink_to_fit();
+        snapped.on_path.shrink_to_fit();
+        snapped
+    }
+
     pub fn is_empty(&self) -> bool {
         self.indices.len() == 0
     }
@@ -304,7 +355,7 @@ impl StrokeMesh {
     /// What this outline weighs, counting what is allocated rather than what
     /// is used, since the difference is memory either way.
     fn bytes(&self) -> usize {
-        (self.positions.capacity() + self.on_path.capacity()) * size_of::<Point>()
+        (self.positions.capacity() + self.on_path.capacity()) * size_of::<StoredPoint>()
             + self.indices.bytes()
     }
 
@@ -318,7 +369,10 @@ impl StrokeMesh {
         self.positions
             .iter()
             .zip(self.on_path.iter())
-            .map(|(&position, &on_path)| StrokeVertexPair { position, on_path })
+            .map(|(&position, &on_path)| StrokeVertexPair {
+                position: position.widen(),
+                on_path: on_path.widen(),
+            })
     }
 }
 
@@ -378,6 +432,7 @@ fn triangles<V: Copy>(buffers: &VertexBuffers<V, u32>) -> impl Iterator<Item = [
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::fill::geom::QUANTISATION;
 
     /// A square, as the simplest closed contour with corners to join.
     fn square() -> [Figure; 1] {
@@ -407,6 +462,77 @@ mod test {
     ///
     /// A join style whose corner stops moving with the width, such as a miter
     /// under its limit, is what this is here to catch.
+    /// A square whose corners do not land on the grid, rotated and offset.
+    ///
+    /// **A square at ±1 is the shape that hides a snap**: stroked at a
+    /// power-of-two width it puts its furthest vertices — the corners, where
+    /// the offset is largest and where a proportionality check looks — on
+    /// exact multiples of the step, so a statistic taken from the extremes
+    /// reads unchanged however coarse the grid is. The vertices along a join's
+    /// arc still move, so it does not hide everything; it hides exactly the
+    /// measurement most likely to be reached for.
+    fn skew_square() -> [Figure; 1] {
+        use tunnels_sprites::Contour;
+        let (sin, cos) = (0.3f32).sin_cos();
+        let points: Vec<Point> = [
+            (0.0f32, 0.9137f32),
+            (0.9137, 0.0),
+            (0.0, -0.9137),
+            (-0.9137, 0.0),
+        ]
+        .iter()
+        .map(|&(x, y)| Point::new(x * sin - y * cos + 0.0413, x * cos + y * sin - 0.0271))
+        .collect();
+        [Figure {
+            rule: FillRule::NonZero,
+            subpaths: vec![Contour::new(points).expect("four corners is a loop")],
+        }]
+    }
+
+    /// What keeping a stroke on the grid costs the offset it is narrowed by.
+    ///
+    /// A stroke is stored once at the reference width and reaches every
+    /// narrower one by scaling that offset, so an error here is an error in
+    /// the drawn width at every thickness alike rather than one that shrinks
+    /// with the beam. Both endpoints snap, each by up to half a step in each
+    /// axis, so the offset between them moves by at most a step in each axis —
+    /// and that bound is what is asserted, rather than a tolerance chosen to
+    /// pass.
+    #[test]
+    fn snapping_a_stroke_moves_its_offset_by_less_than_a_step() {
+        let offsets = |v: StrokeVertexPair| {
+            (
+                v.position.x() - v.on_path.x(),
+                v.position.y() - v.on_path.y(),
+            )
+        };
+        let exact: Vec<(f32, f32)> = stroke(&skew_square(), REFERENCE_WIDTH)
+            .vertices()
+            .map(offsets)
+            .collect();
+        let stored: Vec<(f32, f32)> = StrokeMesh::of(stroke(&skew_square(), REFERENCE_WIDTH))
+            .vertices()
+            .map(offsets)
+            .collect();
+        assert_eq!(exact.len(), stored.len(), "storing lost a vertex");
+        assert!(!exact.is_empty(), "the fixture stroked to nothing");
+
+        let step = 1.0 / QUANTISATION;
+        let mut worst = 0.0f32;
+        for (a, b) in exact.iter().zip(&stored) {
+            worst = worst.max((a.0 - b.0).abs()).max((a.1 - b.1).abs());
+        }
+        assert!(
+            worst <= step,
+            "an offset moved {worst}, further than the {step} a snap of both ends allows"
+        );
+        // And it does move: a fixture nothing snapped would prove nothing.
+        assert!(
+            worst > 0.0,
+            "nothing moved, so this measured a grid-aligned fixture"
+        );
+    }
+
     #[test]
     fn what_a_stroked_vertex_is_offset_by_is_proportional_to_the_width() {
         let widest = |width| {

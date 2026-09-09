@@ -6,7 +6,7 @@
 //! waveforms driven by a clock, which change every frame.
 
 use super::Frame;
-use super::geom::{Indices, Triangle, TriangleList};
+use super::geom::{Indices, StoredPoint, Triangle, TriangleList};
 use log::debug;
 use std::collections::HashMap;
 use tunnels_model::layer::FigureId;
@@ -63,63 +63,6 @@ const TARGET_PX: f64 = 14.0;
 /// the frame puts one figure-space unit at 540 pixels — so past this the
 /// triangles are smaller than a pixel and the extra ones buy nothing.
 const FINEST_LEVEL: i8 = -7;
-
-/// Steps of the grid a mesh's vertices are stored on, in one figure-space unit.
-///
-/// A vertex is a pair of `i16`, which is half what a pair of `f32` weighs.
-/// This is the whole of the mapping: the pair spans **±4 figure units**, a
-/// power of two and so exact both ways, and every figure either library can
-/// draw sits inside it — the furthest, a star lattice, reaches 2.4314, so the
-/// range is 1.64 times wider than anything drawn on it. Past the range it
-/// clamps rather than wrapping, which turns a figure that overran into one
-/// folded onto the edge instead of one appearing on the far side. That no
-/// figure overruns is a property of the libraries and not of this number, so
-/// it is held by a test rather than by the arithmetic.
-///
-/// **The resolution is four orders of magnitude finer than the mesh it
-/// carries.** One step is 1/8192 of a figure unit, which at 1920 lines with
-/// the figure filling the frame is 0.23 of a pixel, against triangles refined
-/// to fourteen; the whole grid is 128 steps across one triangle edge at the
-/// density that a screen reaches.
-///
-/// **Snapping moves a figure less than a sixteenth of a pixel of translation
-/// does**, measured across both libraries at 1024 and at 1920 lines on
-/// coverage overlap, on a two-sided Hausdorff distance, and on how many pixels
-/// change at all — and a sixteenth of a pixel is a displacement no knob can
-/// ask for. It moves the figure's own area by 0.011% across the library and by
-/// 1.08% on the worst single figure, so nothing thin is swallowed either.
-///
-/// **The decode is free where it happens.** The per-vertex pass already
-/// touches every vertex every frame to work out polar coordinates and phase,
-/// so widening an `i16` there disappears beside the arctangent next to it. The
-/// stored form never has to be the form a backend sees.
-const QUANTISATION: f32 = 8192.0;
-
-/// A mesh vertex, snapped to the grid [`QUANTISATION`] describes.
-///
-/// Equality is equality of the stored cell, which is what a refinement dedups
-/// on: two vertices that land in one cell are one vertex, and the triangle
-/// between them collapses to no area and draws nothing.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-struct StoredPoint([i16; 2]);
-
-impl StoredPoint {
-    fn of(p: Point) -> Self {
-        let snap = |v: f32| {
-            (v * QUANTISATION)
-                .round()
-                .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
-        };
-        Self([snap(p.x()), snap(p.y())])
-    }
-
-    fn widen(self) -> Point {
-        Point::new(
-            f32::from(self.0[0]) / QUANTISATION,
-            f32::from(self.0[1]) / QUANTISATION,
-        )
-    }
-}
 
 /// A refined figure, with vertices shared between the triangles that use them.
 ///
@@ -465,7 +408,8 @@ fn bisect(tri: Triangle, target: f32, depth: u32, out: &mut Vec<Point>) {
 mod test {
     use super::*;
     use crate::fill::figure::FigureCache;
-    use crate::fill::geom::IndexBatch;
+    use crate::fill::geom::{IndexBatch, QUANTISATION};
+    use std::f32::consts::SQRT_2;
     use tunnels_model::layer::{GeneratedId, SpriteId};
 
     #[test]
@@ -627,6 +571,17 @@ mod test {
         // Room to spare rather than merely fitting, because the figure that
         // reaches furthest is a field cut out of a tiling and a family added
         // later could cut a wider one.
+        // The margin a contour is held to has to cover an outline of it as
+        // well as a fill of it: a stroked vertex sits outside the contour by
+        // up to half the reference width, along the diagonal where a
+        // right-angle join puts it furthest. So the two stores share one grid
+        // and the fill's margin is what pays for the stroke's reach.
+        let offset = crate::fill::geometry::REFERENCE_WIDTH / 2.0 * SQRT_2;
+        assert!(
+            limit * 0.75 + offset < limit,
+            "a stroke reaches {offset} past its contour, more than the quarter \
+             of the grid a contour's margin leaves for it"
+        );
         assert!(
             worst.0 < limit * 0.75,
             "{:?} reaches {}, too near the edge of a grid that stops at {limit}",
