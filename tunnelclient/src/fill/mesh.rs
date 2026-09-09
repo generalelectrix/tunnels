@@ -64,15 +64,15 @@ const FINEST_LEVEL: i8 = -7;
 
 /// Steps of the grid a mesh's vertices are stored on, in one figure-space unit.
 ///
-/// A vertex is kept as a pair of `i16` rather than a pair of `f32`, halving
-/// what a mesh's vertices weigh. This is the whole of the mapping: the pair
-/// spans **±4 figure units**, which is a power of two and so exact both ways,
-/// and every figure either library can draw sits inside it — the furthest,
-/// a star lattice, reaches 2.4314, which leaves the range 1.64 times wider
-/// than anything drawn on it. It clamps rather than wrapping, so a figure that
-/// somehow ran past the range would be folded onto its edge instead of
-/// appearing on the far side; [`every_figure_fits_the_grid_it_is_stored_on`]
-/// is what keeps that from being reached.
+/// A vertex is a pair of `i16`, which is half what a pair of `f32` weighs.
+/// This is the whole of the mapping: the pair spans **±4 figure units**, a
+/// power of two and so exact both ways, and every figure either library can
+/// draw sits inside it — the furthest, a star lattice, reaches 2.4314, so the
+/// range is 1.64 times wider than anything drawn on it. Past the range it
+/// clamps rather than wrapping, which turns a figure that overran into one
+/// folded onto the edge instead of one appearing on the far side. That no
+/// figure overruns is a property of the libraries and not of this number, so
+/// it is held by a test rather than by the arithmetic.
 ///
 /// **The resolution is four orders of magnitude finer than the mesh it
 /// carries.** One step is 1/8192 of a figure unit, which at 1920 lines with
@@ -80,17 +80,16 @@ const FINEST_LEVEL: i8 = -7;
 /// to fourteen; the whole grid is 128 steps across one triangle edge at the
 /// density that a screen reaches.
 ///
-/// That it is invisible was measured rather than argued, over all 401 figures
-/// rendered at 1024 and at 1920: **snapping disturbs the raster less than
-/// translating the same unsnapped figure by a sixteenth of a pixel does**, on
-/// coverage IoU, on a two-sided Hausdorff distance, and on how many pixels
-/// change at all. Snapping also moves the figure's own area by 0.011% across
-/// the library and by 1.08% on the worst single figure, so nothing thin is
-/// being swallowed.
+/// **Snapping moves a figure less than a sixteenth of a pixel of translation
+/// does**, measured across both libraries at 1024 and at 1920 lines on
+/// coverage overlap, on a two-sided Hausdorff distance, and on how many pixels
+/// change at all — and a sixteenth of a pixel is a displacement no knob can
+/// ask for. It moves the figure's own area by 0.011% across the library and by
+/// 1.08% on the worst single figure, so nothing thin is swallowed either.
 ///
-/// **The decode is what makes it worth doing.** The per-vertex pass already
+/// **The decode is free where it happens.** The per-vertex pass already
 /// touches every vertex every frame to work out polar coordinates and phase,
-/// so widening an `i16` there disappears beside the arctangent beside it. The
+/// so widening an `i16` there disappears beside the arctangent next to it. The
 /// stored form never has to be the form a backend sees.
 const QUANTISATION: f32 = 8192.0;
 
@@ -126,9 +125,9 @@ impl StoredPoint {
 /// **The width is a property of one mesh and not of the library**, because the
 /// two ends of the library are three orders of magnitude apart: the smallest
 /// figure refines to a thousand vertices at the coarsest density and the
-/// largest to 354,089 at the finest, which no `u16` reaches. Picking one width
-/// for all of them would either be `u32` everywhere, which is what this
-/// replaces, or a cap on how finely a figure may be refined.
+/// largest to 354,089 at the finest, which no `u16` reaches. One width for all
+/// of them is either `u32` everywhere or a cap on how finely a figure may be
+/// refined.
 ///
 /// Indices are two-thirds of what a mesh weighs — a triangle costs three of
 /// them against the two stored coordinates of about half a vertex — so this is
@@ -293,9 +292,9 @@ pub struct MeshId {
 /// end is where it lands.** 2,024 of these meshes fit in a `u16` but the 382
 /// that do not carry nine tenths of the triangles at the two finest densities,
 /// so the four coarse densities nearly halve while the ceiling moves by a
-/// third. Which is the useful way round: the four coarse ones are what a
-/// client builds before the show, and a client that has not been turned up
-/// cannot reach the other two at all.
+/// third. That is the useful way round, because the four coarse ones are the
+/// densities built before the show and the only ones a client reaches at all
+/// until it is told to refine large figures.
 ///
 /// Nothing is evicted, and no cap is wanted, because a figure dropped is a
 /// figure tessellated again and the families holding the most triangles are
