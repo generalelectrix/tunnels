@@ -21,7 +21,7 @@ use self::draw::{
     draw_points, draw_textured,
 };
 use self::figure::FigureCache;
-use self::geometry::{FillGeometry, Scale, StrokeGeometry, Thickness};
+use self::geometry::{FillGeometry, StrokeGeometry};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampSpan;
 use crate::draw::{draw_segments, hsv_to_rgb, place, thickness_px};
@@ -338,20 +338,18 @@ where
         // period comes out as the colour's rather than its own.
         let span = RampSpan::of(&fill.color_anims);
 
-        let stroke = fill.draw_mode.draws_outline().then(|| {
-            Thickness::bucketed(
-                thickness_px(fill.thickness, cfg),
-                Scale {
-                    px_per_unit: placed.px_per_unit,
-                    nominal_px_per_unit: level.nominal_px_per_unit(),
-                },
-            )
-        });
+        // What the thickness knob comes to as a fraction of the width every
+        // outline is stroked at, which is what the per-vertex pass narrows by.
+        let stroke_width = (thickness_px(fill.thickness, cfg) / placed.px_per_unit) as f32
+            / geometry::REFERENCE_WIDTH;
         let interior = fill
             .draw_mode
             .draws_fill()
             .then(|| fills.get(fill.figure, contours));
-        let outline = stroke.map(|thickness| outlines.get(fill.figure, contours, thickness));
+        let outline = fill
+            .draw_mode
+            .draws_outline()
+            .then(|| outlines.get(fill.figure, contours));
         // A uniform figure needs no ramp; a varying one needs the texture
         // holding its colour, which the pool may already have.
         let texture = if flat {
@@ -371,21 +369,21 @@ where
             field,
             spin_speed: fill.spin_speed as f32,
             warps: &fill.warps,
+            taper: &fill.taper,
+            stroke_width,
         };
 
-        // Nothing varies across the figure and nothing displaces it, so it
-        // draws straight from the tessellator's own triangles.
-        if flat && !warping {
-            if let Some(interior) = interior {
-                draw_points(interior.points(), color, placed.m, gl);
-            }
-            if let Some(outline) = outline {
-                draw_points(outline.points(), color, placed.m, gl);
-            }
-            return;
-        }
-
-        if let Some(interior) = interior {
+        // Nothing varies across the figure and nothing displaces it, so its
+        // interior draws straight from the tessellator's own triangles. An
+        // outline never takes that path: it is stroked at one width for every
+        // beam and reaches its own by being narrowed per vertex, so it goes
+        // through the pass however still the figure is.
+        if flat
+            && !warping
+            && let Some(interior) = interior
+        {
+            draw_points(interior.points(), color, placed.m, gl);
+        } else if let Some(interior) = interior {
             let mesh = meshes.get(
                 MeshId {
                     figure: fill.figure,
@@ -475,10 +473,20 @@ mod test {
     fn the_precompute_covers_both_libraries() {
         let mut renderer = Renderer::<FakeTexture>::default();
         renderer.precompute();
+        let figures = tunnels_sprites::count() + GeneratedId::library().count();
         assert_eq!(
             renderer.meshes.len(),
-            (tunnels_sprites::count() + GeneratedId::library().count()) * Level::eager().count(),
+            figures * Level::eager().count(),
             "the precompute does not cover both libraries at every eager density"
+        );
+        // Outlines are not precomputed. One is 47,554 vertices on the
+        // average figure, so the whole library would be 305 MB against the
+        // 37 MB of interiors beside it — and a show draws a handful of figures
+        // rather than four hundred.
+        assert_eq!(
+            renderer.outlines.held(),
+            0,
+            "the precompute strokes outlines it has no reason to build"
         );
     }
 
