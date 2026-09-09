@@ -26,17 +26,42 @@ const TOLERANCE: f64 = 0.006;
 /// Figures this library draws differently from the Python, deliberately.
 ///
 /// The Python is the ancestor of these families rather than the specification
-/// for them, and a run of bars is where the two part. The Python pitches its
-/// bars from one edge of the frame, which runs the pattern out before it
-/// reaches the other and leaves the marks against the two edges unlike: one set
-/// is cut in half by the frame where the other stands whole. Both families here
-/// pitch their bars between the edges instead, so a run reads the same either
-/// way up.
+/// for them, and it carries two faults that are fixed here.
+///
+/// It pitches a run of bars from one edge of the frame, which runs the pattern
+/// out before it reaches the other and leaves the marks against the two edges
+/// unlike: one set is cut in half by the frame where the other stands whole.
+/// Both bar families here pitch between the edges instead, so a run reads the
+/// same either way up.
+///
+/// It also places a stack of polygon rings by the circle the corners sit on,
+/// which centres what is seen only when a corner faces each of two opposite
+/// edges. An odd-cornered stack is therefore off centre, by 45 units at five
+/// corners and 111 at three, and a figure off centre wobbles when it is spun.
+/// The stacks here are centred on what they cover, so only the odd-cornered
+/// ones move.
 ///
 /// Naming them is what keeps the departure a decision. Each is checked to
 /// *disagree* with the Python, so a figure that comes back into line is a
 /// failure here rather than a quiet return to the other shape.
-const DIVERGED: [&str; 5] = ["slats_8", "slats_16", "slats_v_8", "grid_6", "grid_12"];
+const DIVERGED: [&str; 16] = [
+    "slats_8",
+    "slats_16",
+    "slats_v_8",
+    "grid_6",
+    "grid_12",
+    "twistring_3_3",
+    "twistring_3_5",
+    "twistring_3_12",
+    "twistring_5",
+    "twistring_5_3",
+    "twistring_5_5",
+    "twistring_5_13",
+    "twistring_5_20",
+    "twistring_7_3",
+    "twistring_7_14",
+    "twistring_9_13",
+];
 
 #[derive(Default)]
 struct FamilyReport {
