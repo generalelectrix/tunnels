@@ -48,10 +48,31 @@ use tunnels_model::layer::{
 /// which is what rotating three buffers amounts to.
 const FRAMES_IN_FLIGHT: u64 = 3;
 
+/// How many frames a renderer has drawn.
+///
+/// One count serves every cache that acts on how long ago something was used,
+/// so "three frames ago" means the same to all of them and none keeps a clock
+/// of its own. It advances once per drawn frame and never runs backwards,
+/// which is the whole of what those caches ask of it.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub struct Frame(u64);
+
+impl Frame {
+    fn advance(&mut self) {
+        self.0 += 1;
+    }
+
+    /// Frames passed since `then`, saturating at zero for a count that has not
+    /// happened yet.
+    fn since(self, then: Self) -> u64 {
+        self.0.saturating_sub(then.0)
+    }
+}
+
 /// One colour ramp on the GPU, and when it was last drawn with.
 struct RampEntry<T> {
     texture: T,
-    last_used: u64,
+    last_used: Frame,
     /// A texture is created at a width and keeps it, so an entry can only be
     /// taken back for a ramp of the same span.
     texels: u32,
@@ -89,7 +110,6 @@ struct RampPool<T> {
     cycle_scratch: RgbaImage,
     figure_scratch: RgbaImage,
     settings: TextureSettings,
-    frame: u64,
 }
 
 impl<T> RampPool<T>
@@ -109,7 +129,6 @@ where
                 .filter(Filter::Linear)
                 .wrap_u(Wrap::Repeat)
                 .wrap_v(Wrap::Repeat),
-            frame: 0,
         }
     }
 
@@ -117,13 +136,12 @@ where
     ///
     /// `None` only if the backend refused to give up a texture, which is a
     /// reason to skip a figure rather than to stop the show.
-    fn texture_for(&mut self, fill: &FillLayer, span: RampSpan) -> Option<&T> {
+    fn texture_for(&mut self, fill: &FillLayer, span: RampSpan, frame: Frame) -> Option<&T> {
         let Self {
             entries,
             cycle_scratch,
             figure_scratch,
             settings,
-            frame,
         } = self;
         let scratch = match span {
             RampSpan::Cycle => cycle_scratch,
@@ -134,7 +152,7 @@ where
 
         let free = entries
             .iter()
-            .position(|e| e.texels == width && e.last_used + FRAMES_IN_FLIGHT <= *frame);
+            .position(|e| e.texels == width && frame.since(e.last_used) >= FRAMES_IN_FLIGHT);
         let index = match free {
             Some(index) => index,
             None => {
@@ -147,7 +165,7 @@ where
                 ) {
                     Ok(texture) => entries.push(RampEntry {
                         texture,
-                        last_used: *frame,
+                        last_used: frame,
                         texels: width,
                     }),
                     Err(e) => {
@@ -170,7 +188,7 @@ where
             error!("Could not update a colour ramp texture: {e:?}");
             return None;
         }
-        entry.last_used = *frame;
+        entry.last_used = frame;
         Some(&entry.texture)
     }
 }
@@ -185,6 +203,8 @@ pub struct Renderer<T> {
     outlines: StrokeGeometry,
     meshes: MeshLibrary,
     ramps: RampPool<T>,
+    /// What the caches measure age against.
+    frame: Frame,
     /// Scratch for the per-vertex pass, reused across every layer and every
     /// frame. Layers draw one after another and none of this outlives the
     /// draw that fills it, so one buffer serves all of them.
@@ -202,6 +222,7 @@ where
             outlines: StrokeGeometry::default(),
             meshes: MeshLibrary::default(),
             ramps: RampPool::new(),
+            frame: Frame::default(),
             verts: VertexBuffers::default(),
         }
     }
@@ -222,7 +243,7 @@ where
         gl: &mut G,
         cfg: &ClientConfig,
     ) {
-        self.ramps.frame += 1;
+        self.frame.advance();
         for layer in layers {
             match layer {
                 Layer::Segments(segments) => draw_segments(segments, c, gl, cfg),
@@ -309,6 +330,7 @@ where
             outlines,
             meshes,
             ramps,
+            frame,
             verts,
         } = self;
 
@@ -361,7 +383,7 @@ where
         let texture = if flat {
             None
         } else {
-            match ramps.texture_for(fill, span) {
+            match ramps.texture_for(fill, span, *frame) {
                 Some(texture) => Some(texture),
                 None => return,
             }
@@ -583,16 +605,15 @@ mod test {
         // One layer, one colour, many frames. The ramp is rebuilt every frame
         // — that is the point of dropping the content cache — so what matters
         // is only which texture it is written into.
-        for frame in 1..40 {
-            pool.frame = frame;
+        for n in 1..40 {
             let id = pool
-                .texture_for(&fill(0.25), RampSpan::Cycle)
+                .texture_for(&fill(0.25), RampSpan::Cycle, Frame(n))
                 .expect("a texture")
                 .id;
-            if let Some(previous) = last_written.insert(id, frame) {
+            if let Some(previous) = last_written.insert(id, n) {
                 assert!(
-                    frame - previous >= FRAMES_IN_FLIGHT,
-                    "texture {id} was written at frame {previous} and again at {frame}, \
+                    n - previous >= FRAMES_IN_FLIGHT,
+                    "texture {id} was written at frame {previous} and again at {n}, \
                      inside the {FRAMES_IN_FLIGHT} frames a draw may still be reading it"
                 );
             }
@@ -607,10 +628,10 @@ mod test {
         let mut pool: RampPool<FakeTexture> = RampPool::new();
         // Four figures in one frame. None may be handed a texture another has
         // already been drawn with, whatever their colours are.
-        pool.frame = 1;
+        let frame = Frame(1);
         let ids: Vec<usize> = (0..4)
             .map(|i| {
-                pool.texture_for(&fill(f64::from(i) * 0.2), RampSpan::Cycle)
+                pool.texture_for(&fill(f64::from(i) * 0.2), RampSpan::Cycle, frame)
                     .expect("a texture")
                     .id
             })
@@ -639,9 +660,9 @@ mod test {
         };
         let before = buffers(&pool);
         for frame in 1..20 {
-            pool.frame = frame;
+            let frame = Frame(frame);
             for span in [RampSpan::Cycle, RampSpan::Figure] {
-                assert!(pool.texture_for(&fill(0.25), span).is_some());
+                assert!(pool.texture_for(&fill(0.25), span, frame).is_some());
             }
         }
         assert_eq!(
@@ -659,11 +680,13 @@ mod test {
     fn the_pool_settles_at_frames_in_flight_per_layer() {
         for layers in [1u32, 3] {
             let mut pool: RampPool<FakeTexture> = RampPool::new();
-            for frame in 1..500u64 {
-                pool.frame = frame;
+            for n in 1..500u64 {
                 for layer in 0..layers {
-                    let center = (frame as f64 * 0.01 + f64::from(layer) * 0.1).rem_euclid(1.0);
-                    assert!(pool.texture_for(&fill(center), RampSpan::Cycle).is_some());
+                    let center = (n as f64 * 0.01 + f64::from(layer) * 0.1).rem_euclid(1.0);
+                    assert!(
+                        pool.texture_for(&fill(center), RampSpan::Cycle, Frame(n))
+                            .is_some()
+                    );
                 }
             }
             let bound = FRAMES_IN_FLIGHT as usize * layers as usize;
