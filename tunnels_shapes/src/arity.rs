@@ -17,7 +17,7 @@
 
 use crate::families::*;
 use serde::{Deserialize, Serialize};
-use std::f64::consts::{FRAC_PI_3, TAU};
+use std::f64::consts::TAU;
 use std::hash::{Hash, Hasher};
 use std::ops::RangeInclusive;
 
@@ -123,38 +123,56 @@ fn gcd(a: u32, b: u32) -> u32 {
 }
 
 impl ShapeFamily {
-    /// Every family, in the order the enum declares them.
+    /// Every family, in the order the enum declares them, which is the order a
+    /// family control walks.
+    ///
+    /// Families sharing a construction sit together, so turning the knob past
+    /// one of them lands on its siblings before it reaches anything else. The
+    /// polygon rings run up through their side counts and hand straight over to
+    /// the circle, so the knob walks seven-sided, then round.
     ///
     /// A new family has to be added here as well as to the enum. The compiler
-    /// catches a family missing from `name`, `resolve` and `ShapeParams::family`,
-    /// which are exhaustive matches, but not one missing from this list;
+    /// catches a family missing from `name`, `generator` and `resolve`, which
+    /// are exhaustive matches, but not one missing from this list;
     /// `every_family_is_reachable` is what catches that.
-    pub const ALL: [ShapeFamily; 25] = [
+    pub const ALL: [ShapeFamily; 37] = [
         Self::StarPolygon,
-        Self::Rose,
-        Self::SpirographInside,
-        Self::SpirographOutside,
+        Self::Rose1,
+        Self::Rose2,
+        Self::Rose3,
+        Self::SpirographInside1,
+        Self::SpirographInside2,
+        Self::SpirographInside3,
+        Self::SpirographOutside1,
+        Self::SpirographOutside2,
+        Self::SpirographOutside3,
         Self::Guilloche,
-        Self::Lissajous,
-        Self::MaurerRose,
-        Self::Harmonograph,
-        Self::CycloidRosette,
         Self::Phyllotaxis,
-        Self::ModularChords,
-        Self::StringArt,
-        Self::TwistRings,
+        Self::ModularChords1,
+        Self::ModularChords2,
+        Self::ModularChords3,
+        Self::StringArt4,
+        Self::StringArt5,
+        Self::StringArt6,
+        Self::TwistRings3,
+        Self::TwistRings4,
         Self::MoireRings,
         Self::MoireGrid,
         Self::MoireWeave,
-        Self::PinwheelNest,
-        Self::StarLattice,
-        Self::Truchet,
+        Self::StarLattice55,
+        Self::StarLattice70,
+        Self::StarLattice85,
+        Self::PolygonRings3,
+        Self::PolygonRings4,
+        Self::PolygonRings5,
+        Self::PolygonRings6,
+        Self::PolygonRings7,
         Self::ConcentricRings,
-        Self::PolygonRings,
-        Self::PetalMandala,
+        Self::PetalMandala1,
+        Self::PetalMandala2,
+        Self::PetalMandala3,
         Self::Slats,
         Self::Grid,
-        Self::Frames,
     ];
 
     /// The arities this family is a figure over.
@@ -167,42 +185,46 @@ impl ShapeFamily {
             // seven is the fewest points a step of three has room in.
             Self::StarPolygon => 7..=19,
             // One petal is a circle through the origin.
-            Self::Rose => 2..=13,
+            Self::Rose1 | Self::Rose2 | Self::Rose3 => 2..=13,
             // Two lobes is an ellipse.
-            Self::SpirographInside | Self::SpirographOutside => 3..=21,
-            // One copy is a plain spirograph with nothing to interfere with.
-            Self::Guilloche => 2..=8,
-            // One to one is an ellipse.
-            Self::Lissajous => 2..=13,
-            Self::MaurerRose => 2..=15,
-            // No arity axis; the control selects among the curated figures.
-            Self::Harmonograph => 1..=13,
-            // One copy is a bare loop with nothing inside it.
-            Self::CycloidRosette => 2..=12,
+            Self::SpirographInside1
+            | Self::SpirographInside2
+            | Self::SpirographInside3
+            | Self::SpirographOutside1
+            | Self::SpirographOutside2
+            | Self::SpirographOutside3 => 3..=21,
+            // One copy is a plain spirograph with nothing to interfere with,
+            // and past six the centre fills in with a grey knot.
+            Self::Guilloche => 2..=6,
             // Below about twenty florets the spiral is a scatter of dots.
             Self::Phyllotaxis => 24..=400,
             // Below about twenty points the chords outline a polygon.
-            Self::ModularChords => 24..=220,
-            Self::StringArt => 5..=34,
+            Self::ModularChords1 | Self::ModularChords2 | Self::ModularChords3 => 24..=220,
+            Self::StringArt4 | Self::StringArt5 | Self::StringArt6 => 5..=34,
             // Two rings, below which a relative turn registers against nothing.
-            Self::TwistRings => 3..=20,
+            Self::TwistRings3 | Self::TwistRings4 => 3..=20,
             // Too few of either and there is no second pattern to beat against.
             Self::MoireRings => 3..=26,
-            // The upper end muds to grey at forty feet, which is a viewing
-            // distance rather than a geometric bound.
-            Self::MoireGrid => 8..=48,
-            Self::MoireWeave => 6..=40,
-            // One layer is a ring of blades a beam makes with live knobs, and
-            // two blades on the outside leaves no coprime count under it.
-            Self::PinwheelNest => 3..=17,
-            Self::StarLattice => 1..=5,
-            Self::Truchet => 2..=16,
+            // The upper end is where the bars merge into an even grey rather
+            // than beating against each other, which is a viewing distance
+            // rather than a geometric bound. A weave carries two marks per
+            // crossing where a grid carries one, so it merges sooner.
+            Self::MoireGrid => 8..=24,
+            Self::MoireWeave => 6..=20,
+            Self::StarLattice55 | Self::StarLattice70 | Self::StarLattice85 => 1..=5,
+            // One ring is a plain polygon, which is still a figure a beam
+            // cannot draw.
+            Self::PolygonRings3
+            | Self::PolygonRings4
+            | Self::PolygonRings5
+            | Self::PolygonRings6
+            | Self::PolygonRings7 => 1..=16,
             Self::ConcentricRings
-            | Self::PolygonRings
-            | Self::PetalMandala
+            | Self::PetalMandala1
+            | Self::PetalMandala2
+            | Self::PetalMandala3
             | Self::Slats
-            | Self::Grid
-            | Self::Frames => 4..=16,
+            | Self::Grid => 4..=16,
         }
     }
 
@@ -231,18 +253,21 @@ impl ShapeFamily {
         }
         match self {
             Self::StarPolygon => arities![7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
-            Self::Rose => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            Self::Rose1 | Self::Rose2 | Self::Rose3 => {
+                arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            }
             // Every lobe count to fifteen, then every other one: the curated
             // spirographs stop at seventeen inside and outside, and two lobes
             // apart is where a count still reads as a different figure.
-            Self::SpirographInside | Self::SpirographOutside => {
+            Self::SpirographInside1
+            | Self::SpirographInside2
+            | Self::SpirographInside3
+            | Self::SpirographOutside1
+            | Self::SpirographOutside2
+            | Self::SpirographOutside3 => {
                 arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 21]
             }
-            Self::Guilloche => arities![2, 3, 4, 5, 6, 7, 8],
-            Self::Lissajous => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-            Self::MaurerRose => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-            Self::Harmonograph => arities![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-            Self::CycloidRosette => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            Self::Guilloche => arities![2, 3, 4, 5, 6],
             // The sixteen curated floret counts exactly. The dot radius is
             // fitted against this count, and these are the counts it was
             // fitted on.
@@ -253,106 +278,124 @@ impl ShapeFamily {
             }
             // The curated point counts, less four that sat beside a neighbour
             // close enough to draw the same figure.
-            Self::ModularChords => {
+            Self::ModularChords1 | Self::ModularChords2 | Self::ModularChords3 => {
                 arities![
                     24, 30, 36, 45, 48, 56, 60, 90, 96, 120, 128, 144, 150, 180, 200, 220
                 ]
             }
             // The sixteen curated corner counts exactly.
-            Self::StringArt => arities![5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 18, 20, 22, 26, 30, 34],
-            Self::TwistRings => arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20],
+            Self::StringArt4 | Self::StringArt5 | Self::StringArt6 => {
+                arities![5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 18, 20, 22, 26, 30, 34]
+            }
+            Self::TwistRings3 | Self::TwistRings4 => {
+                arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20]
+            }
             Self::MoireRings => arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 19, 22, 24, 26],
+            // Every count the range admits, which is what a beat pattern wants:
+            // one bar more is a different figure here where elsewhere it would
+            // be the same one drawn slightly finer.
             Self::MoireGrid => {
-                arities![8, 9, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 34, 40, 48]
+                arities![8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 24]
             }
             Self::MoireWeave => {
-                arities![6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 23, 26, 29, 32, 40]
+                arities![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
             }
-            Self::PinwheelNest => arities![3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
-            Self::StarLattice => arities![1, 2, 3, 4, 5],
-            Self::Truchet => arities![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            Self::StarLattice55 | Self::StarLattice70 | Self::StarLattice85 => {
+                arities![1, 2, 3, 4, 5]
+            }
+            Self::PolygonRings3
+            | Self::PolygonRings4
+            | Self::PolygonRings5
+            | Self::PolygonRings6
+            | Self::PolygonRings7 => {
+                arities![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            }
             Self::ConcentricRings
-            | Self::PolygonRings
-            | Self::PetalMandala
+            | Self::PetalMandala1
+            | Self::PetalMandala2
+            | Self::PetalMandala3
             | Self::Slats
-            | Self::Grid
-            | Self::Frames => arities![4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            | Self::Grid => arities![4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         }
     }
 
     /// The second degree of freedom every figure of this family is drawn at.
     ///
-    /// One position rather than a range, because the two controls a figure
-    /// mode has are spent on the family and the count within it. Which
-    /// position is a matter of taste, and the curated figures are the evidence
-    /// there is about taste: each of these is the position whose resolution
-    /// agrees with the most curated figures of its family, and where two agree
-    /// equally the tie goes to the one curation kept at the top of the arity
-    /// range. Where the position carries units — a pen depth, a reach, an
-    /// overlap — it is the median of the curated values instead.
+    /// One position rather than a range, because the two controls a figure mode
+    /// has are spent on the family and the count within it. A family is this
+    /// position together with a construction, so the position is what
+    /// distinguishes families sharing one.
     ///
-    /// Nine families resolve nothing from this and take zero: `harmo`,
-    /// `phyllo`, `moire_grid`, `moire_weave`, `pinwheel_nest`, `truchet`,
-    /// `rings`, `grid` and `frames`.
+    /// Each of these is a position someone looked at a figure at and kept,
+    /// rather than a position computed from anything. That is the authority for
+    /// the number: which figure of a family is worth a knob position is a
+    /// matter of taste, and the evidence about taste is a person looking at
+    /// figures. Where a position resolves to something with a name — a
+    /// corner count, a pen depth, a reach — it is given here, so a position
+    /// that stops resolving to what it says is visible as a disagreement
+    /// between this comment and its number.
+    ///
+    /// Six families resolve nothing from this and take zero: `phyllo`,
+    /// `moire_grid`, `moire_weave`, `rings`, `slats` and `grid`.
     pub fn secondary(self) -> Secondary {
         Secondary::new(match self {
-            // A step near two fifths of the point count. Curation kept only
-            // the high steps above fifteen points and none of the low ones.
-            Self::StarPolygon => 0.79,
-            Self::Rose => 0.646,
-            // A pen depth of 1.74, against a curated median of 1.75. Depth one
-            // is the cusped hypocycloid, where a ribbon leaves the tips as
-            // detached blobs, and this is well clear of it.
-            Self::SpirographInside => 0.37,
-            // A pen depth of 1.56; the curated epicycloids run shallower than
-            // the hypocycloids, at a median of 1.50.
-            Self::SpirographOutside => 0.28,
+            // A step near two fifths of the point count.
+            Self::StarPolygon => 0.76,
+            // A divisor of one, which is the plain rose; then the low divisors;
+            // then a divisor of seven, which laces the petals over each other.
+            Self::Rose1 => 0.0,
+            Self::Rose2 => 0.25,
+            Self::Rose3 => 0.76,
+            // Pen depths of 1.00, 1.92 and 2.90. Depth one is the cusped
+            // hypocycloid, where a ribbon leaves the tips as detached blobs.
+            Self::SpirographInside1 | Self::SpirographOutside1 => 0.0,
+            Self::SpirographInside2 | Self::SpirographOutside2 => 0.46,
+            Self::SpirographInside3 | Self::SpirographOutside3 => 0.95,
             // The simplest base. A guilloche's marks are the base's lobes
             // times its copies, and the copies are what the other knob turns.
-            Self::Guilloche => 0.045,
-            // Every curated Lissajous has its second frequency below its
-            // first, and at two the coprime frequencies are 1, 3, 5, 7 and 9 —
-            // so any position above a fifth leaves that region at the bottom
-            // of the range.
-            Self::Lissajous => 0.183,
-            // A step of 53, the only one two curated roses share.
-            Self::MaurerRose => 0.35,
-            // The cardioid: one cusp where the nephroid has two, and the only
-            // kind curation carried to twelve copies.
-            Self::CycloidRosette => 0.625,
-            // A multiplier near a twentieth of the point count: the median of
-            // the curated ratios among the figures carrying enough points to
-            // sit where this family's arities do, twelve of the sixteen of
-            // which are above ninety.
-            Self::ModularChords => 0.046,
-            // Five corners, which holds the marks a figure carries — corners
-            // times the count per corner — closest to the curated band across
-            // the whole range.
-            Self::StringArt => 0.214,
-            // Five sides, the only count curation carried to twenty rings.
-            Self::TwistRings => 0.178,
-            // One ring of offset: the longest beat there is, and the only
-            // offset coprime with every ring count, so it does not jump as the
-            // count crosses a factor.
-            Self::MoireRings => 0.167,
-            // A reach of 0.70, which five curated lattices carry.
-            Self::StarLattice => 0.5,
-            // Six sides. A stack of circles is already its own family, and an
-            // octagon is nearly one.
-            Self::PolygonRings => 0.35,
-            // Petals overlapping by one spacing, where each petal's rim passes
-            // through its neighbours' centres.
-            Self::PetalMandala => 0.75,
-            Self::Slats => 0.25,
-            Self::Harmonograph
-            | Self::Phyllotaxis
+            Self::Guilloche => 0.0,
+            // A multiplier of two, which is the cardioid and the one figure of
+            // this family that is not symmetric about an axis; then a middling
+            // multiplier; then one near the point count.
+            Self::ModularChords1 => 0.0,
+            Self::ModularChords2 => 0.5,
+            Self::ModularChords3 => 0.99,
+            // Four, five and six corners.
+            Self::StringArt4 => 0.07,
+            Self::StringArt5 => 0.21,
+            Self::StringArt6 => 0.36,
+            // Three sides and four.
+            Self::TwistRings3 => 0.04,
+            Self::TwistRings4 => 0.11,
+            // Two rings of offset, which beats coarsely enough to read as
+            // separated bands rather than as an even grey at the top of the
+            // range. Two and three share a factor with 6 and with 24, and at
+            // those two counts the family falls back to an offset of one and
+            // draws the finer figure — a discontinuity at two of the sixteen
+            // positions, taken over fourteen that would otherwise be haze.
+            Self::MoireRings => 0.5,
+            // Reaches of 0.55, 0.70 and 0.85.
+            Self::StarLattice55 => 0.0,
+            Self::StarLattice70 => 0.5,
+            Self::StarLattice85 => 1.0,
+            // Three sides through seven. A stack of circles is its own family,
+            // and an octagon is nearly one.
+            Self::PolygonRings3 => 0.05,
+            Self::PolygonRings4 => 0.15,
+            Self::PolygonRings5 => 0.25,
+            Self::PolygonRings6 => 0.35,
+            Self::PolygonRings7 => 0.45,
+            // Petal radii of 0.80, 0.90 and the whole ring radius, at which
+            // every petal's rim passes through the centre.
+            Self::PetalMandala1 => 0.0,
+            Self::PetalMandala2 => 0.5,
+            Self::PetalMandala3 => 1.0,
+            Self::Phyllotaxis
             | Self::MoireGrid
             | Self::MoireWeave
-            | Self::PinwheelNest
-            | Self::Truchet
             | Self::ConcentricRings
-            | Self::Grid
-            | Self::Frames => 0.0,
+            | Self::Slats
+            | Self::Grid => 0.0,
         })
     }
 
@@ -364,19 +407,21 @@ impl ShapeFamily {
             Self::StarPolygon => {
                 ShapeParams::StarPolygon(StarPolygon::new(n, star_step(n, secondary)))
             }
-            Self::Rose => {
+            Self::Rose1 | Self::Rose2 | Self::Rose3 => {
                 let divisor = secondary.pick(&rose_divisors(n)).unwrap_or(1);
                 ShapeParams::Rose(Rose::new(n, divisor, taper(arity, &range, 22.0, 15.0)))
             }
-            Self::SpirographInside => {
+            Self::SpirographInside1 | Self::SpirographInside2 | Self::SpirographInside3 => {
                 spirograph(n, secondary, taper(arity, &range, 24.0, 17.0), Roll::Inside)
             }
-            Self::SpirographOutside => spirograph(
-                n,
-                secondary,
-                taper(arity, &range, 24.0, 17.0),
-                Roll::Outside,
-            ),
+            Self::SpirographOutside1 | Self::SpirographOutside2 | Self::SpirographOutside3 => {
+                spirograph(
+                    n,
+                    secondary,
+                    taper(arity, &range, 24.0, 17.0),
+                    Roll::Outside,
+                )
+            }
             Self::Guilloche => {
                 let (fixed, rolling, pen) = secondary
                     .pick(GUILLOCHE_BASES)
@@ -387,44 +432,24 @@ impl ShapeFamily {
                     n,
                 ))
             }
-            Self::Lissajous => {
-                let b = secondary.pick(&lissajous_partners(n)).unwrap_or(1);
-                ShapeParams::Lissajous(Lissajous::new(
-                    n,
-                    b,
-                    LISSAJOUS_PHASE,
-                    taper(arity, &range, 22.0, 12.0),
-                ))
-            }
-            Self::MaurerRose => {
-                let step = secondary.pick(MAURER_STEPS).unwrap_or(MAURER_STEPS[0]);
-                ShapeParams::MaurerRose(MaurerRose::new(n, step, MAURER_WIDTH))
-            }
-            Self::Harmonograph => harmonograph_preset(n),
-            Self::CycloidRosette => {
-                let kind = secondary
-                    .pick(&CYCLOID_KINDS)
-                    .unwrap_or(CycloidKind::Astroid);
-                ShapeParams::CycloidRosette(CycloidRosette::new(
-                    kind,
-                    n,
-                    taper(arity, &range, 20.0, 9.0),
-                ))
-            }
             Self::Phyllotaxis => {
                 ShapeParams::Phyllotaxis(Phyllotaxis::new(n, PHYLLOTAXIS_DOT / (n as f64).sqrt()))
             }
-            Self::ModularChords => ShapeParams::ModularChords(ModularChords::new(
-                n,
-                modular_multiplier(n, secondary),
-                taper(arity, &range, 11.0, 5.0).round() as u32,
-            )),
-            Self::StringArt => ShapeParams::StringArt(StringArt::new(
-                secondary.pick_in(4..=10),
-                n,
-                taper(arity, &range, 16.0, 5.0),
-            )),
-            Self::TwistRings => {
+            Self::ModularChords1 | Self::ModularChords2 | Self::ModularChords3 => {
+                ShapeParams::ModularChords(ModularChords::new(
+                    n,
+                    modular_multiplier(n, secondary),
+                    taper(arity, &range, 11.0, 5.0).round() as u32,
+                ))
+            }
+            Self::StringArt4 | Self::StringArt5 | Self::StringArt6 => {
+                ShapeParams::StringArt(StringArt::new(
+                    secondary.pick_in(4..=10),
+                    n,
+                    taper(arity, &range, 16.0, 5.0),
+                ))
+            }
+            Self::TwistRings3 | Self::TwistRings4 => {
                 let sides = secondary.pick_in(3..=16);
                 let corner_pitch = TAU / sides as f64;
                 ShapeParams::TwistRings(TwistRings::new(
@@ -449,8 +474,7 @@ impl ShapeFamily {
                 n,
                 MOIRE_WEAVE_TWIST / n as f64,
             )),
-            Self::PinwheelNest => ShapeParams::PinwheelNest(pinwheel_nest(n)),
-            Self::StarLattice => {
+            Self::StarLattice55 | Self::StarLattice70 | Self::StarLattice85 => {
                 let reach = secondary.between(0.55, 0.85);
                 ShapeParams::StarLattice(StarLattice::new(
                     n,
@@ -458,33 +482,31 @@ impl ShapeFamily {
                     reach,
                 ))
             }
-            Self::Truchet => ShapeParams::Truchet(Truchet::new(n, TRUCHET_WIDTH / n as f64)),
-            Self::ConcentricRings => {
-                ShapeParams::ConcentricRings(ConcentricRings::new(nested_radii(n)))
-            }
-            Self::PolygonRings => ShapeParams::PolygonRings(PolygonRings::new(
+            Self::PolygonRings3
+            | Self::PolygonRings4
+            | Self::PolygonRings5
+            | Self::PolygonRings6
+            | Self::PolygonRings7 => ShapeParams::PolygonRings(PolygonRings::new(
                 secondary.pick_in(3..=12),
                 nested_radii(n),
             )),
-            Self::PetalMandala => {
-                let spacing = 2.0 * PETAL_RING_RADIUS * (std::f64::consts::PI / n as f64).sin();
-                let overlap = secondary.between(PETAL_OVERLAP.0, PETAL_OVERLAP.1);
+            Self::ConcentricRings => {
+                ShapeParams::ConcentricRings(ConcentricRings::new(nested_radii(n)))
+            }
+            Self::PetalMandala1 | Self::PetalMandala2 | Self::PetalMandala3 => {
+                let reach = secondary.between(PETAL_REACH.0, PETAL_REACH.1);
                 ShapeParams::PetalMandala(PetalMandala::new(
                     n,
                     PETAL_RING_RADIUS,
-                    overlap * spacing,
+                    reach * PETAL_RING_RADIUS,
                 ))
             }
+            // Which way the bars run is not a degree of freedom a figure of
+            // this family is chosen for, so the family fixes it.
             Self::Slats => {
-                let direction = if secondary.get() < 0.5 {
-                    bars::Direction::Horizontal
-                } else {
-                    bars::Direction::Vertical
-                };
-                ShapeParams::Slats(Slats::new(n, direction, SLAT_DUTY))
+                ShapeParams::Slats(Slats::new(n, bars::Direction::Horizontal, SLAT_DUTY))
             }
             Self::Grid => ShapeParams::Grid(Grid::new(n, GRID_DUTY)),
-            Self::Frames => ShapeParams::Frames(Frames::new(n, FRAME_THICKNESS / n as f64)),
         }
     }
 }
@@ -513,29 +535,6 @@ fn rose_divisors(petals: u32) -> Vec<u32> {
         .collect()
 }
 
-/// Frequencies the other axis of a Lissajous figure may carry.
-///
-/// Equal frequencies trace an ellipse, which a ring of marks already makes. A
-/// frequency sharing a factor with the first closes the figure before the full
-/// turn is out and traces it again, which an even number of times cancels.
-fn lissajous_partners(a: u32) -> Vec<u32> {
-    (1..=9).filter(|&b| b != a && gcd(a, b) == 1).collect()
-}
-
-/// A quarter turn is avoided: where `a` is even and `b` odd it traces the figure
-/// twice, so the phase is held a third of a turn away from it.
-const LISSAJOUS_PHASE: f64 = FRAC_PI_3;
-
-/// The one width the curated Maurer roses carry.
-const MAURER_WIDTH: f64 = 5.0;
-
-/// Steps a Maurer walk may advance by.
-///
-/// The walk closes after `360 / gcd(step, 360)` points, so a step sharing a
-/// factor with 360 lands on few angles at nearly equal radii and collapses the
-/// figure into a chevron. These are the curated steps that are coprime with 360.
-const MAURER_STEPS: &[u32] = &[19, 43, 47, 53, 67, 71, 97, 109, 113, 127];
-
 /// Base curves a guilloche may be built on.
 ///
 /// The base is a whole spirograph rather than a number, so it indexes the
@@ -563,13 +562,6 @@ fn ring_offsets(rings: u32) -> Vec<u32> {
     (1..=3).filter(|&offset| gcd(rings, offset) == 1).collect()
 }
 
-const CYCLOID_KINDS: [CycloidKind; 4] = [
-    CycloidKind::Astroid,
-    CycloidKind::Deltoid,
-    CycloidKind::Cardioid,
-    CycloidKind::Nephroid,
-];
-
 /// Floret radius against floret count: fitted across sixteen curated figures,
 /// which spread from 323 to 341 excluding two deliberate outliers.
 const PHYLLOTAXIS_DOT: f64 = 330.0;
@@ -579,9 +571,6 @@ const MOIRE_GRID_TWIST: f64 = 1.8;
 
 /// Relative angle against bar count, fitted across nine curated weaves.
 const MOIRE_WEAVE_TWIST: f64 = 1.55;
-
-/// Ribbon width against tile count, fitted across the curated tilings.
-const TRUCHET_WIDTH: f64 = 85.0;
 
 /// Total twist across the stack, as a fraction of one corner pitch.
 ///
@@ -597,22 +586,25 @@ const STAR_LATTICE_WIDTH: f64 = 22.0;
 /// The radius the petals of a mandala are centred on.
 const PETAL_RING_RADIUS: f64 = 260.0;
 
-/// Petal radius as a multiple of the distance between neighbouring petals.
+/// Petal radius as a fraction of the radius the petals are centred on.
 ///
-/// This is the family's second degree of freedom: at the low end the petals
-/// barely meet, at the high end they cut deeply into one another. The three
-/// curated mandalas sit at 0.77, 1.00 and 1.09, which is the band.
-const PETAL_OVERLAP: (f64, f64) = (0.77, 1.09);
+/// This is the family's second degree of freedom, and it is a fraction of the
+/// ring rather than of the gap between neighbouring petals so that it means the
+/// same thing at every arity. Neighbours close up as the petal count rises, so
+/// a radius tied to that gap shrinks with the count and leaves a hole in the
+/// middle that grows as the figure gets busier. Tied to the ring, a petal
+/// reaches as far in at sixteen petals as at four, and the extra petals overlap
+/// each other instead of retreating from the centre.
+///
+/// At the top of the band every petal's rim passes through the centre of the
+/// figure, which is as far as reaching in goes.
+const PETAL_REACH: (f64, f64) = (0.80, 1.00);
 
 /// Half bar, half gap.
 const SLAT_DUTY: f64 = 0.5;
 
 /// Bars thinner than their gaps, so the crossings leave a lattice of holes.
 const GRID_DUTY: f64 = 0.35;
-
-/// Border thickness against frame count. Both curated figures sit on this
-/// exactly: four frames at 45, six at 30.
-const FRAME_THICKNESS: f64 = 180.0;
 
 /// The outermost radius a nested stack starts from.
 const OUTER_RADIUS: f64 = 470.0;
@@ -660,77 +652,3 @@ fn modular_multiplier(points: u32, secondary: Secondary) -> u32 {
         .collect();
     secondary.pick(&candidates).unwrap_or(2)
 }
-
-/// Ribbon width against blade count, per layer, fitted across the curated nests.
-const PINWHEEL_WIDTHS: [f64; 3] = [110.0, 135.0, 150.0];
-
-/// Where each layer starts and ends, and how far its blades turn between.
-const PINWHEEL_LAYERS: [(f64, f64, f64); 3] =
-    [(50.0, 205.0, 2.6), (185.0, 335.0, 2.1), (315.0, 470.0, 1.7)];
-
-/// A nest of blade rings whose counts share no factor.
-///
-/// One number cannot set a tuple, so the arity is the outermost blade count and
-/// the inner counts are the largest preceding values coprime with everything
-/// outside them — a chosen mapping, but the one that keeps the coprimality the
-/// figure is made of.
-fn pinwheel_nest(outermost: u32) -> PinwheelNest {
-    let mut counts = vec![outermost];
-    while counts.len() < PINWHEEL_LAYERS.len() {
-        let smallest = *counts.last().unwrap_or(&outermost);
-        match (2..smallest)
-            .rev()
-            .find(|&c| counts.iter().all(|&k| gcd(c, k) == 1))
-        {
-            Some(count) => counts.push(count),
-            None => break,
-        }
-    }
-    counts.reverse();
-    let layers = counts
-        .iter()
-        .enumerate()
-        .map(|(i, &blades)| {
-            let (inner, outer, sweep) = PINWHEEL_LAYERS[i];
-            pinwheel::Layer::new(
-                blades,
-                inner,
-                outer,
-                sweep,
-                PINWHEEL_WIDTHS[i] / blades as f64,
-            )
-        })
-        .collect();
-    PinwheelNest::new(layers)
-}
-
-/// A harmonograph carries no count, so the control selects among the curated
-/// figures rather than resolving into a number.
-fn harmonograph_preset(index: u32) -> ShapeParams {
-    let curated = crate::presets::of_family(ShapeFamily::Harmonograph);
-    let i = (index as usize)
-        .saturating_sub(1)
-        .min(curated.len().saturating_sub(1));
-    curated
-        .get(i)
-        .cloned()
-        .unwrap_or(ShapeParams::Harmonograph(FALLBACK_HARMONOGRAPH))
-}
-
-/// Stands in if the curated set is ever empty, so a live control still reaches
-/// a figure.
-const FALLBACK_HARMONOGRAPH: Harmonograph = Harmonograph {
-    x: harmonograph::Axis {
-        frequencies: (2.0, 2.01),
-        damping: (0.012, 0.010),
-        phase: 0.0,
-    },
-    y: harmonograph::Axis {
-        frequencies: (3.0, 3.01),
-        damping: (0.011, 0.013),
-        phase: 1.1,
-    },
-    turns: 30.0,
-    steps: 3000,
-    width: 7.0,
-};

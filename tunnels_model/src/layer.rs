@@ -472,12 +472,12 @@ mod test {
             FigureId::Baked(SpriteId(37)),
             FigureId::Generated(GeneratedId::default()),
             FigureId::Generated(GeneratedId {
-                family: ShapeFamily::Truchet,
+                family: ShapeFamily::MoireWeave,
                 arity: Arity::new(11),
                 secondary: Secondary::new(0.375),
             }),
             FigureId::Generated(GeneratedId {
-                family: ShapeFamily::StarLattice,
+                family: ShapeFamily::StarLattice85,
                 arity: Arity::new(1),
                 secondary: Secondary::new(1.0),
             }),

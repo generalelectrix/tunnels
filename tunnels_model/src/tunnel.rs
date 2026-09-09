@@ -1139,7 +1139,7 @@ mod test {
     #[test]
     fn a_figure_mode_renders_a_placed_figure() {
         let generated = GeneratedId {
-            family: ShapeFamily::Rose,
+            family: ShapeFamily::Rose1,
             arity: Arity::new(5),
             secondary: Secondary::new(0.5),
         };
@@ -2566,7 +2566,7 @@ pub mod fixture {
     /// A seven-pointed star, which is the plainest figure the generated
     /// library makes.
     pub fn generated_star() -> GeneratedId {
-        generated_id(ShapeFamily::StarPolygon, 7, 0.0)
+        generated_id(ShapeFamily::StarPolygon, 7, 0.76)
     }
 
     /// Two sets of parallel bars cut to a disc, at a small angle to each other.
@@ -2588,7 +2588,7 @@ pub mod fixture {
     /// than fitted to what it happens to reach. Fitted, it would be a small
     /// object in the middle of the frame instead of a field the frame cuts.
     pub fn generated_lattice() -> GeneratedId {
-        generated_id(ShapeFamily::StarLattice, 1, 1.0)
+        generated_id(ShapeFamily::StarLattice85, 1, 1.0)
     }
 
     /// A tunnel that draws a generated figure.

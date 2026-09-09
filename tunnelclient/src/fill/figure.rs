@@ -111,14 +111,14 @@ mod test {
         );
 
         // A star lattice is a field cut out of a tiling and runs well past.
-        let lattice = reach(id(ShapeFamily::StarLattice, 1, 1.0));
+        let lattice = reach(id(ShapeFamily::StarLattice85, 1, 1.0));
         assert!(
             lattice > 2.5,
             "the star lattice reaches only {lattice}; it is a field and should overrun"
         );
 
         // A rose is composed inside the frame and is not grown to fill the box.
-        let rose = reach(id(ShapeFamily::Rose, 5, 0.0));
+        let rose = reach(id(ShapeFamily::Rose1, 5, 0.0));
         assert!(
             (0.9..0.99).contains(&rose),
             "the rose reaches {rose}, which is not where it was composed"

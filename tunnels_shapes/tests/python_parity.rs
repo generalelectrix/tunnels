@@ -62,7 +62,9 @@ fn matches_the_python_generator() {
     let mut families: BTreeMap<&'static str, FamilyReport> = BTreeMap::new();
     for preset in presets::all() {
         let diverged = DIVERGED.contains(&preset.name.as_str());
-        let report = families.entry(preset.params.family().name()).or_default();
+        let report = families
+            .entry(preset.params.generator().name())
+            .or_default();
         let path = dir.join(format!("{}.svg", preset.name));
         let svg = match std::fs::read_to_string(&path) {
             Ok(svg) => svg,

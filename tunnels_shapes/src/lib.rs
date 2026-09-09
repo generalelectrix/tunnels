@@ -19,5 +19,5 @@ pub mod geom;
 pub mod presets;
 
 pub use arity::{Arity, Secondary};
-pub use families::{ShapeFamily, ShapeParams};
+pub use families::{Generator, ShapeFamily, ShapeParams};
 pub use geom::{Contour, Figure, FillRule, Point};

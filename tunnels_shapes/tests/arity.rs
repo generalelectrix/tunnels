@@ -284,37 +284,42 @@ fn a_stack_of_polygon_rings_is_centred_on_the_frame() {
     });
 }
 
-/// Both ends of the secondary control must reach different figures, or the
-/// control is not a control.
+/// Two families built by the same construction must draw different figures.
+///
+/// A family is a construction with its second degree of freedom pinned, so
+/// families sharing a construction are told apart by that pin and by nothing
+/// else. A pin that resolves to what a sibling's resolves to at every count
+/// they both offer spends two positions of the family control on one figure.
 #[test]
-fn the_secondary_control_does_something() {
-    for family in ShapeFamily::ALL {
-        // These families carry a single degree of freedom: everything else about
-        // them follows from arity, or, for the harmonograph, from a curated set
-        // there is nothing to compute.
-        if matches!(
-            family,
-            ShapeFamily::Phyllotaxis
-                | ShapeFamily::MoireGrid
-                | ShapeFamily::MoireWeave
-                | ShapeFamily::Truchet
-                | ShapeFamily::ConcentricRings
-                | ShapeFamily::Grid
-                | ShapeFamily::Frames
-                | ShapeFamily::PinwheelNest
-                | ShapeFamily::Harmonograph
-        ) {
-            continue;
+fn families_sharing_a_construction_draw_different_figures() {
+    for (i, &family) in ShapeFamily::ALL.iter().enumerate() {
+        for &sibling in &ShapeFamily::ALL[i + 1..] {
+            if family.generator() != sibling.generator() {
+                continue;
+            }
+            let shared: Vec<Arity> = family
+                .arities()
+                .iter()
+                .copied()
+                .filter(|arity| sibling.arities().contains(arity))
+                .collect();
+            assert!(
+                !shared.is_empty(),
+                "{} and {} are the same construction but share no arity",
+                family.name(),
+                sibling.name()
+            );
+            assert!(
+                shared.iter().any(|&arity| {
+                    family.resolve(arity, family.secondary())
+                        != sibling.resolve(arity, sibling.secondary())
+                }),
+                "{} and {} draw the same figure at all {} of the arities they share",
+                family.name(),
+                sibling.name(),
+                shared.len()
+            );
         }
-        let arity = Arity::new(*family.arity_range().end());
-        let low = family.resolve(arity, Secondary::new(0.0));
-        let high = family.resolve(arity, Secondary::new(1.0));
-        assert_ne!(
-            low,
-            high,
-            "{}: both ends of the secondary reach the same figure",
-            family.name()
-        );
     }
 }
 
@@ -348,32 +353,58 @@ fn arities_outside_the_range_are_brought_back_in() {
 #[test]
 fn every_family_is_reachable() {
     use std::collections::BTreeSet;
+    use tunnels_shapes::families::Generator;
     use tunnels_shapes::presets;
 
-    let swept: BTreeSet<ShapeFamily> = ShapeFamily::ALL.into_iter().collect();
+    /// Constructions curation kept that the library offers no family of.
+    ///
+    /// A construction earns a place by having been curated, but curation is
+    /// necessary rather than sufficient: these were built, looked at, and left
+    /// out. Naming them is what keeps a family dropped on purpose apart from a
+    /// family dropped by accident, and what makes deleting one from the table
+    /// without saying so a failure here.
+    const CULLED: [Generator; 7] = [
+        Generator::Lissajous,
+        Generator::MaurerRose,
+        Generator::Harmonograph,
+        Generator::CycloidRosette,
+        Generator::PinwheelNest,
+        Generator::Truchet,
+        Generator::Frames,
+    ];
+
+    let families: BTreeSet<ShapeFamily> = ShapeFamily::ALL.into_iter().collect();
     assert_eq!(
-        swept.len(),
+        families.len(),
         ShapeFamily::ALL.len(),
         "a family is listed twice in the sweep"
     );
 
-    let curated: BTreeSet<ShapeFamily> = presets::all()
+    let offered: BTreeSet<Generator> = families.iter().map(|f| f.generator()).collect();
+    let curated: BTreeSet<Generator> = presets::all()
         .iter()
-        .map(|preset| preset.params.family())
+        .map(|preset| preset.params.generator())
         .collect();
 
-    for family in &curated {
+    for construction in &offered {
         assert!(
-            swept.contains(family),
-            "{}: curated, but the arity control cannot reach it",
-            family.name()
+            curated.contains(construction),
+            "{}: offered by the family control, but nothing built from it was curated",
+            construction.name()
         );
     }
-    for family in &swept {
+    for construction in &curated {
         assert!(
-            curated.contains(family),
-            "{}: reachable by the arity control, but nothing in it was curated",
-            family.name()
+            offered.contains(construction) || CULLED.contains(construction),
+            "{}: curated and not offered, without being named as culled",
+            construction.name()
+        );
+    }
+    for construction in CULLED {
+        assert!(
+            !offered.contains(&construction),
+            "{}: named as culled, but the family control offers it",
+            construction.name()
         );
     }
 }
@@ -416,23 +447,20 @@ fn every_offered_arity_is_one_the_family_admits() {
             family.name()
         );
     }
-    assert_eq!(total, 339, "the generated library is a different size");
+    assert_eq!(total, 514, "the generated library is a different size");
 }
 
 /// The families whose second control resolves into nothing, named rather than
 /// discovered, so that a family gaining a degree of freedom has to say so here.
 #[test]
 fn only_the_families_without_a_second_freedom_ignore_the_secondary() {
-    const WITHOUT: [ShapeFamily; 9] = [
-        ShapeFamily::Harmonograph,
+    const WITHOUT: [ShapeFamily; 6] = [
         ShapeFamily::Phyllotaxis,
         ShapeFamily::MoireGrid,
         ShapeFamily::MoireWeave,
-        ShapeFamily::PinwheelNest,
-        ShapeFamily::Truchet,
         ShapeFamily::ConcentricRings,
+        ShapeFamily::Slats,
         ShapeFamily::Grid,
-        ShapeFamily::Frames,
     ];
 
     for family in ShapeFamily::ALL {
