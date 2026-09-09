@@ -6,7 +6,6 @@
 use crate::animation::{PreparedAnimation, TargetedAnimation};
 use crate::waveforms::{WaveformArgs, sawtooth};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use strum::VariantArray;
 use tunnels_lib::number::{Phase, UnipolarFloat};
 
@@ -307,7 +306,7 @@ impl Layer {
     }
 }
 
-pub type LayerCollection = Vec<Arc<Layer>>;
+pub type LayerCollection = Vec<Layer>;
 
 #[cfg(test)]
 mod test {

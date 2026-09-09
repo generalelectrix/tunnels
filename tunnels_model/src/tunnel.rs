@@ -1361,7 +1361,6 @@ mod test {
 }
 
 pub mod fixture {
-    use std::sync::Arc;
     use std::time::Duration;
 
     use crate::layer::{ColorPhase, DrawMode, Layer, LayerCollection, RenderMode, ShapeMode};
@@ -1405,7 +1404,7 @@ pub mod fixture {
     }
 
     fn snapshot(layer: Layer) -> LayerCollection {
-        vec![Arc::new(layer)]
+        vec![layer]
     }
 
     /// Configure a tunnel for stress testing.
@@ -1809,7 +1808,7 @@ pub mod fixture {
                     audio_envelope: UnipolarFloat::ZERO,
                 },
             );
-            snapshots.push(vec![Arc::new(arcs)]);
+            snapshots.push(vec![arcs]);
             for _ in 0..frames_per_snapshot {
                 tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
             }
@@ -1840,7 +1839,7 @@ pub mod fixture {
                 audio_envelope: UnipolarFloat::ZERO,
             },
         );
-        vec![Arc::new(arcs)]
+        vec![arcs]
     }
 
     /// Every target an animation can be pointed at, in the order slots are
@@ -2227,10 +2226,7 @@ pub mod fixture {
             SmoothMode::Linear,
         );
 
-        vec![
-            Arc::new(render_default(&lit)),
-            Arc::new(render_masked(&mask)),
-        ]
+        vec![render_default(&lit), render_masked(&mask)]
     }
 
     /// A stroked outline carrying a colour sweep.

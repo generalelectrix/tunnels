@@ -218,7 +218,7 @@ where
     ) {
         self.ramps.frame += 1;
         for layer in layers {
-            match layer.as_ref() {
+            match layer {
                 Layer::Segments(segments) => draw_segments(segments, c, gl, cfg),
                 Layer::Fill(fill) => self.draw_fill(fill, c, gl, cfg),
             }

@@ -1,7 +1,6 @@
 mod software_graphics;
 
 use std::path::Path;
-use std::sync::Arc;
 
 use client_lib::config::ClientConfig;
 use graphics::Graphics;
@@ -187,21 +186,21 @@ fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
 
 #[test]
 fn single_arc() {
-    let snapshot = vec![Arc::new(default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)]))];
+    let snapshot = vec![default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)])];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "single_arc.png");
 }
 
 #[test]
 fn concentric_rings() {
-    let snapshot = vec![Arc::new(default_layer(
+    let snapshot = vec![default_layer(
         1.0,
         vec![
             test_arc(0.0, 0.0, 0.2),
             test_arc(0.0, 0.33, 0.35),
             test_arc(0.0, 0.66, 0.5),
         ],
-    ))];
+    )];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "concentric_rings.png");
 }
@@ -211,7 +210,7 @@ fn rotated_arc() {
     let mut seg = test_arc(0.0, 0.6, 0.3);
     let span = 0.5;
     seg.placement.rot_angle = 0.125; // 45 degrees
-    let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
+    let snapshot = vec![default_layer(span, vec![seg])];
     let image = render_snapshot(&snapshot, &test_config());
     compare_to_fixture(&image, "rotated_arc.png");
 }
@@ -224,7 +223,7 @@ fn flipped_horizontal() {
     let span = 0.25;
     seg.placement.x = 0.3; // offset from center so flip is visually distinct
 
-    let snapshot = vec![Arc::new(default_layer(span, vec![seg]))];
+    let snapshot = vec![default_layer(span, vec![seg])];
 
     // Render without flip and compare to fixture.
     let unflipped = render_snapshot(&snapshot, &test_config());
@@ -458,12 +457,12 @@ fn snapshot_from_groups(
     groups
         .into_iter()
         .map(|(span, shapes)| {
-            Arc::new(Layer::Segments(SegmentLayer::new(
+            Layer::Segments(SegmentLayer::new(
                 render_mode,
                 SegmentPath::Line,
                 span,
                 shapes,
-            )))
+            ))
         })
         .collect()
 }

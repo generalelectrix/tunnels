@@ -522,7 +522,7 @@ mod tests {
         let mut compared = LayersCompared::default();
         assert_eq!(expected.len(), actual.len(), "{label}: layer count");
         for (i, (e, a)) in expected.iter().zip(actual).enumerate() {
-            match (e.as_ref(), a.as_ref()) {
+            match (e, a) {
                 (Layer::Segments(e), Layer::Segments(a)) => {
                     compared.segments += 1;
                     assert_eq!(

@@ -464,7 +464,7 @@ mod test {
 
         let mut layers: Vec<SegmentLayer> = first_channel
             .iter()
-            .map(|layer| match layer.as_ref() {
+            .map(|layer| match layer {
                 Layer::Segments(segments) => segments.clone(),
                 Layer::Fill(_) => panic!("the stress test mode draws no figures"),
             })
