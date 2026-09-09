@@ -537,49 +537,14 @@ fn project(m: Matrix2d, v: Point) -> [f32; 2] {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::fill::Frame;
     use crate::fill::geom::{Triangle, TriangleList};
     use crate::fill::mesh::{Level, MeshId, MeshLibrary};
+    use crate::fill::{Frame, noise_animation};
     use std::collections::HashMap;
     use tunnels_lib::number::UnipolarFloat;
     use tunnels_model::animation::{Animation, OffsetSpan};
     use tunnels_model::clock_bank::ClockBank;
     use tunnels_model::layer::{FigureId, SpriteId};
-
-    /// An animation shaped so that it reads where on the figure it is asked,
-    /// aimed at `target`.
-    fn noise_warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation> {
-        use std::time::Duration;
-        use tunnels_model::animation::{ControlMessage, StateChange, Waveform};
-
-        struct Noop;
-        impl tunnels_model::animation::EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
-
-        let mut animation = Animation::default();
-        for sc in [
-            StateChange::Waveform(Waveform::Noise),
-            StateChange::NPeriods(1),
-            StateChange::Size(UnipolarFloat::ONE),
-            // Uncorrelated between neighbours, which is the setting the spread
-            // across the figure has to survive.
-            StateChange::Smoothing(UnipolarFloat::ZERO),
-        ] {
-            animation.control(ControlMessage::Set(sc), &mut Noop);
-        }
-        // Smoothing is reached over time rather than set. The animation runs at
-        // no speed, so nothing else moves while it gets there.
-        animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
-        TargetedAnimation {
-            animation: animation.prepare(
-                &ClockBank::default(),
-                UnipolarFloat::ZERO,
-                OffsetSpan::Figure,
-            ),
-            target,
-        }
-    }
 
     /// How much a noise warp moved each point of a square, drawn at a density
     /// chosen for `px_per_unit`, keyed by the point it moved.
@@ -600,7 +565,7 @@ mod test {
             Point::new(lo, hi),
         ));
 
-        let warps = [noise_warp(AnimationTarget::PositionX)];
+        let warps = [noise_animation(AnimationTarget::PositionX)];
         let work = VertexWork {
             field: PhaseField {
                 phase: PhaseAxis::Linear,
@@ -725,7 +690,7 @@ mod test {
         // And both are read where an animation spreads across the figure: noise
         // takes the coordinate the phase does not, so such a layer pays for the
         // pair while one carrying no such animation still pays for one.
-        let noise = [noise_warp(AnimationTarget::PositionX)];
+        let noise = [noise_animation(AnimationTarget::PositionX)];
         assert!(
             needs(PhaseAxis::Radius, 0.0, &noise).angle,
             "a layer spreading noise across the figure did not ask for the coordinate it spreads along"

@@ -489,7 +489,17 @@ impl OffsetSpan {
     /// screen pixels — tens of thousands of them, and more on a larger frame —
     /// so a table bounds what it costs and keeps that cost off the resolution.
     /// A run of segments is resolved once per segment, which is fewer places
-    /// than the table would have entries, so it reads the field directly.
+    /// than the table would have entries, so it reads the field directly: a
+    /// table there would be more work than it saves, and would put a hundred-odd
+    /// values that shows are built on behind an interpolation.
+    ///
+    /// **This has to be answered from the beam and nowhere else.** A table and
+    /// the field it stands for are two ways of answering the same question, and
+    /// they agree only to within what interpolating costs — so every consumer
+    /// of an animation has to take the same one. Deriving the choice from the
+    /// span means a preview and the wall arrive at it alike without either
+    /// knowing about the other. Deciding it at each site instead, however
+    /// simply, is what would let them drift.
     fn is_tabulated(self) -> bool {
         matches!(self, Self::Figure)
     }
