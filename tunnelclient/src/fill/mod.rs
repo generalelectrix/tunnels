@@ -234,17 +234,17 @@ where
     /// Build the figure meshes a show is likely to want, before it starts.
     ///
     /// Every figure both libraries hold, at the four coarsest densities: 62
-    /// baked and 514 generated, **2,304 meshes, 19 million triangles, 220 MB,
+    /// baked and 514 generated, **2,304 meshes, 19 million triangles, 168 MB,
     /// 3.2 s**. It covers a figure at the default size on a 1080-line
     /// projector and everything smaller.
     ///
-    /// The generated figures are 204 MB of that against the baked library's
-    /// 17 MB, on eight times as many figures, because a family computes its
+    /// The generated figures are 155 MB of that against the baked library's
+    /// 13 MB, on eight times as many figures, because a family computes its
     /// contours to the tessellator's tolerance where a piece of artwork was
     /// drawn with as few points as a hand needed.
     ///
     /// The two finest densities are reachable but not built here, and they are
-    /// most of what the caches could ever hold — 2.5 GB against this 220 MB.
+    /// most of what the caches could ever hold — 2.1 GB against this 168 MB.
     /// A show pays for them only if it reaches them, and the cost when it does
     /// is **per figure, not per density**: tens of milliseconds for the one
     /// figure that grew, rather than the seconds a whole density costs. A
@@ -484,8 +484,8 @@ mod test {
         // a console machine pays once per monitor client.
         let mb = renderer.meshes.bytes() as f64 / 1e6;
         assert!(
-            (180.0..215.0).contains(&mb),
-            "the precompute weighs {mb:.1} MB, not the 198 the docstring quotes"
+            (155.0..185.0).contains(&mb),
+            "the precompute weighs {mb:.1} MB, not the 168 the docstring quotes"
         );
         // Outlines are not precomputed. One is 47,554 vertices on the
         // average figure, so the whole library would be 305 MB against the
