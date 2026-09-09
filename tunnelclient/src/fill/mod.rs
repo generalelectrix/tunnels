@@ -323,7 +323,6 @@ where
         }
         let level = Level::for_screen(
             placed.px_per_unit,
-            cfg.target_px,
             if cfg.refine_large_figures {
                 Level::FINEST
             } else {
@@ -349,7 +348,7 @@ where
                 thickness_px(fill.thickness, cfg),
                 Scale {
                     px_per_unit: placed.px_per_unit,
-                    nominal_px_per_unit: level.nominal_px_per_unit(cfg.target_px),
+                    nominal_px_per_unit: level.nominal_px_per_unit(),
                 },
             )
         });

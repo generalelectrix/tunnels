@@ -39,6 +39,22 @@ const COARSEST_LEVEL: i8 = -2;
 /// of both the time and the memory of building every density.
 const EAGER_LEVEL: i8 = -5;
 
+/// How many pixels a filled figure's mesh triangles should span on screen.
+///
+/// Triangle count goes as the inverse square of this, so it is the strongest
+/// lever there is on what a figure costs per frame.
+///
+/// A figure's mesh carries phase, not colour: colour is resolved per fragment
+/// against the ramp. Phase is smooth, so the mesh only has to be fine enough
+/// that a straight line approximates an arctangent or a square root over one
+/// triangle, which is a far weaker requirement than approximating a hue sweep
+/// would be.
+///
+/// One number covers every output resolution, because density is chosen from
+/// how many pixels a figure actually covers: a larger frame puts more pixels
+/// on the same figure and reaches a finer level on its own.
+const TARGET_PX: f64 = 14.0;
+
 /// Finest mesh worth keeping.
 ///
 /// Output resolution is bounded — a 1080-line projector with a figure filling
@@ -88,7 +104,7 @@ impl Level {
     /// The finest density there is.
     pub const FINEST: Self = Self(FINEST_LEVEL);
 
-    /// The bucket whose triangles land nearest `target_px` on screen.
+    /// The bucket whose triangles land nearest [`TARGET_PX`] on screen.
     ///
     /// `px_per_unit` is how many pixels one figure-space unit covers, which is
     /// the whole of what density depends on.
@@ -101,8 +117,8 @@ impl Level {
     ///
     /// `finest` is the densest mesh the caller is willing to have built; a
     /// figure large enough to want more than that is drawn with it instead.
-    pub fn for_screen(px_per_unit: f64, target_px: f64, finest: Self) -> Self {
-        let raw = target_px / px_per_unit.max(1.0);
+    pub fn for_screen(px_per_unit: f64, finest: Self) -> Self {
+        let raw = TARGET_PX / px_per_unit.max(1.0);
         let exp = raw.log2().round();
         // `as i8` on a NaN or an enormous value saturates rather than wrapping,
         // and the clamp then puts it on a real level.
@@ -125,8 +141,8 @@ impl Level {
     /// of this, since levels are powers of two. Quantities that must not move
     /// continuously with the size knob — a stroke width bucket — are measured
     /// against this rather than against the real scale.
-    pub fn nominal_px_per_unit(self, target_px: f64) -> f64 {
-        target_px / f64::from(self.target_edge())
+    pub fn nominal_px_per_unit(self) -> f64 {
+        TARGET_PX / f64::from(self.target_edge())
     }
 }
 
@@ -230,33 +246,22 @@ mod test {
     fn a_level_buckets_scale_by_powers_of_two() {
         // Densities are powers of two, so scales a factor of two apart land on
         // adjacent levels and scales within a factor of root two land on one.
-        let target = 14.0;
         let finest = Level::FINEST;
-        let coarse = Level::for_screen(100.0, target, finest);
-        assert_eq!(
-            coarse,
-            Level::for_screen(120.0, target, finest),
-            "same bucket"
-        );
+        let coarse = Level::for_screen(100.0, finest);
+        assert_eq!(coarse, Level::for_screen(120.0, finest), "same bucket");
         assert!(
-            Level::for_screen(400.0, target, finest) < coarse,
+            Level::for_screen(400.0, finest) < coarse,
             "a bigger figure gets a finer mesh"
         );
         // Both ends clamp rather than running away.
         assert_eq!(
-            Level::for_screen(1e9, target, finest),
-            Level::for_screen(1e12, target, finest)
+            Level::for_screen(1e9, finest),
+            Level::for_screen(1e12, finest)
         );
-        assert_eq!(
-            Level::for_screen(0.0, target, finest),
-            Level(COARSEST_LEVEL)
-        );
+        assert_eq!(Level::for_screen(0.0, finest), Level(COARSEST_LEVEL));
         // And a caller that will not have finer meshes built gets the finest
         // it is willing to hold, however large the figure is.
-        assert_eq!(
-            Level::for_screen(1e9, target, Level::IN_TABLE),
-            Level::IN_TABLE
-        );
+        assert_eq!(Level::for_screen(1e9, Level::IN_TABLE), Level::IN_TABLE);
     }
 
     #[test]
