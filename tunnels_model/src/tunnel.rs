@@ -2725,6 +2725,46 @@ pub mod fixture {
         sprite_position_animation(DrawMode::Outline)
     }
 
+    /// An outline displaced by a noise warp.
+    ///
+    /// The only waveform that reads a vertex's index rather than only its
+    /// position on the figure: noise offsets each sample into a second
+    /// dimension of the field, so what a vertex is displaced by depends on
+    /// which vertex it is. That makes this the case that says whether an
+    /// outline's vertices are addressed as the points they are or as the
+    /// corners they were written into.
+    ///
+    /// Smoothing at zero is what puts the samples a full interval apart,
+    /// which is where the difference is largest.
+    pub fn sprite_noise_warp_outline_snapshot() -> LayerCollection {
+        let mut tunnel = sprite_tunnel(BULLSEYE);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        tunnel.size = Smoother::new(
+            UnipolarFloat::new(0.3),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        tunnel.phase_axis = PhaseAxis::Linear;
+        tunnel.anims[0].target = AnimationTarget::PositionX;
+        for sc in [
+            AnimStateChange::Waveform(Waveform::Noise),
+            AnimStateChange::NPeriods(2),
+            AnimStateChange::Size(UnipolarFloat::new(0.4)),
+            AnimStateChange::Smoothing(UnipolarFloat::ZERO),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
+        }
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
     /// A masked figure stacked over a lit one, which intersects their
     /// apertures the way stacking gobos does.
     pub fn sprite_masked_stack_snapshot() -> LayerCollection {

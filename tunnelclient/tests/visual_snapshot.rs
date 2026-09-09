@@ -668,6 +668,18 @@ fn sprite_position_animation_outline() {
     compare_fill_to_fixture(&image, "sprite_position_animation_outline.png");
 }
 
+/// A noise warp on an outline, which is the only waveform whose value depends
+/// on which vertex it is asked about rather than only on where that vertex
+/// sits on the figure.
+#[test]
+fn sprite_noise_warp_outline() {
+    let image = render_snapshot(
+        &fixture::sprite_noise_warp_outline_snapshot(),
+        &test_config(),
+    );
+    compare_fill_to_fixture(&image, "sprite_noise_warp_outline.png");
+}
+
 /// A masked figure over a lit one intersects their apertures, which is how
 /// gobo stacking already works for segments.
 #[test]

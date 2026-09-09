@@ -4,6 +4,7 @@
 //! software rasteriser the golden images are taken through.
 
 use super::fastmath;
+use super::geom::Indices;
 use super::geometry::StrokeMesh;
 use super::mesh::RefinedMesh;
 use super::ramp::RampSpan;
@@ -78,6 +79,11 @@ pub struct VertexBuffers {
 }
 
 impl VertexBuffers {
+    /// Where the pass put each vertex, for a draw that reads them by index.
+    pub fn positions(&self) -> &[Point] {
+        &self.positions
+    }
+
     /// Everything a frame does per vertex, in one walk of the mesh.
     ///
     /// Fused because the things it produces all want the same polar
@@ -394,51 +400,26 @@ fn same_branch(reference: f32, u: f32, period: f32) -> f32 {
 /// its colour is uniform: the displacement lives on the refined mesh's
 /// vertices.
 pub fn draw_flat<G: Graphics>(
-    mesh: &RefinedMesh,
-    verts: &VertexBuffers,
+    positions: &[Point],
+    indices: &Indices,
     color: [f32; 4],
     m: Matrix2d,
     gl: &mut G,
 ) {
-    if mesh.is_empty() {
+    if indices.len() == 0 {
         return;
     }
     let mut pos = Vec::with_capacity(CHUNK);
     gl.tri_list(&DrawState::default(), &color, |f| {
-        for batch in mesh.batches(CHUNK) {
+        for batch in indices.batches(CHUNK) {
             pos.clear();
             // A flat colour interpolates nothing, so the grouping into
             // triangles carries no meaning here.
             pos.extend(
                 batch
                     .indices()
-                    .filter_map(|i| verts.positions.get(i as usize).map(|v| project(m, *v))),
+                    .filter_map(|i| positions.get(i as usize).map(|v| project(m, *v))),
             );
-            f(&pos);
-        }
-    });
-}
-
-/// Draw a flat run of triangles in one colour.
-///
-/// The path a figure takes when nothing varies across it: no ramp, no per-
-/// vertex pass, and the tessellator's own triangles rather than a refined
-/// mesh. An outline reaches it the same way when its colour is flat, and needs
-/// no refined mesh even when it is not.
-///
-/// The backend takes a bounded number of vertices per call, and a run ending
-/// mid-triangle would draw a torn one, so the cap is rounded down to a whole
-/// number of triangles here rather than at each call site.
-pub fn draw_points<G: Graphics>(points: &[Point], color: [f32; 4], m: Matrix2d, gl: &mut G) {
-    if points.is_empty() {
-        return;
-    }
-    let stride = CHUNK / 3 * 3;
-    let mut pos = Vec::with_capacity(stride);
-    gl.tri_list(&DrawState::default(), &color, |f| {
-        for batch in points.chunks(stride) {
-            pos.clear();
-            pos.extend(batch.iter().map(|v| project(m, *v)));
             f(&pos);
         }
     });
@@ -449,21 +430,21 @@ pub fn draw_points<G: Graphics>(points: &[Point], color: [f32; 4], m: Matrix2d, 
 /// The sampler resolves the waveform per fragment, so the sawtooth's jump lands
 /// exactly where it belongs however coarse the mesh is.
 pub fn draw_textured<G: Graphics>(
-    mesh: &RefinedMesh,
+    indices: &Indices,
     verts: &VertexBuffers,
     period: Option<f32>,
     texture: &G::Texture,
     m: Matrix2d,
     gl: &mut G,
 ) {
-    if mesh.is_empty() {
+    if indices.len() == 0 {
         return;
     }
     let mut pos = Vec::with_capacity(CHUNK);
     let mut uv = Vec::with_capacity(CHUNK);
 
     gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
-        for batch in mesh.batches(CHUNK) {
+        for batch in indices.batches(CHUNK) {
             pos.clear();
             uv.clear();
             // Grouped by triangle here, because the seam shift is taken
@@ -496,53 +477,6 @@ pub fn draw_textured<G: Graphics>(
             f(&pos, &uv);
         }
     });
-}
-
-/// Draw the vertex pass's own output in one colour.
-pub fn draw_list_flat<G: Graphics>(
-    verts: &VertexBuffers,
-    color: [f32; 4],
-    m: Matrix2d,
-    gl: &mut G,
-) {
-    draw_points(&verts.positions, color, m, gl);
-}
-
-/// Draw a flat vertex list against the ramp texture.
-pub fn draw_list_textured<G: Graphics>(
-    verts: &VertexBuffers,
-    period: Option<f32>,
-    texture: &G::Texture,
-    m: Matrix2d,
-    gl: &mut G,
-) {
-    let stride = CHUNK / 3 * 3;
-    let mut pos = Vec::with_capacity(stride);
-    let mut uv = Vec::with_capacity(stride);
-    gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
-        for (batch, uvs) in verts.positions.chunks(stride).zip(verts.uvs.chunks(stride)) {
-            pos.clear();
-            uv.clear();
-            for (tri, tri_uv) in batch.as_chunks::<3>().0.iter().zip(tri_uvs(uvs)) {
-                let reference = tri_uv[0][0];
-                for (p, v) in tri.iter().zip(tri_uv) {
-                    pos.push(project(m, *p));
-                    uv.push([
-                        match period {
-                            Some(period) => same_branch(reference, v[0], period),
-                            None => v[0],
-                        },
-                        v[1],
-                    ]);
-                }
-            }
-            f(&pos, &uv);
-        }
-    });
-}
-
-fn tri_uvs(uvs: &[[f32; 2]]) -> impl Iterator<Item = [[f32; 2]; 3]> + '_ {
-    uvs.as_chunks::<3>().0.iter().copied()
 }
 
 /// Apply a 2D affine matrix to a point, leaving figure space for the backend's.
