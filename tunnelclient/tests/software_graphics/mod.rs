@@ -73,14 +73,26 @@ fn color_rgba_f32(color: Rgba<u8>) -> [f32; 4] {
     ]
 }
 
+/// Composite one colour over another the way the GL backend does.
+///
+/// `Blend::Alpha` binds `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA` for colour and
+/// `ONE`/`ONE` for alpha, both under `FUNC_ADD` — so colour is a plain
+/// source-over weighted by the incoming alpha, and alpha adds rather than
+/// taking the usual `a + b(1 - a)`.
+///
+/// **This is what a golden is for.** A fixture is worth having because it shows
+/// what a projector will show, so where this and the hardware disagree the
+/// fixture is a picture of nothing. They previously disagreed: colour was
+/// weighted `1 - (1 - a)²`, which agrees with GL at both ends and nowhere
+/// between, reading a half-open mask as three-quarters closed.
 fn layer_color(over: &[f32; 4], under: &[f32; 4]) -> [f32; 4] {
-    let over_weight = 1.0 - (1.0 - over[3]).powf(2.0);
+    let over_weight = over[3];
     let under_weight = 1.0 - over_weight;
     [
         over_weight * over[0] + under_weight * under[0],
         over_weight * over[1] + under_weight * under[1],
         over_weight * over[2] + under_weight * under[2],
-        (over[3].powf(2.0) + under[3].powf(2.0)).sqrt().min(1.0),
+        (over[3] + under[3]).min(1.0),
     ]
 }
 
