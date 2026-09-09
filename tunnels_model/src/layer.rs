@@ -461,11 +461,15 @@ impl Layer {
     /// Whether this layer would draw nothing, and so can be dropped before it
     /// reaches a renderer.
     ///
-    /// A gobo is never this, whatever its shapes come to. What it draws is
-    /// black everywhere its shapes are not, and with no shapes at all that is
-    /// the whole frame — the most it can draw rather than the least. An
-    /// aperture animated shut is played, and dropping the layer here would
-    /// throw away the moment it closes.
+    /// A gobo is never this. What it draws is black everywhere its shapes are
+    /// not, so a run left with no shapes blacks the frame entire — the most it
+    /// can draw rather than the least, and not something to drop.
+    ///
+    /// A run reaches that state by blacking taking every segment away. It is
+    /// not how a thickness animation closes a gobo's window: thickness is a
+    /// field each shape carries, so winding it to nothing leaves the shapes
+    /// where they are and the run is never empty. That window closes in the
+    /// renderer, where shapes of no thickness tessellate to nothing.
     pub fn is_empty(&self) -> bool {
         if self.mode() == PaintMode::Gobo {
             return false;
@@ -488,9 +492,11 @@ mod test {
     /// An empty run draws nothing and is dropped, unless it is a gobo — a gobo
     /// with no shapes blacks the frame entire rather than drawing nothing.
     ///
-    /// This is one half of what a gobo does when its shapes come to nothing.
-    /// The other half is that a channel off at its upfader emits no layer for
-    /// this to be asked about, which `Channel::render` decides.
+    /// A run is emptied by blacking, not by a thickness animation, which
+    /// leaves its shapes in place carrying no thickness. So this covers only
+    /// one of the ways a gobo's window closes; the renderer covers the other,
+    /// and a channel off at its upfader emits no layer for either to be asked
+    /// about.
     #[test]
     fn an_empty_run_is_dropped_unless_it_is_a_gobo() {
         let run = |mode| {

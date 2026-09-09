@@ -720,15 +720,19 @@ fn look_gobo_intersection() {
     compare_fill_to_fixture(&image, "look_gobo_intersection.png");
 }
 
-/// A gobo whose apertures have closed to nothing blacks the frame entire.
+/// A gobo whose window has closed blacks the frame entire.
 ///
-/// Winding a gobo's shapes down to nothing is played, and what it plays is the
-/// light going out — so the layer is not dropped as empty and the ground goes
-/// down over everything under it. A channel the operator has taken off its
-/// upfader is the other case and never reaches a renderer at all.
+/// Two ways for a window to close and both arrive here the same way. A
+/// thickness animation winds the segments down until they tessellate to
+/// nothing, which leaves the shapes in place carrying a thickness of zero;
+/// blacking takes every segment away instead, which leaves no shapes at all.
+/// Neither marks the stencil, so the ground goes down over everything.
+///
+/// A channel the operator has taken off its upfader is a different thing and
+/// never reaches a renderer, because a channel at zero level emits no layer.
 #[test]
 fn gobo_closed_aperture() {
-    let snapshot = vec![
+    let lit = || {
         default_layer(
             1.0,
             vec![
@@ -736,22 +740,48 @@ fn gobo_closed_aperture() {
                 test_arc(0.0, 0.33, 0.35),
                 test_arc(0.0, 0.66, 0.45),
             ],
-        ),
-        layer_in_mode(PaintMode::Gobo, 1.0, Vec::new()),
-    ];
-    let image = render_snapshot(&snapshot, &test_config());
-    // Said outright as well as pinned, so the test cannot come to rest on a
-    // picture that is merely stable. The lit rings under the gobo are what
-    // makes an all-black frame mean the ground went down over them.
-    for (x, y, px) in image.enumerate_pixels() {
-        assert_eq!(
-            px.0,
-            [0, 0, 0, 255],
-            "a shut gobo left {:?} at ({x}, {y})",
-            px.0
-        );
-    }
+        )
+    };
+    let thinned = |thickness| {
+        let mut shapes = vec![test_arc(0.0, 0.0, 0.2), test_arc(0.0, 0.66, 0.45)];
+        for shape in &mut shapes {
+            shape.thickness = thickness;
+        }
+        shapes
+    };
+
+    // The lit rings underneath are what makes an all-black frame mean the
+    // ground went down over them rather than nothing having been drawn, and
+    // the assertion is spelt out as well as pinned so that the test cannot
+    // come to rest on a picture that is merely stable.
+    let closed_by_thickness = vec![lit(), layer_in_mode(PaintMode::Gobo, 1.0, thinned(0.0))];
+    let image = render_snapshot(&closed_by_thickness, &test_config());
+    assert_uniformly_black(&image, "a gobo thinned to nothing");
+
+    let closed_by_blacking = vec![lit(), layer_in_mode(PaintMode::Gobo, 1.0, Vec::new())];
+    assert_uniformly_black(
+        &render_snapshot(&closed_by_blacking, &test_config()),
+        "a gobo with every segment blacked",
+    );
+
+    // A window still open is the control: the same gobo at a thickness that
+    // draws leaves some of the rings under it alight, so the black above is
+    // the aperture closing and not the fixture failing to light anything.
+    let open = vec![lit(), layer_in_mode(PaintMode::Gobo, 1.0, thinned(0.1))];
+    let open = render_snapshot(&open, &test_config());
+    assert!(
+        open.pixels().any(|px| px.0 != [0, 0, 0, 255]),
+        "a gobo with an open window blacked the whole frame"
+    );
+
     compare_to_fixture(&image, "gobo_closed_aperture.png");
+}
+
+/// Assert every pixel is opaque black, naming what was drawn if one is not.
+fn assert_uniformly_black(image: &image::RgbaImage, what: &str) {
+    for (x, y, px) in image.enumerate_pixels() {
+        assert_eq!(px.0, [0, 0, 0, 255], "{what} left {:?} at ({x}, {y})", px.0);
+    }
 }
 
 /// A stroked outline takes its colour from the contour it follows, not from

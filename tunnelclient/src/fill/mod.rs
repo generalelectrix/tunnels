@@ -284,17 +284,14 @@ where
     /// beam drawn over it paints over that black exactly as it paints over a
     /// mask's.
     ///
-    /// A layer whose shapes have closed to nothing blacks the frame entire.
-    /// That is the aperture shut rather than a step skipped: a thickness or
-    /// size animation winding a gobo's shapes down to nothing is played, and
-    /// what it plays is the light going out. A channel the operator has taken
-    /// off its upfader never reaches here at all, because a channel at zero
-    /// level emits no layer.
+    /// A layer whose shapes draw nothing blacks the frame entire, which is the
+    /// aperture shut rather than a step skipped. A thickness animation winds a
+    /// gobo's shapes down until they tessellate to nothing and mark nothing,
+    /// and the ground then goes down everywhere. That is played, and what it
+    /// plays is the light going out.
     ///
-    /// The consequence to know when a projector goes black: a gobo naming a
-    /// figure this build does not carry draws no shapes, and so blacks the
-    /// frame exactly as a shut aperture does. It is the same picture from a
-    /// deploy that did not take.
+    /// A channel the operator has taken off its upfader is a different thing
+    /// and never reaches here, because a channel at zero level emits no layer.
     fn draw_gobo<G: Graphics<Texture = T>>(
         &mut self,
         layer: &Layer,
