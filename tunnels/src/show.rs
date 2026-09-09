@@ -652,7 +652,7 @@ mod test {
 
     fn all_state_changes() -> Vec<(&'static str, StateChange)> {
         use tunnels_lib::number::{BipolarFloat, UnipolarFloat};
-        use tunnels_model::layer::{ColorPhase, DrawMode, RenderMode, ShapeMode};
+        use tunnels_model::layer::{ColorPhase, DrawMode, ShapeMode};
 
         let uni = UnipolarFloat::new(0.5);
         let bip = BipolarFloat::new(0.25);
@@ -683,9 +683,9 @@ mod test {
             t("tunnel/position_x", T::PositionX(0.3));
             t("tunnel/position_y", T::PositionY(-0.2));
             t("tunnel/spin_speed", T::SpinSpeed(bip));
-            t("tunnel/render_arc", T::RenderMode(RenderMode::Arc));
-            t("tunnel/render_dot", T::RenderMode(RenderMode::Dot));
-            t("tunnel/render_saucer", T::RenderMode(RenderMode::Saucer));
+            t("tunnel/render_button_0", T::RenderModeButton(0));
+            t("tunnel/render_button_1", T::RenderModeButton(1));
+            t("tunnel/render_button_2", T::RenderModeButton(2));
             t("tunnel/mode_ellipse", T::ShapeMode(ShapeMode::Ellipse));
             t("tunnel/mode_line", T::ShapeMode(ShapeMode::Line));
             t("tunnel/mode_generated", T::ShapeMode(ShapeMode::Generated));

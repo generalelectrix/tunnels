@@ -146,6 +146,23 @@ pub struct RadioButtons {
 }
 
 impl RadioButtons {
+    /// Where a mapping sits in the group, or `None` if it is not one of them.
+    ///
+    /// The position is what a positional control carries: a group whose
+    /// buttons stand for something the model decides sends this rather than
+    /// naming the thing itself.
+    pub fn index_of(&self, mapping: Mapping) -> Option<u8> {
+        self.mappings
+            .iter()
+            .position(|m| *m == mapping)
+            .map(|i| i as u8)
+    }
+
+    /// The mapping at a position in the group.
+    pub fn mapping(&self, index: u8) -> Option<Mapping> {
+        self.mappings.get(usize::from(index)).copied()
+    }
+
     /// Emit midi to ensure that only the selected mapping is selected.
     /// Performs no check that the selected mapping is actually present.
     pub fn select<S: FnMut(Event)>(&self, selected: Mapping, mut send: S) {

@@ -89,6 +89,11 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
     use ControlMessage::*;
     use StateChange::*;
     let v = event.value;
+    // A positional control: which button was pressed is the whole message, and
+    // what that position means is the model's business.
+    if let Some(button) = RENDER_MODE_BUTTONS.index_of(event.mapping) {
+        return Some(Tunnel(Set(RenderModeButton(button))));
+    }
     Some(match event.mapping {
         THICKNESS => Tunnel(Set(Thickness(unipolar_from_midi(v)))),
         SIZE => Tunnel(Set(Size(unipolar_from_midi(v)))),
@@ -114,9 +119,6 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         NUDGE_CCW => Tunnel(NudgeCCW),
         POSITION_X => Tunnel(Set(PositionX(bipolar_from_midi(v).val()))),
         POSITION_Y => Tunnel(Set(PositionY(bipolar_from_midi(v).val()))),
-        RENDER_MODE_ARC => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Arc))),
-        RENDER_MODE_DOT => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Dot))),
-        RENDER_MODE_SAUCER => Tunnel(Set(RenderMode(tunnels_model::layer::RenderMode::Saucer))),
         SHAPE_MODE_ELLIPSE => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Ellipse))),
         SHAPE_MODE_LINE => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Line))),
         SHAPE_MODE_GENERATED => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Generated))),
@@ -174,16 +176,10 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
         PositionX(v) => send(event(POSITION_X, bipolar_to_midi(BipolarFloat::new(v)))),
         PositionY(v) => send(event(POSITION_Y, bipolar_to_midi(BipolarFloat::new(v)))),
         SpinSpeed(v) => send(event(SPIN_SPEED, bipolar_to_midi(v))),
-        RenderMode(v) => {
-            use tunnels_model::layer::RenderMode::*;
-            RENDER_MODE_BUTTONS.select(
-                match v {
-                    Arc => RENDER_MODE_ARC,
-                    Dot => RENDER_MODE_DOT,
-                    Saucer => RENDER_MODE_SAUCER,
-                },
-                send,
-            );
+        RenderModeButton(v) => {
+            if let Some(mapping) = RENDER_MODE_BUTTONS.mapping(v) {
+                RENDER_MODE_BUTTONS.select(mapping, send);
+            }
         }
         ShapeMode(v) => {
             use tunnels_model::layer::ShapeMode::*;
@@ -208,4 +204,42 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
         // itself.
         ColorPhase(_) | DrawMode(_) => (),
     };
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use tunnels_model::tunnel::N_RENDER_MODE_BUTTONS;
+
+    /// The button row has a button for every setting it drives, and a position
+    /// survives the trip out to a surface and back.
+    ///
+    /// The row is positional now, so nothing on either side names a mode and
+    /// no exhaustive match fails to build when a variant is added to one
+    /// setting and not the other. From here that would look like a button with
+    /// nothing behind it; the model's own test pins the two settings to each
+    /// other.
+    #[test]
+    fn the_render_mode_row_has_a_button_for_every_setting() {
+        assert_eq!(
+            RENDER_MODE_BUTTONS.mappings.len(),
+            N_RENDER_MODE_BUTTONS,
+            "one button per setting the row drives"
+        );
+
+        for button in 0..RENDER_MODE_BUTTONS.mappings.len() as u8 {
+            let mapping = RENDER_MODE_BUTTONS
+                .mapping(button)
+                .expect("the row holds this position");
+            assert_eq!(RENDER_MODE_BUTTONS.index_of(mapping), Some(button));
+            assert!(
+                matches!(
+                    interpret(&event(mapping, 1)),
+                    Some(Tunnel(ControlMessage::Set(StateChange::RenderModeButton(b))))
+                        if b == button
+                ),
+                "button {button} did not interpret as its own position"
+            );
+        }
+    }
 }

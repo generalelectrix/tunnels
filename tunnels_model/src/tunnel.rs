@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::sync::Once;
 use std::time::Duration;
+use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
 use tunnels_sprites::{Slot, SpriteFamily};
@@ -310,7 +311,8 @@ impl Tunnel {
         }
     }
 
-    /// What the render-mode control reads, which depends on the mode.
+    /// Which render-mode button a surface should light, which depends on the
+    /// mode.
     ///
     /// The third of the group the segment control opens: a segment mode picks
     /// how a segment is drawn with these buttons, a figure mode picks how much
@@ -318,35 +320,16 @@ impl Tunnel {
     /// is disturbed by work done in the other mode, and changing the mode
     /// moves the buttons because the state being reported is a different
     /// field.
-    fn render_mode_control(&self) -> RenderMode {
-        if self.shape_mode.draws_segments() {
-            self.render_mode
-        } else {
-            Self::button_for_draw_mode(self.draw_mode)
-        }
-    }
-
-    /// How much of a figure a render-mode button paints.
     ///
-    /// A figure has no segments, so the buttons that pick how a segment is
-    /// drawn pick how much of the figure is painted instead. The two are
-    /// matched in the order their surfaces offer them, and both matches are
-    /// exhaustive, so a mode added to either without a counterpart in the
-    /// other fails to build.
-    fn draw_mode_for(button: RenderMode) -> DrawMode {
-        match button {
-            RenderMode::Arc => DrawMode::Fill,
-            RenderMode::Dot => DrawMode::Outline,
-            RenderMode::Saucer => DrawMode::Both,
-        }
-    }
-
-    /// The render-mode button that names how much of a figure is painted.
-    fn button_for_draw_mode(drawn: DrawMode) -> RenderMode {
-        match drawn {
-            DrawMode::Fill => RenderMode::Arc,
-            DrawMode::Outline => RenderMode::Dot,
-            DrawMode::Both => RenderMode::Saucer,
+    /// The row carries a position and nothing else, and each mode reads that
+    /// position against its own list. Neither setting is ever expressed as the
+    /// other, which they are not: how a segment is drawn and how much of a
+    /// figure is painted have nothing to say about each other.
+    fn render_mode_control(&self) -> u8 {
+        if self.shape_mode.draws_segments() {
+            variant_index(self.render_mode)
+        } else {
+            variant_index(self.draw_mode)
         }
     }
 
@@ -704,7 +687,7 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(PositionX(self.x_offset.target()));
         emitter.emit_tunnel_state_change(PositionY(self.y_offset.target()));
         emitter.emit_tunnel_state_change(SpinSpeed(self.spin_speed));
-        emitter.emit_tunnel_state_change(RenderMode(self.render_mode_control()));
+        emitter.emit_tunnel_state_change(RenderModeButton(self.render_mode_control()));
         emitter.emit_tunnel_state_change(ColorPhase(self.color_phase));
         emitter.emit_tunnel_state_change(DrawMode(self.draw_mode));
         emitter.emit_tunnel_state_change(ShapeMode(self.shape_mode));
@@ -800,14 +783,17 @@ impl Tunnel {
             PositionX(v) => self.x_offset.set_target(v),
             PositionY(v) => self.y_offset.set_target(v),
             SpinSpeed(v) => self.spin_speed = v,
-            // One group of buttons, two fields: a segment mode picks how a
+            // One row of buttons, two fields: a segment mode picks how a
             // segment is drawn with them and a figure mode picks how much of
-            // the figure is painted.
-            RenderMode(v) => {
+            // the figure is painted. A position past the end of the mode's own
+            // list names nothing, and changes nothing.
+            RenderModeButton(v) => {
                 if self.shape_mode.draws_segments() {
-                    self.render_mode = v;
-                } else {
-                    self.draw_mode = Self::draw_mode_for(v);
+                    if let Some(mode) = variant_at(v) {
+                        self.render_mode = mode;
+                    }
+                } else if let Some(mode) = variant_at(v) {
+                    self.draw_mode = mode;
                 }
             }
             ColorPhase(v) => self.color_phase = v,
@@ -859,6 +845,12 @@ typed_index!(AnimationIdx, TargetedAnimation);
 
 // TODO: move some of these into associated constants
 pub const N_ANIM: usize = 4;
+/// How many render-mode buttons a surface offers.
+///
+/// The row drives two settings and carries only a position, so it needs one
+/// button per variant of each. A surface offering a different number has a
+/// button that names nothing, or a setting no button can reach.
+pub const N_RENDER_MODE_BUTTONS: usize = RenderMode::VARIANTS.len();
 /// legacy tuning parameter; tunnel rotated this many radial units/frame at 30fps
 const ROT_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; marquee rotated this many radial units/frame at 30fps
@@ -879,6 +871,23 @@ pub const KNOB_CENTRE: u8 = 64;
 /// segments is not a beam.
 pub const SEGMENTS_MIN: u8 = 1;
 pub const SEGMENTS_MAX: u8 = SEGMENTS_MIN + KNOB_MAX;
+
+/// Where a variant sits in its own list of variants.
+///
+/// A control surface offers one button per variant in that order, so this is
+/// also the position of the button that names it.
+fn variant_index<T: VariantArray + PartialEq>(value: T) -> u8 {
+    T::VARIANTS
+        .iter()
+        .position(|variant| *variant == value)
+        .expect("a variant is in its own list of variants") as u8
+}
+
+/// The variant a button position names, or `None` if the row is longer than
+/// the list.
+fn variant_at<T: VariantArray + Copy>(button: u8) -> Option<T> {
+    T::VARIANTS.get(usize::from(button)).copied()
+}
 
 /// The largest family index this build carries, or `None` if there is nothing
 /// to choose between.
@@ -919,7 +928,9 @@ pub enum StateChange {
     PositionX(f64),
     PositionY(f64),
     SpinSpeed(BipolarFloat),
-    RenderMode(RenderMode),
+    /// Which of the render-mode buttons is lit, as its position in the row.
+    /// What it means is the mode's business, not the message's.
+    RenderModeButton(u8),
     ShapeMode(ShapeMode),
     ColorPhase(ColorPhase),
     DrawMode(DrawMode),
@@ -979,7 +990,7 @@ mod test {
 
         let heard = |name: &str| recorder.0.iter().any(|sc| sc.starts_with(name));
         assert!(heard("MarqueeSpeed"), "{:?}", recorder.0);
-        assert!(heard("RenderMode"), "{:?}", recorder.0);
+        assert!(heard("RenderModeButton"), "{:?}", recorder.0);
         assert!(heard("ShapeMode"), "{:?}", recorder.0);
         // The segment and blacking controls read different fields in each
         // mode, so a mode change has to restate them or the surface shows the
@@ -997,11 +1008,8 @@ mod test {
             ..Default::default()
         }
         .handle_state_change(StateChange::ShapeMode(ShapeMode::Sprite), &mut recorder);
-        assert!(
-            recorder.0.iter().any(|sc| sc == "RenderMode(Saucer)"),
-            "{:?}",
-            recorder.0
-        );
+        let names_both = format!("RenderModeButton({})", variant_index(DrawMode::Both));
+        assert!(recorder.0.contains(&names_both), "{:?}", recorder.0);
     }
 
     /// A show runs in front of an audience, so a mode with nothing to draw
@@ -1055,7 +1063,8 @@ mod test {
 
         tunnel.handle_state_change(StateChange::Segments(segments), &mut Silent);
         tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
-        tunnel.handle_state_change(StateChange::RenderMode(RenderMode::Saucer), &mut Silent);
+        let saucer = variant_index(RenderMode::Saucer);
+        tunnel.handle_state_change(StateChange::RenderModeButton(saucer), &mut Silent);
         assert_eq!(tunnel.segs, segments + SEGMENTS_MIN);
         assert_eq!(tunnel.render_mode, RenderMode::Saucer);
         assert_eq!(
@@ -1065,7 +1074,7 @@ mod test {
         );
         assert_eq!(
             tunnel.render_mode_control(),
-            RenderMode::Saucer,
+            saucer,
             "a segment mode reports the render mode"
         );
         assert_eq!(tunnel.blacking, BlackingInterval::for_knob(blacking));
@@ -1112,7 +1121,8 @@ mod test {
         );
 
         // The same three buttons, naming how much of a figure is painted.
-        tunnel.handle_state_change(StateChange::RenderMode(RenderMode::Dot), &mut Silent);
+        let outline = variant_index(DrawMode::Outline);
+        tunnel.handle_state_change(StateChange::RenderModeButton(outline), &mut Silent);
         assert_eq!(tunnel.draw_mode, DrawMode::Outline);
         assert_eq!(
             tunnel.render_mode,
@@ -1121,7 +1131,7 @@ mod test {
         );
         assert_eq!(
             tunnel.render_mode_control(),
-            RenderMode::Dot,
+            outline,
             "a figure mode reports the draw mode as the button that names it"
         );
 
@@ -1138,19 +1148,48 @@ mod test {
         );
         assert_eq!(
             tunnel.render_mode_control(),
-            RenderMode::Saucer,
+            saucer,
             "the render mode came back unchanged"
         );
     }
 
-    /// The render-mode buttons and the draw modes are matched by position, so
-    /// the first button names the first draw mode and the last names the last.
+    /// One row of buttons drives two lists, so the lists have to be the same
+    /// length and a position has to mean the same thing going in as coming
+    /// back out.
+    ///
+    /// Nothing converts between the two settings any more, so no exhaustive
+    /// match fails to build when a variant is added to one list and not the
+    /// other. This is what catches it instead: the row would have a position
+    /// that one mode reads and the other ignores.
     #[test]
-    fn the_draw_modes_line_up_with_the_buttons_that_name_them() {
-        assert_eq!(RenderMode::VARIANTS.len(), DrawMode::VARIANTS.len());
-        for (button, drawn) in RenderMode::VARIANTS.iter().zip(DrawMode::VARIANTS) {
-            assert_eq!(Tunnel::draw_mode_for(*button), *drawn);
-            assert_eq!(Tunnel::button_for_draw_mode(*drawn), *button);
+    fn a_button_position_means_the_same_thing_to_both_modes() {
+        assert_eq!(
+            RenderMode::VARIANTS.len(),
+            DrawMode::VARIANTS.len(),
+            "one row of buttons drives both"
+        );
+
+        for button in 0..RenderMode::VARIANTS.len() as u8 {
+            for (mode, reads_render) in [(ShapeMode::Ellipse, true), (ShapeMode::Sprite, false)] {
+                let mut tunnel = Tunnel {
+                    shape_mode: mode,
+                    ..Default::default()
+                };
+                tunnel.handle_state_change(StateChange::RenderModeButton(button), &mut Silent);
+                assert_eq!(
+                    tunnel.render_mode_control(),
+                    button,
+                    "button {button} came back as another position in {mode:?}"
+                );
+                if reads_render {
+                    assert_eq!(
+                        tunnel.render_mode,
+                        RenderMode::VARIANTS[usize::from(button)]
+                    );
+                } else {
+                    assert_eq!(tunnel.draw_mode, DrawMode::VARIANTS[usize::from(button)]);
+                }
+            }
         }
     }
 
@@ -1939,7 +1978,7 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
-            StateChange::RenderMode(RenderMode::VARIANTS[index % RenderMode::VARIANTS.len()]),
+            StateChange::RenderModeButton((index % RenderMode::VARIANTS.len()) as u8),
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
