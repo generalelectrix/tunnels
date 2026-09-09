@@ -489,16 +489,18 @@ impl PreparedAnimation {
 /// Where a noise pulse stops being dark, as a magnitude of the noise.
 ///
 /// The magnitude of simplex noise is close to uniform across the lower part of
-/// its range, so a knee placed a quarter of the way up that range is the value
-/// noise spends about a quarter of its time below.
-const NOISE_GATE_LOW: f64 = 0.15;
+/// its range, so where this knee sits in that range is directly how much of the
+/// time a pulse rests: about a seventh of the way up it, and so dark about a
+/// seventh of the time.
+const NOISE_GATE_LOW: f64 = 0.09;
 
 /// Where a noise pulse reaches full, as a magnitude of the noise.
 ///
-/// Placed so that about the top tenth of noise magnitudes saturate. Noise
+/// Placed so that about the top twentieth of noise magnitudes saturate. Noise
 /// approaches the end of its own range too rarely to arrive at full any other
-/// way.
-const NOISE_GATE_HIGH: f64 = 0.63;
+/// way, and the flat top that arriving costs is worth no more of the period
+/// than it takes.
+const NOISE_GATE_HIGH: f64 = 0.71;
 
 /// Shape bipolar noise into a unipolar pulse.
 ///
@@ -527,14 +529,15 @@ mod test {
     /// them it holds still however far the noise goes on.
     #[test]
     fn a_noise_gate_rests_at_both_ends_of_its_range() {
-        for v in [0.0, 0.05, NOISE_GATE_LOW, -NOISE_GATE_LOW, 0.1, -0.02] {
+        for v in [0.0, NOISE_GATE_LOW / 2.0, NOISE_GATE_LOW, -NOISE_GATE_LOW] {
             assert_eq!(
                 gate_noise(v),
                 0.0,
                 "noise of {v} lit a pulse from inside the dark zone"
             );
         }
-        for v in [NOISE_GATE_HIGH, -NOISE_GATE_HIGH, 0.8, -0.9, 1.0, -1.0] {
+        let above = (NOISE_GATE_HIGH + 1.0) / 2.0;
+        for v in [NOISE_GATE_HIGH, -NOISE_GATE_HIGH, above, -above, 1.0, -1.0] {
             assert_eq!(
                 gate_noise(v),
                 1.0,
