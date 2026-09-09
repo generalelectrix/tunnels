@@ -16,7 +16,7 @@ mod geometry;
 mod mesh;
 mod ramp;
 
-use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_points, draw_textured};
+use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_textured};
 use self::figure::FigureCache;
 use self::geometry::{FillGeometry, StrokeGeometry};
 use self::mesh::{Level, MeshId, MeshLibrary};
@@ -256,23 +256,23 @@ where
     /// is held only while it is used.** Those are two different things, and
     /// one word used to cover both. Turning a figure's contours into triangles
     /// is slow and small — 1.5 ms on the average figure and 49 ms at the
-    /// worst, against 29.7 MB for all 576 of them — and the answer does not
+    /// worst, against 17.5 MB for all 576 of them — and the answer does not
     /// depend on how densely the figure will be drawn, so it is worth paying
     /// for up front and keeping for the run. Refining those triangles to a
     /// density is the opposite: a couple of milliseconds, and megabytes that
     /// quadruple with every level. That is built on demand and reaped when
     /// nothing is drawing it.
     ///
-    /// So this builds no meshes. It costs **29.7 MB and 1.5 s**, and what it
+    /// So this builds no meshes. It costs **17.5 MB and 1.5 s**, and what it
     /// buys is that no figure a show reaches has to be tessellated while the
     /// show is running: a look recall clobbers every mixer channel at once,
     /// and the eight most expensive figures tessellated on one frame is a
     /// third of a second of frozen frames.
     ///
-    /// **Most of that 29.7 MB is figures nobody touches**, and it is worth
+    /// **Most of that 17.5 MB is figures nobody touches**, and it is worth
     /// knowing that before deciding it is worth paying: an interior averages
-    /// 52 kB, so a show that draws twenty figures would accumulate about 1 MB
-    /// of them on demand. What the eager pass buys is not the memory, which is
+    /// 30 kB, so a show that draws twenty figures would accumulate about
+    /// 600 kB of them on demand. What the eager pass buys is not the memory, which is
     /// cheaper the other way, but the absence of a stall on the one frame
     /// where every channel changes at once.
     ///
@@ -393,7 +393,7 @@ where
             && !warping
             && let Some(interior) = interior
         {
-            draw_points(interior.points(), color, placed.m, gl);
+            draw_flat(interior.points(), interior.indices(), color, placed.m, gl);
         } else if let Some(interior) = interior {
             let mesh = meshes.get(
                 MeshId {
@@ -420,7 +420,7 @@ where
                         gl,
                     );
                 }
-                None => draw_flat(mesh.indices(), verts, color, placed.m, gl),
+                None => draw_flat(verts.positions(), mesh.indices(), color, placed.m, gl),
             }
         }
 
@@ -443,7 +443,7 @@ where
                         gl,
                     );
                 }
-                None => draw_flat(outline.indices(), verts, color, placed.m, gl),
+                None => draw_flat(verts.positions(), outline.indices(), color, placed.m, gl),
             }
         }
     }
@@ -509,8 +509,8 @@ mod test {
         // of what a client holds before it has drawn anything.
         let mb = renderer.fills.bytes() as f64 / 1e6;
         assert!(
-            (25.0..35.0).contains(&mb),
-            "the interiors weigh {mb:.1} MB, not the 29.7 the docstring quotes"
+            (15.0..21.0).contains(&mb),
+            "the interiors weigh {mb:.1} MB, not the 17.5 the docstring quotes"
         );
         assert_eq!(
             renderer.meshes.len(),
@@ -518,8 +518,8 @@ mod test {
             "the warm-up refines meshes at a density nothing has asked for"
         );
         // Outlines are not warmed either. One is 47,554 vertices on the
-        // average figure, so the whole library would be 305 MB against the
-        // 30 MB of interiors beside it — and a show draws a handful of figures
+        // average figure, so the whole library would be 110 MB against the
+        // 17 MB of interiors beside it — and a show draws a handful of figures
         // rather than five hundred.
         assert_eq!(
             renderer.outlines.held(),

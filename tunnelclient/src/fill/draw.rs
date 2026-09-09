@@ -79,6 +79,11 @@ pub struct VertexBuffers {
 }
 
 impl VertexBuffers {
+    /// Where the pass put each vertex, for a draw that reads them by index.
+    pub fn positions(&self) -> &[Point] {
+        &self.positions
+    }
+
     /// Everything a frame does per vertex, in one walk of the mesh.
     ///
     /// Fused because the things it produces all want the same polar
@@ -395,8 +400,8 @@ fn same_branch(reference: f32, u: f32, period: f32) -> f32 {
 /// its colour is uniform: the displacement lives on the refined mesh's
 /// vertices.
 pub fn draw_flat<G: Graphics>(
+    positions: &[Point],
     indices: &Indices,
-    verts: &VertexBuffers,
     color: [f32; 4],
     m: Matrix2d,
     gl: &mut G,
@@ -413,33 +418,8 @@ pub fn draw_flat<G: Graphics>(
             pos.extend(
                 batch
                     .indices()
-                    .filter_map(|i| verts.positions.get(i as usize).map(|v| project(m, *v))),
+                    .filter_map(|i| positions.get(i as usize).map(|v| project(m, *v))),
             );
-            f(&pos);
-        }
-    });
-}
-
-/// Draw a flat run of triangles in one colour.
-///
-/// The path a figure takes when nothing varies across it: no ramp, no per-
-/// vertex pass, and the tessellator's own triangles rather than a refined
-/// mesh. An outline reaches it the same way when its colour is flat, and needs
-/// no refined mesh even when it is not.
-///
-/// The backend takes a bounded number of vertices per call, and a run ending
-/// mid-triangle would draw a torn one, so the cap is rounded down to a whole
-/// number of triangles here rather than at each call site.
-pub fn draw_points<G: Graphics>(points: &[Point], color: [f32; 4], m: Matrix2d, gl: &mut G) {
-    if points.is_empty() {
-        return;
-    }
-    let stride = CHUNK / 3 * 3;
-    let mut pos = Vec::with_capacity(stride);
-    gl.tri_list(&DrawState::default(), &color, |f| {
-        for batch in points.chunks(stride) {
-            pos.clear();
-            pos.extend(batch.iter().map(|v| project(m, *v)));
             f(&pos);
         }
     });

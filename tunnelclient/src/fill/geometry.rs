@@ -17,7 +17,7 @@
 //! two petals, where a large step drives 360 chords through a small figure —
 //! the end of a range nobody checks, because cost is looked for at the top.
 
-use super::geom::{Indices, StoredPoint, Triangle, TriangleList};
+use super::geom::{Indices, StoredPoint, TriangleList};
 use lyon_path::Path;
 use lyon_path::math::point;
 use lyon_tessellation::{
@@ -70,8 +70,14 @@ pub const REFERENCE_WIDTH: f32 = 1.0;
 ///
 /// Never emptied, and never needs to be: an interior does not depend on how
 /// densely it will be drawn, so a figure has exactly one however the knobs
-/// move, and the knobs reach a table. 401 interiors is the whole of it — every
+/// move, and the knobs reach a table. 576 interiors is the whole of it — every
 /// figure the build ships and every figure the generated library names.
+///
+/// **This is the one store resident for the life of the process.** Meshes are
+/// reaped by age and outlines are emptied under a budget, so what those cost
+/// is a ceiling a show may never reach; what this costs is carried by every
+/// client from startup to shutdown. Its 17.5 MB is the smallest of the three
+/// numbers and the only unconditional one.
 #[derive(Default)]
 pub struct FillGeometry(HashMap<FigureId, TriangleList>);
 
@@ -85,7 +91,7 @@ impl FillGeometry {
     /// What the interiors held weigh.
     #[cfg(test)]
     pub fn bytes(&self) -> usize {
-        self.0.values().map(|tris| size_of_val(tris.points())).sum()
+        self.0.values().map(TriangleList::bytes).sum()
     }
 
     /// The figure's interior, tessellated on first use.
@@ -108,11 +114,13 @@ impl FillGeometry {
                     .tessellate_path(&path_of(figure), &options, &mut builder)
                     .is_ok()
                 {
-                    for [a, b, c] in triangles(&buffers) {
-                        out.push(Triangle::new(a, b, c));
-                    }
+                    out.extend(&buffers.vertices, &buffers.indices);
                 }
             }
+            // Both runs grow by doubling and how many vertices a figure
+            // tessellates to is not known until it has, so the last doubling
+            // leaves slack that is held for the life of the process.
+            out.shrink_to_fit();
             out
         })
     }
@@ -129,7 +137,7 @@ impl FillGeometry {
 /// 352 figures at the mean of 190 kB, or 31 at the largest, and either way it
 /// is sixty-four megabytes.
 ///
-/// The whole library at once is 109.6 MB, against the 29.7 MB its interiors
+/// The whole library at once is 109.6 MB, against the 17.5 MB its interiors
 /// come to. Outlines outweigh the interiors they follow because what a stroke
 /// costs is set by how finely the contour is sampled — [`STROKE_SEGMENT`] puts
 /// a join every 0.025 units along it — and hardly at all by how wide it is.
@@ -413,20 +421,6 @@ fn path_of_capped(figure: &Figure, max: f32) -> Path {
         builder.end(true);
     }
     builder.build()
-}
-
-/// Resolve the tessellator's indexed output into whole triangles.
-///
-/// A triangle naming a vertex that is not there is dropped entire. Lyon does
-/// not emit one, but dropping the odd point instead would shift every later
-/// vertex by one and scramble the rest of the figure.
-fn triangles<V: Copy>(buffers: &VertexBuffers<V, u32>) -> impl Iterator<Item = [V; 3]> + '_ {
-    buffers.indices.as_chunks::<3>().0.iter().filter_map(|tri| {
-        match tri.map(|i| buffers.vertices.get(i as usize).copied()) {
-            [Some(a), Some(b), Some(c)] => Some([a, b, c]),
-            _ => None,
-        }
-    })
 }
 
 #[cfg(test)]

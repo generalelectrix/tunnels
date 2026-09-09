@@ -76,25 +76,74 @@ impl Triangle {
 /// is not a coarser figure, it is nonsense. Points only go in a triangle at a
 /// time, so the invariant holds by construction and nothing downstream has to
 /// check it.
-#[derive(Debug, Default, Clone)]
-pub struct TriangleList(Vec<Point>);
+#[derive(Default)]
+pub struct TriangleList {
+    points: Vec<Point>,
+    indices: Indices,
+}
 
 impl TriangleList {
+    /// Add a triangle of three vertices nothing else shares.
+    #[cfg(test)]
     pub fn push(&mut self, triangle: Triangle) {
-        self.0.extend_from_slice(&triangle.points());
+        let base = u32::try_from(self.points.len()).unwrap_or(u32::MAX);
+        self.points.extend_from_slice(&triangle.points());
+        self.indices.push_triangle([base, base + 1, base + 2]);
+    }
+
+    /// Take a tessellator's indexed output, keeping the sharing it found.
+    ///
+    /// A figure's contours are tessellated one at a time into a single list,
+    /// so each set of indices is shifted past the vertices already held.
+    pub fn extend(&mut self, points: &[Point], indices: &[u32]) {
+        let base = u32::try_from(self.points.len()).unwrap_or(u32::MAX);
+        self.points.extend_from_slice(points);
+        // A triangle naming a vertex that is not there is dropped entire, as
+        // it is everywhere else the tessellator's output is resolved.
+        for triangle in indices.as_chunks::<3>().0 {
+            if triangle.iter().all(|&i| (i as usize) < points.len()) {
+                self.indices.push_triangle([
+                    triangle[0] + base,
+                    triangle[1] + base,
+                    triangle[2] + base,
+                ]);
+            }
+        }
     }
 
     pub fn triangles(&self) -> impl Iterator<Item = Triangle> + '_ {
-        self.0
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|&[a, b, c]| Triangle::new(a, b, c))
+        self.indices
+            .batches(usize::MAX)
+            .flat_map(IndexBatch::triangles)
+            .filter_map(|[a, b, c]| {
+                Some(Triangle::new(
+                    *self.points.get(a as usize)?,
+                    *self.points.get(b as usize)?,
+                    *self.points.get(c as usize)?,
+                ))
+            })
     }
 
-    /// Every vertex in order, three to a triangle.
+    /// Give back the slack both runs carry from growing by doubling.
+    pub fn shrink_to_fit(&mut self) {
+        self.points.shrink_to_fit();
+        self.indices.shrink_to_fit();
+    }
+
+    /// The vertices the triangles address, each held once.
     pub fn points(&self) -> &[Point] {
-        &self.0
+        &self.points
+    }
+
+    /// The triangles, as indices into those vertices.
+    pub fn indices(&self) -> &Indices {
+        &self.indices
+    }
+
+    /// What this list weighs.
+    #[cfg(test)]
+    pub fn bytes(&self) -> usize {
+        self.points.capacity() * size_of::<Point>() + self.indices.bytes()
     }
 }
 
@@ -207,6 +256,36 @@ impl Indices {
         match self {
             Self::Narrow(i) => i.capacity() * size_of::<u16>(),
             Self::Wide(i) => i.capacity() * size_of::<u32>(),
+        }
+    }
+
+    /// Add one triangle, widening the run if the index no longer fits.
+    ///
+    /// Growing into `u32` on demand is what lets a list be built without
+    /// knowing how many vertices it will end up addressing.
+    pub fn push_triangle(&mut self, triangle: [u32; 3]) {
+        if let Self::Narrow(narrow) = self {
+            if let Ok(fits) = triangle
+                .iter()
+                .map(|&i| u16::try_from(i))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                narrow.extend(fits);
+                return;
+            }
+            *self = Self::Wide(narrow.iter().map(|&i| u32::from(i)).collect());
+        }
+        let Self::Wide(wide) = self else {
+            unreachable!("just widened");
+        };
+        wide.extend(triangle);
+    }
+
+    /// Give back the slack an incrementally built run carries.
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Narrow(i) => i.shrink_to_fit(),
+            Self::Wide(i) => i.shrink_to_fit(),
         }
     }
 
