@@ -16,10 +16,7 @@ mod geometry;
 mod mesh;
 mod ramp;
 
-use self::draw::{
-    PhaseField, VertexBuffers, VertexWork, draw_flat, draw_list_flat, draw_list_textured,
-    draw_points, draw_textured,
-};
+use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_points, draw_textured};
 use self::figure::FigureCache;
 use self::geometry::{FillGeometry, StrokeGeometry};
 use self::mesh::{Level, MeshId, MeshLibrary};
@@ -414,9 +411,16 @@ where
             verts.vertex_pass(mesh, work);
             match texture {
                 Some(texture) => {
-                    draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
+                    draw_textured(
+                        mesh.indices(),
+                        verts,
+                        field.wrap_period(),
+                        texture,
+                        placed.m,
+                        gl,
+                    );
                 }
-                None => draw_flat(mesh, verts, color, placed.m, gl),
+                None => draw_flat(mesh.indices(), verts, color, placed.m, gl),
             }
         }
 
@@ -430,9 +434,16 @@ where
             verts.stroke_vertex_pass(outline, work);
             match texture {
                 Some(texture) => {
-                    draw_list_textured(verts, field.wrap_period(), texture, placed.m, gl);
+                    draw_textured(
+                        outline.indices(),
+                        verts,
+                        field.wrap_period(),
+                        texture,
+                        placed.m,
+                        gl,
+                    );
                 }
-                None => draw_list_flat(verts, color, placed.m, gl),
+                None => draw_flat(outline.indices(), verts, color, placed.m, gl),
             }
         }
     }

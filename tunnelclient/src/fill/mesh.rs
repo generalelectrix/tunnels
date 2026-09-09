@@ -6,7 +6,7 @@
 //! waveforms driven by a clock, which change every frame.
 
 use super::Frame;
-use super::geom::{IndexBatch, Triangle, TriangleList};
+use super::geom::{Indices, Triangle, TriangleList};
 use log::debug;
 use std::collections::HashMap;
 use tunnels_model::layer::FigureId;
@@ -121,52 +121,6 @@ impl StoredPoint {
     }
 }
 
-/// A mesh's triangles, as indices into its vertices, in the narrowest width
-/// that addresses them.
-///
-/// **The width is a property of one mesh and not of the library**, because the
-/// two ends of the library are three orders of magnitude apart: the smallest
-/// figure refines to a thousand vertices at the coarsest density and the
-/// largest to 354,089 at the finest, which no `u16` reaches. One width for all
-/// of them is either `u32` everywhere or a cap on how finely a figure may be
-/// refined.
-///
-/// Indices are two-thirds of what a mesh weighs — a triangle costs three of
-/// them against the two stored coordinates of about half a vertex — so this is
-/// the term worth narrowing first. It halves the coarse densities, where every
-/// mesh fits, and does almost nothing at the finest, where the meshes that do
-/// not fit hold nine tenths of the triangles.
-enum Indices {
-    Narrow(Vec<u16>),
-    Wide(Vec<u32>),
-}
-
-impl Indices {
-    /// The indices of `flat`, narrowed if every one of them fits.
-    fn of(flat: Vec<u32>, vertices: usize) -> Self {
-        if vertices > usize::from(u16::MAX) + 1 {
-            return Self::Wide(flat);
-        }
-        Self::Narrow(flat.into_iter().map(|i| i as u16).collect())
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            Self::Narrow(i) => i.len(),
-            Self::Wide(i) => i.len(),
-        }
-    }
-
-    /// What these indices hold, counting what is allocated rather than what
-    /// is used, since the difference is memory either way.
-    fn bytes(&self) -> usize {
-        match self {
-            Self::Narrow(i) => i.capacity() * size_of::<u16>(),
-            Self::Wide(i) => i.capacity() * size_of::<u32>(),
-        }
-    }
-}
-
 /// A refined figure, with vertices shared between the triangles that use them.
 ///
 /// Sharing matters because phase is evaluated per vertex every frame: a flat
@@ -182,10 +136,6 @@ impl RefinedMesh {
         self.indices.len() / 3
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.indices.len() == 0
-    }
-
     /// Every vertex, in the order the indices address them, widened back into
     /// figure space.
     pub fn points(&self) -> impl Iterator<Item = Point> + '_ {
@@ -198,19 +148,9 @@ impl RefinedMesh {
         self.verts.capacity() * size_of::<StoredPoint>() + self.indices.bytes()
     }
 
-    /// Runs of whole triangles, each within `max_vertices`.
-    pub fn batches(&self, max_vertices: usize) -> impl Iterator<Item = IndexBatch<'_>> {
-        let run = (max_vertices / 3 * 3).max(3);
-        // Only one of the two is ever populated; the other contributes no
-        // batches, which is what lets both widths come back as one iterator.
-        let (narrow, wide) = match &self.indices {
-            Indices::Narrow(i) => (i.as_slice(), [].as_slice()),
-            Indices::Wide(i) => ([].as_slice(), i.as_slice()),
-        };
-        narrow
-            .chunks(run)
-            .map(IndexBatch::Narrow)
-            .chain(wide.chunks(run).map(IndexBatch::Wide))
+    /// The triangles, as indices into the vertices a pass has just walked.
+    pub fn indices(&self) -> &Indices {
+        &self.indices
     }
 }
 
@@ -525,6 +465,7 @@ fn bisect(tri: Triangle, target: f32, depth: u32, out: &mut Vec<Point>) {
 mod test {
     use super::*;
     use crate::fill::figure::FigureCache;
+    use crate::fill::geom::IndexBatch;
     use tunnels_model::layer::{GeneratedId, SpriteId};
 
     #[test]
@@ -726,19 +667,25 @@ mod test {
             assert_eq!(held.triangle_count(), triangles.len());
             // A cap past the whole mesh gives one batch of everything.
             let read: Vec<[u32; 3]> = held
+                .indices()
                 .batches(usize::MAX)
                 .flat_map(IndexBatch::triangles)
                 .collect();
             assert_eq!(read, triangles, "the triangles came back changed");
             let ungrouped: Vec<u32> = held
+                .indices()
                 .batches(usize::MAX)
                 .flat_map(IndexBatch::indices)
                 .collect();
             assert_eq!(ungrouped, flat, "the indices came back changed");
             // And a cap of one triangle cuts three batches of whole triangles
             // rather than tearing one apart.
-            assert_eq!(held.batches(3).count(), 3);
-            let cut: Vec<[u32; 3]> = held.batches(3).flat_map(IndexBatch::triangles).collect();
+            assert_eq!(held.indices().batches(3).count(), 3);
+            let cut: Vec<[u32; 3]> = held
+                .indices()
+                .batches(3)
+                .flat_map(IndexBatch::triangles)
+                .collect();
             assert_eq!(cut, triangles, "a batched walk lost a triangle");
         }
     }
@@ -759,7 +706,11 @@ mod test {
         let mut worst: f32 = 0.0;
         let verts: Vec<Point> = mesh.points().collect();
         // A cap past the whole mesh gives one batch, which is every triangle.
-        for tri in mesh.batches(usize::MAX).flat_map(IndexBatch::triangles) {
+        for tri in mesh
+            .indices()
+            .batches(usize::MAX)
+            .flat_map(IndexBatch::triangles)
+        {
             let corners = tri.map(|i| verts[i as usize]);
             for (p, q) in [
                 (corners[0], corners[1]),

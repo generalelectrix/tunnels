@@ -98,6 +98,74 @@ impl TriangleList {
     }
 }
 
+/// Indices into a run of shared vertices, in the narrowest width that
+/// addresses them.
+///
+/// **The width is a property of one run and not of the library**, because the
+/// two ends of the library are three orders of magnitude apart: the smallest
+/// figure refines to a thousand vertices at the coarsest density and the
+/// largest to 354,089 at the finest, which no `u16` reaches. One width for all
+/// of them is either `u32` everywhere or a cap on how finely a figure may be
+/// refined.
+///
+/// Indices are two-thirds of what a mesh weighs — a triangle costs three of
+/// them against the two stored coordinates of about half a vertex — so this is
+/// the term worth narrowing first. It halves the coarse densities, where every
+/// mesh fits, and does almost nothing at the finest, where the meshes that do
+/// not fit hold nine tenths of the triangles.
+pub enum Indices {
+    Narrow(Vec<u16>),
+    Wide(Vec<u32>),
+}
+
+impl Default for Indices {
+    /// An empty run, which addresses no vertices and so needs no width.
+    fn default() -> Self {
+        Self::Narrow(Vec::new())
+    }
+}
+
+impl Indices {
+    /// The indices of `flat`, narrowed if every one of them fits.
+    pub fn of(flat: Vec<u32>, vertices: usize) -> Self {
+        if vertices > usize::from(u16::MAX) + 1 {
+            return Self::Wide(flat);
+        }
+        Self::Narrow(flat.into_iter().map(|i| i as u16).collect())
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Narrow(i) => i.len(),
+            Self::Wide(i) => i.len(),
+        }
+    }
+
+    /// What these indices hold, counting what is allocated rather than what
+    /// is used, since the difference is memory either way.
+    pub fn bytes(&self) -> usize {
+        match self {
+            Self::Narrow(i) => i.capacity() * size_of::<u16>(),
+            Self::Wide(i) => i.capacity() * size_of::<u32>(),
+        }
+    }
+
+    /// Runs of whole triangles, each within `max_vertices`.
+    pub fn batches(&self, max_vertices: usize) -> impl Iterator<Item = IndexBatch<'_>> {
+        let run = (max_vertices / 3 * 3).max(3);
+        // Only one of the two is ever populated; the other contributes no
+        // batches, which is what lets both widths come back as one iterator.
+        let (narrow, wide) = match self {
+            Self::Narrow(i) => (i.as_slice(), [].as_slice()),
+            Self::Wide(i) => ([].as_slice(), i.as_slice()),
+        };
+        narrow
+            .chunks(run)
+            .map(IndexBatch::Narrow)
+            .chain(wide.chunks(run).map(IndexBatch::Wide))
+    }
+}
+
 /// A run of whole triangles from a refined mesh, small enough for one call
 /// into the backend.
 ///

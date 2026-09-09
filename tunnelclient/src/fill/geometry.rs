@@ -17,7 +17,7 @@
 //! two petals, where a large step drives 360 chords through a small figure —
 //! the end of a range nobody checks, because cost is looked for at the top.
 
-use super::geom::{Triangle, TriangleList};
+use super::geom::{Indices, Triangle, TriangleList};
 use lyon_path::Path;
 use lyon_path::math::point;
 use lyon_tessellation::{
@@ -118,26 +118,22 @@ impl FillGeometry {
     }
 }
 
-/// Bytes one stroked vertex costs: a point where it landed and the contour
-/// point it was offset from, two coordinates each.
-const BYTES_PER_VERTEX: usize = 2 * 2 * size_of::<f32>();
-
-/// The most the outline table may hold, in vertices.
+/// The most the outline table may hold, in bytes.
 ///
-/// **Sized in vertices rather than in entries, because a count of entries is
-/// not a bound on anything.** A figure strokes to 47,554 vertices on average
-/// and to 312,249 at the largest, a spread of six and a half times, so how
-/// many outlines are held says almost nothing about how much they weigh. The
-/// cap this replaces counted entries: at 256 of them it named 30 MB and held
-/// nearer 195 MB, and it went unnoticed because the number it named was
-/// plausible. Sixty-four megabytes is 84 figures at the mean or 13 at the
-/// largest, and either way it is sixty-four megabytes.
+/// **Sized in bytes rather than in entries or in vertices, because neither of
+/// those is a bound on anything.** A figure strokes to 12,869 distinct
+/// vertices on average and to 108,212 at the largest, a spread of eight times,
+/// so a count of outlines says almost nothing about what they weigh — and once
+/// vertices are shared, a count of them does not either, since how many
+/// triangles each one serves varies with the figure. Sixty-four megabytes is
+/// 228 figures at the mean or 28 at the largest, and either way it is
+/// sixty-four megabytes.
 ///
-/// The whole library at once would be 305 MB, against the 37 MB its interiors
+/// The whole library at once is 168.9 MB, against the 29.7 MB its interiors
 /// come to. Outlines outweigh the interiors they follow because what a stroke
 /// costs is set by how finely the contour is sampled — [`STROKE_SEGMENT`] puts
 /// a join every 0.025 units along it — and hardly at all by how wide it is.
-const STROKE_BUDGET: usize = 64 * 1024 * 1024 / BYTES_PER_VERTEX;
+const STROKE_BUDGET: usize = 64 << 20;
 
 /// Outlines tessellated so far.
 ///
@@ -155,8 +151,8 @@ const STROKE_BUDGET: usize = 64 * 1024 * 1024 / BYTES_PER_VERTEX;
 #[derive(Default)]
 pub struct StrokeGeometry {
     outlines: HashMap<FigureId, StrokeMesh>,
-    /// Vertices across every outline held, against [`STROKE_BUDGET`].
-    vertices: usize,
+    /// What the outlines held weigh, against [`STROKE_BUDGET`].
+    bytes: usize,
 }
 
 impl StrokeGeometry {
@@ -169,12 +165,12 @@ impl StrokeGeometry {
     /// The figure's outline at [`REFERENCE_WIDTH`], tessellated on first use.
     pub fn get(&mut self, id: FigureId, figures: &[Figure]) -> &StrokeMesh {
         if !self.outlines.contains_key(&id) {
-            if self.vertices >= STROKE_BUDGET {
+            if self.bytes >= STROKE_BUDGET {
                 self.outlines.clear();
-                self.vertices = 0;
+                self.bytes = 0;
             }
             let mesh = stroke(figures, REFERENCE_WIDTH);
-            self.vertices += mesh.len();
+            self.bytes += mesh.bytes();
             self.outlines.insert(id, mesh);
         }
         &self.outlines[&id]
@@ -203,6 +199,7 @@ fn stroke(figures: &[Figure], width: f32) -> StrokeMesh {
         .with_line_join(LineJoin::Round)
         .with_line_cap(LineCap::Round);
     let mut out = StrokeMesh::default();
+    let mut flat = Vec::new();
     for figure in figures {
         let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
         let mut builder = BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
@@ -217,9 +214,16 @@ fn stroke(figures: &[Figure], width: f32) -> StrokeMesh {
             )
             .is_ok()
         {
-            out.extend(&buffers);
+            out.extend(&buffers, &mut flat);
         }
     }
+    // Both runs grow by doubling and how many vertices a figure strokes to is
+    // not known until it has, so the last doubling leaves slack that is held
+    // for as long as the outline is.
+    out.positions.shrink_to_fit();
+    out.on_path.shrink_to_fit();
+    flat.shrink_to_fit();
+    out.indices = Indices::of(flat, out.positions.len());
     out
 }
 
@@ -237,12 +241,22 @@ pub struct StrokeVertexPair {
     pub on_path: Point,
 }
 
-/// A stroked outline, as a flat triangle list carrying its contour points.
+/// A stroked outline, as shared vertices carrying their contour points and the
+/// triangles that index them.
 ///
 /// A ribbon takes its colour from where it sits **on the contour**, not from
 /// where each offset vertex happens to land. That is what a stroke is: one
 /// segment at one place on the figure, so its colour is constant across its
 /// width by definition.
+///
+/// **Vertices are shared rather than repeated per corner, which decides what a
+/// vertex *is* and not only what it costs.** A stroked vertex serves about
+/// three triangles, so repeating it triples the store — and it also gives the
+/// same point three identities. Everything resolved per vertex then answers
+/// three times for one place: three transcendentals where one would do, and,
+/// for the one waveform that reads a vertex's index rather than only its
+/// position, three different displacements that pull a triangle apart at a
+/// corner its neighbours share.
 ///
 /// It is also why a stroke needs no refinement. Refinement exists so that
 /// phase varies little enough across a triangle for the ramp lookup to
@@ -252,25 +266,46 @@ pub struct StrokeVertexPair {
 pub struct StrokeMesh {
     positions: Vec<Point>,
     on_path: Vec<Point>,
+    indices: Indices,
 }
 
 impl StrokeMesh {
     /// Take the tessellator's indexed output, splitting each vertex into the
-    /// two runs.
-    fn extend(&mut self, buffers: &VertexBuffers<StrokeVertexPair, u32>) {
-        for vertex in triangles(buffers).flatten() {
+    /// two runs and keeping the indices that address them.
+    ///
+    /// A figure's contours are stroked one at a time into a single mesh, so
+    /// each set of indices is shifted past the vertices already held.
+    fn extend(&mut self, buffers: &VertexBuffers<StrokeVertexPair, u32>, flat: &mut Vec<u32>) {
+        let base = u32::try_from(self.positions.len()).unwrap_or(u32::MAX);
+        for vertex in &buffers.vertices {
             self.positions.push(vertex.position);
             self.on_path.push(vertex.on_path);
+        }
+        // A triangle naming a vertex that is not there is dropped entire.
+        // Lyon does not emit one, but keeping the odd corner would shift every
+        // later index and scramble the rest of the figure.
+        let held = buffers.vertices.len();
+        for triangle in buffers.indices.as_chunks::<3>().0 {
+            if triangle.iter().all(|&i| (i as usize) < held) {
+                flat.extend(triangle.iter().map(|&i| i + base));
+            }
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.positions.is_empty()
+        self.indices.len() == 0
     }
 
-    /// How many vertices this outline is made of.
-    pub fn len(&self) -> usize {
-        self.positions.len()
+    /// The triangles, as indices into the vertices a pass has just walked.
+    pub fn indices(&self) -> &Indices {
+        &self.indices
+    }
+
+    /// What this outline weighs, counting what is allocated rather than what
+    /// is used, since the difference is memory either way.
+    fn bytes(&self) -> usize {
+        (self.positions.capacity() + self.on_path.capacity()) * size_of::<Point>()
+            + self.indices.bytes()
     }
 
     /// Each vertex, paired with the contour point it was offset from.
