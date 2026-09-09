@@ -5889,6 +5889,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "touchosc_sync"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hostname",
+ "log",
+ "mdns-sd",
+ "tiny_http",
+ "zip",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5993,24 +6005,21 @@ dependencies = [
  "derive_more 2.0.1",
  "eframe",
  "egui_plot",
- "hostname",
  "insta",
  "lazy_static",
  "log",
- "mdns-sd",
  "midi_harness",
  "postcard",
  "rosc",
  "serde",
  "serde_yaml",
  "simplelog",
- "tiny_http",
+ "touchosc_sync",
  "tunnels_audio",
  "tunnels_lib",
  "tunnels_model",
  "tunnels_net",
  "zero_configure",
- "zip",
 ]
 
 [[package]]

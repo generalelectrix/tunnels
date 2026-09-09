@@ -31,7 +31,7 @@ use tunnels_audio::EnvelopeStreams;
 use tunnels_net::FramePublisher;
 
 use crate::midi::MidiDeviceInit;
-use crate::touchosc_serve::LayoutServer;
+use touchosc_sync::LayoutServer;
 
 /// How often should we autosave the show?
 pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
@@ -353,7 +353,7 @@ impl Show {
                 if self.touchosc_server.is_some() {
                     bail!("The TouchOSC layout server is already running.");
                 }
-                self.touchosc_server = Some(LayoutServer::start()?);
+                self.touchosc_server = Some(crate::touchosc_serve::serve_layout()?);
                 GuiDirty::TOUCHOSC
             }
             StopTouchOscServer => {
