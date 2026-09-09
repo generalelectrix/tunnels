@@ -33,14 +33,19 @@ pub struct ClientConfig {
     pub artnet_node: bool,
     /// Log at debug level?
     pub log_level_debug: bool,
-    /// Let a figure larger than the startup mesh table anticipated be given a
-    /// mesh matched to its size, built the first time it is drawn.
+    /// Let a figure drawn larger than the default density covers be given a
+    /// mesh matched to its size.
     ///
-    /// Off, a figure that wants more density than the table holds is drawn
-    /// with the finest mesh the table does hold, and nothing is ever built
-    /// during a show. On, the two finer densities become available and are
-    /// built per figure on first use — a pause of about 7 ms typically and 17
-    /// at worst for the first, 28 and 64 for the second.
+    /// Off, a figure that wants more density than the default reaches is drawn
+    /// with the finest mesh that density gives. On, the two finer ones become
+    /// available and are refined per figure on first use — a pause of about
+    /// 8 ms typically and 34 at worst for the first, 26 and 103 for the
+    /// second.
+    ///
+    /// A mesh is refined when a figure is first drawn at a density either way,
+    /// so this does not decide whether a show ever pauses to build one. It
+    /// decides how large the ones it builds are, and every level costs four
+    /// times the one below it in both time and memory.
     ///
     /// It defaults off because the question it answers is whether the extra
     /// density is visible at all, and that is a judgement to make by eye
