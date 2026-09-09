@@ -234,17 +234,17 @@ where
     /// Build the figure meshes a show is likely to want, before it starts.
     ///
     /// Every figure both libraries hold, at the four coarsest densities: 62
-    /// baked and 339 generated, **1,604 meshes, 16 million triangles, 290 MB,
-    /// 3.5 s**. It covers a figure at the default size on a 1080-line
+    /// baked and 339 generated, **1,604 meshes, 16 million triangles, 198 MB,
+    /// 3.6 s**. It covers a figure at the default size on a 1080-line
     /// projector and everything smaller.
     ///
-    /// The generated figures are 264 MB of that against the baked library's
-    /// 26 MB, on a fifth again as many figures, because a family computes its
+    /// The generated figures are 181 MB of that against the baked library's
+    /// 17 MB, on a fifth again as many figures, because a family computes its
     /// contours to the tessellator's tolerance where a piece of artwork was
     /// drawn with as few points as a hand needed.
     ///
     /// The two finest densities are reachable but not built here, and they are
-    /// most of what the caches could ever hold — 2.2 GB against this 290 MB.
+    /// most of what the caches could ever hold — 1.9 GB against this 198 MB.
     /// A show pays for them only if it reaches them, and the cost when it does
     /// is **per figure, not per density**: tens of milliseconds for the one
     /// figure that grew, rather than the seconds a whole density costs. A
@@ -279,9 +279,10 @@ where
             }
         }
         info!(
-            "Built {} figure meshes, {} triangles.",
+            "Built {} figure meshes, {} triangles, {:.0} MB.",
             meshes.len(),
-            meshes.triangles()
+            meshes.triangles(),
+            meshes.bytes() as f64 / 1e6,
         );
     }
 
@@ -478,6 +479,13 @@ mod test {
             renderer.meshes.len(),
             figures * Level::eager().count(),
             "the precompute does not cover both libraries at every eager density"
+        );
+        // What that comes to is the number the docstring quotes, and the one
+        // a console machine pays once per monitor client.
+        let mb = renderer.meshes.bytes() as f64 / 1e6;
+        assert!(
+            (180.0..215.0).contains(&mb),
+            "the precompute weighs {mb:.1} MB, not the 198 the docstring quotes"
         );
         // Outlines are not precomputed. One is 47,554 vertices on the
         // average figure, so the whole library would be 305 MB against the

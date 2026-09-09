@@ -62,14 +62,58 @@ const TARGET_PX: f64 = 14.0;
 /// triangles are smaller than a pixel and the extra ones buy nothing.
 const FINEST_LEVEL: i8 = -7;
 
+/// A mesh's triangles, as indices into its vertices, in the narrowest width
+/// that addresses them.
+///
+/// **The width is a property of one mesh and not of the library**, because the
+/// two ends of the library are three orders of magnitude apart: the smallest
+/// figure refines to a thousand vertices at the coarsest density and the
+/// largest to 354,089 at the finest, which no `u16` reaches. Picking one width
+/// for all of them would either be `u32` everywhere, which is what this
+/// replaces, or a cap on how finely a figure may be refined.
+///
+/// Indices are three-quarters of what a mesh weighs — a triangle costs three
+/// of them against the two coordinates of about half a vertex — so this is the
+/// term worth narrowing first. It halves the coarse densities, where every
+/// mesh fits, and does almost nothing at the finest, where the meshes that do
+/// not fit hold nine tenths of the triangles.
+enum Indices {
+    Narrow(Vec<u16>),
+    Wide(Vec<u32>),
+}
+
+impl Indices {
+    /// The indices of `flat`, narrowed if every one of them fits.
+    fn of(flat: Vec<u32>, vertices: usize) -> Self {
+        if vertices > usize::from(u16::MAX) + 1 {
+            return Self::Wide(flat);
+        }
+        Self::Narrow(flat.into_iter().map(|i| i as u16).collect())
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Narrow(i) => i.len(),
+            Self::Wide(i) => i.len(),
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Narrow(i) => i.len() * size_of::<u16>(),
+            Self::Wide(i) => i.len() * size_of::<u32>(),
+        }
+    }
+}
+
 /// A refined figure, with vertices shared between the triangles that use them.
 ///
 /// Sharing matters because phase is evaluated per vertex every frame: a flat
 /// triangle list repeats each shared vertex about six times, and each repeat
 /// would be another transcendental evaluated for an answer already known.
 pub struct RefinedMesh {
-    pub verts: Vec<Point>,
-    indices: Vec<u32>,
+    verts: Vec<Point>,
+    indices: Indices,
 }
 
 impl RefinedMesh {
@@ -78,14 +122,33 @@ impl RefinedMesh {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.indices.is_empty()
+        self.indices.len() == 0
+    }
+
+    /// Every vertex, in the order the indices address them.
+    pub fn points(&self) -> impl Iterator<Item = Point> + '_ {
+        self.verts.iter().copied()
+    }
+
+    /// What this mesh weighs, which is what the caches holding it are sized
+    /// against.
+    fn bytes(&self) -> usize {
+        self.verts.len() * size_of::<Point>() + self.indices.bytes()
     }
 
     /// Runs of whole triangles, each within `max_vertices`.
     pub fn batches(&self, max_vertices: usize) -> impl Iterator<Item = IndexBatch<'_>> {
-        self.indices
-            .chunks((max_vertices / 3 * 3).max(3))
-            .map(IndexBatch::new)
+        let run = (max_vertices / 3 * 3).max(3);
+        // Only one of the two is ever populated; the other contributes no
+        // batches, which is what lets both widths come back as one iterator.
+        let (narrow, wide) = match &self.indices {
+            Indices::Narrow(i) => (i.as_slice(), [].as_slice()),
+            Indices::Wide(i) => ([].as_slice(), i.as_slice()),
+        };
+        narrow
+            .chunks(run)
+            .map(IndexBatch::Narrow)
+            .chain(wide.chunks(run).map(IndexBatch::Wide))
     }
 }
 
@@ -155,15 +218,20 @@ pub struct MeshId {
 ///
 /// **The set is bounded, because both libraries are tables.** Each names a
 /// fixed list of figures, so the key runs over those figures times the six
-/// densities and no further: 62 baked and 339 generated, 2,406 meshes, **2.2
+/// densities and no further: 62 baked and 339 generated, 2,406 meshes, **1.9
 /// GB** if every one of them were ever drawn.
 ///
 /// Bounded is not small, and where the two libraries sit in that number is
-/// worth knowing: the baked share is 316 MB of it and the generated share is
-/// the other 1.9 GB, because a generated figure carries an order of magnitude
+/// worth knowing: the baked share is 279 MB of it and the generated share is
+/// the other 1.6 GB, because a generated figure carries an order of magnitude
 /// more triangles than a piece of artwork does. Most of that is the two finest
 /// densities, which only a figure drawn larger than the size knob's default
-/// reaches; the four coarser ones come to 290 MB between them.
+/// reaches; the four coarser ones come to 198 MB between them.
+///
+/// Narrow indices bite hardest at the coarse end and hardly at all at the
+/// fine: 2,021 of these meshes fit in `u16` but the 385 that do not carry
+/// nine tenths of the triangles at the two finest densities. So the four
+/// coarse densities nearly halve and the ceiling moves by an eighth.
 ///
 /// Nothing is evicted, and no cap is wanted, because a figure dropped is a
 /// figure tessellated again and the families holding the most triangles are
@@ -186,6 +254,12 @@ impl MeshLibrary {
     /// Total triangles held, for reporting memory pressure.
     pub fn triangles(&self) -> usize {
         self.built.values().map(RefinedMesh::triangle_count).sum()
+    }
+
+    /// What the meshes held weigh, which is the number the docstrings above
+    /// quote and the one a client reports at startup.
+    pub fn bytes(&self) -> usize {
+        self.built.values().map(RefinedMesh::bytes).sum()
     }
 
     /// How many meshes are held, against the table that bounds them.
@@ -220,6 +294,7 @@ fn refine(tris: &TriangleList, target: f32) -> RefinedMesh {
         });
         indices.push(idx);
     }
+    let indices = Indices::of(indices, verts.len());
     RefinedMesh { verts, indices }
 }
 
@@ -274,6 +349,55 @@ mod test {
         assert_eq!(Level::for_screen(1e9, Level::IN_TABLE), Level::IN_TABLE);
     }
 
+    /// The index width is a property of one mesh, and nothing downstream can
+    /// tell which width a mesh it is walking chose.
+    ///
+    /// A figure whose mesh outgrows `u16` between one density and the next
+    /// would otherwise index the wrong vertices rather than fail, because a
+    /// truncated index is a valid index into a shorter list.
+    #[test]
+    fn the_index_width_follows_the_vertex_count_and_reads_back_the_same() {
+        let triangles: [[u32; 3]; 3] = [[0, 1, 2], [2, 1, 3], [65_534, 3, 0]];
+        let flat: Vec<u32> = triangles.iter().flatten().copied().collect();
+        let mesh = |vertices: usize| RefinedMesh {
+            verts: vec![Point::new(0.0, 0.0); vertices],
+            indices: Indices::of(flat.clone(), vertices),
+        };
+        // The largest index a `u16` carries is 65,535, so a mesh of that many
+        // vertices and one more is the last that still fits.
+        let narrow = mesh(usize::from(u16::MAX) + 1);
+        let wide = mesh(usize::from(u16::MAX) + 2);
+        assert!(
+            matches!(narrow.indices, Indices::Narrow(_)),
+            "a mesh a u16 addresses was stored wide"
+        );
+        assert!(
+            matches!(wide.indices, Indices::Wide(_)),
+            "a mesh a u16 cannot address was narrowed, which loses vertices"
+        );
+        assert!(wide.bytes() > narrow.bytes(), "narrowing saved nothing");
+
+        for held in [&narrow, &wide] {
+            assert_eq!(held.triangle_count(), triangles.len());
+            // A cap past the whole mesh gives one batch of everything.
+            let read: Vec<[u32; 3]> = held
+                .batches(usize::MAX)
+                .flat_map(IndexBatch::triangles)
+                .collect();
+            assert_eq!(read, triangles, "the triangles came back changed");
+            let ungrouped: Vec<u32> = held
+                .batches(usize::MAX)
+                .flat_map(IndexBatch::indices)
+                .collect();
+            assert_eq!(ungrouped, flat, "the indices came back changed");
+            // And a cap of one triangle cuts three batches of whole triangles
+            // rather than tearing one apart.
+            assert_eq!(held.batches(3).count(), 3);
+            let cut: Vec<[u32; 3]> = held.batches(3).flat_map(IndexBatch::triangles).collect();
+            assert_eq!(cut, triangles, "a batched walk lost a triangle");
+        }
+    }
+
     #[test]
     fn refining_shares_vertices_and_bounds_edge_length() {
         // One large triangle, refined well past its own size.
@@ -288,9 +412,10 @@ mod test {
         assert!(mesh.triangle_count() > 1, "nothing was refined");
 
         let mut worst: f32 = 0.0;
+        let verts: Vec<Point> = mesh.points().collect();
         // A cap past the whole mesh gives one batch, which is every triangle.
         for tri in mesh.batches(usize::MAX).flat_map(IndexBatch::triangles) {
-            let corners = tri.map(|i| mesh.verts[i as usize]);
+            let corners = tri.map(|i| verts[i as usize]);
             for (p, q) in [
                 (corners[0], corners[1]),
                 (corners[1], corners[2]),
@@ -304,9 +429,9 @@ mod test {
         // Sharing is the point: a flat list would carry three vertices per
         // triangle and every interior one is used by more than one triangle.
         assert!(
-            mesh.verts.len() < mesh.triangle_count() * 3,
+            verts.len() < mesh.triangle_count() * 3,
             "{} vertices for {} triangles — nothing was shared",
-            mesh.verts.len(),
+            verts.len(),
             mesh.triangle_count()
         );
     }

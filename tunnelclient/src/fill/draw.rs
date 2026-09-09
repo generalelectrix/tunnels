@@ -95,9 +95,9 @@ impl VertexBuffers {
         self.positions.clear();
         self.uvs.clear();
 
-        for (i, v) in mesh.verts.iter().enumerate() {
-            let polar = Polar::of(*v, needs.angle, needs.radius);
-            let along = polar.phase(*v, work.field.phase);
+        for (i, v) in mesh.points().enumerate() {
+            let polar = Polar::of(v, needs.angle, needs.radius);
+            let along = polar.phase(v, work.field.phase);
             let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
 
             let (x, y) = if needs.rotates {
@@ -412,8 +412,7 @@ pub fn draw_flat<G: Graphics>(
             pos.extend(
                 batch
                     .indices()
-                    .iter()
-                    .filter_map(|&i| verts.positions.get(i as usize).map(|v| project(m, *v))),
+                    .filter_map(|i| verts.positions.get(i as usize).map(|v| project(m, *v))),
             );
             f(&pos);
         }
