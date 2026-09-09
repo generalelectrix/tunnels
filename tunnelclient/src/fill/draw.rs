@@ -101,31 +101,27 @@ pub struct VertexWork<'a> {
 /// warp moves it rather than sliding across it.
 pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork) {
     let needs = Needs::of(&work);
+    let anchor = Displacement::anchor(&work);
     out.positions.clear();
     out.uvs.clear();
 
     for (i, v) in mesh.verts.iter().enumerate() {
         let polar = Polar::of(*v, needs.angle, needs.radius);
         let along = polar.phase(*v, work.field.phase);
-        let displacement = Displacement::of(&work, polar, along, i);
+        let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
 
-        out.positions.push(if needs.rotates {
+        let (x, y) = if needs.rotates {
             // The figure's own points, moved in polar terms because a spin is
             // a rotation about the same centre the phase is measured from.
             let angle = polar.angle + displacement.turn;
             let radius = polar.radius * displacement.radial;
-            Point::new(
-                radius * angle.cos() * displacement.scale_x,
-                radius * angle.sin() * displacement.scale_y,
-            )
+            (radius * angle.cos(), radius * angle.sin())
         } else {
             // Without rotation the angle never changes, so scaling the radius
             // is scaling x and y — no round trip through polar coordinates.
-            Point::new(
-                v.x() * displacement.radial * displacement.scale_x,
-                v.y() * displacement.radial * displacement.scale_y,
-            )
-        });
+            (v.x() * displacement.radial, v.y() * displacement.radial)
+        };
+        out.positions.push(displacement.place(x, y));
         out.uvs.push([along * work.field.ramp_scale(), 0.5]);
     }
 }
@@ -145,13 +141,14 @@ pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork
 /// polar coordinates, without a second arctangent per vertex.
 pub fn stroke_vertex_pass(out: &mut VertexBuffers, mesh: &StrokeMesh, work: VertexWork) {
     let needs = Needs::of(&work);
+    let anchor = Displacement::anchor(&work);
     out.positions.clear();
     out.uvs.clear();
 
     for (i, vertex) in mesh.vertices().enumerate() {
         let polar = Polar::of(vertex.on_path, needs.angle, needs.radius);
         let along = polar.phase(vertex.on_path, work.field.phase);
-        let displacement = Displacement::of(&work, polar, along, i);
+        let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
 
         let (x, y) = (vertex.position.x(), vertex.position.y());
         let (x, y) = if needs.rotates {
@@ -160,10 +157,8 @@ pub fn stroke_vertex_pass(out: &mut VertexBuffers, mesh: &StrokeMesh, work: Vert
         } else {
             (x, y)
         };
-        out.positions.push(Point::new(
-            x * displacement.radial * displacement.scale_x,
-            y * displacement.radial * displacement.scale_y,
-        ));
+        out.positions
+            .push(displacement.place(x * displacement.radial, y * displacement.radial));
         out.uvs.push([along * work.field.ramp_scale(), 0.5]);
     }
 }
@@ -191,14 +186,16 @@ impl Needs {
     }
 }
 
-/// What a point's warps work out to: a scale about the origin, a turn, and a
-/// squash.
+/// What a point's warps work out to: a scale about the origin, a turn, a
+/// squash, and an offset.
 #[derive(Copy, Clone)]
 struct Displacement {
     radial: f32,
     turn: f32,
     scale_x: f32,
     scale_y: f32,
+    offset_x: f32,
+    offset_y: f32,
 }
 
 impl Displacement {
@@ -213,6 +210,8 @@ impl Displacement {
             turn: work.spin_speed * polar.radius * std::f32::consts::TAU,
             scale_x: 1.0,
             scale_y: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
         };
         for warp in work.warps {
             let value = warp.animation.value(Phase::new(f64::from(along)), index) as f32;
@@ -222,7 +221,9 @@ impl Displacement {
             // so run along the angle it deforms a disc into petals and along
             // the radius it pinches one into rings. `Spin` turns a segment about
             // its own centroid; a point has no orientation to turn, so the
-            // same intent arrives as a shear growing with radius.
+            // same intent arrives as a shear growing with radius. A position
+            // moves a whole run of segments at once; here each point moves on
+            // its own, and the figure bends between them.
             match warp.target {
                 // Multiplicative, so the deformation is proportional.
                 AnimationTarget::Size => out.radial *= 1.0 + value,
@@ -231,19 +232,22 @@ impl Displacement {
                     out.scale_x *= 1.0 + value;
                     out.scale_y *= 1.0 - value;
                 }
+                // Additive, in the figure's own units, so a unit of it is a
+                // unit of the figure — the same amount of travel whatever the
+                // figure has been scaled to.
+                AnimationTarget::PositionX => out.offset_x += value,
+                AnimationTarget::PositionY => out.offset_y += value,
                 // The rest never arrive. A colour target is answered once per
                 // ramp texel instead, and a target that means the same thing
                 // everywhere on a figure is resolved into a single number and
                 // folded into the layer before it is built — into the
-                // placement, into the thickness, or, for a marquee, into
+                // rotation, into the thickness, or, for a marquee, into
                 // nothing, a figure having no segments to slide along a path.
                 AnimationTarget::Color
                 | AnimationTarget::ColorSpread
                 | AnimationTarget::ColorSaturation
                 | AnimationTarget::Rotation
                 | AnimationTarget::Thickness
-                | AnimationTarget::PositionX
-                | AnimationTarget::PositionY
                 | AnimationTarget::MarqueeRotation => {}
             }
         }
@@ -251,6 +255,42 @@ impl Displacement {
         // origin rather than collapsing it.
         out.radial = out.radial.max(0.0);
         out
+    }
+
+    /// The displacement where a figure has no coordinate: at the start of the
+    /// cycle, and at the centre.
+    ///
+    /// A figure's placement is answered there, so this is the offset it already
+    /// carries.
+    fn anchor(work: &VertexWork) -> Self {
+        Self::of(work, Polar::default(), 0.0, 0)
+    }
+
+    /// This displacement with the offset the placement already carries taken
+    /// out, leaving only what deviates from it.
+    ///
+    /// A placement is in the units a position knob is in and a point is in the
+    /// figure's own, so the two cannot be added together and the whole value
+    /// cannot be spent twice. Measuring the points from the placement's own
+    /// reading leaves a figure that varies nowhere exactly where it was put.
+    fn beyond(self, anchor: Self) -> Self {
+        Self {
+            offset_x: self.offset_x - anchor.offset_x,
+            offset_y: self.offset_y - anchor.offset_y,
+            ..self
+        }
+    }
+
+    /// Where a point lands once this displacement has been applied to it.
+    ///
+    /// The squash multiplies and the offset adds, in that order, so a figure
+    /// flattened onto one axis is still moved the same distance along it.
+    #[inline]
+    fn place(self, x: f32, y: f32) -> Point {
+        Point::new(
+            x * self.scale_x + self.offset_x,
+            y * self.scale_y + self.offset_y,
+        )
     }
 }
 
@@ -531,6 +571,100 @@ mod test {
         assert!(needs(ColorPhase::Angle, 0.0, &[]).angle);
         assert!(!needs(ColorPhase::Linear, 0.0, &[]).angle);
         assert!(needs(ColorPhase::Linear, 0.0, &[AnimationTarget::Spin]).angle);
+    }
+
+    /// An animation aimed at `target`, shaped so that its value runs across the
+    /// figure rather than standing at one number.
+    fn varying_warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation> {
+        use std::time::Duration;
+        use tunnels_model::animation::{ControlMessage, StateChange, Waveform};
+
+        struct Noop;
+        impl tunnels_model::animation::EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+
+        let mut animation = Animation::default();
+        for sc in [
+            StateChange::Waveform(Waveform::Sawtooth),
+            StateChange::NPeriods(1),
+            StateChange::Size(UnipolarFloat::ONE),
+            // Unsmoothed, so the ramp is the straight line the arithmetic here
+            // is written against rather than one with its corners rounded off.
+            StateChange::Smoothing(UnipolarFloat::ZERO),
+        ] {
+            animation.control(ControlMessage::Set(sc), &mut Noop);
+        }
+        // Smoothing is reached over time rather than set. The animation runs at
+        // no speed, so nothing else moves while it gets there.
+        animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        TargetedAnimation {
+            animation: animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO),
+            target,
+        }
+    }
+
+    /// A position warp displaces a point by how far the animation departs from
+    /// the value the placement already took, and by nothing else.
+    ///
+    /// The placement is answered where a figure has no coordinate — at the
+    /// start of the cycle — so that is where the deviation is measured from.
+    /// A point read there is left exactly where an unwarped one would be,
+    /// which is what keeps a figure placed where it was put.
+    #[test]
+    fn a_position_warp_displaces_a_point_by_what_it_deviates() {
+        let warps = [
+            varying_warp(AnimationTarget::PositionX),
+            varying_warp(AnimationTarget::PositionY),
+        ];
+        let work = VertexWork {
+            field: PhaseField {
+                phase: ColorPhase::Linear,
+                cycles: 1.0,
+                span: RampSpan::Cycle,
+            },
+            spin_speed: 0.0,
+            warps: &warps,
+        };
+        let anchor = Displacement::anchor(&work);
+        let at = |along| Displacement::of(&work, Polar::default(), along, 0).beyond(anchor);
+
+        let start = at(0.0);
+        assert_eq!(
+            (start.offset_x, start.offset_y),
+            (0.0, 0.0),
+            "the point the placement was answered at moved"
+        );
+
+        // A sawtooth a quarter of the way along is halfway up its rise, which
+        // is a displacement of half a figure-space unit on both axes.
+        let quarter = at(0.25);
+        assert_eq!(quarter.offset_x, 0.5);
+        assert_eq!(quarter.offset_y, 0.5);
+
+        // Nothing else the warps could have touched moved with them.
+        assert_eq!(quarter.radial, 1.0);
+        assert_eq!(quarter.turn, 0.0);
+        assert_eq!((quarter.scale_x, quarter.scale_y), (1.0, 1.0));
+    }
+
+    /// The offset lands on the point after everything that scales it, so a
+    /// figure squashed by an aspect animation is displaced by the same
+    /// distance a round one is.
+    #[test]
+    fn an_offset_moves_a_point_after_the_scales() {
+        let displacement = Displacement {
+            radial: 1.0,
+            turn: 0.0,
+            scale_x: 2.0,
+            scale_y: 0.5,
+            offset_x: 0.25,
+            offset_y: -0.75,
+        };
+        assert_eq!(
+            displacement.place(3.0, 4.0),
+            Point::new(3.0 * 2.0 + 0.25, 4.0 * 0.5 - 0.75)
+        );
     }
 
     #[test]

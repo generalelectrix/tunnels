@@ -49,14 +49,35 @@ impl AnimationTarget {
             Self::Size
             | Self::AspectRatio
             | Self::Spin
+            | Self::PositionX
+            | Self::PositionY
             | Self::Color
             | Self::ColorSpread
             | Self::ColorSaturation => true,
+            Self::Rotation | Self::Thickness | Self::MarqueeRotation => false,
+        }
+    }
+
+    /// Whether what reaches a figure's points is this target's deviation from
+    /// the placement rather than its whole value.
+    ///
+    /// Position is the one it is. A figure is placed before it is drawn, in the
+    /// units a position is measured in rather than in the figure's own, so the
+    /// whole value is spent putting it there and what is left for the points is
+    /// how far each of them departs from that — which is nothing at all where
+    /// the value is the same everywhere.
+    pub fn deviates_from_the_placement(self) -> bool {
+        match self {
+            Self::PositionX | Self::PositionY => true,
             Self::Rotation
             | Self::Thickness
-            | Self::PositionX
-            | Self::PositionY
-            | Self::MarqueeRotation => false,
+            | Self::Size
+            | Self::AspectRatio
+            | Self::Spin
+            | Self::MarqueeRotation
+            | Self::Color
+            | Self::ColorSpread
+            | Self::ColorSaturation => false,
         }
     }
 }

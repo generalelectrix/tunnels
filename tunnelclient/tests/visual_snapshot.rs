@@ -647,6 +647,28 @@ fn sprite_radial_animation() {
     compare_fill_to_fixture(&image, "sprite_radial_animation.png");
 }
 
+/// A position animation run along the figure, which shears it continuously
+/// rather than translating it as a whole.
+#[test]
+fn sprite_position_animation() {
+    let image = render_snapshot(
+        &fixture::sprite_position_animation_snapshot(),
+        &test_config(),
+    );
+    compare_fill_to_fixture(&image, "sprite_position_animation.png");
+}
+
+/// The same shear on a stroked figure, which reaches a point through the
+/// contour it was offset from rather than through the refined mesh.
+#[test]
+fn sprite_position_animation_outline() {
+    let image = render_snapshot(
+        &fixture::sprite_position_animation_outline_snapshot(),
+        &test_config(),
+    );
+    compare_fill_to_fixture(&image, "sprite_position_animation_outline.png");
+}
+
 /// A masked figure over a lit one intersects their apertures, which is how
 /// gobo stacking already works for segments.
 #[test]

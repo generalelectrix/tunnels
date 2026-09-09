@@ -432,10 +432,12 @@ impl Tunnel {
     /// Render this tunnel as a filled figure.
     ///
     /// A figure is one shape rather than a run of them, so a target that means
-    /// the same thing everywhere on it — rotation, thickness, position — is
-    /// resolved here into a single number. What is left is the targets that
-    /// vary from point to point, which travel with the layer to wherever the
-    /// figure's own geometry is.
+    /// the same thing everywhere on it — rotation, thickness — is resolved here
+    /// into a single number. What is left is the targets that vary from point
+    /// to point, which travel with the layer to wherever the figure's own
+    /// geometry is. Position is resolved in both places: the placement takes
+    /// its whole value, in the units a position is measured in, and the points
+    /// take how far each departs from that.
     fn render_fill(
         &self,
         figure: FigureId,
@@ -457,6 +459,10 @@ impl Tunnel {
         };
 
         let placement = Placement {
+            // The whole of a position animation, and not only the part no
+            // point deviates from: a placement is in the units a position knob
+            // is in and a point is in the figure's own, so the two cannot
+            // stand in for each other and neither can be netted off.
             x: offset.x + uniform(AnimationTarget::PositionX),
             y: offset.y + uniform(AnimationTarget::PositionY),
             // The tunnel's ellipse formula, onto the figure's two half-extents.
@@ -801,6 +807,12 @@ fn fill_animations(
     anims
         .iter()
         .filter(|a| a.animation.is_active() && a.target.varies_across_figure() && keep(a.target))
+        // A target the placement has already answered reaches the points as
+        // what deviates from it, so one that is the same everywhere reaches
+        // them with nothing to say. Dropping it is what leaves the figure
+        // undisplaced, and an undisplaced figure is drawn a way a displaced one
+        // cannot be.
+        .filter(|a| !a.target.deviates_from_the_placement() || a.animation.varies_in_space())
         .cloned()
         .collect()
 }
@@ -1036,6 +1048,10 @@ pub trait EmitStateChange {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::animation::{
+        ControlMessage as AnimControlMessage, StateChange as AnimStateChange,
+        Waveform as AnimWaveform,
+    };
     use crate::clock_bank::ClockBank;
     use crate::layer::DrawMode;
     use crate::palette::ColorPalette;
@@ -1048,6 +1064,9 @@ mod test {
     struct Silent;
     impl EmitStateChange for Silent {
         fn emit_tunnel_state_change(&mut self, _: StateChange) {}
+    }
+    impl crate::animation::EmitStateChange for Silent {
+        fn emit_animation_state_change(&mut self, _: AnimStateChange) {}
     }
 
     /// An emitter that keeps what it was told, rendered.
@@ -1540,6 +1559,74 @@ mod test {
         assert!(
             fill.color.is_uniform(),
             "a mask is one colour however the colour knobs are set"
+        );
+    }
+
+    /// A position animation is answered at the placement, and where it varies
+    /// across the figure at the points as well.
+    ///
+    /// The two answers are in different units — a placement is in the units a
+    /// position knob is in, a point is in the figure's own — so the placement
+    /// carries the whole value however the animation is set, and the points
+    /// can only be given what deviates from it. An animation that is one value
+    /// everywhere deviates by nothing and must not reach them at all: a figure
+    /// nothing displaces is drawn a way a displaced one cannot be.
+    #[test]
+    fn a_position_animation_reaches_the_points_only_where_it_varies() {
+        let fill = |waveform, n_periods: u16| {
+            let mut tunnel = Tunnel {
+                shape_mode: ShapeMode::Sprite,
+                ..Default::default()
+            };
+            tunnel.anims[0].target = AnimationTarget::PositionX;
+            for sc in [
+                AnimStateChange::Waveform(waveform),
+                AnimStateChange::NPeriods(n_periods),
+                AnimStateChange::Size(UnipolarFloat::ONE),
+                // A square is at one end of its travel at the start of its
+                // cycle, which is where the placement reads it; unsmoothed, so
+                // it is there exactly rather than partway up a ramp.
+                AnimStateChange::Smoothing(UnipolarFloat::ZERO),
+            ] {
+                tunnel.anims[0]
+                    .animation
+                    .control(AnimControlMessage::Set(sc), &mut Silent);
+            }
+            // Smoothing is reached over time rather than set. Standing still
+            // otherwise: the animation runs at no speed, so its own clock does
+            // not move off the start of the cycle.
+            tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+            let Layer::Fill(fill) = render_fixture(&tunnel) else {
+                panic!("a sprite mode renders a figure, not segments");
+            };
+            fill
+        };
+
+        let placed = fill(AnimWaveform::Square, 0);
+        let warped = fill(AnimWaveform::Square, 3);
+        let flat = fill(AnimWaveform::Constant, 3);
+
+        assert_ne!(
+            placed.placement.x, 0.0,
+            "a position animation did not move the placement"
+        );
+        assert_eq!(
+            warped.placement.x, placed.placement.x,
+            "the placement stopped carrying the whole value once the animation varied"
+        );
+
+        assert!(
+            !placed.warps_points(),
+            "an animation that is one value everywhere displaced the points"
+        );
+        assert!(
+            !flat.warps_points(),
+            "a waveform that is one value everywhere displaced the points"
+        );
+        assert_eq!(
+            warped.warps.iter().map(|a| a.target).collect::<Vec<_>>(),
+            vec![AnimationTarget::PositionX],
+            "a position animation that varies did not reach the points"
         );
     }
 
@@ -2410,6 +2497,60 @@ pub mod fixture {
             &mut NoopEmitter,
         );
         snapshot(render_default(&tunnel))
+    }
+
+    /// A figure sheared by a position animation running along its length.
+    ///
+    /// The animation moves each point in x by how far it deviates from the
+    /// value the placement was given, and that value is read along the figure's
+    /// linear coordinate — so the deviation grows and reverses down the figure
+    /// and the bullseye's rings snake instead of nesting. The whole figure is
+    /// still placed where an unanimated one would be: the deviation is zero
+    /// where the placement read it.
+    ///
+    /// `draw_mode` chooses which of the two passes carries the displacement.
+    /// A fill takes it through the refined mesh and an outline through the
+    /// stroke's contour points, and the two arrive at a point by different
+    /// routes.
+    fn sprite_position_animation(draw_mode: DrawMode) -> LayerCollection {
+        let mut tunnel = sprite_tunnel(BULLSEYE);
+        tunnel.draw_mode = draw_mode;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.05),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        // Small enough that the shear stays inside the frame: a golden clipped
+        // by the viewport hides whatever it clipped.
+        tunnel.size = Smoother::new(
+            UnipolarFloat::new(0.3),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        // Along the figure rather than around it, so the displacement is
+        // across the direction it is applied in and reads as a shear.
+        tunnel.color_phase = ColorPhase::Linear;
+        tunnel.anims[0].target = AnimationTarget::PositionX;
+        for sc in [
+            AnimStateChange::Waveform(Waveform::Sine),
+            AnimStateChange::NPeriods(2),
+            AnimStateChange::Size(UnipolarFloat::new(0.4)),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
+        }
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure sheared by a position animation, filled.
+    pub fn sprite_position_animation_snapshot() -> LayerCollection {
+        sprite_position_animation(DrawMode::Fill)
+    }
+
+    /// A figure sheared by a position animation, stroked.
+    pub fn sprite_position_animation_outline_snapshot() -> LayerCollection {
+        sprite_position_animation(DrawMode::Outline)
     }
 
     /// A masked figure stacked over a lit one, which intersects their

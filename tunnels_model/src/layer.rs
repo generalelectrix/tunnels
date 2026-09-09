@@ -369,6 +369,18 @@ pub struct FillLayer {
     pub warps: Vec<TargetedAnimation<PreparedAnimation>>,
 }
 
+impl FillLayer {
+    /// Whether anything displaces the figure's points.
+    ///
+    /// A figure nothing displaces is drawn from the tessellator's own
+    /// triangles, with no per-vertex pass at all; a displaced one needs the
+    /// refined mesh the displacement lives on, which is more triangles and a
+    /// different tessellation of the same region.
+    pub fn warps_points(&self) -> bool {
+        self.spin_speed != 0.0 || !self.warps.is_empty()
+    }
+}
+
 /// What a beam expands into for one frame.
 #[derive(Debug, Clone)]
 pub enum Layer {

@@ -347,7 +347,7 @@ where
         // takes this path however many are running on it.
         let flat = fill.color.is_mask() || (fill.color_anims.is_empty() && fill.color.is_uniform());
         let color = flat_color(fill);
-        let warping = fill.spin_speed != 0.0 || !fill.warps.is_empty();
+        let warping = fill.warps_points();
         // A colour animation that varies across the figure has to be resolved
         // against the figure's own coordinate, not the colour cycle's, or its
         // period comes out as the colour's rather than its own.
