@@ -131,6 +131,13 @@ impl VertexBuffers {
     /// is then applied to the vertex where it actually is — as a rotation and
     /// a scale about the origin, which is the same transform the fill reaches
     /// through polar coordinates, without a second arctangent per vertex.
+    ///
+    /// The width is answered here as well, and only here. An outline is
+    /// stroked once at a width no beam exceeds, and each vertex is drawn in
+    /// from there toward the contour point it was offset from — so a thickness
+    /// animation reaches a figure the way every other geometry animation does,
+    /// at each of its points, and an outline can be thick at one place around
+    /// a figure and gone at another.
     pub fn stroke_vertex_pass(&mut self, mesh: &StrokeMesh, work: VertexWork) {
         let needs = Needs::of(&work);
         let anchor = Displacement::anchor(&work);
@@ -142,7 +149,14 @@ impl VertexBuffers {
             let along = polar.phase(vertex.on_path, work.field.phase);
             let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
 
-            let (x, y) = (vertex.position.x(), vertex.position.y());
+            // The ribbon's own width, applied before anything moves the
+            // point: the offset is in the figure's undisplaced coordinates,
+            // which is where the contour point it is measured from lives.
+            let reach = work.taper_at(along, i);
+            let (x, y) = (
+                vertex.on_path.x() + (vertex.position.x() - vertex.on_path.x()) * reach,
+                vertex.on_path.y() + (vertex.position.y() - vertex.on_path.y()) * reach,
+            );
             let (x, y) = if needs.rotates {
                 let (sin, cos) = displacement.turn.sin_cos();
                 (x * cos - y * sin, x * sin + y * cos)
@@ -165,6 +179,34 @@ pub struct VertexWork<'a> {
     pub spin_speed: f32,
     /// Animations displacing geometry.
     pub warps: &'a [TargetedAnimation<PreparedAnimation>],
+    /// Animations scaling an outline's width along the contour.
+    pub taper: &'a [TargetedAnimation<PreparedAnimation>],
+    /// The width an outline is drawn at where nothing tapers it, as a fraction
+    /// of the width it was stroked at.
+    pub stroke_width: f32,
+}
+
+impl VertexWork<'_> {
+    /// How far a ribbon reaches at one point, as a fraction of the width its
+    /// outline was stroked at.
+    ///
+    /// Never past one, so the width only ever narrows. Narrowing is what keeps
+    /// the ribbon the shape it was cut as: an offset scaled down lands where a
+    /// thinner stroke's own vertex would, and one scaled up would carry joins
+    /// built for a stroke this wide out to a width they were not cut for.
+    ///
+    /// Never below zero either, and zero is reached rather than approached: a
+    /// waveform at full amplitude troughs at exactly minus one, which is a
+    /// ribbon of no width and a beam that has gone out.
+    #[inline]
+    fn taper_at(&self, along: f32, index: usize) -> f32 {
+        // Summed the way a beam sums them, so a figure and a run of segments
+        // answer a stack of thickness animations alike.
+        let scale = self.taper.iter().fold(1.0, |acc, a| {
+            acc + a.animation.value(Phase::new(f64::from(along)), index) as f32
+        });
+        (self.stroke_width * scale).clamp(0.0, 1.0)
+    }
 }
 
 /// Which coordinates a frame's work actually asks for.
@@ -242,10 +284,10 @@ impl Displacement {
                 AnimationTarget::PositionX => out.offset_x += value,
                 AnimationTarget::PositionY => out.offset_y += value,
                 // The rest never arrive. A colour target is answered once per
-                // ramp texel instead, and a target that means the same thing
-                // everywhere on a figure is resolved into a single number and
-                // folded into the layer before it is built — into the
-                // rotation, into the thickness, or, for a marquee, into
+                // ramp texel; thickness is answered per vertex too, but on the
+                // outline alone, where it scales the ribbon's reach rather
+                // than moving the point; a rotation turns the whole figure and
+                // is folded into the placement; and a marquee resolves into
                 // nothing, a figure having no segments to slide along a path.
                 AnimationTarget::Color
                 | AnimationTarget::ColorSpread
@@ -550,6 +592,8 @@ mod test {
                 },
                 spin_speed,
                 warps: &warps,
+                taper: &[],
+                stroke_width: 1.0,
             })
         };
 
@@ -629,6 +673,8 @@ mod test {
             },
             spin_speed: 0.0,
             warps: &warps,
+            taper: &[],
+            stroke_width: 1.0,
         };
         let anchor = Displacement::anchor(&work);
         let at = |along| Displacement::of(&work, Polar::default(), along, 0).beyond(anchor);
