@@ -549,6 +549,7 @@ mod test {
             },
             color_anims: Vec::new(),
             warps: Vec::new(),
+            taper: Vec::new(),
         }
     }
 

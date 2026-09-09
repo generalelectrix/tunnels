@@ -493,12 +493,18 @@ impl Tunnel {
             figure,
             placement,
             spin_speed: self.spin_speed.val(),
-            thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
-                .abs(),
+            // The knob alone. A thickness animation is not folded in here: on
+            // a figure it tapers the outline point by point, so the width the
+            // knob names is the one the taper is measured against rather than
+            // one already spent.
+            thickness: self.thickness.val().val(),
             draw_mode: self.draw_mode,
             color: self.color_field(base_hue, level_scale, as_mask),
             color_anims: fill_animations(anims, AnimationTarget::is_color),
-            warps: fill_animations(anims, |target| !target.is_color()),
+            warps: fill_animations(anims, |target| {
+                !target.is_color() && target != AnimationTarget::Thickness
+            }),
+            taper: fill_animations(anims, |target| target == AnimationTarget::Thickness),
         }
     }
 
@@ -1713,6 +1719,70 @@ mod test {
         );
     }
 
+    /// A thickness animation travels with the layer instead of being resolved
+    /// into the width before it is built.
+    ///
+    /// Resolved, it was asked for its value where a figure has no coordinate —
+    /// at the start of the cycle — and periodicity multiplies exactly that
+    /// coordinate, so the knob reached nothing and a sine contributed nothing
+    /// at all. What the layer carries has to be the animation itself, and it
+    /// has to vary along the figure.
+    #[test]
+    fn a_thickness_animation_travels_with_the_layer() {
+        let mut tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            ..Default::default()
+        };
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.15),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        tunnel.anims[0].target = AnimationTarget::Thickness;
+        for sc in [
+            AnimStateChange::Waveform(AnimWaveform::Sine),
+            AnimStateChange::NPeriods(2),
+            AnimStateChange::Size(UnipolarFloat::ONE),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut Silent);
+        }
+
+        let Layer::Fill(fill) = render_fixture(&tunnel) else {
+            panic!("a sprite mode renders a figure");
+        };
+        assert_eq!(
+            fill.thickness, 0.15,
+            "the width the taper is measured against has an animation folded into it"
+        );
+        assert_eq!(
+            fill.taper.len(),
+            1,
+            "the thickness animation did not reach the layer"
+        );
+        assert!(
+            fill.warps.is_empty(),
+            "the thickness animation was sent to displace points as well"
+        );
+        // Two periods run across the figure, so its peak and trough are an
+        // eighth and three eighths of the way along. The value at the start of
+        // the cycle is a zero, which is what the fold used to read and why a
+        // sine's animation used to draw nothing at all.
+        let taper = &fill.taper[0].animation;
+        assert_eq!(taper.value(Phase::ZERO, 0), 0.0);
+        assert!(
+            taper.value(Phase::new(0.125), 0) > 0.99,
+            "the peak does not reach full amplitude, only {}",
+            taper.value(Phase::new(0.125), 0)
+        );
+        assert!(
+            taper.value(Phase::new(0.375), 0) < -0.99,
+            "at full amplitude the trough takes the width to nothing, not to {}",
+            taper.value(Phase::new(0.375), 0)
+        );
+    }
+
     fn render_fixture(tunnel: &Tunnel) -> Layer {
         tunnel.render(
             UnipolarFloat::ONE,
@@ -2691,6 +2761,38 @@ pub mod fixture {
             Tunnel::GEOM_SMOOTH_TIME,
             SmoothMode::Linear,
         );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// An outline tapered by a thickness animation running around the figure.
+    ///
+    /// At full amplitude the waveform's trough takes the width to nothing, so
+    /// the outline is thick at some places around the rings and absent at
+    /// others, which is what makes a figure read as a beam rather than as a
+    /// line of even weight. `n_periods` chooses how many times that runs
+    /// around, and is the whole of what distinguishes one of these from
+    /// another.
+    pub fn sprite_thickness_animation_snapshot(n_periods: u16) -> LayerCollection {
+        let mut tunnel = sprite_tunnel(BULLSEYE);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.15),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        // Around the figure rather than along it, so the taper runs the way a
+        // ring's own outline does.
+        tunnel.color_phase = ColorPhase::Angle;
+        tunnel.anims[0].target = AnimationTarget::Thickness;
+        for sc in [
+            AnimStateChange::Waveform(Waveform::Sine),
+            AnimStateChange::NPeriods(n_periods),
+            AnimStateChange::Size(UnipolarFloat::ONE),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
+        }
         snapshot(render_default(&tunnel))
     }
 
