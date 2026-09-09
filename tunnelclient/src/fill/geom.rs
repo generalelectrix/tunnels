@@ -179,6 +179,20 @@ impl TriangleList {
 /// touches every vertex every frame to work out polar coordinates and phase,
 /// so widening an `i16` there disappears beside the arctangent next to it. The
 /// stored form never has to be the form a backend sees.
+///
+/// **A figure's interior is deliberately not kept on this grid, though it
+/// could be.** Snapping one saves 5.0 MB across the library and costs more
+/// than every other use of the grid put together: a star lattice moves 542
+/// pixels of a 512-line frame and a star polygon 339, against 35 for a refined
+/// mesh and 63 for an outline.
+///
+/// Why those two are the worst is the part worth keeping, because it predicts
+/// the next case without measuring it. **What a screen punishes is the ratio
+/// of boundary to area, not the size of the displacement.** A lattice's fill
+/// is nearly all edge, so a fixed error flips a great many of its pixels,
+/// while the same error inside a solid shape flips none of them. The rule runs
+/// the other way round on an outline and gives the same answer: a thin ribbon
+/// suffers where a wide one does not, because a wide one is mostly interior.
 pub const QUANTISATION: f32 = 8192.0;
 
 /// A stored vertex, snapped to the grid [`QUANTISATION`] describes.
