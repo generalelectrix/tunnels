@@ -328,6 +328,21 @@ impl Tunnel {
         }
     }
 
+    /// How many segments a run of this tunnel is drawn as.
+    ///
+    /// Above forty an odd count is rounded up, for artistic reasons: a run that
+    /// dense reads better without the seam an odd one leaves.
+    ///
+    /// This is the count an animation is resolved against, so it is also how
+    /// many places along the tunnel an animation is asked for a value.
+    pub fn segment_count(&self) -> u8 {
+        if self.segs > 40 && !self.segs.is_multiple_of(2) {
+            self.segs + 1
+        } else {
+            self.segs
+        }
+    }
+
     /// Borrow an animation as a mutable reference.
     pub fn animation(&mut self, anim_num: AnimationIdx) -> &mut TargetedAnimation {
         &mut self.anims[anim_num]
@@ -539,12 +554,7 @@ impl Tunnel {
         ctx: RenderContext,
         anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     ) -> SegmentLayer {
-        // for artistic reasons/convenience, eliminate odd numbers of segments above 40.
-        let segs = if self.segs > 40 && !self.segs.is_multiple_of(2) {
-            self.segs + 1
-        } else {
-            self.segs
-        };
+        let segs = self.segment_count();
 
         let mut arcs = Vec::new();
 
