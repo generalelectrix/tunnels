@@ -1,5 +1,5 @@
 use crate::{
-    animation::TargetedAnimation,
+    animation::{OffsetSpan, TargetedAnimation},
     audio::{AudioInput, ShowEmitter},
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
@@ -14,6 +14,14 @@ use crate::{
 
 use log::error;
 use serde::{Deserialize, Serialize};
+
+/// The animation a surface's controls are pointed at, and the beam it is drawn
+/// on.
+pub(crate) struct SelectedAnimation<'m> {
+    pub animation: &'m mut TargetedAnimation,
+    /// How far the beam's offset axis runs, and how it is divided.
+    pub spread: OffsetSpan,
+}
 
 /// Manage stateful aspects of the UI.
 /// Mediate between the input systems and the show data.
@@ -61,21 +69,24 @@ impl MasterUI {
         }
     }
 
-    /// The animation the controls are pointed at, and how many places along the
-    /// beam it is resolved at.
+    /// The animation the controls are pointed at, with the beam it is spread
+    /// over.
     ///
-    /// The two travel together because reading an animation is only meaningful
-    /// against the run it is spread over: a waveform is asked for a value once
-    /// per segment, and which segment is asking is part of the question.
-    pub(crate) fn current_animation_and_segments<'m>(
+    /// They travel together because reading an animation is only meaningful
+    /// against that beam: a waveform is asked for a value once per place along
+    /// it, and which place is asking is part of the question.
+    pub(crate) fn selected_animation<'m>(
         &self,
         mixer: &'m mut Mixer,
-    ) -> Option<(&'m mut TargetedAnimation, usize)> {
+    ) -> Option<SelectedAnimation<'m>> {
         match self.current_beam(mixer) {
             Beam::Look(_) => None,
             Beam::Tunnel(t) => {
-                let segments = t.segment_count() as usize;
-                Some((t.animation(self.current_animation_idx()), segments))
+                let spread = t.offset_span();
+                Some(SelectedAnimation {
+                    animation: t.animation(self.current_animation_idx()),
+                    spread,
+                })
             }
         }
     }

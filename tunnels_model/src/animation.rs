@@ -8,7 +8,8 @@ use crate::{clock_bank::ClockIdx, waveforms};
 use noise::NoiseFn;
 use noise::Simplex;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::fmt;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
@@ -84,9 +85,12 @@ impl TargetedAnimation {
         &self,
         external_clocks: &impl ClockStore,
         audio_envelope: UnipolarFloat,
+        span: OffsetSpan,
     ) -> TargetedAnimation<PreparedAnimation> {
         TargetedAnimation {
-            animation: self.animation.prepare(external_clocks, audio_envelope),
+            animation: self
+                .animation
+                .prepare(external_clocks, audio_envelope, span),
             target: self.target,
         }
     }
@@ -198,7 +202,8 @@ impl Animation {
         }
     }
 
-    /// Resolve everything that is fixed for a frame, once.
+    /// Resolve everything that is fixed for a frame, once, for a beam of the
+    /// given shape.
     ///
     /// A render asks an animation for a value once per segment, or on a filled
     /// shape once per vertex — tens of thousands of times. Most of what
@@ -206,18 +211,41 @@ impl Animation {
     /// what phase it is at, where the smoother has got to, and the amplitude
     /// the size, submaster and audio envelope multiply out to. None of it
     /// depends on where in the figure the question is being asked.
+    ///
+    /// The span is what the beam brings to that, and it is more than a number.
+    /// A noise field is spread over it, so it decides both what an offset
+    /// means and whether the field is worth tabulating before the walk begins
+    /// — which is why anything that means to read what a beam is drawn with,
+    /// a preview included, has to prepare against that beam's own span rather
+    /// than one of its choosing.
     pub fn prepare(
         &self,
         external_clocks: &impl ClockStore,
         audio_envelope: UnipolarFloat,
+        span: OffsetSpan,
     ) -> PreparedAnimation {
+        let smoothing = self.smoothing.val();
+        let phase_temporal = self.phase(external_clocks);
+        let ticks = self.ticks(external_clocks);
+        let tabulate = self.active()
+            && matches!(self.static_params.waveform, Waveform::Noise)
+            && self.static_params.n_periods > 0
+            && span.is_tabulated();
         PreparedAnimation {
             static_params: self.static_params,
-            phase_temporal: self.phase(external_clocks),
-            smoothing: self.smoothing.val(),
-            ticks: self.ticks(external_clocks),
+            phase_temporal,
+            smoothing,
+            ticks,
             scale: self.scale_value(external_clocks, audio_envelope, 1.0),
             simplex_gen: self.simplex_gen,
+            noise: tabulate.then(|| {
+                Arc::new(NoiseTable::build(
+                    self.simplex_gen,
+                    ticks as f64 + phase_temporal.val(),
+                    f64::from(self.static_params.n_periods),
+                    (1.0 - smoothing.val()) * span.extent(),
+                ))
+            }),
             active: self.active(),
         }
     }
@@ -357,11 +385,258 @@ pub trait EmitStateChange {
     fn emit_animation_state_change(&mut self, sc: StateChange);
 }
 
+/// How many units of noise a figure spreads across itself.
+///
+/// A run of segments spends one unit per segment, so a hundred-odd of them
+/// reach that many. A figure has no segments to count, so it is given a span of
+/// its own in the same units, chosen to decorrelate across it about as much as
+/// a run of segments does along its length.
+pub const NOISE_SPREAD: f64 = 64.0;
+
+/// Where along the axis an animation decorrelates across a point sits.
+///
+/// Noise reads this as its second coordinate: two points a whole unit apart
+/// take independent values, and two points sharing one take the same value.
+/// What a unit means is the difference between the two kinds of beam, which is
+/// why this is a type rather than a number — a run of segments counts them,
+/// and a figure spreads a fixed span over itself however finely it is divided.
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Default)]
+pub struct SpreadOffset(f64);
+
+impl SpreadOffset {
+    /// The offset of one segment of a run of them.
+    pub fn segment(index: usize) -> Self {
+        Self(index as f64)
+    }
+
+    /// The offset of a point on a figure, from a coordinate running 0 to 1
+    /// across it.
+    ///
+    /// Taking a coordinate rather than an index is what keeps a figure's noise
+    /// the figure's: a point halfway across reads the same value however many
+    /// vertices the figure was divided into, so the density a mesh was cut at
+    /// does not reach the noise.
+    pub fn across_figure(t: f64) -> Self {
+        Self(t * NOISE_SPREAD)
+    }
+
+    /// The offset itself, in those units.
+    pub fn val(self) -> f64 {
+        self.0
+    }
+}
+
+/// How far a beam's offset axis runs, and how it is divided.
+///
+/// A beam resolves an animation at a set of places along itself, and the offset
+/// says where each of them sits. The two kinds of beam answer that differently
+/// — a run of segments counts its segments, and a figure spreads a fixed span
+/// across itself — so a caller that means to sweep the axis, or to tabulate
+/// anything over it, has to be told which it is looking at.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum OffsetSpan {
+    /// A run of this many segments, one unit apart.
+    Segments(u8),
+    /// A figure, over which [`NOISE_SPREAD`] units are spread.
+    Figure,
+}
+
+impl Default for OffsetSpan {
+    fn default() -> Self {
+        Self::Segments(0)
+    }
+}
+
+impl OffsetSpan {
+    /// How far the axis runs, in the units an offset is measured in.
+    pub fn extent(self) -> f64 {
+        match self {
+            Self::Segments(count) => f64::from(count),
+            Self::Figure => NOISE_SPREAD,
+        }
+    }
+
+    /// How many segments the beam is drawn as.
+    ///
+    /// A figure is drawn as none. It is a continuum rather than a run of
+    /// places, so there is nothing to count and nowhere a point of its own
+    /// would go.
+    pub fn segment_count(self) -> usize {
+        match self {
+            Self::Segments(count) => usize::from(count),
+            Self::Figure => 0,
+        }
+    }
+
+    /// The offset a given fraction of the way along the beam.
+    ///
+    /// A run of segments has places rather than a continuum, so a fraction
+    /// lands on the segment it falls inside and every point of that segment
+    /// answers alike. A figure is continuous and takes the fraction itself.
+    pub fn at(self, along: UnipolarFloat) -> SpreadOffset {
+        match self {
+            Self::Segments(count) => {
+                SpreadOffset::segment((along.val() * f64::from(count)) as usize)
+            }
+            Self::Figure => SpreadOffset::across_figure(along.val()),
+        }
+    }
+
+    /// Whether a beam of this shape reads noise at more places than tabulating
+    /// it would cost.
+    ///
+    /// A figure is resolved at every vertex of a mesh whose density comes from
+    /// screen pixels — tens of thousands of them, and more on a larger frame —
+    /// so a table bounds what it costs and keeps that cost off the resolution.
+    /// A run of segments is resolved once per segment, which is fewer places
+    /// than the table would have entries, so it reads the field directly.
+    fn is_tabulated(self) -> bool {
+        matches!(self, Self::Figure)
+    }
+}
+
+/// Samples per unit of noise in a tabulated animation.
+///
+/// Simplex features run about a unit across, so two samples a unit is the
+/// coarsest that represents one at all. From there the error falls as the
+/// square of the spacing, which is what a field this smooth interpolated
+/// bilinearly is worth: measured against the field itself across every
+/// periodicity and smoothing a control can reach, two samples a unit sits 0.86
+/// from it, four 0.31, eight 0.082, sixteen 0.023 — on a waveform whose own
+/// range is two.
+///
+/// Eight is where that stops being the largest error in the picture and where
+/// the table is still cheap. The offset axis alone spans [`NOISE_SPREAD`]
+/// units, so each doubling from here doubles the rows, and
+/// [`NOISE_TABLE_TOLERANCE`] is the other end of the same choice.
+const SAMPLES_PER_NOISE_UNIT: f64 = 8.0;
+
+/// How far a tabulated animation may sit from the noise it stands for.
+///
+/// Held beside the density that buys it, because a change to one without the
+/// other is a change to what a table promises.
+pub const NOISE_TABLE_TOLERANCE: f64 = 0.1;
+
+/// Samples along an axis that spans no noise at all.
+///
+/// An axis of no extent still needs two samples for an interpolation to have
+/// something to sit between; both hold the same value, so what it reads is that
+/// value everywhere.
+const MIN_TABLE_SAMPLES: usize = 2;
+
+/// One frame of an animation's noise, tabulated over the beam it is drawn on.
+///
+/// The field is read on a grid and interpolated between, so what an animation
+/// costs follows the noise it actually spans rather than how many places the
+/// beam is divided into. Everything that grows without bound — the elapsed
+/// ticks the field drifts along — is spent building the table, so what a
+/// reader hands back is bounded by the beam.
+///
+/// Holds the noise itself and not the waveform: the duty cycle gates and a
+/// pulse's knees are applied to what comes out, where they stay as sharp as
+/// they are asked for rather than being blurred across a cell.
+struct NoiseTable {
+    /// Samples in row-major order, a row per offset and `cols` to a row.
+    samples: Vec<f64>,
+    cols: usize,
+    rows: usize,
+    /// How far the phase axis runs, in noise units.
+    phase_extent: f64,
+    /// How far the offset axis runs, in noise units.
+    offset_extent: f64,
+}
+
+impl fmt::Debug for NoiseTable {
+    /// Names the table's shape rather than its contents, which run to tens of
+    /// thousands of samples.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NoiseTable")
+            .field("cols", &self.cols)
+            .field("rows", &self.rows)
+            .field("phase_extent", &self.phase_extent)
+            .field("offset_extent", &self.offset_extent)
+            .finish()
+    }
+}
+
+impl NoiseTable {
+    /// Tabulate a rectangle of `field`, starting at `phase_base` along the
+    /// axis it drifts on.
+    fn build(field: &Simplex, phase_base: f64, phase_extent: f64, offset_extent: f64) -> Self {
+        let cols = Self::samples_across(phase_extent);
+        let rows = Self::samples_across(offset_extent);
+        let mut samples = Vec::with_capacity(cols * rows);
+        for row in 0..rows {
+            let y = offset_extent * row as f64 / (rows - 1) as f64;
+            for col in 0..cols {
+                let x = phase_extent * col as f64 / (cols - 1) as f64;
+                samples.push(field.get([phase_base + x, y]));
+            }
+        }
+        Self {
+            samples,
+            cols,
+            rows,
+            phase_extent,
+            offset_extent,
+        }
+    }
+
+    /// How many samples an axis spanning `extent` noise units is given.
+    fn samples_across(extent: f64) -> usize {
+        let spanned = (SAMPLES_PER_NOISE_UNIT * extent).ceil();
+        // A NaN or an unbounded extent saturates rather than wrapping, and the
+        // minimum then puts it on a real count.
+        (spanned as usize).saturating_add(1).max(MIN_TABLE_SAMPLES)
+    }
+
+    /// The field at a point of the rectangle, interpolated between the four
+    /// samples around it.
+    ///
+    /// A point outside the rectangle reads its edge. Nothing on a beam asks for
+    /// one — the extents are what the beam spans — but a coordinate arriving
+    /// from geometry is not worth trusting to the last bit during a show.
+    fn sample(&self, phase: f64, offset: f64) -> f64 {
+        let (col, along) = Self::cell(phase, self.phase_extent, self.cols);
+        let (row, down) = Self::cell(offset, self.offset_extent, self.rows);
+        let top = self.row(row);
+        let bottom = self.row(row + 1);
+        let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+        lerp(
+            lerp(top[col], top[col + 1], along),
+            lerp(bottom[col], bottom[col + 1], along),
+            down,
+        )
+    }
+
+    /// Which cell of an axis a coordinate falls in, and how far across it.
+    ///
+    /// The cell is always one the axis has, so the pair either side of it is
+    /// always there to interpolate between.
+    fn cell(at: f64, extent: f64, samples: usize) -> (usize, f64) {
+        let cells = samples - 1;
+        // An extent of nothing is one cell wide with both ends equal, so
+        // anywhere in it reads the same value.
+        if extent <= 0.0 {
+            return (0, 0.0);
+        }
+        let scaled = (at / extent * cells as f64).clamp(0.0, cells as f64);
+        let cell = (scaled as usize).min(cells - 1);
+        (cell, scaled - cell as f64)
+    }
+
+    /// One row of samples, clamped to the rows there are.
+    fn row(&self, row: usize) -> &[f64] {
+        let row = row.min(self.rows - 1);
+        &self.samples[row * self.cols..(row + 1) * self.cols]
+    }
+}
+
 /// An animation with everything that is constant for a frame already resolved.
 ///
 /// Holds no reference to the animation it came from, so a render can prepare
 /// its animations once and then walk a figure without borrowing anything.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PreparedAnimation {
     static_params: StaticParams,
     /// Where the driving clock has got to.
@@ -373,6 +648,9 @@ pub struct PreparedAnimation {
     /// Size, clock submaster and audio envelope, multiplied out.
     scale: f64,
     simplex_gen: &'static Simplex,
+    /// The frame's noise, where the beam reads it at more places than
+    /// tabulating it costs.
+    noise: Option<Arc<NoiseTable>>,
     /// A zero-size animation contributes nothing and skips the waveform.
     active: bool,
 }
@@ -400,12 +678,26 @@ impl PreparedAnimation {
             && self.static_params.waveform.varies_with_phase()
     }
 
+    /// Whether the value depends on where along the offset axis it is asked.
+    ///
+    /// Only noise reads that axis, and only while its samples are not held
+    /// together: at full smoothing every point of a beam takes the same noise,
+    /// and with no periodicity the offset is held at zero whatever it was
+    /// given. A caller that pays for the coordinate the offset is measured
+    /// along can skip it when nothing reads it.
+    pub fn varies_across_spread(&self) -> bool {
+        self.active
+            && matches!(self.static_params.waveform, Waveform::Noise)
+            && self.static_params.n_periods > 0
+            && self.smoothing < UnipolarFloat::ONE
+    }
+
     /// The animation's value at a point, with amplitude applied.
-    pub fn value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
+    pub fn value(&self, spatial_phase_offset: Phase, offset: SpreadOffset) -> f64 {
         if !self.active {
             return 0.;
         }
-        self.unit_value(spatial_phase_offset, offset_index) * self.scale
+        self.unit_value(spatial_phase_offset, offset) * self.scale
     }
 
     /// Scale a value by the amplitude factors: size, clock submaster, and audio
@@ -415,7 +707,7 @@ impl PreparedAnimation {
     }
 
     /// The waveform's own value, before amplitude.
-    pub fn unit_value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
+    pub fn unit_value(&self, spatial_phase_offset: Phase, offset: SpreadOffset) -> f64 {
         let result = match self.static_params.waveform {
             Waveform::Sine => waveforms::sine(&self.waveform_args(spatial_phase_offset)),
             Waveform::Square => waveforms::square(&self.waveform_args(spatial_phase_offset)),
@@ -436,8 +728,6 @@ impl PreparedAnimation {
                     return 0.0;
                 }
 
-                let x_offset = self.ticks as f64 + spatial_phase + temporal_phase;
-
                 // Use smoothing parameter as a "cross-correlation" term;
                 // increased smoothing means a smaller Y-offset between
                 // samples. Smoothing of zero offsets each sample by a full
@@ -452,10 +742,19 @@ impl PreparedAnimation {
                 let y_offset = if self.static_params.n_periods == 0 {
                     0.0
                 } else {
-                    (1.0 - self.smoothing.val()) * offset_index as f64
+                    (1.0 - self.smoothing.val()) * offset.val()
                 };
 
-                let val = self.simplex_gen.get([x_offset, y_offset]);
+                // A tabulated animation was built over exactly this rectangle
+                // of the field, with the elapsed ticks already spent, so what
+                // it is handed here is the beam's own coordinates and stays
+                // bounded by the beam.
+                let val = match &self.noise {
+                    Some(table) => table.sample(spatial_phase, y_offset),
+                    None => self
+                        .simplex_gen
+                        .get([self.ticks as f64 + spatial_phase + temporal_phase, y_offset]),
+                };
 
                 if self.static_params.pulse {
                     gate_noise(val)
@@ -523,6 +822,189 @@ fn gate_noise(v: f64) -> f64 {
 mod test {
     use super::*;
     use crate::clock_bank::ClockBank;
+
+    /// What the first few segments of a run read, taken before a figure had a
+    /// coordinate of its own.
+    const PINNED_SEGMENT_NOISE: [f64; 4] = [
+        0.0,
+        -0.2650758166508769,
+        -0.26703366624431013,
+        -0.26222119586893344,
+    ];
+
+    /// A noise animation shaped by `n_periods` and `smoothing`, resolved
+    /// against `span`.
+    fn noise_animation(n_periods: u16, smoothing: f64, span: OffsetSpan) -> PreparedAnimation {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let mut animation = Animation::default();
+        for sc in [
+            StateChange::Waveform(Waveform::Noise),
+            StateChange::NPeriods(n_periods),
+            StateChange::Size(UnipolarFloat::ONE),
+            StateChange::Smoothing(UnipolarFloat::new(smoothing)),
+        ] {
+            animation.control(ControlMessage::Set(sc), &mut Noop);
+        }
+        // Smoothing is reached over time rather than set, and the animation
+        // runs at no speed, so nothing else moves while it gets there.
+        animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO, span)
+    }
+
+    /// A tabulated animation stands for the field it tabulates.
+    ///
+    /// Everything a figure is drawn with comes off the table, so how far it can
+    /// sit from the noise it was built from is the whole of what tabulating
+    /// costs in the picture. Read against the same animation resolved without a
+    /// table, across every periodicity and smoothing a control can reach.
+    #[test]
+    fn a_tabulated_animation_stands_for_the_noise_it_tabulates() {
+        // Finer than the table on both axes, so the reading falls between
+        // samples rather than on them, which is where interpolation is worst.
+        let steps = 237;
+        let mut worst: f64 = 0.0;
+        for n_periods in [1u16, 3, 8, 15] {
+            for smoothing in [0.0, 0.5, 0.9] {
+                let tabulated = noise_animation(n_periods, smoothing, OffsetSpan::Figure);
+                assert!(
+                    tabulated.noise.is_some(),
+                    "a figure's noise was not tabulated, so this compared the field with itself"
+                );
+                // A run of segments reads the field directly, which is what
+                // gives the same animation an untabulated reading to be held
+                // against.
+                let direct = noise_animation(n_periods, smoothing, OffsetSpan::Segments(1));
+
+                for i in 0..=steps {
+                    for j in 0..=steps {
+                        let phase = Phase::new(i as f64 / (steps + 1) as f64);
+                        let offset = SpreadOffset::across_figure(j as f64 / steps as f64);
+                        let error = (tabulated.unit_value(phase, offset)
+                            - direct.unit_value(phase, offset))
+                        .abs();
+                        assert!(
+                            error <= NOISE_TABLE_TOLERANCE,
+                            "a table of noise over {n_periods} periods at a smoothing of \
+                             {smoothing} sat {error} from the field it stands for"
+                        );
+                        worst = worst.max(error);
+                    }
+                }
+            }
+        }
+        // The tolerance is what the sample density was chosen to buy, so it has
+        // to be reached and not merely respected: one that nothing approaches
+        // would let the density fall a long way before anything noticed.
+        assert!(
+            worst > NOISE_TABLE_TOLERANCE / 4.0,
+            "the worst a table sat from its field was {worst}, so far inside the \
+             {NOISE_TABLE_TOLERANCE} it promises that the promise says nothing"
+        );
+    }
+
+    /// A run of segments reads the noise field where it always did.
+    ///
+    /// Segments were never the thing tessellation moved — a segment index is
+    /// the beam's own and does not follow a screen — so nothing about how a
+    /// figure is answered is allowed to reach them. Every show that exists is
+    /// built on these numbers.
+    #[test]
+    fn noise_on_a_run_of_segments_is_where_it_has_always_been() {
+        let anim = noise_animation(3, 0.25, OffsetSpan::Segments(126));
+        assert!(
+            anim.noise.is_none(),
+            "a run of segments was answered from a table rather than the field"
+        );
+        let smoothing = anim.smoothing.val();
+
+        for seg_num in [0usize, 1, 7, 64, 125] {
+            let phase = Phase::new(seg_num as f64 / 126.0);
+            // The coordinates a segment has always been asked at: the field
+            // drifts along the elapsed periods and the phase, and steps across
+            // by a segment at a time, held together by the smoothing.
+            let expected = get_simplex_gen().get([
+                anim.ticks as f64 + phase.val() * 3.0 + anim.phase_temporal.val(),
+                (1.0 - smoothing) * seg_num as f64,
+            ]);
+            let value = anim.unit_value(phase, SpreadOffset::segment(seg_num));
+            assert_eq!(
+                value, expected,
+                "segment {seg_num} of a run reads the noise field at a different place than it did"
+            );
+        }
+
+        // And the numbers themselves, as they stood before a figure had a
+        // coordinate of its own.
+        let pinned: Vec<f64> = (0..4)
+            .map(|seg_num| {
+                anim.unit_value(
+                    Phase::new(seg_num as f64 / 126.0),
+                    SpreadOffset::segment(seg_num),
+                )
+            })
+            .collect();
+        for (value, pin) in pinned.iter().zip(PINNED_SEGMENT_NOISE) {
+            assert!(
+                (value - pin).abs() < 1e-12,
+                "a run of segments reads {pinned:?} where it used to read \
+                 {PINNED_SEGMENT_NOISE:?}"
+            );
+        }
+    }
+
+    /// A figure spreads a span of noise across itself, and the smoothing
+    /// control is what decides how much of that span it spends.
+    ///
+    /// The spread is the whole reason a figure's coordinate is scaled rather
+    /// than run from zero to one: a coordinate that spent under a unit of noise
+    /// on the whole figure would hold every point of it at the same value, and
+    /// a control that turned nothing would be worse than one that was missing.
+    #[test]
+    fn smoothing_decorrelates_a_figure_across_itself() {
+        let across = |smoothing: f64| -> Vec<f64> {
+            let anim = noise_animation(1, smoothing, OffsetSpan::Figure);
+            (0..64)
+                .map(|i| {
+                    let t = i as f64 / 64.0;
+                    anim.unit_value(Phase::new(t), SpreadOffset::across_figure(t))
+                })
+                .collect()
+        };
+
+        // Held together at full smoothing, the figure reads a single line of
+        // the field and neighbouring points barely differ. Spent in full, they
+        // are a step apart in it.
+        let held = across(1.0);
+        let spread = across(0.0);
+        // How far the value moves from one point of the figure to the next,
+        // which is what decorrelation means where it is looked at.
+        let step = |values: &[f64]| {
+            values.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f64>() / (values.len() - 1) as f64
+        };
+        assert!(
+            step(&spread) > 10.0 * step(&held),
+            "an unsmoothed figure moved {} between neighbouring points against \
+             the {} a fully smoothed one moves, so the control has nothing to spend",
+            step(&spread),
+            step(&held)
+        );
+
+        // Turning the control moves what every part of the figure is doing,
+        // not merely how far the extremes reach.
+        let moved = spread
+            .iter()
+            .zip(&held)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f64, f64::max);
+        assert!(
+            moved > 0.5,
+            "turning the smoothing control across a figure moved the waveform by \
+             {moved}, which is nothing a viewer would see"
+        );
+    }
 
     /// A gated noise pulse rests at each end of the unipolar range rather than
     /// only approaching it, so the two knees are where it arrives, and outside
@@ -619,7 +1101,9 @@ mod test {
             // Longer than the control takes to be reached.
             animation.update_state(Duration::from_millis(500), UnipolarFloat::ZERO);
 
-            let reached = animation.prepare(&clocks, UnipolarFloat::ZERO).smoothing;
+            let reached = animation
+                .prepare(&clocks, UnipolarFloat::ZERO, OffsetSpan::default())
+                .smoothing;
             assert_eq!(
                 reached,
                 animation.smoothing(),
@@ -654,7 +1138,11 @@ mod test {
                 ControlMessage::Set(StateChange::Size(UnipolarFloat::new(size))),
                 &mut Noop,
             );
-            animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
+            animation.prepare(
+                &ClockBank::default(),
+                UnipolarFloat::ZERO,
+                OffsetSpan::default(),
+            )
         };
 
         assert!(prepare(Waveform::Sine, 1, 1.0).varies_in_space());

@@ -245,11 +245,11 @@ impl Show {
         if !self.visualizer_active {
             return;
         }
-        let (animation, fixture_count) = self
+        let (animation, spread) = self
             .state
             .ui
-            .current_animation_and_segments(&mut self.state.mixer)
-            .map(|(a, segments)| (a.animation.clone(), segments))
+            .selected_animation(&mut self.state.mixer)
+            .map(|selected| (selected.animation.animation.clone(), selected.spread))
             .unwrap_or_default();
         self.gui_state
             .animation_state
@@ -259,7 +259,8 @@ impl Show {
                     clock_bank: self.state.clocks.as_static(),
                     audio_envelope: self.audio_input.envelope(),
                 },
-                fixture_count,
+                spread,
+                fixture_count: spread.segment_count(),
                 // A tunnel is drawn as a dense run, so its points would only
                 // retrace the line they lie on.
                 show_fixture_values: false,
@@ -1187,27 +1188,45 @@ mod test {
         // Show drops the clock publisher when the client disconnects.
     }
 
-    /// An animation is resolved once for each place along the beam it is
-    /// spread over, and which place is asking is part of the question: a
-    /// waveform that reads its position along the beam answers differently at
-    /// each one. A snapshot that did not carry how many places there are would
-    /// collapse them all onto the first, and every control that shapes an
-    /// animation across the beam would stop reaching the visualiser.
+    /// An animation is resolved at each place along the beam it is spread over,
+    /// and which place is asking is part of the question: a waveform that reads
+    /// its position along the beam answers differently at each one.
+    ///
+    /// So a snapshot carries the axis those places lie on, in the units the
+    /// beam measures it in. Without it every sample would collapse onto the
+    /// first place and every control that shapes an animation across the beam
+    /// would stop reaching the visualiser; with the wrong units it would sweep
+    /// a range the beam does not have, and show a waveform the wall never
+    /// draws.
     #[test]
-    fn an_animation_snapshot_carries_the_places_along_the_beam() {
+    fn an_animation_snapshot_carries_the_axis_the_beam_spreads_over() {
+        use tunnels_model::animation::OffsetSpan;
+        use tunnels_model::layer::ShapeMode;
         use tunnels_model::tunnel::{SEGMENTS_MIN, StateChange as TunnelStateChange};
 
         let (mut show, _send) = Show::test_new();
         show.visualizer_active = true;
 
-        let snapshot_segments = |show: &mut Show| {
+        let set = |show: &mut Show, sc| {
+            show.state.ui.handle_control_message(
+                ControlMessage::Tunnel(tunnel::ControlMessage::Set(sc)),
+                &mut show.state.mixer,
+                &mut show.state.clocks,
+                &mut show.state.color_palette,
+                &mut show.state.positions,
+                &mut show.audio_input,
+                &mut show.dispatcher,
+            );
+        };
+        let snapshot_spread = |show: &mut Show| {
             show.snapshot_animation_state();
-            show.gui_state.animation_state.load().fixture_count
+            show.gui_state.animation_state.load().spread
         };
 
-        let initial = snapshot_segments(&mut show);
+        let initial = snapshot_spread(&mut show);
         assert_ne!(
-            initial, 0,
+            initial.segment_count(),
+            0,
             "the visualiser was told the beam has nowhere to resolve an animation"
         );
 
@@ -1217,24 +1236,33 @@ mod test {
         // rounding it up the way it does a dense odd run.
         let segments = 20u8;
         assert_ne!(
-            segments as usize, initial,
+            OffsetSpan::Segments(segments),
+            initial,
             "the count was already what the test moves it to"
         );
-        show.state.ui.handle_control_message(
-            ControlMessage::Tunnel(tunnel::ControlMessage::Set(TunnelStateChange::Segments(
-                segments - SEGMENTS_MIN,
-            ))),
-            &mut show.state.mixer,
-            &mut show.state.clocks,
-            &mut show.state.color_palette,
-            &mut show.state.positions,
-            &mut show.audio_input,
-            &mut show.dispatcher,
+        set(
+            &mut show,
+            TunnelStateChange::Segments(segments - SEGMENTS_MIN),
         );
         assert_eq!(
-            snapshot_segments(&mut show),
-            segments as usize,
+            snapshot_spread(&mut show),
+            OffsetSpan::Segments(segments),
             "the visualiser kept the segment count the beam no longer has"
+        );
+        assert_eq!(
+            show.gui_state.animation_state.load().fixture_count,
+            segments as usize,
+            "the points drawn for each segment were counted from something else"
+        );
+
+        // A figure has no segments to count and spreads a span of its own
+        // across itself instead, which is a different axis and not a longer
+        // one.
+        set(&mut show, TunnelStateChange::ShapeMode(ShapeMode::Sprite));
+        assert_eq!(
+            snapshot_spread(&mut show),
+            OffsetSpan::Figure,
+            "the visualiser is still counting segments on a beam that draws none"
         );
     }
 

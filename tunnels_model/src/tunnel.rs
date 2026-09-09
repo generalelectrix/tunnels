@@ -1,4 +1,4 @@
-use crate::animation::{PreparedAnimation, TargetedAnimation};
+use crate::animation::{OffsetSpan, PreparedAnimation, SpreadOffset, TargetedAnimation};
 use crate::layer::{
     ColorAdjust, ColorField, DrawMode, FigureId, FigureLibrary, FillLayer, GeneratedId, Layer,
     PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry, ShapeMode,
@@ -344,6 +344,20 @@ impl Tunnel {
         }
     }
 
+    /// How far this beam's offset axis runs, and how it is divided.
+    ///
+    /// The two kinds of beam spread an animation across themselves in different
+    /// units — a run of segments counts them, and a figure is a continuum — so
+    /// this is what anything asking an animation where it is being asked, or
+    /// sweeping that axis to show what the beam does, has to start from.
+    pub fn offset_span(&self) -> OffsetSpan {
+        if self.shape_mode.draws_segments() {
+            OffsetSpan::Segments(self.segment_count())
+        } else {
+            OffsetSpan::Figure
+        }
+    }
+
     /// Borrow an animation as a mutable reference.
     pub fn animation(&mut self, anim_num: AnimationIdx) -> &mut TargetedAnimation {
         &mut self.anims[anim_num]
@@ -395,8 +409,9 @@ impl Tunnel {
         // costs is mostly deciding which clock drives it, where that clock is,
         // where its smoother has got to and what the amplitude works out to —
         // none of which depends on where in the figure the question is asked.
-        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] =
-            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio_envelope));
+        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] = std::array::from_fn(|i| {
+            self.anims[i].prepare(ctx.clocks, ctx.audio_envelope, self.offset_span())
+        });
 
         match self.shape_mode {
             ShapeMode::Ellipse => Layer::Segments(self.render_segments(
@@ -486,7 +501,7 @@ impl Tunnel {
             anims
                 .iter()
                 .filter(|a| a.target == target)
-                .map(|a| a.animation.value(Phase::ZERO, 0))
+                .map(|a| a.animation.value(Phase::ZERO, SpreadOffset::default()))
                 .sum()
         };
 
@@ -596,7 +611,9 @@ impl Tunnel {
             let mut spin_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
             for anim in anims {
-                let anim_value = anim.animation.value(rel_angle, seg_num as usize);
+                let anim_value = anim
+                    .animation
+                    .value(rel_angle, SpreadOffset::segment(seg_num as usize));
 
                 use AnimationTarget::*;
                 match anim.target {
@@ -1781,16 +1798,16 @@ mod test {
         // the cycle is a zero, which is what the fold used to read and why a
         // sine's animation used to draw nothing at all.
         let taper = &fill.taper[0].animation;
-        assert_eq!(taper.value(Phase::ZERO, 0), 0.0);
+        assert_eq!(taper.value(Phase::ZERO, SpreadOffset::default()), 0.0);
         assert!(
-            taper.value(Phase::new(0.125), 0) > 0.99,
+            taper.value(Phase::new(0.125), SpreadOffset::default()) > 0.99,
             "the peak does not reach full amplitude, only {}",
-            taper.value(Phase::new(0.125), 0)
+            taper.value(Phase::new(0.125), SpreadOffset::default())
         );
         assert!(
-            taper.value(Phase::new(0.375), 0) < -0.99,
+            taper.value(Phase::new(0.375), SpreadOffset::default()) < -0.99,
             "at full amplitude the trough takes the width to nothing, not to {}",
-            taper.value(Phase::new(0.375), 0)
+            taper.value(Phase::new(0.375), SpreadOffset::default())
         );
     }
 
@@ -2727,14 +2744,14 @@ pub mod fixture {
 
     /// An outline displaced by a noise warp.
     ///
-    /// The only waveform that reads a vertex's index rather than only its
-    /// position on the figure: noise offsets each sample into a second
-    /// dimension of the field, so what a vertex is displaced by depends on
-    /// which vertex it is. That makes this the case that says whether an
-    /// outline's vertices are addressed as the points they are or as the
-    /// corners they were written into.
+    /// The only waveform that reads both of a figure's coordinates rather than
+    /// only the one its phase runs along: noise takes the second as its own
+    /// axis, so what a point is displaced by depends on where it sits across
+    /// the figure as well as along it. That makes this the case that says
+    /// whether an outline's vertices are addressed as the points they are or as
+    /// the corners they were written into.
     ///
-    /// Smoothing at zero is what puts the samples a full interval apart,
+    /// Smoothing at zero is what spends the whole of the figure's noise span,
     /// which is where the difference is largest.
     pub fn sprite_noise_warp_outline_snapshot() -> LayerCollection {
         let mut tunnel = sprite_tunnel(BULLSEYE);

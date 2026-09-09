@@ -668,9 +668,8 @@ fn sprite_position_animation_outline() {
     compare_fill_to_fixture(&image, "sprite_position_animation_outline.png");
 }
 
-/// A noise warp on an outline, which is the only waveform whose value depends
-/// on which vertex it is asked about rather than only on where that vertex
-/// sits on the figure.
+/// A noise warp on an outline, which is the only waveform that reads both of a
+/// figure's coordinates rather than only the one its phase runs along.
 #[test]
 fn sprite_noise_warp_outline() {
     let image = render_snapshot(

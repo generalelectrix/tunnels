@@ -17,7 +17,7 @@
 use crate::draw::hsv_to_rgb;
 use image::{Rgba, RgbaImage};
 use tunnels_lib::number::Phase;
-use tunnels_model::animation::{PreparedAnimation, TargetedAnimation};
+use tunnels_model::animation::{PreparedAnimation, SpreadOffset, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
 use tunnels_model::layer::{ColorAdjust, ColorField};
 
@@ -127,7 +127,15 @@ pub fn build_into(
 
         let mut adjust = ColorAdjust::default();
         for anim in anims {
-            let value = anim.animation.value(phase, x as usize);
+            // A ramp is one coordinate wide, so the offset is measured along
+            // the same coordinate the phase is. That it is measured as a
+            // coordinate at all is what keeps a colour animation's noise the
+            // figure's: a table's length is chosen from what the colour needs,
+            // and a figure spreads the same span across itself however many
+            // texels that comes to.
+            let value = anim
+                .animation
+                .value(phase, SpreadOffset::across_figure(phase.val()));
             // The same adjustments a beam makes to its own colour, against
             // the ramp's coordinate instead of a segment index.
             match anim.target {
