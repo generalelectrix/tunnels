@@ -8,7 +8,7 @@
 
 use tunnels_shapes::arity::{Arity, Secondary};
 use tunnels_shapes::families::{ShapeFamily, ShapeParams};
-use tunnels_shapes::geom::{EXTENT, Figure, Point};
+use tunnels_shapes::geom::{CENTER, EXTENT, Figure, Point};
 
 /// Positions across the secondary control, including both ends.
 const SECONDARIES: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
@@ -150,6 +150,20 @@ fn nothing_the_controls_reach_cancels_itself() {
     });
 }
 
+/// The coordinates a figure occupies along one axis, in order and without
+/// repeats.
+fn edges(figure: &Figure, of: impl Fn(Point) -> f64) -> Vec<f64> {
+    let mut values: Vec<f64> = figure
+        .contours
+        .iter()
+        .flat_map(|contour| contour.points())
+        .map(|&point| of(point))
+        .collect();
+    values.sort_by(f64::total_cmp);
+    values.dedup_by(|a, b| (*a - *b).abs() < COINCIDENT);
+    values
+}
+
 /// Where each bar of a run begins and ends across its own width.
 ///
 /// A bar spans the frame along its length whichever way the run is pitched, so
@@ -227,6 +241,45 @@ fn a_run_of_bars_reads_the_same_from_either_edge() {
                 "{at}: the bars run from {near} to {far}, \
                  so the frame cuts the marks at its edge in half"
             ),
+        }
+    });
+}
+
+/// A stack of polygon rings sits in the middle of the frame.
+///
+/// Placing a polygon by the circle its corners sit on does not centre what is
+/// seen: a polygon with an odd number of corners reaches the whole radius at
+/// the corner facing one edge and only `cos(pi / sides)` of it at the side
+/// facing the other. At three corners that is a quarter of the radius out of
+/// true, which is a tenth of the frame. Even corner counts are symmetric by
+/// construction and would pass this on their own, so the odd ones are what it
+/// is here for.
+#[test]
+fn a_stack_of_polygon_rings_is_centred_on_the_frame() {
+    sweep(|family, arity, params| {
+        let ShapeParams::PolygonRings(ref rings) = params else {
+            return;
+        };
+
+        let at = format!(
+            "{} at arity {} on {} sides",
+            family.name(),
+            arity.get(),
+            rings.sides
+        );
+        let figure = params.generate();
+        for (values, axis) in [
+            (edges(&figure, |p| p.x), "across"),
+            (edges(&figure, |p| p.y), "down"),
+        ] {
+            let middle = (values[0] + values[values.len() - 1]) / 2.0;
+            assert!(
+                (middle - CENTER).abs() < COINCIDENT,
+                "{at}: the stack runs from {} to {} {axis}, centred on {middle} \
+                 rather than on {CENTER}",
+                values[0],
+                values[values.len() - 1]
+            );
         }
     });
 }
