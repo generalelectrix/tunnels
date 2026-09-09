@@ -720,6 +720,40 @@ fn look_gobo_intersection() {
     compare_fill_to_fixture(&image, "look_gobo_intersection.png");
 }
 
+/// A gobo whose apertures have closed to nothing blacks the frame entire.
+///
+/// Winding a gobo's shapes down to nothing is played, and what it plays is the
+/// light going out — so the layer is not dropped as empty and the ground goes
+/// down over everything under it. A channel the operator has taken off its
+/// upfader is the other case and never reaches a renderer at all.
+#[test]
+fn gobo_closed_aperture() {
+    let snapshot = vec![
+        default_layer(
+            1.0,
+            vec![
+                test_arc(0.0, 0.0, 0.2),
+                test_arc(0.0, 0.33, 0.35),
+                test_arc(0.0, 0.66, 0.45),
+            ],
+        ),
+        layer_in_mode(PaintMode::Gobo, 1.0, Vec::new()),
+    ];
+    let image = render_snapshot(&snapshot, &test_config());
+    // Said outright as well as pinned, so the test cannot come to rest on a
+    // picture that is merely stable. The lit rings under the gobo are what
+    // makes an all-black frame mean the ground went down over them.
+    for (x, y, px) in image.enumerate_pixels() {
+        assert_eq!(
+            px.0,
+            [0, 0, 0, 255],
+            "a shut gobo left {:?} at ({x}, {y})",
+            px.0
+        );
+    }
+    compare_to_fixture(&image, "gobo_closed_aperture.png");
+}
+
 /// A stroked outline takes its colour from the contour it follows, not from
 /// where each offset vertex landed, so the colour is constant across the
 /// ribbon's width and a long straight stroke does not band along its length.

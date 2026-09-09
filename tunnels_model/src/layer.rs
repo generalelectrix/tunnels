@@ -461,10 +461,15 @@ impl Layer {
     /// Whether this layer would draw nothing, and so can be dropped before it
     /// reaches a renderer.
     ///
-    /// Dropping is what an empty layer means in every mode, gobos included. A
-    /// gobo with no shapes has no window to open, and opens none rather than
-    /// blacking the frame entire.
+    /// A gobo is never this, whatever its shapes come to. What it draws is
+    /// black everywhere its shapes are not, and with no shapes at all that is
+    /// the whole frame — the most it can draw rather than the least. An
+    /// aperture animated shut is played, and dropping the layer here would
+    /// throw away the moment it closes.
     pub fn is_empty(&self) -> bool {
+        if self.mode() == PaintMode::Gobo {
+            return false;
+        }
         match self {
             Self::Segments(l) => l.shapes.is_empty(),
             // A figure is one shape and is always there; whether the build
@@ -479,6 +484,35 @@ pub type LayerCollection = Vec<Layer>;
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// An empty run draws nothing and is dropped, unless it is a gobo — a gobo
+    /// with no shapes blacks the frame entire rather than drawing nothing.
+    ///
+    /// This is one half of what a gobo does when its shapes come to nothing.
+    /// The other half is that a channel off at its upfader emits no layer for
+    /// this to be asked about, which `Channel::render` decides.
+    #[test]
+    fn an_empty_run_is_dropped_unless_it_is_a_gobo() {
+        let run = |mode| {
+            Layer::Segments(SegmentLayer::new(
+                RenderMode::default(),
+                SegmentPath::Ellipse,
+                mode,
+                1.0,
+                Vec::new(),
+            ))
+        };
+        for mode in [PaintMode::Normal, PaintMode::Mask] {
+            assert!(
+                run(mode).is_empty(),
+                "an empty run in {mode:?} draws nothing and can be dropped"
+            );
+        }
+        assert!(
+            !run(PaintMode::Gobo).is_empty(),
+            "an empty gobo blacks the frame, which is the most it can draw"
+        );
+    }
 
     /// A composition drawn in a black mode imposes it on everything inside it,
     /// and `Normal` imposes nothing.

@@ -255,8 +255,7 @@ where
         }
     }
 
-    /// Draw a layer's own geometry under the given draw state, and say whether
-    /// any of it reached the frame.
+    /// Draw a layer's own geometry under the given draw state.
     fn draw_shapes<G: Graphics<Texture = T>>(
         &mut self,
         layer: &Layer,
@@ -264,7 +263,7 @@ where
         c: &Context,
         gl: &mut G,
         cfg: &ClientConfig,
-    ) -> bool {
+    ) {
         match layer {
             Layer::Segments(segments) => draw_segments(segments, draw_state, c, gl, cfg),
             Layer::Fill(fill) => self.draw_fill(fill, draw_state, c, gl, cfg),
@@ -285,10 +284,17 @@ where
     /// beam drawn over it paints over that black exactly as it paints over a
     /// mask's.
     ///
-    /// A layer that marks nothing lays down no black. There is no window to
-    /// invert, and a beam that failed to draw — a figure this build does not
-    /// carry, a size knob wound to nothing — should go unseen rather than take
-    /// the frame with it.
+    /// A layer whose shapes have closed to nothing blacks the frame entire.
+    /// That is the aperture shut rather than a step skipped: a thickness or
+    /// size animation winding a gobo's shapes down to nothing is played, and
+    /// what it plays is the light going out. A channel the operator has taken
+    /// off its upfader never reaches here at all, because a channel at zero
+    /// level emits no layer.
+    ///
+    /// The consequence to know when a projector goes black: a gobo naming a
+    /// figure this build does not carry draws no shapes, and so blacks the
+    /// frame exactly as a shut aperture does. It is the same picture from a
+    /// deploy that did not take.
     fn draw_gobo<G: Graphics<Texture = T>>(
         &mut self,
         layer: &Layer,
@@ -298,9 +304,7 @@ where
     ) {
         settle(gl);
         gl.clear_stencil(STENCIL_CLEAR);
-        if !self.draw_shapes(layer, &DrawState::new_clip(), c, gl, cfg) {
-            return;
-        }
+        self.draw_shapes(layer, &DrawState::new_clip(), c, gl, cfg);
         Polygon::new(GOBO_BLACK).draw(&ground(cfg), &DrawState::new_outside(), c.transform, gl);
         settle(gl);
         gl.clear_stencil(STENCIL_CLEAR);
@@ -356,9 +360,6 @@ where
         self.meshes.triangles()
     }
 
-    ///
-    /// Says whether any of the figure reached the frame, which a caller
-    /// inverting the frame around it needs to know.
     fn draw_fill<G: Graphics<Texture = T>>(
         &mut self,
         fill: &FillLayer,
@@ -366,7 +367,7 @@ where
         c: &Context,
         gl: &mut G,
         cfg: &ClientConfig,
-    ) -> bool {
+    ) {
         let Self {
             figures,
             fills,
@@ -379,13 +380,13 @@ where
 
         // A figure this build does not carry draws nothing.
         let Some(contours) = figures.get(fill.figure) else {
-            return false;
+            return;
         };
 
         let placed = Placed::of(fill, c, cfg);
         if placed.px_per_unit <= 0.0 {
             // Scaled to nothing. Nothing to draw, and no density to draw it at.
-            return false;
+            return;
         }
         let level = Level::for_screen(
             placed.px_per_unit,
@@ -428,7 +429,7 @@ where
         } else {
             match ramps.texture_for(fill, span, *frame) {
                 Some(texture) => Some(texture),
-                None => return false,
+                None => return,
             }
         };
         let field = PhaseField {
@@ -449,12 +450,11 @@ where
         // outline never takes that path: it is stroked at one width for every
         // beam and reaches its own by being narrowed per vertex, so it goes
         // through the pass however still the figure is.
-        let mut drew = false;
         if flat
             && !warping
             && let Some(interior) = interior
         {
-            drew |= draw_flat(
+            draw_flat(
                 interior.points(),
                 interior.indices(),
                 color,
@@ -477,7 +477,7 @@ where
             // positions and ramp coordinates together, because both want the
             // same polar coordinates for a point.
             verts.vertex_pass(mesh, work);
-            drew |= match texture {
+            match texture {
                 Some(texture) => draw_textured(
                     mesh.indices(),
                     verts,
@@ -495,7 +495,7 @@ where
                     placed.m,
                     gl,
                 ),
-            };
+            }
         }
 
         if let Some(outline) = outline
@@ -505,7 +505,7 @@ where
             && !outline.is_empty()
         {
             verts.stroke_vertex_pass(outline, work);
-            drew |= match texture {
+            match texture {
                 Some(texture) => draw_textured(
                     outline.indices(),
                     verts,
@@ -523,9 +523,8 @@ where
                     placed.m,
                     gl,
                 ),
-            };
+            }
         }
-        drew
     }
 }
 

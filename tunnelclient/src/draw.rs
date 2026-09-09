@@ -39,20 +39,16 @@ pub(crate) fn hsv_to_rgb(c: &Hsva) -> Color {
 }
 
 /// Draw a run of segments, each at its own placement along the layer's path.
-///
-/// Says whether the run had any segments to draw, which a caller inverting the
-/// frame around them needs to know.
 pub(crate) fn draw_segments<G: Graphics>(
     layer: &SegmentLayer,
     draw_state: &DrawState,
     c: &Context,
     gl: &mut G,
     cfg: &ClientConfig,
-) -> bool {
+) {
     for shape in &layer.shapes {
         draw_shape(layer, shape, draw_state, c, gl, cfg);
     }
-    !layer.shapes.is_empty()
 }
 
 /// The viewport transform placing a shape where its placement says.

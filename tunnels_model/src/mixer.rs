@@ -268,3 +268,56 @@ pub enum ChannelStateChange {
 pub trait EmitStateChange {
     fn emit_mixer_state_change(&mut self, sc: StateChange);
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+    use crate::tunnel::Tunnel;
+
+    /// A channel taken off its upfader emits no layer, whatever mode it is in.
+    ///
+    /// This is what separates a gobo the operator has put away from one whose
+    /// aperture has been animated shut: the first never reaches a renderer,
+    /// and the second reaches it and blacks the frame. Without the level
+    /// deciding it here, there would be no way to hold a gobo channel ready
+    /// without blacking the video channel it is on.
+    #[test]
+    fn a_channel_off_at_the_upfader_emits_no_layer() {
+        let clocks = ClockBank::default().as_static();
+        let palette = ColorPalette::default();
+        let positions = PositionBank::default();
+        let ctx = RenderContext {
+            clocks: &clocks,
+            palette: &palette,
+            positions: &positions,
+            audio_envelope: UnipolarFloat::ZERO,
+        };
+        let channel = |level| Channel {
+            beam: Beam::Tunnel(Tunnel::default()),
+            level,
+            bump: false,
+            mode: PaintMode::Gobo,
+            video_outs: BTreeSet::new(),
+        };
+
+        let mut out = Vec::new();
+        channel(UnipolarFloat::ZERO).render(UnipolarFloat::ONE, PaintMode::Normal, ctx, &mut out);
+        assert!(
+            out.is_empty(),
+            "a gobo channel at zero level emitted {} layers, and so would have \
+             blacked the frame it was meant to be absent from",
+            out.len()
+        );
+
+        channel(UnipolarFloat::ONE).render(UnipolarFloat::ONE, PaintMode::Normal, ctx, &mut out);
+        assert_eq!(out.len(), 1, "a channel that is up emits its beam's layer");
+        assert_eq!(
+            out[0].mode(),
+            PaintMode::Gobo,
+            "the channel's own mode reaches the layer it emits"
+        );
+    }
+}
