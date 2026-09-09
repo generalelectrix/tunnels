@@ -403,7 +403,7 @@ where
             // sliding across it. One walk of the mesh produces displaced
             // positions and ramp coordinates together, because both want the
             // same polar coordinates for a point.
-            draw::vertex_pass(verts, mesh, work);
+            verts.vertex_pass(mesh, work);
             match texture {
                 Some(texture) => {
                     draw_textured(mesh, verts, field.wrap_period(), texture, placed.m, gl);
@@ -419,7 +419,7 @@ where
             if outline.is_empty() {
                 return;
             }
-            draw::stroke_vertex_pass(verts, outline, work);
+            verts.stroke_vertex_pass(outline, work);
             match texture {
                 Some(texture) => {
                     draw_list_textured(verts, field.wrap_period(), texture, placed.m, gl);

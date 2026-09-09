@@ -77,6 +77,90 @@ pub struct VertexBuffers {
     uvs: Vec<[f32; 2]>,
 }
 
+impl VertexBuffers {
+    /// Everything a frame does per vertex, in one walk of the mesh.
+    ///
+    /// Fused because the things it produces all want the same polar
+    /// coordinates: the ramp coordinate is an angle, a spin is a rotation
+    /// about the same centre, and a radial animation scales the same radius.
+    /// Computed separately that was two `atan2` calls a vertex, which a
+    /// profile of the prototype put at a third of the frame.
+    ///
+    /// Position comes out displaced; the ramp coordinate is read from the
+    /// vertex *before* displacement, so a colour pattern stays glued to the
+    /// figure while a warp moves it rather than sliding across it.
+    pub fn vertex_pass(&mut self, mesh: &RefinedMesh, work: VertexWork) {
+        let needs = Needs::of(&work);
+        self.positions.clear();
+        self.uvs.clear();
+
+        for (i, v) in mesh.verts.iter().enumerate() {
+            let polar = Polar::of(*v, needs.angle, needs.radius);
+            let along = polar.phase(*v, work.field.phase);
+            let displacement = Displacement::of(&work, polar, along, i);
+
+            self.positions.push(if needs.rotates {
+                // The figure's own points, moved in polar terms because a
+                // spin is a rotation about the same centre the phase is
+                // measured from.
+                let angle = polar.angle + displacement.turn;
+                let radius = polar.radius * displacement.radial;
+                Point::new(
+                    radius * angle.cos() * displacement.scale_x,
+                    radius * angle.sin() * displacement.scale_y,
+                )
+            } else {
+                // Without rotation the angle never changes, so scaling the
+                // radius is scaling x and y — no round trip through polar
+                // coordinates.
+                Point::new(
+                    v.x() * displacement.radial * displacement.scale_x,
+                    v.y() * displacement.radial * displacement.scale_y,
+                )
+            });
+            self.uvs.push([along * work.field.ramp_scale(), 0.5]);
+        }
+    }
+
+    /// As [`vertex_pass`](Self::vertex_pass), for an outline.
+    ///
+    /// Differs in one thing, and it is the whole of what makes a stroke
+    /// cheap: **phase comes from the contour point a vertex was offset from,
+    /// not from where the vertex landed.** A ribbon is one segment at one
+    /// place on the figure, so both its edges take the same colour, and there
+    /// is no variation across its width for a refinement to resolve.
+    ///
+    /// The displacement is worked out from the contour point too, so a warp
+    /// moves the ribbon as a unit rather than shearing its two edges apart. It
+    /// is then applied to the vertex where it actually is — as a rotation and
+    /// a scale about the origin, which is the same transform the fill reaches
+    /// through polar coordinates, without a second arctangent per vertex.
+    pub fn stroke_vertex_pass(&mut self, mesh: &StrokeMesh, work: VertexWork) {
+        let needs = Needs::of(&work);
+        self.positions.clear();
+        self.uvs.clear();
+
+        for (i, vertex) in mesh.vertices().enumerate() {
+            let polar = Polar::of(vertex.on_path, needs.angle, needs.radius);
+            let along = polar.phase(vertex.on_path, work.field.phase);
+            let displacement = Displacement::of(&work, polar, along, i);
+
+            let (x, y) = (vertex.position.x(), vertex.position.y());
+            let (x, y) = if needs.rotates {
+                let (sin, cos) = displacement.turn.sin_cos();
+                (x * cos - y * sin, x * sin + y * cos)
+            } else {
+                (x, y)
+            };
+            self.positions.push(Point::new(
+                x * displacement.radial * displacement.scale_x,
+                y * displacement.radial * displacement.scale_y,
+            ));
+            self.uvs.push([along * work.field.ramp_scale(), 0.5]);
+        }
+    }
+}
+
 /// Everything the per-vertex pass reads.
 #[derive(Copy, Clone)]
 pub struct VertexWork<'a> {
@@ -86,86 +170,6 @@ pub struct VertexWork<'a> {
     pub spin_speed: f32,
     /// Animations displacing geometry.
     pub warps: &'a [TargetedAnimation<PreparedAnimation>],
-}
-
-/// Everything a frame does per vertex, in one walk of the mesh.
-///
-/// Fused because the things it produces all want the same polar coordinates:
-/// the ramp coordinate is an angle, a spin is a rotation about the same centre,
-/// and a radial animation scales the same radius. Computed separately that was
-/// two `atan2` calls a vertex, which a profile of the prototype put at a third
-/// of the frame.
-///
-/// Position comes out displaced; the ramp coordinate is read from the vertex
-/// *before* displacement, so a colour pattern stays glued to the figure while a
-/// warp moves it rather than sliding across it.
-pub fn vertex_pass(out: &mut VertexBuffers, mesh: &RefinedMesh, work: VertexWork) {
-    let needs = Needs::of(&work);
-    out.positions.clear();
-    out.uvs.clear();
-
-    for (i, v) in mesh.verts.iter().enumerate() {
-        let polar = Polar::of(*v, needs.angle, needs.radius);
-        let along = polar.phase(*v, work.field.phase);
-        let displacement = Displacement::of(&work, polar, along, i);
-
-        out.positions.push(if needs.rotates {
-            // The figure's own points, moved in polar terms because a spin is
-            // a rotation about the same centre the phase is measured from.
-            let angle = polar.angle + displacement.turn;
-            let radius = polar.radius * displacement.radial;
-            Point::new(
-                radius * angle.cos() * displacement.scale_x,
-                radius * angle.sin() * displacement.scale_y,
-            )
-        } else {
-            // Without rotation the angle never changes, so scaling the radius
-            // is scaling x and y — no round trip through polar coordinates.
-            Point::new(
-                v.x() * displacement.radial * displacement.scale_x,
-                v.y() * displacement.radial * displacement.scale_y,
-            )
-        });
-        out.uvs.push([along * work.field.ramp_scale(), 0.5]);
-    }
-}
-
-/// As `vertex_pass`, for an outline.
-///
-/// Differs in one thing, and it is the whole of what makes a stroke cheap:
-/// **phase comes from the contour point a vertex was offset from, not from
-/// where the vertex landed.** A ribbon is one segment at one place on the figure,
-/// so both its edges take the same colour, and there is no variation across
-/// its width for a refinement to resolve.
-///
-/// The displacement is worked out from the contour point too, so a warp moves
-/// the ribbon as a unit rather than shearing its two edges apart. It is then
-/// applied to the vertex where it actually is — as a rotation and a scale
-/// about the origin, which is the same transform the fill reaches through
-/// polar coordinates, without a second arctangent per vertex.
-pub fn stroke_vertex_pass(out: &mut VertexBuffers, mesh: &StrokeMesh, work: VertexWork) {
-    let needs = Needs::of(&work);
-    out.positions.clear();
-    out.uvs.clear();
-
-    for (i, vertex) in mesh.vertices().enumerate() {
-        let polar = Polar::of(vertex.on_path, needs.angle, needs.radius);
-        let along = polar.phase(vertex.on_path, work.field.phase);
-        let displacement = Displacement::of(&work, polar, along, i);
-
-        let (x, y) = (vertex.position.x(), vertex.position.y());
-        let (x, y) = if needs.rotates {
-            let (sin, cos) = displacement.turn.sin_cos();
-            (x * cos - y * sin, x * sin + y * cos)
-        } else {
-            (x, y)
-        };
-        out.positions.push(Point::new(
-            x * displacement.radial * displacement.scale_x,
-            y * displacement.radial * displacement.scale_y,
-        ));
-        out.uvs.push([along * work.field.ramp_scale(), 0.5]);
-    }
 }
 
 /// Which coordinates a frame's work actually asks for.
