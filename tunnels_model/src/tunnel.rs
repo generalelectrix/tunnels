@@ -19,6 +19,72 @@ use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{SmoothMode, Smoother};
 use tunnels_sprites::{Slot, SpriteFamily};
 
+/// How often a segment is taken out, on [-16, 16].
+///
+/// A positive interval keeps every nth segment and a negative one drops every
+/// nth, so the two signs are two readings of the same count and a beam runs
+/// from mostly dark through solid and out the other side.
+///
+/// Neither 0 nor -1 is one of these, and for different reasons: -1 takes out
+/// every segment, since every index is a multiple of one, and 0 has no meaning
+/// at all, because the remainder that decides whether a segment is drawn is not
+/// defined against it. Nothing constructs either.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+struct BlackingInterval(i8);
+
+impl BlackingInterval {
+    /// The interval a position of the blacking knob names.
+    ///
+    /// The knob's two halves are read against different spans because the
+    /// detent belongs to the lower one, which is why the travel does not
+    /// divide evenly. The bottom of the positive half absorbs the two counts
+    /// that are not intervals, so neither reaches a render.
+    fn for_knob(knob: u8) -> Self {
+        let (knob, centre) = (i32::from(knob), i32::from(KNOB_CENTRE));
+        let scaled = if knob <= centre {
+            -(17 * (centre - knob) / centre)
+        } else {
+            17 * (knob - centre) / (i32::from(KNOB_MAX) - centre)
+        };
+        let clamped = scaled.clamp(-16, 16);
+        Self(if clamped >= -1 {
+            max(clamped, 1)
+        } else {
+            clamped
+        } as i8)
+    }
+
+    /// The knob position that names this interval.
+    ///
+    /// The middle of the band of positions that name it, so a position
+    /// reported to a surface names the interval it came from.
+    ///
+    /// Found by walking the travel rather than by inverting the arithmetic:
+    /// each half of the knob truncates a division, so there is no inverse to
+    /// write, and a band is contiguous because neither half turns back on
+    /// itself.
+    fn knob(self) -> u8 {
+        let mut band = (0..=KNOB_MAX).filter(|knob| Self::for_knob(*knob) == self);
+        match (band.next(), band.next_back()) {
+            (Some(first), Some(last)) => first + (last - first) / 2,
+            (Some(only), None) => only,
+            // No interval has an empty band, since every one of them came from
+            // a position of this knob.
+            (None, _) => KNOB_CENTRE,
+        }
+    }
+
+    /// Whether the segment at this index is drawn.
+    fn keeps(self, segment: u8) -> bool {
+        let remainder = i32::from(segment) % i32::from(self.0);
+        if self.0 > 0 {
+            remainder == 0
+        } else {
+            remainder != 0
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Ellipsoidal tunnels.
 ///
@@ -47,15 +113,10 @@ pub struct Tunnel {
     position_selection: Option<PositionIdx>,
     /// TODO: regularize segs interface into regular float knobs
     segs: u8,
-    /// Where the blacking knob is standing, as the raw position a control
-    /// surface sends.
+    /// How often a segment is taken out.
     ///
-    /// A knob position and not a value: it has no units and no domain until a
-    /// mode reads it, which is what lets one knob mean an interval to a segment
-    /// mode and a figure to a figure mode without either having to round-trip
-    /// through a number that means something else. The default takes out every
-    /// other chicklet.
-    blacking: u8,
+    /// The default takes out every other chicklet.
+    blacking: BlackingInterval,
     curr_rot_angle: Phase,
     curr_marquee_angle: Phase,
     spin_speed: BipolarFloat,
@@ -112,7 +173,7 @@ impl Default for Tunnel {
             palette_selection: None,
             position_selection: None,
             segs: 126,
-            blacking: 73,
+            blacking: BlackingInterval(2),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
             spin_speed: BipolarFloat::ZERO,
@@ -132,34 +193,6 @@ impl Default for Tunnel {
 impl Tunnel {
     const MOVE_SMOOTH_TIME: Duration = Duration::from_millis(250);
     const GEOM_SMOOTH_TIME: Duration = Duration::from_millis(100);
-    /// how often a segment is taken out, on [-16, 16].
-    ///
-    /// A positive interval keeps every nth segment and a negative one drops
-    /// every nth, so the knob sweeps from mostly dark through solid and out
-    /// the other side. Its two halves are read against different spans
-    /// because the detent belongs to the lower one, which is why the travel
-    /// does not divide evenly.
-    ///
-    /// Neither 0 nor -1 is a usable interval, and for different reasons: -1
-    /// takes out every segment, since every index is a multiple of one, and 0
-    /// has no meaning at all, because the remainder that decides whether a
-    /// segment is drawn is not defined against it. The bottom of the positive
-    /// half absorbs both, so neither reaches a render.
-    fn blacking_interval(&self) -> i32 {
-        let (knob, centre) = (i32::from(self.blacking), i32::from(KNOB_CENTRE));
-        let scaled = if knob <= centre {
-            -(17 * (centre - knob) / centre)
-        } else {
-            17 * (knob - centre) / (i32::from(KNOB_MAX) - centre)
-        };
-        let clamped = scaled.clamp(-16, 16);
-        if clamped >= -1 {
-            max(clamped, 1)
-        } else {
-            clamped
-        }
-    }
-
     /// The family a position of the segment knob names.
     ///
     /// A figure has no segments, so the knob that sets how many segments a beam
@@ -176,8 +209,8 @@ impl Tunnel {
         let Some(last) = family_span() else {
             return 0;
         };
-        let span = u32::from(SEGMENTS_MAX - SEGMENTS_MIN);
-        let position = u32::from(segs.clamp(SEGMENTS_MIN, SEGMENTS_MAX) - SEGMENTS_MIN);
+        let span = u32::from(KNOB_MAX);
+        let position = u32::from(segs.min(KNOB_MAX));
         // Rounded rather than truncated, so the top of the travel reaches the
         // last family instead of stopping one short.
         ((position * last + span / 2) / span) as u16
@@ -190,11 +223,11 @@ impl Tunnel {
     /// came from when the operator turns the knob back to it.
     fn segments_for_family(family: u16) -> u8 {
         let Some(last) = family_span() else {
-            return SEGMENTS_MIN;
+            return 0;
         };
-        let span = u32::from(SEGMENTS_MAX - SEGMENTS_MIN);
+        let span = u32::from(KNOB_MAX);
         let family = u32::from(family).min(last);
-        SEGMENTS_MIN + ((family * span + last / 2) / last) as u8
+        ((family * span + last / 2) / last) as u8
     }
 
     /// How far into a family a position of the blacking knob reaches.
@@ -249,7 +282,7 @@ impl Tunnel {
     /// about which figure is drawn.
     fn segments_control(&self) -> u8 {
         if self.shape_mode.draws_segments() {
-            self.segs
+            self.segs - SEGMENTS_MIN
         } else {
             Self::segments_for_family(self.slot().family)
         }
@@ -265,7 +298,7 @@ impl Tunnel {
     /// that is not the one being drawn.
     fn blacking_control(&self) -> u8 {
         if self.shape_mode.draws_segments() {
-            self.blacking
+            self.blacking.knob()
         } else {
             let slot = self.slot();
             match tunnels_sprites::family(slot.family) {
@@ -530,7 +563,6 @@ impl Tunnel {
         } else {
             self.segs
         };
-        let blacking = self.blacking_interval();
 
         let mut arcs = Vec::new();
 
@@ -546,12 +578,7 @@ impl Tunnel {
 
         // Iterate over each segment ID and skip the segments that are blacked.
         for seg_num in 0..segs {
-            let should_draw_segment = if blacking > 0 {
-                (seg_num as i32) % blacking == 0
-            } else {
-                (seg_num as i32) % blacking != 0
-            };
-            if !should_draw_segment {
+            if !self.blacking.keeps(seg_num) {
                 continue;
             }
 
@@ -746,7 +773,7 @@ impl Tunnel {
             // figure mode opens a family of the library with it.
             Segments(v) => {
                 if self.shape_mode.draws_segments() {
-                    self.segs = v;
+                    self.segs = SEGMENTS_MIN + v.min(KNOB_MAX);
                 } else {
                     let index = self.slot().index;
                     if let Some(family) = tunnels_sprites::family(Self::family_for_segments(v)) {
@@ -765,7 +792,7 @@ impl Tunnel {
             // it and a figure mode picks within the open family.
             Blacking(v) => {
                 if self.shape_mode.draws_segments() {
-                    self.blacking = v;
+                    self.blacking = BlackingInterval::for_knob(v);
                 } else if let Some(family) = tunnels_sprites::family(self.slot().family) {
                     self.sprite = SpriteId(family.member(Self::selection_for_blacking(v, family)));
                 }
@@ -839,9 +866,6 @@ const MARQUEE_SPEED_SCALE: f64 = 0.023;
 /// legacy tuning parameter; spin rotated this many radial units/frame at 30fps
 const SPIN_SPEED_SCALE: f64 = 0.023;
 const COLOR_SPREAD_SCALE: f64 = 16.;
-/// The segment knob's travel, which is what the control surface can send.
-pub const SEGMENTS_MIN: u8 = 1;
-pub const SEGMENTS_MAX: u8 = 128;
 /// The top of a knob's raw travel, and the position its detent sits at.
 ///
 /// A surface reports a knob in seven bits, so a position is one of 128 and the
@@ -849,6 +873,12 @@ pub const SEGMENTS_MAX: u8 = 128;
 /// lower half, leaving that half one longer than the upper.
 pub const KNOB_MAX: u8 = 127;
 pub const KNOB_CENTRE: u8 = 64;
+/// The segment counts the segment knob's travel covers.
+///
+/// The knob counts from zero and the count from one, because a beam of no
+/// segments is not a beam.
+pub const SEGMENTS_MIN: u8 = 1;
+pub const SEGMENTS_MAX: u8 = SEGMENTS_MIN + KNOB_MAX;
 
 /// The largest family index this build carries, or `None` if there is nothing
 /// to choose between.
@@ -880,7 +910,9 @@ pub enum StateChange {
     ColorSpread(UnipolarFloat),
     ColorSaturation(UnipolarFloat),
     PaletteSelection(Option<ColorPaletteIdx>),
-    Segments(u8), // FIXME integer knob
+    /// Where the segment knob is standing, as the raw position a surface
+    /// sends. What it means is the mode's business, not the message's.
+    Segments(u8),
     /// Where the blacking knob is standing, as the raw position a surface
     /// sends. What it means is the mode's business, not the message's.
     Blacking(u8),
@@ -1016,12 +1048,15 @@ mod test {
             tunnel.shape_mode.draws_segments(),
             "the default draws segments"
         );
-        let blacking = 89;
+        // The middle of the band of positions naming its interval, so the
+        // position a surface is told to stand at is the one it was given.
+        let blacking = 88;
+        let segments = 36;
 
-        tunnel.handle_state_change(StateChange::Segments(37), &mut Silent);
+        tunnel.handle_state_change(StateChange::Segments(segments), &mut Silent);
         tunnel.handle_state_change(StateChange::Blacking(blacking), &mut Silent);
         tunnel.handle_state_change(StateChange::RenderMode(RenderMode::Saucer), &mut Silent);
-        assert_eq!(tunnel.segs, 37);
+        assert_eq!(tunnel.segs, segments + SEGMENTS_MIN);
         assert_eq!(tunnel.render_mode, RenderMode::Saucer);
         assert_eq!(
             tunnel.draw_mode,
@@ -1033,13 +1068,17 @@ mod test {
             RenderMode::Saucer,
             "a segment mode reports the render mode"
         );
-        assert_eq!(tunnel.blacking, blacking);
+        assert_eq!(tunnel.blacking, BlackingInterval::for_knob(blacking));
         assert_eq!(
             tunnel.sprite,
             SpriteId::default(),
             "the figure is untouched"
         );
-        assert_eq!(tunnel.segments_control(), 37, "a segment mode reports segs");
+        assert_eq!(
+            tunnel.segments_control(),
+            segments,
+            "a segment mode reports segs"
+        );
         assert_eq!(
             tunnel.blacking_control(),
             blacking,
@@ -1056,8 +1095,16 @@ mod test {
             SpriteId(family.member(family.len - 1)),
             "the far end of the blacking knob is the last figure of the family"
         );
-        assert_eq!(tunnel.segs, 37, "the segment count is untouched");
-        assert_eq!(tunnel.blacking, blacking, "the blacking is untouched");
+        assert_eq!(
+            tunnel.segs,
+            segments + SEGMENTS_MIN,
+            "the segment count is untouched"
+        );
+        assert_eq!(
+            tunnel.blacking,
+            BlackingInterval::for_knob(blacking),
+            "the blacking is untouched"
+        );
         assert_eq!(
             tunnel.segments_control(),
             Tunnel::segments_for_family(index),
@@ -1081,7 +1128,7 @@ mod test {
         tunnel.handle_state_change(StateChange::ShapeMode(ShapeMode::Ellipse), &mut Silent);
         assert_eq!(
             tunnel.segments_control(),
-            37,
+            segments,
             "the segment count came back unchanged"
         );
         assert_eq!(
@@ -1120,7 +1167,7 @@ mod test {
             };
             let segs = tunnel.segments_control();
             let blacking = tunnel.blacking_control();
-            assert!((SEGMENTS_MIN..=SEGMENTS_MAX).contains(&segs), "figure {id}");
+            assert!(segs <= KNOB_MAX, "figure {id}");
 
             tunnel.sprite = SpriteId(0);
             tunnel.handle_state_change(StateChange::Segments(segs), &mut Silent);
@@ -1139,15 +1186,13 @@ mod test {
     #[test]
     fn the_figure_knobs_reach_every_family_and_every_figure_in_one() {
         let families = tunnels_sprites::families();
-        assert_eq!(Tunnel::family_for_segments(SEGMENTS_MIN), 0, "the floor");
+        assert_eq!(Tunnel::family_for_segments(0), 0, "the floor");
         assert_eq!(
-            Tunnel::family_for_segments(SEGMENTS_MAX),
+            Tunnel::family_for_segments(KNOB_MAX),
             families.len() as u16 - 1,
             "the ceiling"
         );
-        let mut reached: Vec<u16> = (SEGMENTS_MIN..=SEGMENTS_MAX)
-            .map(Tunnel::family_for_segments)
-            .collect();
+        let mut reached: Vec<u16> = (0..=KNOB_MAX).map(Tunnel::family_for_segments).collect();
         assert!(
             reached.windows(2).all(|w| w[0] <= w[1]),
             "turning the knob up went back to an earlier family"
@@ -1184,7 +1229,8 @@ mod test {
         }
     }
 
-    /// Every knob position gives the interval it names, over the whole travel.
+    /// Every knob position gives the interval it names, over the whole travel,
+    /// and the position reported back for that interval names it again.
     ///
     /// The interval is a ratio of the knob's position to the span its half of
     /// the travel covers, truncated. Stated here as that ratio, in floating
@@ -1192,6 +1238,10 @@ mod test {
     /// for all 128 positions, and an interval is a count of segments, so a
     /// position that landed a step either side of the ratio would black the
     /// wrong ones.
+    ///
+    /// The round trip is what a surface sees: an interval is reported as a
+    /// position, and an operator who leaves that position alone must not have
+    /// the beam change under them.
     #[test]
     fn the_blacking_interval_is_the_ratio_the_knob_stands_at() {
         for knob in 0..=KNOB_MAX {
@@ -1209,14 +1259,16 @@ mod test {
                 clamped
             };
 
-            let tunnel = Tunnel {
-                blacking: knob,
-                ..Default::default()
-            };
+            let interval = BlackingInterval::for_knob(knob);
             assert_eq!(
-                tunnel.blacking_interval(),
-                expected,
+                interval,
+                BlackingInterval(expected as i8),
                 "knob position {knob} names the wrong interval"
+            );
+            assert_eq!(
+                BlackingInterval::for_knob(interval.knob()),
+                interval,
+                "the position reported for knob {knob} names another interval"
             );
         }
     }
@@ -1227,11 +1279,7 @@ mod test {
     #[test]
     fn no_knob_position_leaves_nothing_to_look_at() {
         for knob in 0..=KNOB_MAX {
-            let interval = Tunnel {
-                blacking: knob,
-                ..Default::default()
-            }
-            .blacking_interval();
+            let interval = BlackingInterval::for_knob(knob).0;
             assert!(
                 interval >= 1 || interval <= -2,
                 "knob position {knob} gives an interval of {interval}"
@@ -1252,7 +1300,7 @@ mod test {
         assert!(index > 0, "the middle of a family is not its first figure");
 
         let mut recorder = Recorder::default();
-        tunnel.handle_state_change(StateChange::Segments(SEGMENTS_MAX), &mut recorder);
+        tunnel.handle_state_change(StateChange::Segments(KNOB_MAX), &mut recorder);
         let slot = tunnel.slot();
         assert_eq!(slot.family, tunnels_sprites::families().len() as u16 - 1);
         let family = tunnels_sprites::family(slot.family).expect("the last family");
@@ -1462,12 +1510,23 @@ pub mod fixture {
         snapshot(render_default(&tunnel))
     }
 
+    /// Set how many segments a beam draws, the way a control surface would.
+    ///
+    /// The knob counts from zero and a segment count from one, so a fixture
+    /// states the count it wants drawn and this finds the position for it.
+    fn set_segments(tunnel: &mut Tunnel, segments: u8) {
+        tunnel.handle_state_change(
+            StateChange::Segments(segments - SEGMENTS_MIN),
+            &mut NoopEmitter,
+        );
+    }
+
     fn saucer_tunnel(segs: u8, thickness: f64) -> Tunnel {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(segs), &mut NoopEmitter);
+        set_segments(&mut tunnel, segs);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(thickness)),
             &mut NoopEmitter,
@@ -1555,7 +1614,7 @@ pub mod fixture {
     /// Create an arc tunnel with spin animation on the ellipse path.
     fn arc_spin_tunnel(segs: u8) -> Tunnel {
         let mut tunnel = Tunnel::default();
-        tunnel.handle_state_change(StateChange::Segments(segs), &mut NoopEmitter);
+        set_segments(&mut tunnel, segs);
         tunnel.anims[0].target = AnimationTarget::Spin;
         tunnel.anims[0].animation.control(
             AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
@@ -1596,7 +1655,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
+        set_segments(&mut tunnel, 24);
         tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         snapshot(render_default(&tunnel))
     }
@@ -1608,7 +1667,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(24), &mut NoopEmitter);
+        set_segments(&mut tunnel, 24);
         tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         snapshot(render_default(&tunnel))
     }
@@ -1620,7 +1679,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
+        set_segments(&mut tunnel, 12);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(0.1)),
             &mut NoopEmitter,
@@ -1635,7 +1694,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
+        set_segments(&mut tunnel, 126);
         tunnel.anims[0].target = AnimationTarget::Spin;
         tunnel.anims[0].animation.control(
             AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.5))),
@@ -1656,7 +1715,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(12), &mut NoopEmitter);
+        set_segments(&mut tunnel, 12);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(0.1)),
             &mut NoopEmitter,
@@ -1678,7 +1737,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(126), &mut NoopEmitter);
+        set_segments(&mut tunnel, 126);
         tunnel.anims[0].target = AnimationTarget::AspectRatio;
         tunnel.anims[0].animation.control(
             AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::new(0.25))),
@@ -1721,7 +1780,7 @@ pub mod fixture {
             shape_mode: ShapeMode::Line,
             ..Default::default()
         };
-        tunnel.handle_state_change(StateChange::Segments(16), &mut NoopEmitter);
+        set_segments(&mut tunnel, 16);
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(0.15)),
             &mut NoopEmitter,
@@ -1850,7 +1909,7 @@ pub mod fixture {
     /// target and every waveform at least once.
     pub fn configure_max_variation(tunnel: &mut Tunnel, index: usize, of: usize, segments: u8) {
         let phase = index as f64 / of as f64;
-        tunnel.handle_state_change(StateChange::Segments(segments), &mut NoopEmitter);
+        set_segments(tunnel, segments);
         tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut NoopEmitter);
         tunnel.handle_state_change(
             StateChange::ColorSpread(UnipolarFloat::ONE),
@@ -1910,9 +1969,7 @@ pub mod fixture {
         // on it, so spreading them is what makes every channel draw a
         // different figure.
         tunnel.handle_state_change(
-            StateChange::Segments(
-                SEGMENTS_MIN + ((SEGMENTS_MAX - SEGMENTS_MIN) as f64 * phase) as u8,
-            ),
+            StateChange::Segments((f64::from(KNOB_MAX) * phase) as u8),
             &mut NoopEmitter,
         );
         tunnel.handle_state_change(
