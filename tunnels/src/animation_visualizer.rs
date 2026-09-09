@@ -10,7 +10,20 @@ use crate::clock_server::SharedClockData;
 pub struct AnimationSnapshot {
     pub animation: Animation,
     pub clocks: SharedClockData,
+    /// How many places along the beam the animation is resolved at.
+    ///
+    /// A waveform is asked for a value once per place, and which place is
+    /// asking is part of the question — noise reads it directly, and the
+    /// controls that spread an animation across a beam have nothing to act on
+    /// without it. So this decides the shape of the plot, not just how finely
+    /// it is sampled.
     pub fixture_count: usize,
+    /// Whether each of those places is also drawn as a point of its own.
+    ///
+    /// A run dense enough that its points merge into a line is already served
+    /// by the line, so the points are for the case where there are few of them
+    /// and each is worth picking out.
+    pub show_fixture_values: bool,
 }
 
 #[derive(Default)]
@@ -57,10 +70,12 @@ impl VisualizerPanelState {
 
         // Individual fixture dots.
         self.dots.clear();
-        self.dots.extend((0..state.fixture_count).map(|i| {
-            let phase = i as f64 * phase_offset_per_fixture;
-            PlotPoint::new(phase, anim.value(Phase::new(phase), i))
-        }));
+        if state.show_fixture_values {
+            self.dots.extend((0..state.fixture_count).map(|i| {
+                let phase = i as f64 * phase_offset_per_fixture;
+                PlotPoint::new(phase, anim.value(Phase::new(phase), i))
+            }));
+        }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, state: &AnimationSnapshot) {
@@ -80,11 +95,15 @@ impl VisualizerPanelState {
                         .color(Color32::WHITE)
                         .width(2.0_f32),
                 );
-                plot_ui.points(
-                    Points::new("Fixture Values", PlotPoints::Borrowed(&self.dots))
-                        .color(Color32::CYAN)
-                        .radius(5.0_f32),
-                );
+                // Named in the legend only when there is something to name, so
+                // a plot that draws no points does not offer to hide them.
+                if !self.dots.is_empty() {
+                    plot_ui.points(
+                        Points::new("Fixture Values", PlotPoints::Borrowed(&self.dots))
+                            .color(Color32::CYAN)
+                            .radius(5.0_f32),
+                    );
+                }
             });
 
         // Continuously repaint while the visualizer is active.
@@ -112,6 +131,7 @@ mod tests {
     fn compute_with_fixtures() {
         let state = AnimationSnapshot {
             fixture_count: 4,
+            show_fixture_values: true,
             ..Default::default()
         };
         let mut panel = VisualizerPanelState::default();
@@ -162,6 +182,7 @@ mod tests {
         // First compute with 4 fixtures.
         panel.compute(&AnimationSnapshot {
             fixture_count: 4,
+            show_fixture_values: true,
             ..Default::default()
         });
         assert_eq!(panel.dots.len(), 4);
@@ -169,8 +190,101 @@ mod tests {
         // Recompute with 2 fixtures -- dots should shrink.
         panel.compute(&AnimationSnapshot {
             fixture_count: 2,
+            show_fixture_values: true,
             ..Default::default()
         });
         assert_eq!(panel.dots.len(), 2);
+    }
+
+    /// The count of places along the beam and the drawing of a point at each
+    /// of them are separate questions: a dense run still has to be resolved at
+    /// every one of its places for the waveform to come out right, while
+    /// drawing all of them would bury the line they lie on.
+    #[test]
+    fn the_places_are_resolved_whether_or_not_each_is_drawn() {
+        let plot = |show_fixture_values| {
+            let mut panel = VisualizerPanelState::default();
+            panel.compute(&AnimationSnapshot {
+                fixture_count: 126,
+                show_fixture_values,
+                ..Default::default()
+            });
+            (
+                panel.preview.iter().map(|p| p.y).collect::<Vec<_>>(),
+                panel.dots.len(),
+            )
+        };
+        let (drawn, drawn_dots) = plot(true);
+        let (undrawn, undrawn_dots) = plot(false);
+
+        assert_eq!(drawn_dots, 126, "a plot that draws its places drew none");
+        assert_eq!(
+            undrawn_dots, 0,
+            "a plot that draws no places drew {undrawn_dots}"
+        );
+        assert_eq!(
+            drawn, undrawn,
+            "the waveform changed shape according to whether its places were drawn"
+        );
+    }
+
+    /// An animation that reads where along the beam it is being asked about —
+    /// noise, through its cross-correlation — only answers differently at
+    /// different places, so a plot that resolves every place at the first one
+    /// silently drops every control that shapes the animation across the beam.
+    #[test]
+    fn a_waveform_that_reads_its_place_on_the_beam_is_shaped_by_the_controls() {
+        use crate::animation::{ControlMessage, EmitStateChange, StateChange, Waveform};
+        use tunnels_lib::number::UnipolarFloat;
+
+        struct Silent;
+        impl EmitStateChange for Silent {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+
+        let plot = |smoothing: f64, fixture_count: usize| {
+            let mut animation = Animation::default();
+            for sc in [
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::NPeriods(3),
+                // No size: a plot draws the waveform an animation would make
+                // whatever its amplitude, and an animation still being set up
+                // is exactly the one an operator is watching the plot for.
+                StateChange::Smoothing(UnipolarFloat::new(smoothing)),
+            ] {
+                animation.control(ControlMessage::Set(sc), &mut Silent);
+            }
+            // The smoothing control is reached over time rather than set.
+            animation.update_state(std::time::Duration::from_secs(1), UnipolarFloat::ZERO);
+            let mut panel = VisualizerPanelState::default();
+            panel.compute(&AnimationSnapshot {
+                animation,
+                fixture_count,
+                ..Default::default()
+            });
+            panel.preview.iter().map(|p| p.y).collect::<Vec<_>>()
+        };
+
+        let spread = |count| {
+            plot(0.0, count)
+                .iter()
+                .zip(plot(1.0, count).iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f64, f64::max)
+        };
+
+        assert!(
+            spread(126) > 0.1,
+            "turning the control across a run of 126 places moved the waveform by \
+             {}, which is nothing a viewer would see",
+            spread(126)
+        );
+        // One place is the degenerate case the bug wore: every sample resolves
+        // at the first place, so there is no second place to differ from.
+        assert_eq!(
+            spread(1),
+            0.0,
+            "a run of one place somehow varies along itself"
+        );
     }
 }

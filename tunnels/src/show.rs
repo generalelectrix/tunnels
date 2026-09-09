@@ -245,11 +245,11 @@ impl Show {
         if !self.visualizer_active {
             return;
         }
-        let animation = self
+        let (animation, fixture_count) = self
             .state
             .ui
-            .current_animation(&mut self.state.mixer)
-            .map(|a| a.animation.clone())
+            .current_animation_and_segments(&mut self.state.mixer)
+            .map(|(a, segments)| (a.animation.clone(), segments))
             .unwrap_or_default();
         self.gui_state
             .animation_state
@@ -259,7 +259,10 @@ impl Show {
                     clock_bank: self.state.clocks.as_static(),
                     audio_envelope: self.audio_input.envelope(),
                 },
-                fixture_count: 0,
+                fixture_count,
+                // A tunnel is drawn as a dense run, so its points would only
+                // retrace the line they lie on.
+                show_fixture_values: false,
             }));
     }
 
@@ -1182,6 +1185,57 @@ mod test {
             "expected 'already running', got: {err}"
         );
         // Show drops the clock publisher when the client disconnects.
+    }
+
+    /// An animation is resolved once for each place along the beam it is
+    /// spread over, and which place is asking is part of the question: a
+    /// waveform that reads its position along the beam answers differently at
+    /// each one. A snapshot that did not carry how many places there are would
+    /// collapse them all onto the first, and every control that shapes an
+    /// animation across the beam would stop reaching the visualiser.
+    #[test]
+    fn an_animation_snapshot_carries_the_places_along_the_beam() {
+        use tunnels_model::tunnel::{SEGMENTS_MIN, StateChange as TunnelStateChange};
+
+        let (mut show, _send) = Show::test_new();
+        show.visualizer_active = true;
+
+        let snapshot_segments = |show: &mut Show| {
+            show.snapshot_animation_state();
+            show.gui_state.animation_state.load().fixture_count
+        };
+
+        let initial = snapshot_segments(&mut show);
+        assert_ne!(
+            initial, 0,
+            "the visualiser was told the beam has nowhere to resolve an animation"
+        );
+
+        // Move the segment count through the control the operator turns, so the
+        // snapshot is shown to follow the beam rather than a constant. Few
+        // enough segments that the beam takes the count as given, rather than
+        // rounding it up the way it does a dense odd run.
+        let segments = 20u8;
+        assert_ne!(
+            segments as usize, initial,
+            "the count was already what the test moves it to"
+        );
+        show.state.ui.handle_control_message(
+            ControlMessage::Tunnel(tunnel::ControlMessage::Set(TunnelStateChange::Segments(
+                segments - SEGMENTS_MIN,
+            ))),
+            &mut show.state.mixer,
+            &mut show.state.clocks,
+            &mut show.state.color_palette,
+            &mut show.state.positions,
+            &mut show.audio_input,
+            &mut show.dispatcher,
+        );
+        assert_eq!(
+            snapshot_segments(&mut show),
+            segments as usize,
+            "the visualiser kept the segment count the beam no longer has"
+        );
     }
 
     #[test]

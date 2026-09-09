@@ -187,9 +187,14 @@ impl Animation {
     }
 
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+        // Reached whatever the amplitude, because it shapes the waveform rather
+        // than driving it: an animation held at no size is one being set up,
+        // and the controls turned while it is have to arrive. Its clock is a
+        // different matter — an animation that is not showing has no time to
+        // keep, and starts from the top when it is given a size.
+        self.smoothing.update_state(delta_t);
         if self.active() {
             self.internal_clock.update_state(delta_t, audio_envelope);
-            self.smoothing.update_state(delta_t);
         }
     }
 
@@ -450,18 +455,13 @@ impl PreparedAnimation {
                     (1.0 - self.smoothing.val()) * offset_index as f64
                 };
 
-                let mut val = self.simplex_gen.get([x_offset, y_offset]);
+                let val = self.simplex_gen.get([x_offset, y_offset]);
 
-                // Take the square for pulse mode to avoid sharp edges at zero,
-                // and to maintain a bias towards the animation value frequently
-                // touching zero. This produces more of a forest of peaks.
-                // Simply rescaling the full noise spectrum into the unipolar
-                // range would result in very rarely touching zero, which is
-                // unlikely to be what we're looking for, artistically speaking.
                 if self.static_params.pulse {
-                    val = val.powi(2);
+                    gate_noise(val)
+                } else {
+                    val
                 }
-                val
             }
             Waveform::Constant => 1.0,
         };
@@ -486,10 +486,150 @@ impl PreparedAnimation {
     }
 }
 
+/// Where a noise pulse stops being dark, as a magnitude of the noise.
+///
+/// The magnitude of simplex noise is close to uniform across the lower part of
+/// its range, so where this knee sits in that range is directly how much of the
+/// time a pulse rests: about a seventh of the way up it, and so dark about a
+/// seventh of the time.
+const NOISE_GATE_LOW: f64 = 0.09;
+
+/// Where a noise pulse reaches full, as a magnitude of the noise.
+///
+/// Placed so that about the top twentieth of noise magnitudes saturate. Noise
+/// approaches the end of its own range too rarely to arrive at full any other
+/// way, and the flat top that arriving costs is worth no more of the period
+/// than it takes.
+const NOISE_GATE_HIGH: f64 = 0.71;
+
+/// Shape bipolar noise into a unipolar pulse.
+///
+/// Noise reaches the ends of its own range only rarely, so a curve that merely
+/// rescales it settles into a dim middle: never resolving to black, never
+/// arriving at full. The gate is flat at both ends instead — dark below one
+/// knee, full above the other — which is what buys a pulse that starts and
+/// ends at rest and a peak that lands rather than approaches.
+///
+/// Between the knees it is smoothstepped, so brightness enters and leaves a
+/// pulse with no kink. The dark zone also holds the fold that taking a
+/// magnitude puts at zero, keeping that corner off the sloped part of the
+/// curve.
+fn gate_noise(v: f64) -> f64 {
+    let t = ((v.abs() - NOISE_GATE_LOW) / (NOISE_GATE_HIGH - NOISE_GATE_LOW)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::clock_bank::ClockBank;
+
+    /// A gated noise pulse rests at each end of the unipolar range rather than
+    /// only approaching it, so the two knees are where it arrives, and outside
+    /// them it holds still however far the noise goes on.
+    #[test]
+    fn a_noise_gate_rests_at_both_ends_of_its_range() {
+        for v in [0.0, NOISE_GATE_LOW / 2.0, NOISE_GATE_LOW, -NOISE_GATE_LOW] {
+            assert_eq!(
+                gate_noise(v),
+                0.0,
+                "noise of {v} lit a pulse from inside the dark zone"
+            );
+        }
+        let above = (NOISE_GATE_HIGH + 1.0) / 2.0;
+        for v in [NOISE_GATE_HIGH, -NOISE_GATE_HIGH, above, -above, 1.0, -1.0] {
+            assert_eq!(
+                gate_noise(v),
+                1.0,
+                "noise of {v} fell short of full from above the high knee"
+            );
+        }
+    }
+
+    /// The gate reads a magnitude, so noise displaced either way lights a pulse
+    /// the same amount, and a pulse rises without pause between its knees.
+    #[test]
+    fn a_noise_gate_is_symmetric_and_rises_between_its_knees() {
+        let step = (NOISE_GATE_HIGH - NOISE_GATE_LOW) / 64.0;
+        let mut previous = 0.0;
+        for i in 1..64 {
+            let v = NOISE_GATE_LOW + step * i as f64;
+            let value = gate_noise(v);
+            assert_eq!(
+                value,
+                gate_noise(-v),
+                "noise of {v} and of its negation lit a pulse differently"
+            );
+            assert!(
+                value > previous,
+                "a pulse stalled at {value} between its knees, at noise of {v}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&value),
+                "noise of {v} lit a pulse to {value}, outside the unipolar range"
+            );
+            previous = value;
+        }
+    }
+
+    /// A pulse leaves and reaches rest smoothly, so brightness has no kink at
+    /// either knee where a viewer would read it as a corner in the light.
+    #[test]
+    fn a_noise_gate_has_no_kink_at_either_knee() {
+        let span = NOISE_GATE_HIGH - NOISE_GATE_LOW;
+        let step = span / 4096.0;
+        // The slope just inside a knee, against the slope of a straight ramp
+        // between the knees, which is what the gate would have if it did not
+        // ease in and out.
+        let ramp = step / span;
+        for knee in [NOISE_GATE_LOW, NOISE_GATE_HIGH] {
+            let inside = if knee == NOISE_GATE_LOW { step } else { -step };
+            let slope = (gate_noise(knee + inside) - gate_noise(knee)).abs();
+            assert!(
+                slope < ramp / 100.0,
+                "a pulse turned a corner at the {knee} knee: it moved {slope} \
+                 over a step a straight ramp would move {ramp}"
+            );
+        }
+    }
+
+    /// A control that shapes an animation is reached over time rather than set,
+    /// and it has to be reached whether or not the animation is currently
+    /// showing. An animation at no amplitude is still one an operator is
+    /// looking at while they set it up — the waveform it would draw is exactly
+    /// what a preview is for — so a control turned then must arrive, not sit
+    /// where it was until the animation is given a size.
+    #[test]
+    fn a_shaping_control_is_reached_at_any_amplitude() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let clocks = crate::clock_bank::ClockBank::default();
+
+        for size in [UnipolarFloat::ZERO, UnipolarFloat::ONE] {
+            let mut animation = Animation::default();
+            let set = |a: &mut Animation, sc| a.control(ControlMessage::Set(sc), &mut Noop);
+            set(&mut animation, StateChange::Size(size));
+            set(
+                &mut animation,
+                StateChange::Smoothing(UnipolarFloat::new(0.75)),
+            );
+
+            // Longer than the control takes to be reached.
+            animation.update_state(Duration::from_millis(500), UnipolarFloat::ZERO);
+
+            let reached = animation.prepare(&clocks, UnipolarFloat::ZERO).smoothing;
+            assert_eq!(
+                reached,
+                animation.smoothing(),
+                "at a size of {}, smoothing stalled at {} short of the {} it was turned to",
+                size.val(),
+                reached.val(),
+                animation.smoothing().val()
+            );
+        }
+    }
 
     /// Whether an animation varies in space is what decides how finely a
     /// caller has to resolve it, so the two ways of answering "not at all" —

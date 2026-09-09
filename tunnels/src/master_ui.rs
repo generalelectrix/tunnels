@@ -61,6 +61,25 @@ impl MasterUI {
         }
     }
 
+    /// The animation the controls are pointed at, and how many places along the
+    /// beam it is resolved at.
+    ///
+    /// The two travel together because reading an animation is only meaningful
+    /// against the run it is spread over: a waveform is asked for a value once
+    /// per segment, and which segment is asking is part of the question.
+    pub(crate) fn current_animation_and_segments<'m>(
+        &self,
+        mixer: &'m mut Mixer,
+    ) -> Option<(&'m mut TargetedAnimation, usize)> {
+        match self.current_beam(mixer) {
+            Beam::Look(_) => None,
+            Beam::Tunnel(t) => {
+                let segments = t.segment_count() as usize;
+                Some((t.animation(self.current_animation_idx()), segments))
+            }
+        }
+    }
+
     fn current_animation_idx(&self) -> AnimationIdx {
         self.current_animation_for_channel[self.current_channel.0]
     }
