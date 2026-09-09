@@ -7,7 +7,7 @@ use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::fill::Renderer;
 use tunnels_model::layer::{
-    ColorPhase, Hsva, Layer, LayerCollection, Placement, RenderMode, SegmentLayer, SegmentPath,
+    Hsva, Layer, LayerCollection, PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath,
     ShapeGeometry,
 };
 use tunnels_model::tunnel::fixture;
@@ -603,11 +603,11 @@ fn sprite_flat() {
 /// it is the one that would show a band of spurious rainbow if the
 /// same-branch shift were wrong.
 #[test]
-fn sprite_color_phases() {
+fn sprite_color_on_each_axis() {
     for (phase, name) in [
-        (ColorPhase::Angle, "sprite_color_angle.png"),
-        (ColorPhase::Radius, "sprite_color_radius.png"),
-        (ColorPhase::Linear, "sprite_color_linear.png"),
+        (PhaseAxis::Angle, "sprite_color_angle.png"),
+        (PhaseAxis::Radius, "sprite_color_radius.png"),
+        (PhaseAxis::Linear, "sprite_color_linear.png"),
     ] {
         let image = render_snapshot(&fixture::sprite_color_snapshot(phase), &test_config());
         compare_fill_to_fixture(&image, name);

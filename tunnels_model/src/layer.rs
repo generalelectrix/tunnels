@@ -94,11 +94,16 @@ pub enum SegmentPath {
     Line,
 }
 
-/// Which coordinate of a figure indexes the color ramp.
+/// The coordinate of a figure that anything varying across it is read along.
+///
+/// One axis serves the colour ramp, an animation's phase and a taper alike:
+/// each asks how far along the figure a point lies and takes the same answer,
+/// so a pattern, a distortion and a thickness run together rather than along
+/// axes chosen apart.
 #[derive(
     Copy, Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash, VariantArray,
 )]
-pub enum ColorPhase {
+pub enum PhaseAxis {
     /// The angle about the figure's center (default).
     #[default]
     Angle,
@@ -260,11 +265,11 @@ pub struct Placement {
 ///
 /// This is a tunnel's colour model with a figure's coordinate standing in for
 /// the segment index: `hue = center + 0.5 * width * sawtooth(phase * cycles)`.
-/// A closed figure has no segments, so [`ColorPhase`] picks what does the
+/// A closed figure has no segments, so [`PhaseAxis`] picks what does the
 /// indexing.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ColorField {
-    pub phase: ColorPhase,
+    pub phase: PhaseAxis,
     /// Whole colour cycles across the figure, already floored.
     pub cycles: f64,
     pub center: f64,
@@ -422,7 +427,7 @@ mod test {
     #[test]
     fn no_adjustment_moves_what_a_mask_paints() {
         let mask = ColorField {
-            phase: ColorPhase::Angle,
+            phase: PhaseAxis::Angle,
             cycles: 0.,
             center: 0.,
             width: 0.,

@@ -48,6 +48,15 @@ const SHAPE_MODE_LINE: Mapping = note_on(0, 59);
 const SHAPE_MODE_GENERATED: Mapping = note_on(0, 60);
 const SHAPE_MODE_SPRITE: Mapping = note_on(0, 61);
 
+/// TouchOSC only, on the high channel the palette selects already use.
+///
+/// The APC40 has no spare buttons for a third mode row, and channels above
+/// seven carry nothing from it: a mixer page beyond the first goes to a second
+/// device rather than to a higher channel.
+const PHASE_AXIS_ANGLE: Mapping = note_on(8, 62);
+const PHASE_AXIS_RADIUS: Mapping = note_on(8, 63);
+const PHASE_AXIS_LINEAR: Mapping = note_on(8, 64);
+
 // TouchOSC XY position pad.
 const POSITION_X: Mapping = cc(8, 1);
 const POSITION_Y: Mapping = cc(8, 0);
@@ -71,6 +80,15 @@ lazy_static! {
             SHAPE_MODE_LINE,
             SHAPE_MODE_GENERATED,
             SHAPE_MODE_SPRITE,
+        ),
+        off: 0,
+        on: 1,
+    };
+    static ref PHASE_AXIS_BUTTONS: RadioButtons = RadioButtons {
+        mappings: vec!(
+            PHASE_AXIS_ANGLE,
+            PHASE_AXIS_RADIUS,
+            PHASE_AXIS_LINEAR,
         ),
         off: 0,
         on: 1,
@@ -123,6 +141,9 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         SHAPE_MODE_LINE => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Line))),
         SHAPE_MODE_GENERATED => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Generated))),
         SHAPE_MODE_SPRITE => Tunnel(Set(ShapeMode(tunnels_model::layer::ShapeMode::Sprite))),
+        PHASE_AXIS_ANGLE => Tunnel(Set(PhaseAxis(tunnels_model::layer::PhaseAxis::Angle))),
+        PHASE_AXIS_RADIUS => Tunnel(Set(PhaseAxis(tunnels_model::layer::PhaseAxis::Radius))),
+        PHASE_AXIS_LINEAR => Tunnel(Set(PhaseAxis(tunnels_model::layer::PhaseAxis::Linear))),
         m if m.event_type == crate::midi::EventType::NoteOn
             && m.channel == 8
             && m.control >= (PALETTE_SELECT_CONTROL_OFFSET - 1) as u8
@@ -199,10 +220,20 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 send(event(MARQUEE_SPEED, bipolar_to_midi(BipolarFloat::ZERO)));
             }
         }
-        // A figure's colour phase reaches no surface at all, and how much of
-        // it is painted reaches one as a render-mode button rather than as
-        // itself.
-        ColorPhase(_) | DrawMode(_) => (),
+        PhaseAxis(v) => {
+            use tunnels_model::layer::PhaseAxis::*;
+            PHASE_AXIS_BUTTONS.select(
+                match v {
+                    Angle => PHASE_AXIS_ANGLE,
+                    Radius => PHASE_AXIS_RADIUS,
+                    Linear => PHASE_AXIS_LINEAR,
+                },
+                &mut send,
+            );
+        }
+        // How much of a figure is painted reaches a surface as a render-mode
+        // button rather than as itself.
+        DrawMode(_) => (),
     };
 }
 

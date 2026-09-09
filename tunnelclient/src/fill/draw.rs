@@ -13,7 +13,7 @@ use graphics::math::Matrix2d;
 use tunnels_lib::number::Phase;
 use tunnels_model::animation::{PreparedAnimation, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
-use tunnels_model::layer::ColorPhase;
+use tunnels_model::layer::PhaseAxis;
 use tunnels_sprites::Point;
 
 /// Vertices per chunk handed to the backend. `BACK_END_MAX_VERTEX_COUNT` is
@@ -27,7 +27,7 @@ const MAX_SPIN: f32 = std::f32::consts::TAU / 4.0;
 /// run across it, and what the ramp it indexes holds.
 #[derive(Copy, Clone)]
 pub struct PhaseField {
-    pub phase: ColorPhase,
+    pub phase: PhaseAxis,
     pub cycles: f32,
     pub span: RampSpan,
 }
@@ -57,8 +57,8 @@ impl PhaseField {
         match (self.phase, self.span) {
             // Scaled to nothing: every vertex reads one texel and no seam can
             // show.
-            (ColorPhase::Angle, RampSpan::Cycle) if self.cycles == 0.0 => None,
-            (ColorPhase::Angle, _) => Some(self.ramp_scale()),
+            (PhaseAxis::Angle, RampSpan::Cycle) if self.cycles == 0.0 => None,
+            (PhaseAxis::Angle, _) => Some(self.ramp_scale()),
             _ => None,
         }
     }
@@ -226,8 +226,8 @@ impl Needs {
             work.spin_speed != 0.0 || work.warps.iter().any(|w| w.target == AnimationTarget::Spin);
         Self {
             rotates,
-            angle: rotates || work.field.phase == ColorPhase::Angle,
-            radius: rotates || work.field.phase == ColorPhase::Radius,
+            angle: rotates || work.field.phase == PhaseAxis::Angle,
+            radius: rotates || work.field.phase == PhaseAxis::Radius,
         }
     }
 }
@@ -362,11 +362,11 @@ impl Polar {
 
     /// Unit phase along one coordinate, reusing what has already been computed.
     #[inline]
-    fn phase(self, v: Point, phase: ColorPhase) -> f32 {
+    fn phase(self, v: Point, phase: PhaseAxis) -> f32 {
         match phase {
-            ColorPhase::Angle => self.angle / std::f32::consts::TAU + 0.5,
-            ColorPhase::Radius => self.radius / std::f32::consts::SQRT_2,
-            ColorPhase::Linear => (v.y() + 1.0) / 2.0,
+            PhaseAxis::Angle => self.angle / std::f32::consts::TAU + 0.5,
+            PhaseAxis::Radius => self.radius / std::f32::consts::SQRT_2,
+            PhaseAxis::Linear => (v.y() + 1.0) / 2.0,
         }
     }
 }
@@ -600,7 +600,7 @@ mod test {
         // Size and aspect ratio deform a point by the animation's value along
         // the phase coordinate. Neither reads where the point is.
         let deformed = needs(
-            ColorPhase::Linear,
+            PhaseAxis::Linear,
             0.0,
             &[AnimationTarget::Size, AnimationTarget::AspectRatio],
         );
@@ -611,14 +611,14 @@ mod test {
         // The radius is read where the colour runs along it, and wherever the
         // figure turns — a spin is a rotation about the centre the radius is
         // measured from.
-        assert!(needs(ColorPhase::Radius, 0.0, &[]).radius);
-        assert!(needs(ColorPhase::Linear, 0.5, &[]).radius);
-        assert!(needs(ColorPhase::Linear, 0.0, &[AnimationTarget::Spin]).radius);
+        assert!(needs(PhaseAxis::Radius, 0.0, &[]).radius);
+        assert!(needs(PhaseAxis::Linear, 0.5, &[]).radius);
+        assert!(needs(PhaseAxis::Linear, 0.0, &[AnimationTarget::Spin]).radius);
 
         // The angle likewise.
-        assert!(needs(ColorPhase::Angle, 0.0, &[]).angle);
-        assert!(!needs(ColorPhase::Linear, 0.0, &[]).angle);
-        assert!(needs(ColorPhase::Linear, 0.0, &[AnimationTarget::Spin]).angle);
+        assert!(needs(PhaseAxis::Angle, 0.0, &[]).angle);
+        assert!(!needs(PhaseAxis::Linear, 0.0, &[]).angle);
+        assert!(needs(PhaseAxis::Linear, 0.0, &[AnimationTarget::Spin]).angle);
     }
 
     /// An animation aimed at `target`, shaped so that its value runs across the
@@ -667,7 +667,7 @@ mod test {
         ];
         let work = VertexWork {
             field: PhaseField {
-                phase: ColorPhase::Linear,
+                phase: PhaseAxis::Linear,
                 cycles: 1.0,
                 span: RampSpan::Cycle,
             },
@@ -740,7 +740,7 @@ mod test {
     #[test]
     fn the_angular_seam_closes_wherever_the_angle_is_read() {
         let field = |cycles, span| PhaseField {
-            phase: ColorPhase::Angle,
+            phase: PhaseAxis::Angle,
             cycles,
             span,
         };
@@ -759,7 +759,7 @@ mod test {
         );
 
         // The continuous coordinates have no seam to close.
-        for phase in [ColorPhase::Radius, ColorPhase::Linear] {
+        for phase in [PhaseAxis::Radius, PhaseAxis::Linear] {
             for span in [RampSpan::Cycle, RampSpan::Figure] {
                 let field = PhaseField {
                     phase,
