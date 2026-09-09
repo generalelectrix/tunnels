@@ -674,6 +674,27 @@ impl PreparedAnimation {
         self.active
     }
 
+    /// The parameters that hold for as long as the frame does.
+    pub fn static_params(&self) -> StaticParams {
+        self.static_params
+    }
+
+    /// Where the driving clock has got to.
+    pub fn phase_temporal(&self) -> Phase {
+        self.phase_temporal
+    }
+
+    /// The smoother's current value, not its target.
+    pub fn smoothing(&self) -> UnipolarFloat {
+        self.smoothing
+    }
+
+    /// What the amplitude factors — size, clock submaster and audio envelope —
+    /// multiply out to.
+    pub fn scale(&self) -> f64 {
+        self.scale
+    }
+
     /// Whether the value depends on where along a coordinate it is asked.
     ///
     /// A periodicity of zero holds the spatial phase at zero for every

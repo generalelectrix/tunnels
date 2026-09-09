@@ -23,6 +23,7 @@ piston2d-opengl_graphics = "0.89"
 pistoncore-sdl2_window = "0.71"
 piston-texture = "0.9"
 sdl2 = { version = "0.37", features = ["bundled", "static-link"] }
+gl = "0.14"
 tunnels_lib = { path = "../tunnels_lib" }
 tunnels_model = { path = "../tunnels_model" }
 tunnels_net = { path = "../tunnels_net" }

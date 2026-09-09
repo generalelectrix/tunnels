@@ -13,19 +13,21 @@ mod fastmath;
 mod figure;
 mod geom;
 mod geometry;
+pub mod gpu;
 mod mesh;
 mod ramp;
 
 use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_textured};
 use self::figure::FigureCache;
 use self::geometry::{FillGeometry, StrokeGeometry};
+use self::gpu::{FillBackend, GpuFill};
 use self::mesh::{Level, MeshId, MeshLibrary};
 use self::ramp::RampSpan;
 use crate::draw::{draw_segments, hsv_to_rgb, place, thickness_px};
 use client_lib::config::ClientConfig;
 use graphics::math::Matrix2d;
 use graphics::types::Color;
-use graphics::{Context, Graphics, Transformed};
+use graphics::{Context, Transformed};
 use image::RgbaImage;
 use log::{error, info};
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
@@ -200,6 +202,10 @@ pub struct Renderer<T> {
     outlines: StrokeGeometry,
     meshes: MeshLibrary,
     ramps: RampPool<T>,
+    /// The shader fill path's program and its resident vertex buffers.
+    gpu: GpuFill,
+    /// Whether a figure whose colour varies is drawn through the shader.
+    shader_fill: bool,
     /// What the caches measure age against.
     frame: Frame,
     /// Scratch for the per-vertex pass, reused across every layer and every
@@ -219,6 +225,8 @@ where
             outlines: StrokeGeometry::default(),
             meshes: MeshLibrary::default(),
             ramps: RampPool::new(),
+            gpu: GpuFill::default(),
+            shader_fill: false,
             frame: Frame::default(),
             verts: VertexBuffers::default(),
         }
@@ -233,7 +241,7 @@ where
     ///
     /// Order is the whole of how masking works — a mask paints opaque black
     /// over what is already there — so this never reorders or groups them.
-    pub fn draw<G: Graphics<Texture = T>>(
+    pub fn draw<G: FillBackend<Texture = T>>(
         &mut self,
         layers: &LayerCollection,
         c: &Context,
@@ -242,6 +250,7 @@ where
     ) {
         self.frame.advance();
         self.meshes.reap(self.frame);
+        self.gpu.reap(self.frame);
         for layer in layers {
             match layer {
                 Layer::Segments(segments) => draw_segments(segments, c, gl, cfg),
@@ -295,12 +304,23 @@ where
         info!("Tessellated {tessellated} figure interiors.");
     }
 
+    /// Draw a figure whose colour varies through the fill shader rather than by
+    /// walking its mesh on the CPU.
+    pub fn use_shader_fill(&mut self, on: bool) {
+        self.shader_fill = on;
+    }
+
+    /// Draws the fill shader has answered.
+    pub fn shader_draws(&self) -> usize {
+        self.gpu.shaded()
+    }
+
     /// Total triangles held in refined meshes, for reporting memory pressure.
     pub fn mesh_triangles(&self) -> usize {
         self.meshes.triangles()
     }
 
-    fn draw_fill<G: Graphics<Texture = T>>(
+    fn draw_fill<G: FillBackend<Texture = T>>(
         &mut self,
         fill: &FillLayer,
         c: &Context,
@@ -313,6 +333,8 @@ where
             outlines,
             meshes,
             ramps,
+            gpu,
+            shader_fill,
             frame,
             verts,
         } = self;
@@ -395,32 +417,42 @@ where
         {
             draw_flat(interior.points(), interior.indices(), color, placed.m, gl);
         } else if let Some(interior) = interior {
-            let mesh = meshes.get(
-                MeshId {
-                    figure: fill.figure,
-                    level,
-                },
-                interior,
-                *frame,
-            );
-            // Phase comes from the undeformed position, so a colour pattern
-            // stays glued to the figure while a warp moves it rather than
-            // sliding across it. One walk of the mesh produces displaced
-            // positions and ramp coordinates together, because both want the
-            // same polar coordinates for a point.
-            verts.vertex_pass(mesh, work);
-            match texture {
-                Some(texture) => {
-                    draw_textured(
-                        mesh.indices(),
-                        verts,
-                        field.wrap_period(),
-                        texture,
-                        placed.m,
-                        gl,
-                    );
+            let id = MeshId {
+                figure: fill.figure,
+                level,
+            };
+            let mesh = meshes.get(id, interior, *frame);
+            // The shader answers the whole per-vertex pass and the projection
+            // that follows it, which is where a refined mesh's cost is. A
+            // figure whose colour varies reads the ramp; one that does not
+            // carries its colour as a uniform, so both reach it — and either
+            // falls back where the shader cannot stand in for the layer.
+            let shaded = *shader_fill
+                && match draw::shader_uniforms(&work, placed.m, texture.is_none().then_some(color))
+                {
+                    Some(uniforms) => gl.shader_fill(gpu, id, mesh, *frame, &uniforms, texture),
+                    None => false,
+                };
+            if !shaded {
+                // Phase comes from the undeformed position, so a colour pattern
+                // stays glued to the figure while a warp moves it rather than
+                // sliding across it. One walk of the mesh produces displaced
+                // positions and ramp coordinates together, because both want
+                // the same polar coordinates for a point.
+                verts.vertex_pass(mesh, work);
+                match texture {
+                    Some(texture) => {
+                        draw_textured(
+                            mesh.indices(),
+                            verts,
+                            field.wrap_period(),
+                            texture,
+                            placed.m,
+                            gl,
+                        );
+                    }
+                    None => draw_flat(verts.positions(), mesh.indices(), color, placed.m, gl),
                 }
-                None => draw_flat(verts.positions(), mesh.indices(), color, placed.m, gl),
             }
         }
 

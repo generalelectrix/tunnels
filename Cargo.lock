@@ -5918,6 +5918,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client_lib",
+ "gl 0.14.0",
  "image",
  "log",
  "lyon_path",
