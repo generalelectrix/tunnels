@@ -156,10 +156,12 @@ impl Indices {
         }
     }
 
+    /// What these indices hold, counting what is allocated rather than what
+    /// is used, since the difference is memory either way.
     fn bytes(&self) -> usize {
         match self {
-            Self::Narrow(i) => i.len() * size_of::<u16>(),
-            Self::Wide(i) => i.len() * size_of::<u32>(),
+            Self::Narrow(i) => i.capacity() * size_of::<u16>(),
+            Self::Wide(i) => i.capacity() * size_of::<u32>(),
         }
     }
 }
@@ -192,7 +194,7 @@ impl RefinedMesh {
     /// What this mesh weighs, which is what the caches holding it are sized
     /// against.
     fn bytes(&self) -> usize {
-        self.verts.len() * size_of::<StoredPoint>() + self.indices.bytes()
+        self.verts.capacity() * size_of::<StoredPoint>() + self.indices.bytes()
     }
 
     /// Runs of whole triangles, each within `max_vertices`.
@@ -359,6 +361,12 @@ fn refine(tris: &TriangleList, target: f32) -> RefinedMesh {
         });
         indices.push(idx);
     }
+    // A vertex list grows by doubling and how many a figure refines to is not
+    // known until it has, so the last doubling leaves 46% of the library's
+    // vertices allocated and unused — 22 MB across the densities built before
+    // the show. These are kept for the run, so the slack is worth a walk of
+    // the list to give back.
+    verts.shrink_to_fit();
     let indices = Indices::of(indices, verts.len());
     RefinedMesh { verts, indices }
 }
