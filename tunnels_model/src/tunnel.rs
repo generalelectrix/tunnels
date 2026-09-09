@@ -477,12 +477,18 @@ impl Tunnel {
             figure,
             placement,
             spin_speed: self.spin_speed.val(),
-            thickness: (self.thickness.val().val() * (1. + uniform(AnimationTarget::Thickness)))
-                .abs(),
+            // The knob alone. A thickness animation is not folded in here: on
+            // a figure it tapers the outline point by point, so the width the
+            // knob names is the one the taper is measured against rather than
+            // one already spent.
+            thickness: self.thickness.val().val(),
             draw_mode: self.draw_mode,
             color: self.color_field(base_hue, level_scale, as_mask),
             color_anims: fill_animations(anims, AnimationTarget::is_color),
-            warps: fill_animations(anims, |target| !target.is_color()),
+            warps: fill_animations(anims, |target| {
+                !target.is_color() && target != AnimationTarget::Thickness
+            }),
+            taper: fill_animations(anims, |target| target == AnimationTarget::Thickness),
         }
     }
 
@@ -2603,6 +2609,38 @@ pub mod fixture {
             Tunnel::GEOM_SMOOTH_TIME,
             SmoothMode::Linear,
         );
+        snapshot(render_default(&tunnel))
+    }
+
+    /// An outline tapered by a thickness animation running around the figure.
+    ///
+    /// At full amplitude the waveform's trough takes the width to nothing, so
+    /// the outline is thick at some places around the rings and absent at
+    /// others, which is what makes a figure read as a beam rather than as a
+    /// line of even weight. `n_periods` chooses how many times that runs
+    /// around, and is the whole of what distinguishes one of these from
+    /// another.
+    pub fn sprite_thickness_animation_snapshot(n_periods: u16) -> LayerCollection {
+        let mut tunnel = sprite_tunnel(BULLSEYE);
+        tunnel.draw_mode = DrawMode::Outline;
+        tunnel.thickness = Smoother::new(
+            UnipolarFloat::new(0.15),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        // Around the figure rather than along it, so the taper runs the way a
+        // ring's own outline does.
+        tunnel.color_phase = ColorPhase::Angle;
+        tunnel.anims[0].target = AnimationTarget::Thickness;
+        for sc in [
+            AnimStateChange::Waveform(Waveform::Sine),
+            AnimStateChange::NPeriods(n_periods),
+            AnimStateChange::Size(UnipolarFloat::ONE),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
+        }
         snapshot(render_default(&tunnel))
     }
 

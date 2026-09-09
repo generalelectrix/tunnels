@@ -51,29 +51,20 @@ const TOLERANCE: f32 = 0.002;
 /// of that.
 const STROKE_SEGMENT: f32 = 0.025;
 
-/// Identifies one tessellated outline.
+/// The width every outline is tessellated at, in figure units.
 ///
-/// Keyed on the thickness the outline was actually stroked at, so the key
-/// names the geometry it stands for and nothing else has to be checked.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-struct StrokeId {
-    figure: FigureId,
-    thickness_bits: u32,
-}
-
-/// Outlines held before the map is emptied and refilled.
+/// An outline is stroked once, this wide, and reaches whatever width it is
+/// actually drawn at by contracting each vertex toward the contour point it
+/// was offset from. So this is a ceiling and not a nominal size: a stroke
+/// wider than this cannot be reached, and one narrower costs nothing.
 ///
-/// A stroke mesh measures 7,800 vertices on the average figure and 18,800 on
-/// the largest, at sixteen bytes a vertex, so this is a ceiling of about 30 MB
-/// typically and 75 MB if every entry were the largest figure in the library.
-///
-/// Emptying it rather than evicting from it is what the growth law asks for.
-/// A thickness animation sweeps the buckets in order and comes back round, so
-/// the entry least recently used is also the one about to be wanted again, and
-/// any recency policy would evict exactly wrong. Refilling costs one
-/// tessellation per outline drawn — 121 µs on the average figure against an
-/// 8.3 ms frame — and only the outlines a frame actually draws.
-const STROKE_CAP: usize = 256;
+/// Set at the generous end of what the knobs can ask for, because the choice
+/// is nearly free: what a stroke costs is set by how finely the contour is
+/// sampled and not by how wide it is, so the whole library measures 281 MB
+/// stroked at 0.02 and 305 MB stroked at 1.0 — an 8% spread across a fiftyfold
+/// range of widths. The only thing a narrow reference would buy is a clamp,
+/// where a beam asks to be wider than its outline was cut.
+pub const REFERENCE_WIDTH: f32 = 1.0;
 
 /// Figure interiors tessellated so far, before any refinement.
 ///
@@ -115,61 +106,89 @@ impl FillGeometry {
     }
 }
 
-/// Outlines tessellated so far, before any refinement.
+/// Outlines tessellated so far.
 ///
-/// Kept apart from the interiors because the work differs — an outline depends
-/// on how wide the stroke is — and so does the growth law that follows from
-/// that. Thickness is a knob and an animation target, so this key moves while
-/// the show runs and the map would grow without limit; it is capped at
-/// [`STROKE_CAP`] instead.
+/// An outline is stroked once at [`REFERENCE_WIDTH`] and narrowed per vertex
+/// wherever it is drawn, so a figure has exactly one however the thickness
+/// knob moves and however many animations taper it. 401 outlines is the whole
+/// of what this can come to hold, the same table the interiors come to.
+///
+/// It is a large table: 47,554 vertices on the average figure and 312,249 on
+/// the largest, at sixteen bytes a vertex, so the whole library is 305 MB
+/// against the 37 MB its interiors come to. What a stroke costs is decided by
+/// how finely the contour is sampled — [`STROKE_SEGMENT`] puts a join every
+/// 0.025 units along it — and not by the width, which is why the outlines
+/// outweigh the interiors they follow.
 #[derive(Default)]
-pub struct StrokeGeometry(HashMap<StrokeId, StrokeMesh>);
+pub struct StrokeGeometry(HashMap<FigureId, StrokeMesh>);
 
 impl StrokeGeometry {
-    /// The figure's outline stroked at `thickness`, tessellated on first use.
-    pub fn get(&mut self, id: FigureId, figures: &[Figure], thickness: Thickness) -> &StrokeMesh {
-        let key = StrokeId {
-            figure: id,
-            thickness_bits: thickness.key(),
-        };
-        if self.0.len() >= STROKE_CAP && !self.0.contains_key(&key) {
-            self.0.clear();
-        }
-        self.0.entry(key).or_insert_with(|| {
-            let options = StrokeOptions::tolerance(TOLERANCE)
-                .with_line_width(thickness.figure_units.max(1e-4))
-                .with_line_join(LineJoin::Round)
-                .with_line_cap(LineCap::Round);
-            let mut out = StrokeMesh::default();
-            for figure in figures {
-                let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
-                let mut builder =
-                    BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
-                        position: Point::from_array(v.position().to_array()),
-                        on_path: Point::from_array(v.position_on_path().to_array()),
-                    });
-                if StrokeTessellator::new()
-                    .tessellate_path(
-                        &path_of_capped(figure, STROKE_SEGMENT),
-                        &options,
-                        &mut builder,
-                    )
-                    .is_ok()
-                {
-                    out.extend(&buffers);
-                }
-            }
-            out
-        })
+    /// How many figures have been stroked.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// The figure's outline at [`REFERENCE_WIDTH`], tessellated on first use.
+    pub fn get(&mut self, id: FigureId, figures: &[Figure]) -> &StrokeMesh {
+        self.0
+            .entry(id)
+            .or_insert_with(|| stroke(figures, REFERENCE_WIDTH))
     }
 }
 
+/// Stroke a figure's contours into a ribbon of triangles `width` across.
+///
+/// **A round join is what lets the result stand in for every narrower stroke,
+/// and changing the join style would break that silently.** Lyon puts a
+/// stroked vertex at `on_path + n̂ · w/2`, where the direction `n̂` and the
+/// multiple of the half-width both come from the path and not from `w` — the
+/// outer side of a join rides an arc of radius `w/2`, and the inner side sits
+/// where the two offset edges cross, further out as the corner sharpens but
+/// further out in proportion. So every offset is linear in the width, and
+/// scaling them all by `s` lands on the mesh this would have produced at
+/// `s · w`. A miter join clamped by a limit is the counterexample: past the
+/// limit its corner stops moving with the width, and a narrowed stroke would
+/// keep a corner cut for a wider one.
+///
+/// The cap is set for completeness and never reached: `path_of_capped` closes
+/// every subpath, so an outline is all joins and has no ends to cap.
+fn stroke(figures: &[Figure], width: f32) -> StrokeMesh {
+    let options = StrokeOptions::tolerance(TOLERANCE)
+        .with_line_width(width)
+        .with_line_join(LineJoin::Round)
+        .with_line_cap(LineCap::Round);
+    let mut out = StrokeMesh::default();
+    for figure in figures {
+        let mut buffers: VertexBuffers<StrokeVertexPair, u32> = VertexBuffers::new();
+        let mut builder = BuffersBuilder::new(&mut buffers, |v: StrokeVertex| StrokeVertexPair {
+            position: Point::from_array(v.position().to_array()),
+            on_path: Point::from_array(v.position_on_path().to_array()),
+        });
+        if StrokeTessellator::new()
+            .tessellate_path(
+                &path_of_capped(figure, STROKE_SEGMENT),
+                &options,
+                &mut builder,
+            )
+            .is_ok()
+        {
+            out.extend(&buffers);
+        }
+    }
+    out
+}
+
 /// A stroked vertex: where it is, and where on the contour it came from.
+///
+/// The pair is what makes the offset recoverable. `position - on_path` is the
+/// vector the tessellator pushed this vertex out along, so scaling it and
+/// adding it back to `on_path` gives the same vertex at another width — which
+/// is how one outline serves every width the knobs ask for.
 #[derive(Copy, Clone)]
 pub struct StrokeVertexPair {
     pub position: Point,
     /// Where on the contour this vertex was offset from, which is what
-    /// colours it.
+    /// colours it and what it narrows toward.
     pub on_path: Point,
 }
 
@@ -204,78 +223,17 @@ impl StrokeMesh {
         self.positions.is_empty()
     }
 
-    /// Every vertex in order, three to a triangle.
-    pub fn points(&self) -> &[Point] {
-        &self.positions
-    }
-
-    /// Each vertex, paired with the contour point that colours it.
+    /// Each vertex, paired with the contour point it was offset from.
     ///
-    /// Stored as parallel runs so [`points`](Self::points) can hand the
-    /// positions over as one slice, and paired back up here because the two
-    /// points mean opposite things and a caller that takes them the wrong way
-    /// round silently colours a ribbon by where it landed.
+    /// Stored as parallel runs because that is how they are written, and
+    /// paired back up here because the two points mean opposite things and a
+    /// caller that takes them the wrong way round silently colours a ribbon by
+    /// where it landed and narrows it toward the wrong place.
     pub fn vertices(&self) -> impl Iterator<Item = StrokeVertexPair> + '_ {
         self.positions
             .iter()
             .zip(self.on_path.iter())
             .map(|(&position, &on_path)| StrokeVertexPair { position, on_path })
-    }
-}
-
-/// The beam's thickness knob, resolved into figure space and quantised so an
-/// animated thickness does not re-tessellate the outline on every frame.
-///
-/// The step is half a pixel on screen rather than a fixed amount of shape
-/// space. A change moves each edge by half of it, and the client multisamples,
-/// so half a pixel sits under anything an edge can resolve — and measuring it
-/// on the screen is what makes the granularity independent of output
-/// resolution and of how large the figure is drawn.
-///
-/// Without this an animated thickness re-strokes the outline every frame. Only
-/// the outline: an interior is not stroked and a mesh is not keyed on one, so
-/// nothing behind it is rebuilt. It does not make the first sweep of a knob
-/// free — every bucket is visited once whatever the step — but a periodic
-/// animation warms the set in one cycle, and every later cycle is a hit for as
-/// long as the set stays under [`STROKE_CAP`].
-#[derive(Copy, Clone, Debug)]
-pub struct Thickness {
-    pub figure_units: f32,
-}
-
-/// How a figure's own units map onto the screen.
-#[derive(Copy, Clone, Debug)]
-pub struct Scale {
-    /// Pixels one figure-space unit covers as the figure is actually drawn.
-    pub px_per_unit: f64,
-    /// Pixels it covers at the nominal size of the density it is drawn at.
-    ///
-    /// The bucket size is taken from this rather than from `px_per_unit` so
-    /// that it holds still while the size knob moves: a quantum that slid with
-    /// the scale would put every frame of a size sweep in its own bucket.
-    pub nominal_px_per_unit: f64,
-}
-
-/// One bucket of stroke thickness, in pixels on screen.
-const QUANTUM_PX: f64 = 0.5;
-
-impl Thickness {
-    /// Bucket an on-screen stroke thickness against the density it is drawn at.
-    pub fn bucketed(screen_px: f64, scale: Scale) -> Self {
-        let figure_units = screen_px / scale.px_per_unit.max(f64::MIN_POSITIVE);
-        let quantum =
-            (QUANTUM_PX / scale.nominal_px_per_unit.max(f64::MIN_POSITIVE)).max(f64::MIN_POSITIVE);
-        let buckets = (figure_units / quantum)
-            .round()
-            .clamp(0.0, f64::from(u32::MAX));
-        Self {
-            figure_units: (buckets * quantum) as f32,
-        }
-    }
-
-    /// The key naming this thickness's geometry.
-    pub fn key(self) -> u32 {
-        self.figure_units.to_bits()
     }
 }
 
@@ -336,59 +294,10 @@ fn triangles<V: Copy>(buffers: &VertexBuffers<V, u32>) -> impl Iterator<Item = [
 mod test {
     use super::*;
 
-    #[test]
-    fn a_thickness_lands_in_half_pixel_buckets_whatever_the_scale() {
-        let scale = Scale {
-            px_per_unit: 200.0,
-            nominal_px_per_unit: 200.0,
-        };
-        // Thicknesses a tenth of a pixel apart share a bucket; half a pixel apart
-        // do not.
-        let a = Thickness::bucketed(10.0, scale);
-        assert_eq!(a.key(), Thickness::bucketed(10.1, scale).key());
-        assert_ne!(a.key(), Thickness::bucketed(10.6, scale).key());
-        // The thickness used is within half a bucket of the one asked for.
-        let on_screen = f64::from(a.figure_units) * scale.px_per_unit;
-        assert!((on_screen - 10.0).abs() <= 0.25, "stroked at {on_screen}px");
-
-        // A figure drawn twice as large, at the same density level, gets half
-        // the thickness in figure units — the same thickness on screen.
-        let large = Thickness::bucketed(
-            10.0,
-            Scale {
-                px_per_unit: 400.0,
-                ..scale
-            },
-        );
-        assert!(
-            (f64::from(large.figure_units) * 400.0 - 10.0).abs() <= 0.25,
-            "stroked at {}px",
-            f64::from(large.figure_units) * 400.0
-        );
-
-        // The bucket holds still as the size knob moves within a level, which
-        // is the whole point: the quantum comes from the level, not the scale.
-        assert_eq!(
-            Thickness::bucketed(10.0, scale).key(),
-            Thickness::bucketed(
-                10.0,
-                Scale {
-                    px_per_unit: 200.4,
-                    ..scale
-                }
-            )
-            .key()
-        );
-    }
-
-    /// Thickness is animated, so its bucket moves every frame and the map has
-    /// to have a ceiling. A sweep of the knob is what puts it there.
-    #[test]
-    fn a_swept_thickness_does_not_grow_the_outline_map_without_limit() {
-        use tunnels_model::layer::SpriteId;
+    /// A square, as the simplest closed contour with corners to join.
+    fn square() -> [Figure; 1] {
         use tunnels_sprites::Contour;
-
-        let square = [Figure {
+        [Figure {
             rule: FillRule::NonZero,
             subpaths: vec![
                 Contour::new(vec![
@@ -399,22 +308,90 @@ mod test {
                 ])
                 .expect("four corners is a loop"),
             ],
-        }];
-        let scale = Scale {
-            px_per_unit: 200.0,
-            nominal_px_per_unit: 200.0,
-        };
+        }]
+    }
 
-        let mut outlines = StrokeGeometry::default();
-        for step in 0..4 * STROKE_CAP {
-            let thickness = Thickness::bucketed(step as f64 * 0.5, scale);
-            outlines.get(FigureId::Baked(SpriteId(0)), &square, thickness);
+    /// What a stroked vertex is offset by is proportional to the width.
+    ///
+    /// This is the whole of why one outline serves every width: scale the
+    /// offsets and you land on the mesh the tessellator would have produced at
+    /// the scaled width, so a narrowed stroke is a real stroke and not an
+    /// approximation of one. The offsets are not all the half-width — the
+    /// inside of a corner reaches further, and further as the corner sharpens
+    /// — which is why proportionality is what is checked and not magnitude.
+    ///
+    /// A join style whose corner stops moving with the width, such as a miter
+    /// under its limit, is what this is here to catch.
+    #[test]
+    fn what_a_stroked_vertex_is_offset_by_is_proportional_to_the_width() {
+        let widest = |width| {
+            stroke(&square(), width)
+                .vertices()
+                .map(|v| v.position.distance(v.on_path))
+                .fold(0.0f32, f32::max)
+        };
+        let reference = widest(REFERENCE_WIDTH);
+        // The inside of the square's right-angle corners, at half the width
+        // times root two, is the furthest any vertex reaches.
+        let corner = REFERENCE_WIDTH / 2.0 * std::f32::consts::SQRT_2;
+        assert!(
+            (reference - corner).abs() <= corner * 1e-3,
+            "the furthest vertex reaches {reference}, not the {corner} a right-angle corner puts it at"
+        );
+        for divisor in [2.0, 8.0, 64.0] {
+            let narrow = widest(REFERENCE_WIDTH / divisor);
+            let expected = reference / divisor;
             assert!(
-                outlines.0.len() <= STROKE_CAP,
-                "{} outlines held after {step} distinct thicknesses",
-                outlines.0.len()
+                (narrow - expected).abs() <= expected * 1e-3,
+                "a stroke {divisor} times narrower reaches {narrow}, not the {expected} proportion asks for"
             );
         }
+    }
+
+    /// Contracted to nothing, every vertex lands on its contour point exactly.
+    ///
+    /// A beam's waveform reaches zero at its trough, so this is the ordinary
+    /// bottom of the range rather than an edge case. Landing exactly there is
+    /// what makes the triangles collapse to no area and draw nothing; landing
+    /// an ulp away would leave a sliver of a figure that has gone out.
+    #[test]
+    fn a_vertex_contracted_to_nothing_lands_on_its_contour_point() {
+        use tunnels_model::layer::SpriteId;
+
+        let mut outlines = StrokeGeometry::default();
+        let mesh = outlines.get(FigureId::Baked(SpriteId(0)), &square());
+        for v in mesh.vertices() {
+            let collapsed = Point::new(
+                v.on_path.x() + (v.position.x() - v.on_path.x()) * 0.0,
+                v.on_path.y() + (v.position.y() - v.on_path.y()) * 0.0,
+            );
+            assert_eq!(
+                collapsed.bits(),
+                v.on_path.bits(),
+                "a vertex contracted to nothing landed beside its contour point"
+            );
+        }
+    }
+
+    /// A figure is stroked once however many widths are asked of it.
+    ///
+    /// The width left the key when it became a per-vertex quantity, so the map
+    /// is one entry per figure and has nothing left to bound.
+    #[test]
+    fn an_outline_is_tessellated_once_per_figure() {
+        use tunnels_model::layer::SpriteId;
+
+        let mut outlines = StrokeGeometry::default();
+        for _ in 0..64 {
+            outlines.get(FigureId::Baked(SpriteId(0)), &square());
+        }
+        outlines.get(FigureId::Baked(SpriteId(1)), &square());
+        assert_eq!(
+            outlines.0.len(),
+            2,
+            "two figures came to {} outlines",
+            outlines.0.len()
+        );
     }
 
     /// A ring is two loops, and the rule between them is what makes it a ring.

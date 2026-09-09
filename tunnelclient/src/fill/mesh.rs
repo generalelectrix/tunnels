@@ -118,16 +118,6 @@ impl Level {
     pub fn eager() -> impl Iterator<Item = Self> {
         (EAGER_LEVEL..=COARSEST_LEVEL).rev().map(Level)
     }
-
-    /// Pixels one figure-space unit covers at this density's nominal size.
-    ///
-    /// The density a figure actually draws at is within a factor of root two
-    /// of this, since levels are powers of two. Quantities that must not move
-    /// continuously with the size knob — a stroke width bucket — are measured
-    /// against this rather than against the real scale.
-    pub fn nominal_px_per_unit(self, target_px: f64) -> f64 {
-        target_px / f64::from(self.target_edge())
-    }
 }
 
 /// Identifies one cached mesh.

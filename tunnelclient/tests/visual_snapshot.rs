@@ -694,6 +694,37 @@ fn sprite_outline() {
     compare_fill_to_fixture(&image, "sprite_outline.png");
 }
 
+/// A thickness animation's periodicity has to reach the outline.
+///
+/// Periodicity is how many times a waveform runs across the figure, so two
+/// settings of it describe two different outlines and cannot draw the same
+/// picture. A thickness resolved to one number before the layer is built
+/// draws the same picture for every setting — and, for a sine, the same
+/// picture as no animation at all, since the value at the start of the cycle
+/// is zero.
+#[test]
+fn periodicity_varies_a_thickness_animation_around_the_figure() {
+    let cfg = test_config();
+    let once = render_snapshot(&fixture::sprite_thickness_animation_snapshot(1), &cfg);
+    let thrice = render_snapshot(&fixture::sprite_thickness_animation_snapshot(3), &cfg);
+    assert!(
+        lit_pixels(&once) > 0 && lit_pixels(&thrice) > 0,
+        "a tapered outline drew nothing at all, so there is nothing to compare"
+    );
+    assert!(
+        once != thrice,
+        "one period and three drew the same outline, so periodicity reached nothing"
+    );
+}
+
+/// How many pixels a render leaves lit against its black ground.
+fn lit_pixels(image: &image::RgbaImage) -> usize {
+    image
+        .pixels()
+        .filter(|px| px[0] > 0 || px[1] > 0 || px[2] > 0)
+        .count()
+}
+
 /// The golden images below draw these three generated figures. A figure is a
 /// family and two numbers, and what those numbers reach is the arity model's
 /// business — so naming here what each of them selects is what turns a change
