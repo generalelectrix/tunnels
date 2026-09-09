@@ -108,6 +108,43 @@ fn triangle_contains(tri: &[[f32; 2]], point: [f32; 2]) -> bool {
     (b1 && b2 && b3) || (!b1 && !b2 && !b3)
 }
 
+/// Whether a draw composites with what is already there or replaces it.
+///
+/// The GL backend blends only when the draw state asks it to; a state carrying
+/// no blend writes its colour whole, alpha included. Honouring that here is
+/// what lets a fixture notice a draw state that has lost its blend — this
+/// rasteriser has no reason of its own to stop compositing, so without this it
+/// would paint a faded layer correctly no matter what the backend would have
+/// done with it.
+///
+/// Every blend mode is treated as alpha-over, which holds only because
+/// [`Blend::Alpha`] is the one this client ever asks for. A draw wanting
+/// `Add` or `Multiply` would need this to grow a case rather than be believed.
+#[derive(Copy, Clone, PartialEq, Debug)]
+enum Compositing {
+    /// Composite over what is there, weighted by the incoming alpha.
+    Blend,
+    /// Overwrite, alpha and all.
+    Replace,
+}
+
+impl Compositing {
+    fn of(draw_state: &DrawState) -> Self {
+        match draw_state.blend {
+            Some(_) => Self::Blend,
+            None => Self::Replace,
+        }
+    }
+
+    /// The colour a pixel takes, given what is being drawn and what is under it.
+    fn resolve(self, over: &[f32; 4], under: &[f32; 4]) -> [f32; 4] {
+        match self {
+            Self::Blend => layer_color(over, under),
+            Self::Replace => *over,
+        }
+    }
+}
+
 /// What the stencil plane does to one run of triangles.
 ///
 /// The four settings a `DrawState` can carry, plus the absence of one. Marking
@@ -199,6 +236,7 @@ impl RenderBuffer {
         &mut self,
         tri: &[[f32; 2]; 3],
         pass: StencilPass,
+        compositing: Compositing,
         mut shade: impl FnMut([f32; 3]) -> [f32; 4],
     ) {
         let mut tl = [f32::MAX, f32::MAX];
@@ -224,7 +262,7 @@ impl RenderBuffer {
                 }
                 let over = shade(w);
                 let under = color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
-                let blended = layer_color(&over, &under);
+                let blended = compositing.resolve(&over, &under);
                 self.inner
                     .put_pixel(x as u32, y as u32, color_f32_rgba(&blended));
             }
@@ -250,6 +288,7 @@ impl Graphics for RenderBuffer {
         F: FnMut(&mut dyn FnMut(&[[f32; 2]])),
     {
         let pass = StencilPass::of(draw_state);
+        let compositing = Compositing::of(draw_state);
         f(&mut |vertices| {
             for tri in vertices.chunks(3) {
                 if tri.len() < 3 {
@@ -276,7 +315,7 @@ impl Graphics for RenderBuffer {
                                 continue;
                             }
                             let under = color_rgba_f32(*self.inner.get_pixel(x as u32, y as u32));
-                            let blended = layer_color(color, &under);
+                            let blended = compositing.resolve(color, &under);
                             self.inner
                                 .put_pixel(x as u32, y as u32, color_f32_rgba(&blended));
                         }
@@ -296,6 +335,7 @@ impl Graphics for RenderBuffer {
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]])),
     {
         let pass = StencilPass::of(draw_state);
+        let compositing = Compositing::of(draw_state);
         let tint = *color;
         let mut tris: Vec<Attributed<[f32; 2]>> = Vec::new();
         f(&mut |vertices, coords| {
@@ -306,7 +346,7 @@ impl Graphics for RenderBuffer {
             }
         });
         for (tri, uv) in tris {
-            self.raster(&tri, pass, |w| {
+            self.raster(&tri, pass, compositing, |w| {
                 let [u, v] = interpolate(w, &uv);
                 let mut over = texture.sample(u, v);
                 for (ch, t) in over.iter_mut().zip(tint) {
@@ -322,6 +362,7 @@ impl Graphics for RenderBuffer {
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 4]])),
     {
         let pass = StencilPass::of(draw_state);
+        let compositing = Compositing::of(draw_state);
         let mut tris: Vec<Attributed<[f32; 4]>> = Vec::new();
         f(&mut |vertices, colors| {
             for (v, c) in vertices.chunks(3).zip(colors.chunks(3)) {
@@ -331,7 +372,7 @@ impl Graphics for RenderBuffer {
             }
         });
         for (tri, cols) in tris {
-            self.raster(&tri, pass, |w| interpolate(w, &cols));
+            self.raster(&tri, pass, compositing, |w| interpolate(w, &cols));
         }
     }
 
@@ -340,6 +381,7 @@ impl Graphics for RenderBuffer {
         F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]], &[[f32; 4]])),
     {
         let pass = StencilPass::of(draw_state);
+        let compositing = Compositing::of(draw_state);
         let mut tris: Vec<Tinted> = Vec::new();
         f(&mut |vertices, coords, colors| {
             for ((v, t), c) in vertices
@@ -353,7 +395,7 @@ impl Graphics for RenderBuffer {
             }
         });
         for ((tri, uv), cols) in tris {
-            self.raster(&tri, pass, |w| {
+            self.raster(&tri, pass, compositing, |w| {
                 let [u, v] = interpolate(w, &uv);
                 let mut over = texture.sample(u, v);
                 for (ch, t) in over.iter_mut().zip(interpolate(w, &cols)) {
@@ -471,6 +513,43 @@ mod test {
         assert!(
             lit(&[[2.0, 2.0], [12.0, 2.0], [12.0, 12.0]]) > 0,
             "a triangle with area lit nothing"
+        );
+    }
+}
+
+#[cfg(test)]
+mod compositing_test {
+    use super::*;
+
+    /// A draw state with no blend overwrites rather than composites.
+    ///
+    /// This is the case no fixture reaches — every draw this client makes
+    /// carries `Blend::Alpha`, so the goldens exercise only the blending arm.
+    /// Without a test here the replacing arm would be dead code that a fixture
+    /// silently depends on: a draw state losing its blend would stop a faded
+    /// layer fading, and every golden would still match.
+    #[test]
+    fn a_draw_state_without_blend_replaces_what_is_under_it() {
+        let opaque = DrawState {
+            blend: None,
+            stencil: None,
+            scissor: None,
+        };
+        assert_eq!(Compositing::of(&opaque), Compositing::Replace);
+        assert_eq!(Compositing::of(&DrawState::default()), Compositing::Blend);
+
+        let half_black = [0.0, 0.0, 0.0, 0.5];
+        let white = [1.0, 1.0, 1.0, 1.0];
+
+        assert_eq!(
+            Compositing::Replace.resolve(&half_black, &white),
+            half_black,
+            "replacing takes the incoming colour whole, alpha and all"
+        );
+        assert_ne!(
+            Compositing::Blend.resolve(&half_black, &white),
+            half_black,
+            "blending lets what is underneath through"
         );
     }
 }
