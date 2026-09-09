@@ -20,18 +20,34 @@ use super::{unipolar_from_midi, unipolar_to_midi};
 pub use crate::mixer::MIXER_CHANNELS_PER_PAGE as PAGE_SIZE;
 
 const FADER: u8 = 0x7;
-const BUMP: u8 = 0x32;
 const MASK: u8 = 0x31;
 const LOOK: u8 = 0x30;
 
+/// The note a channel's bump button sends.
+///
+/// The APC40's Clip Stop, which is a larger button than the row bump used to
+/// sit on and so an easier one to mash mid-show.
+///
+/// **Bump is the one control here that is momentary**: the note on sets it and
+/// the note off releases it. That makes this the note whose behaviour on
+/// release matters, and the first thing to check with the desk in front of
+/// you. A button that sends only on press leaves bump latched on, which is a
+/// channel stuck at full for as long as nobody notices — a worse failure than
+/// any of the toggles above can produce, and one that looks like a fader
+/// problem rather than a note problem.
+const BUMP: u8 = 0x34;
+
 /// The note a channel's gobo button sends, and lights its lamp from.
 ///
-/// The APC40's Track Select button, which the protocol document places at 0x34
-/// on the track's own midi channel alongside the four buttons above it. Nothing
-/// else reads it. **Taken from the protocol document rather than measured off
-/// the hardware**, so a surface that turns out to send something else here
-/// needs this number changed and nothing else.
-const GOBO: u8 = 0x34;
+/// The APC40's Activator, which the row above bump used to occupy and which
+/// bump moving to Clip Stop freed. Its lamp is green, so a gobo'd channel
+/// reads green against a mask's blue, and the look indicator keeps red to
+/// match the saved-look red in the beam grid.
+///
+/// **Taken from the protocol document rather than measured off the hardware**,
+/// so a surface that turns out to send something else here needs this number
+/// changed and nothing else.
+const GOBO: u8 = 0x32;
 
 /// The midi note value for the 0th video channel selector.
 const VIDEO_CHAN_0: u8 = 66;
