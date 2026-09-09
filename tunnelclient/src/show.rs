@@ -118,6 +118,20 @@ pub struct Show {
     start_time: Instant,
 }
 
+/// The rate the render loop is held to.
+///
+/// Enough that motion reads as motion, and no more. Frames past it cost a
+/// machine the same work as any other and buy nothing an audience can tell
+/// apart.
+const MAX_FPS: u64 = 60;
+
+/// The rate the render loop is held to where vsync does not work.
+///
+/// Twice the rate above, so a frame torn by drawing that overtook the display
+/// is at most half a refresh stale. It makes the tear hard to see; nothing
+/// short of working vsync removes it.
+const MAX_FPS_WITHOUT_VSYNC: u64 = 120;
+
 impl Show {
     pub fn new(cfg: ClientConfig) -> Result<Self> {
         let video_channel = VideoChannel(cfg.video_channel as usize);
@@ -143,9 +157,13 @@ impl Show {
         .map_err(|err| anyhow!("{err}"))?;
 
         window.set_capture_cursor(cfg.capture_mouse);
-        // This has no effect if vsync is properly enabled, but on machines with
-        // broken vsync this does work to make rendering a lot smoother.
-        window.set_max_fps(120);
+        // Inert where vsync works, since the swap blocks first. Where it does
+        // not, this is the only thing pacing the loop.
+        window.set_max_fps(if cfg.allow_120_fps {
+            MAX_FPS_WITHOUT_VSYNC
+        } else {
+            MAX_FPS
+        });
 
         // The figure meshes a show is likely to want, built before the first
         // frame. The two finest densities are left out: they are reachable
