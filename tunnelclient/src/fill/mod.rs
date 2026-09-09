@@ -234,17 +234,17 @@ where
     /// Build the figure meshes a show is likely to want, before it starts.
     ///
     /// Every figure both libraries hold, at the four coarsest densities: 62
-    /// baked and 339 generated, **1,604 meshes, 16 million triangles, 290 MB,
-    /// 3.5 s**. It covers a figure at the default size on a 1080-line
+    /// baked and 514 generated, **2,304 meshes, 19 million triangles, 333 MB,
+    /// 3.2 s**. It covers a figure at the default size on a 1080-line
     /// projector and everything smaller.
     ///
-    /// The generated figures are 264 MB of that against the baked library's
-    /// 26 MB, on a fifth again as many figures, because a family computes its
+    /// The generated figures are 307 MB of that against the baked library's
+    /// 26 MB, on eight times as many figures, because a family computes its
     /// contours to the tessellator's tolerance where a piece of artwork was
     /// drawn with as few points as a hand needed.
     ///
     /// The two finest densities are reachable but not built here, and they are
-    /// most of what the caches could ever hold — 2.2 GB against this 290 MB.
+    /// most of what the caches could ever hold — 2.9 GB against this 333 MB.
     /// A show pays for them only if it reaches them, and the cost when it does
     /// is **per figure, not per density**: tens of milliseconds for the one
     /// figure that grew, rather than the seconds a whole density costs. A
@@ -279,9 +279,10 @@ where
             }
         }
         info!(
-            "Built {} figure meshes, {} triangles.",
+            "Built {} figure meshes, {} triangles, {} MB.",
             meshes.len(),
-            meshes.triangles()
+            meshes.triangles(),
+            meshes.bytes() / 1_000_000
         );
     }
 

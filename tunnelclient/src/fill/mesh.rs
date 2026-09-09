@@ -165,15 +165,15 @@ pub struct MeshId {
 ///
 /// **The set is bounded, because both libraries are tables.** Each names a
 /// fixed list of figures, so the key runs over those figures times the six
-/// densities and no further: 62 baked and 339 generated, 2,406 meshes, **2.2
-/// GB** if every one of them were ever drawn.
+/// densities and no further: 62 baked and 514 generated, 3,456 meshes, 175
+/// million triangles, **2.9 GB** if every one of them were ever drawn.
 ///
 /// Bounded is not small, and where the two libraries sit in that number is
 /// worth knowing: the baked share is 316 MB of it and the generated share is
-/// the other 1.9 GB, because a generated figure carries an order of magnitude
+/// the other 2.6 GB, because a generated figure carries an order of magnitude
 /// more triangles than a piece of artwork does. Most of that is the two finest
 /// densities, which only a figure drawn larger than the size knob's default
-/// reaches; the four coarser ones come to 290 MB between them.
+/// reaches; the four coarser ones come to 333 MB between them.
 ///
 /// Nothing is evicted, and no cap is wanted, because a figure dropped is a
 /// figure tessellated again and the families holding the most triangles are
@@ -196,6 +196,20 @@ impl MeshLibrary {
     /// Total triangles held, for reporting memory pressure.
     pub fn triangles(&self) -> usize {
         self.built.values().map(RefinedMesh::triangle_count).sum()
+    }
+
+    /// Vertex and index data held, in bytes.
+    ///
+    /// The payload only: a vertex is two floats and an index is one, which is
+    /// what a mesh costs to keep and what it costs to hand to a driver.
+    pub fn bytes(&self) -> usize {
+        self.built
+            .values()
+            .map(|mesh| {
+                mesh.verts.len() * std::mem::size_of::<Point>()
+                    + mesh.indices.len() * std::mem::size_of::<u32>()
+            })
+            .sum()
     }
 
     /// How many meshes are held, against the table that bounds them.
