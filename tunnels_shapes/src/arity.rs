@@ -343,6 +343,13 @@ impl ShapeFamily {
             Self::StarPolygon => 0.76,
             // A divisor of one, which is the plain rose; then the low divisors;
             // then a divisor of seven, which laces the petals over each other.
+            //
+            // The first two coincide at six, ten and twelve petals. A divisor
+            // has to be coprime with the petal count, which leaves only three
+            // candidates at those three counts, and both positions then select
+            // the first of the three. So three of this construction's
+            // thirty-six figures are drawn twice, and moving the second
+            // position off them would move it at every other count as well.
             Self::Rose1 => 0.0,
             Self::Rose2 => 0.25,
             Self::Rose3 => 0.76,

@@ -254,6 +254,16 @@ fn a_run_of_bars_reads_the_same_from_either_edge() {
 /// true, which is a tenth of the frame. Even corner counts are symmetric by
 /// construction and would pass this on their own, so the odd ones are what it
 /// is here for.
+///
+/// Sweeping the second control rather than reading each family's pinned
+/// position is what reaches this at all, and the reason is general enough to
+/// be worth stating: a construction whose pinned positions all happen to be
+/// even-cornered is off centre everywhere and draws nothing off centre, so the
+/// fault sits in the library without appearing in any figure the library
+/// holds — until a position that was never pinned becomes a family, and every
+/// figure of it is wrong. A position nothing selects today is one a later
+/// family can be pinned to, so the guards belong on the whole range and not on
+/// the table.
 #[test]
 fn a_stack_of_polygon_rings_is_centred_on_the_frame() {
     sweep(|family, arity, params| {
