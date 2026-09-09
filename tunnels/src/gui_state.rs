@@ -16,6 +16,7 @@ bitflags::bitflags! {
         const MIDI_SLOTS    = 0b0000_0001;
         const AUDIO         = 0b0000_0010;
         const CLOCK_SERVICE = 0b0000_0100;
+        const TOUCHOSC     = 0b0000_1000;
     }
 }
 
@@ -26,6 +27,7 @@ pub struct GuiState {
     pub midi_slots: Notified<Vec<SlotStatus>>,
     pub audio_state: Notified<AudioSnapshot>,
     pub clock_service_running: NotifiedAtomicBool,
+    pub touchosc_server_running: NotifiedAtomicBool,
     pub animation_state: ArcSwap<AnimationSnapshot>,
 }
 
@@ -36,7 +38,8 @@ impl GuiState {
         Self {
             midi_slots: Notified::new(Vec::new(), repaint.clone()),
             audio_state: Notified::new(AudioSnapshot::default(), repaint.clone()),
-            clock_service_running: NotifiedAtomicBool::new(false, repaint),
+            clock_service_running: NotifiedAtomicBool::new(false, repaint.clone()),
+            touchosc_server_running: NotifiedAtomicBool::new(false, repaint),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),
         }
     }

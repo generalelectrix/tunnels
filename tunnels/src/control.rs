@@ -36,6 +36,8 @@ pub enum MetaCommand {
     AudioControl(crate::audio::ControlMessage),
     StartClockService,
     StopClockService,
+    StartTouchOscServer,
+    StopTouchOscServer,
     /// Whether the animation visualizer is currently visible.
     SetVisualizerActive(bool),
 }

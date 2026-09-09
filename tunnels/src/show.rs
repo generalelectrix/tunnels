@@ -31,6 +31,7 @@ use tunnels_audio::EnvelopeStreams;
 use tunnels_net::FramePublisher;
 
 use crate::midi::MidiDeviceInit;
+use crate::touchosc_serve::LayoutServer;
 
 /// How often should we autosave the show?
 pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
@@ -39,6 +40,7 @@ pub struct Show {
     dispatcher: Dispatcher,
     audio_input: AudioInput,
     clock_publisher: Option<ClockPublisher>,
+    touchosc_server: Option<LayoutServer>,
     state: ShowState,
     save_path: Option<PathBuf>,
     last_save: Option<Instant>,
@@ -77,6 +79,7 @@ impl Show {
             )?,
             audio_input: AudioInput::new(None, envelope_streams_tx.clone())?,
             clock_publisher: None,
+            touchosc_server: None,
             state: ShowState {
                 ui: MasterUI::new(n_pages),
                 mixer: Mixer::new(n_pages),
@@ -346,6 +349,20 @@ impl Show {
                 info!("Clock service stopped.");
                 GuiDirty::CLOCK_SERVICE
             }
+            StartTouchOscServer => {
+                if self.touchosc_server.is_some() {
+                    bail!("The TouchOSC layout server is already running.");
+                }
+                self.touchosc_server = Some(LayoutServer::start()?);
+                GuiDirty::TOUCHOSC
+            }
+            StopTouchOscServer => {
+                if self.touchosc_server.is_none() {
+                    bail!("The TouchOSC layout server is not running.");
+                }
+                self.touchosc_server = None;
+                GuiDirty::TOUCHOSC
+            }
             SetVisualizerActive(active) => {
                 self.visualizer_active = active;
                 GuiDirty::CLEAN
@@ -366,6 +383,11 @@ impl Show {
             self.gui_state
                 .clock_service_running
                 .store(self.clock_publisher.is_some());
+        }
+        if dirty.contains(GuiDirty::TOUCHOSC) {
+            self.gui_state
+                .touchosc_server_running
+                .store(self.touchosc_server.is_some());
         }
     }
 }
@@ -1181,6 +1203,18 @@ mod test {
         let client = test_show_client();
         let err = client
             .send_command(MetaCommand::StopClockService)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not running"),
+            "expected 'not running', got: {err}"
+        );
+    }
+
+    #[test]
+    fn meta_stop_touchosc_server_when_not_running_fails() {
+        let client = test_show_client();
+        let err = client
+            .send_command(MetaCommand::StopTouchOscServer)
             .unwrap_err();
         assert!(
             err.to_string().contains("not running"),

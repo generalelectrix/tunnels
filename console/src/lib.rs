@@ -4,6 +4,7 @@ mod audio_panel;
 pub mod bootstrap_controller;
 mod midi_panel;
 pub mod startup_config;
+mod touchosc_panel;
 mod ui_util;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -129,6 +130,25 @@ impl eframe::App for ConfigApp {
                                 MetaCommand::StartClockService
                             }
                             clock_panel::ClockServiceAction::Stop => MetaCommand::StopClockService,
+                        };
+                        let mut ctx = GuiContext {
+                            modal: &mut self.modal,
+                            client: &self.client,
+                        };
+                        let _ = ctx.send_command(cmd);
+                    }
+
+                    ui.add_space(16.0);
+                    ui.separator();
+                    let touchosc_running = self.gui_state.touchosc_server_running.load();
+                    if let Some(action) = touchosc_panel::touchosc_server_ui(ui, touchosc_running) {
+                        let cmd = match action {
+                            touchosc_panel::TouchOscServerAction::Start => {
+                                MetaCommand::StartTouchOscServer
+                            }
+                            touchosc_panel::TouchOscServerAction::Stop => {
+                                MetaCommand::StopTouchOscServer
+                            }
                         };
                         let mut ctx = GuiContext {
                             modal: &mut self.modal,

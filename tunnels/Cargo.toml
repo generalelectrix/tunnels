@@ -19,6 +19,12 @@ postcard.workspace = true
 
 rosc = "0.11"
 
+# TouchOSC layout sync: an HTTP server advertised over mDNS.
+mdns-sd = "0.18"
+tiny_http = "0.12"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+hostname = "0.4"
+
 egui_plot = "0.34"
 eframe = "0.33"
 arc-swap = "1"
