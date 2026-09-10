@@ -79,7 +79,7 @@ fn compare_to_fixture(actual: &image::RgbaImage, fixture_name: &str) {
         })
         .to_rgba8();
 
-    assert_images_match(actual, &expected, 2);
+    assert_images_match(actual, &expected, 2, fixture_name);
 }
 
 fn compare_to_fixture_with_limit(
@@ -103,7 +103,7 @@ fn compare_to_fixture_with_limit(
         })
         .to_rgba8();
 
-    assert_images_match_with_limit(actual, &expected, 2, max_mismatches);
+    assert_images_match_with_limit(actual, &expected, 2, max_mismatches, fixture_name);
 }
 
 /// Compare a figure render against its golden, allowing a few edge pixels.
@@ -117,8 +117,63 @@ fn compare_fill_to_fixture(actual: &image::RgbaImage, fixture_name: &str) {
     compare_to_fixture_with_limit(actual, fixture_name, 200);
 }
 
-fn assert_images_match(actual: &image::RgbaImage, expected: &image::RgbaImage, tolerance: u8) {
-    assert_images_match_with_limit(actual, expected, tolerance, 0);
+fn assert_images_match(
+    actual: &image::RgbaImage,
+    expected: &image::RgbaImage,
+    tolerance: u8,
+    name: &str,
+) {
+    assert_images_match_with_limit(actual, expected, tolerance, 0, name);
+}
+
+/// Whether two pixels are the same to within `tolerance` on every channel.
+fn within_tolerance(a: &image::Rgba<u8>, e: &image::Rgba<u8>, tolerance: u8) -> bool {
+    a.0.iter()
+        .zip(e.0.iter())
+        .all(|(ac, ec)| ac.abs_diff(*ec) <= tolerance)
+}
+
+/// Write what was rendered, what was expected, and where they differ, and
+/// return where they were put.
+///
+/// A count of differing pixels says a comparison failed but not how, and an
+/// image is the only form the answer takes: whether a shape moved, whether a
+/// colour shifted, or whether a handful of edge pixels landed on the other side
+/// of a triangle boundary are three different failures behind the same number.
+///
+/// The difference is drawn as the expected image dimmed to a quarter, with the
+/// pixels that differ picked out in magenta, so a change reads against the
+/// shape it happened to rather than against nothing.
+fn write_comparison(
+    actual: &image::RgbaImage,
+    expected: &image::RgbaImage,
+    tolerance: u8,
+    name: &str,
+) -> std::path::PathBuf {
+    let stem = name.strip_suffix(".png").unwrap_or(name);
+    // Cargo sets this for an integration test, inside the target directory, so
+    // it is never committed and never shared between test binaries.
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("image_mismatch");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return dir;
+    }
+
+    let mut diff = expected.clone();
+    for (px, (a, e)) in diff
+        .pixels_mut()
+        .zip(actual.pixels().zip(expected.pixels()))
+    {
+        *px = if within_tolerance(a, e, tolerance) {
+            image::Rgba([e.0[0] / 4, e.0[1] / 4, e.0[2] / 4, 255])
+        } else {
+            image::Rgba([255, 0, 255, 255])
+        };
+    }
+
+    for (suffix, img) in [("actual", actual), ("expected", expected), ("diff", &diff)] {
+        let _ = img.save(dir.join(format!("{stem}.{suffix}.png")));
+    }
+    dir
 }
 
 fn assert_images_match_with_limit(
@@ -126,29 +181,30 @@ fn assert_images_match_with_limit(
     expected: &image::RgbaImage,
     tolerance: u8,
     max_mismatches: usize,
+    name: &str,
 ) {
     assert_eq!(
         actual.dimensions(),
         expected.dimensions(),
-        "Image dimensions differ"
+        "Image dimensions differ for {name}"
     );
     let mismatches: usize = actual
         .pixels()
         .zip(expected.pixels())
-        .filter(|(a, e)| {
-            a.0.iter()
-                .zip(e.0.iter())
-                .any(|(ac, ec)| ac.abs_diff(*ec) > tolerance)
-        })
+        .filter(|(a, e)| !within_tolerance(a, e, tolerance))
         .count();
 
     if mismatches > max_mismatches {
+        let dir = write_comparison(actual, expected, tolerance, name);
         panic!(
-            "Image mismatch: {} pixels differ (out of {}, max allowed: {}). \
+            "Image mismatch for {}: {} pixels differ (out of {}, max allowed: {}). \
+             Rendered, expected and difference images written to {}. \
              Run with UPDATE_FIXTURES=1 to update.",
+            name,
             mismatches,
             actual.width() * actual.height(),
             max_mismatches,
+            dir.display(),
         );
     }
 }
@@ -260,7 +316,7 @@ fn flipped_horizontal() {
     // slightly different containment decisions when geometry is mirrored vs when
     // the final image is flipped, due to sub-pixel rounding at arc edges.
     let expected = image::imageops::flip_horizontal(&unflipped);
-    assert_images_match_with_limit(&flipped, &expected, 2, 100);
+    assert_images_match_with_limit(&flipped, &expected, 2, 100, "flipped_horizontal");
 }
 
 #[test]
