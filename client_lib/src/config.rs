@@ -69,6 +69,20 @@ pub struct ClientConfig {
     /// fifteenth of a second, which is visible. So the risk is not a knob
     /// brushed past by accident.
     pub refine_large_figures: bool,
+    /// Let the render loop run at twice the rate a display is expected to
+    /// refresh at.
+    ///
+    /// Where vsync works the swap blocks until the display is ready, the loop
+    /// needs no other limit, and this changes nothing. Where it does not, the
+    /// cap is the only thing pacing the loop and a frame is torn wherever
+    /// drawing overtakes the display. Running at twice the refresh does not
+    /// remove that tear; it halves how stale the torn part of a frame can be,
+    /// which is what makes it hard to see.
+    ///
+    /// So this describes the machine rather than the show. A display asked for
+    /// more frames than it can show gains nothing for the work, so it belongs
+    /// only where vsync is known to be broken.
+    pub allow_120_fps: bool,
 }
 
 impl ClientConfig {
@@ -101,6 +115,7 @@ impl ClientConfig {
             artnet_node,
             log_level_debug,
             refine_large_figures: false,
+            allow_120_fps: false,
         }
     }
 
@@ -150,6 +165,8 @@ impl ClientConfig {
         // Absent means off, which is what a config written before figures
         // existed should mean.
         config.refine_large_figures = cfg["refine_large_figures"].as_bool().unwrap_or(false);
+        // Absent means the machine's vsync is trusted, which all but a few are.
+        config.allow_120_fps = cfg["allow_120_fps"].as_bool().unwrap_or(false);
         Ok(config)
     }
 }

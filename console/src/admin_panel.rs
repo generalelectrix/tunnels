@@ -114,6 +114,7 @@ pub struct AdminPanelState {
     flip_horizontal: bool,
     capture_mouse: bool,
     refine_large_figures: bool,
+    allow_120_fps: bool,
     artnet_node: bool,
 
     // Async config send / monitor launch
@@ -144,6 +145,7 @@ impl AdminPanelState {
             flip_horizontal: false,
             capture_mouse: false,
             refine_large_figures: false,
+            allow_120_fps: false,
             artnet_node: false,
             config_send_state: Arc::new(Mutex::new(None)),
             monitor_children: Arc::new(Mutex::new(Vec::new())),
@@ -208,6 +210,7 @@ impl AdminPanelState {
             false,
         );
         config.refine_large_figures = self.refine_large_figures;
+        config.allow_120_fps = self.allow_120_fps;
         Ok(config)
     }
 
@@ -222,6 +225,7 @@ impl AdminPanelState {
                 self.fullscreen = false;
                 self.capture_mouse = false;
                 self.artnet_node = false;
+                self.allow_120_fps = false;
             }
             Target::RemoteClient(_) => {
                 self.half_size = false;
@@ -539,6 +543,10 @@ impl AdminPanelState {
             ui.checkbox(&mut self.refine_large_figures, "High-res figures");
             if target != Target::Monitor {
                 ui.checkbox(&mut self.artnet_node, "Run Art-Net Node");
+                ui.checkbox(
+                    &mut self.allow_120_fps,
+                    "Allow 120 fps (for machines with no vsync)",
+                );
             }
 
             ui.add_space(16.0);
