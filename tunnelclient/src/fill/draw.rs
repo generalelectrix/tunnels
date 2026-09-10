@@ -403,6 +403,7 @@ pub fn draw_flat<G: Graphics>(
     positions: &[Point],
     indices: &Indices,
     color: [f32; 4],
+    draw_state: &DrawState,
     m: Matrix2d,
     gl: &mut G,
 ) {
@@ -410,7 +411,7 @@ pub fn draw_flat<G: Graphics>(
         return;
     }
     let mut pos = Vec::with_capacity(CHUNK);
-    gl.tri_list(&DrawState::default(), &color, |f| {
+    gl.tri_list(draw_state, &color, |f| {
         for batch in indices.batches(CHUNK) {
             pos.clear();
             // A flat colour interpolates nothing, so the grouping into
@@ -434,6 +435,7 @@ pub fn draw_textured<G: Graphics>(
     verts: &VertexBuffers,
     period: Option<f32>,
     texture: &G::Texture,
+    draw_state: &DrawState,
     m: Matrix2d,
     gl: &mut G,
 ) {
@@ -443,7 +445,7 @@ pub fn draw_textured<G: Graphics>(
     let mut pos = Vec::with_capacity(CHUNK);
     let mut uv = Vec::with_capacity(CHUNK);
 
-    gl.tri_list_uv(&DrawState::default(), &[1.0; 4], texture, |f| {
+    gl.tri_list_uv(draw_state, &[1.0; 4], texture, |f| {
         for batch in indices.batches(CHUNK) {
             pos.clear();
             uv.clear();

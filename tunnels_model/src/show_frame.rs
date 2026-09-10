@@ -125,7 +125,7 @@ pub mod fixture {
     use crate::beam::Beam;
     use crate::clock::StaticClock;
     use crate::clock_bank::{ClockIdx, MAX_CLOCKS};
-    use crate::layer::FigureLibrary;
+    use crate::layer::{FigureLibrary, PaintMode};
     use crate::look::Look;
     use crate::mixer::{ChannelIdx, VideoChannel};
     use crate::palette::{
@@ -212,7 +212,11 @@ pub mod fixture {
         for (i, channel) in mixer.channels().enumerate() {
             channel.level = UnipolarFloat::new(0.25 + 0.75 * (i as f64 / n_channels as f64));
             channel.bump = i == 3;
-            channel.mask = i == 5;
+            channel.mode = match i {
+                5 => PaintMode::Mask,
+                6 => PaintMode::Gobo,
+                _ => PaintMode::Normal,
+            };
             channel.video_outs.clear();
             channel.video_outs.insert(VideoChannel(i));
             if i % 4 == 0 {
@@ -252,7 +256,11 @@ pub mod fixture {
         let n_channels = mixer.channel_count();
         for (i, channel) in mixer.channels().enumerate() {
             channel.level = UnipolarFloat::new(0.25 + 0.75 * (i as f64 / n_channels as f64));
-            channel.mask = i == 2;
+            channel.mode = match i {
+                2 => PaintMode::Mask,
+                3 => PaintMode::Gobo,
+                _ => PaintMode::Normal,
+            };
             channel.video_outs.clear();
             channel.video_outs.insert(VideoChannel(i));
             if let Beam::Tunnel(tunnel) = &mut channel.beam {
@@ -330,7 +338,11 @@ pub mod fixture {
         let n_channels = mixer.channel_count();
         for (i, channel) in mixer.channels().enumerate() {
             channel.level = UnipolarFloat::ONE;
-            channel.mask = i == generation;
+            channel.mode = if i == generation {
+                PaintMode::Mask
+            } else {
+                PaintMode::Normal
+            };
             channel.video_outs.clear();
             channel.video_outs.insert(VideoChannel(i));
             if let Beam::Tunnel(tunnel) = &mut channel.beam {
@@ -401,7 +413,7 @@ mod tests {
     use super::*;
     use crate::beam::Beam;
     use crate::layer::{
-        ColorField, FillLayer, Hsva, Layer, LayerCollection, Placement, ShapeGeometry,
+        ColorField, FillLayer, Hsva, Layer, LayerCollection, PaintMode, Placement, ShapeGeometry,
     };
     use crate::look::{Look, MAX_NESTING_DEPTH};
     use crate::mixer::{Channel, ChannelIdx, Mixer, VideoChannel};
@@ -544,6 +556,11 @@ mod tests {
                     assert_eq!(
                         e.segment_path, a.segment_path,
                         "{label}: layer {i} segment path"
+                    );
+                    assert_eq!(
+                        e.level.to_bits(),
+                        a.level.to_bits(),
+                        "{label}: layer {i} level"
                     );
                     assert_eq!(
                         e.span.to_bits(),
@@ -713,7 +730,7 @@ mod tests {
                 beam,
                 level: UnipolarFloat::ONE,
                 bump: false,
-                mask: false,
+                mode: PaintMode::Normal,
                 video_outs: BTreeSet::from([VideoChannel(0)]),
             }]));
         }

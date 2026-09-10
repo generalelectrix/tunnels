@@ -1,4 +1,4 @@
-use crate::layer::Layer;
+use crate::layer::{Layer, PaintMode};
 use crate::render_context::RenderContext;
 use crate::{look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
@@ -31,13 +31,13 @@ impl Beam {
     pub fn render(
         &self,
         level: UnipolarFloat,
-        mask: bool,
+        mode: PaintMode,
         ctx: RenderContext,
         out: &mut Vec<Layer>,
     ) {
         match self {
-            Self::Tunnel(t) => out.push(t.render(level, mask, ctx)),
-            Self::Look(l) => l.render(level, mask, ctx, out),
+            Self::Tunnel(t) => out.push(t.render(level, mode, ctx)),
+            Self::Look(l) => l.render(level, mode, ctx, out),
         }
     }
 }

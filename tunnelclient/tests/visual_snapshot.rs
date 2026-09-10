@@ -6,9 +6,10 @@ use client_lib::config::ClientConfig;
 use graphics::Graphics;
 use software_graphics::RenderBuffer;
 use tunnelclient::fill::Renderer;
+use tunnels_lib::number::UnipolarFloat;
 use tunnels_model::layer::{
-    Hsva, Layer, LayerCollection, PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath,
-    ShapeGeometry,
+    Hsva, Layer, LayerCollection, PaintMode, PhaseAxis, Placement, RenderMode, SegmentLayer,
+    SegmentPath, ShapeGeometry,
 };
 use tunnels_model::tunnel::fixture;
 
@@ -155,12 +156,24 @@ fn assert_images_match_with_limit(
 /// Wrap shapes in a layer drawn with the default render mode and path shape,
 /// every segment spanning `span` turns.
 fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
-    Layer::Segments(SegmentLayer::new(
-        RenderMode::default(),
-        SegmentPath::Ellipse,
+    layer_in_mode(PaintMode::Normal, span, shapes)
+}
+
+/// A default-shaped layer that paints in the given mode, at full level.
+fn layer_in_mode(mode: PaintMode, span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
+    layer_in_mode_at(mode, 1.0, span, shapes)
+}
+
+/// A default-shaped layer that paints in the given mode at the given level.
+fn layer_in_mode_at(mode: PaintMode, level: f64, span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
+    Layer::Segments(SegmentLayer {
+        render_mode: RenderMode::default(),
+        segment_path: SegmentPath::Ellipse,
+        mode,
+        level,
         span,
         shapes,
-    ))
+    })
 }
 
 fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
@@ -457,12 +470,14 @@ fn snapshot_from_groups(
     groups
         .into_iter()
         .map(|(span, shapes)| {
-            Layer::Segments(SegmentLayer::new(
+            Layer::Segments(SegmentLayer {
                 render_mode,
-                SegmentPath::Line,
+                segment_path: SegmentPath::Line,
+                mode: PaintMode::Normal,
+                level: 1.0,
                 span,
                 shapes,
-            ))
+            })
         })
         .collect()
 }
@@ -686,6 +701,209 @@ fn sprite_noise_warp_outline() {
 fn sprite_masked_stack() {
     let image = render_snapshot(&fixture::sprite_masked_stack_snapshot(), &test_config());
     compare_fill_to_fixture(&image, "sprite_masked_stack.png");
+}
+
+/// A gobo over a lit figure is the mask above inverted: the lit figure
+/// survives inside the upper figure and is blacked everywhere else, where the
+/// mask blacks the inside and leaves the rest.
+#[test]
+fn sprite_gobo_stack() {
+    let image = render_snapshot(&fixture::sprite_gobo_stack_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "sprite_gobo_stack.png");
+}
+
+/// A gobo blacks the frame rather than clipping it, so a beam drawn after one
+/// lands whole rather than being confined to the window.
+#[test]
+fn sprite_gobo_then_lit() {
+    let image = render_snapshot(&fixture::sprite_gobo_then_lit_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "sprite_gobo_then_lit.png");
+}
+
+/// A look drawn as a gobo makes each of its channels a gobo in its own right,
+/// and what survives all of them is what lies inside all of them.
+#[test]
+fn look_gobo_intersection() {
+    let image = render_snapshot(&fixture::look_gobo_intersection_snapshot(), &test_config());
+    compare_fill_to_fixture(&image, "look_gobo_intersection.png");
+}
+
+/// A gobo whose window has closed blacks the frame entire.
+///
+/// Two ways for a window to close and both arrive here the same way. A
+/// thickness animation winds the segments down until they tessellate to
+/// nothing, which leaves the shapes in place carrying a thickness of zero;
+/// blacking takes every segment away instead, which leaves no shapes at all.
+/// Neither marks the stencil, so the ground goes down over everything.
+///
+/// A channel the operator has taken off its upfader is a different thing and
+/// never reaches a renderer, because a channel at zero level emits no layer.
+#[test]
+fn gobo_closed_aperture() {
+    let lit = || {
+        default_layer(
+            1.0,
+            vec![
+                test_arc(0.0, 0.0, 0.2),
+                test_arc(0.0, 0.33, 0.35),
+                test_arc(0.0, 0.66, 0.45),
+            ],
+        )
+    };
+    let thinned = |thickness| {
+        let mut shapes = vec![test_arc(0.0, 0.0, 0.2), test_arc(0.0, 0.66, 0.45)];
+        for shape in &mut shapes {
+            shape.thickness = thickness;
+        }
+        shapes
+    };
+
+    // The lit rings underneath are what makes an all-black frame mean the
+    // ground went down over them rather than nothing having been drawn, and
+    // the assertion is spelt out as well as pinned so that the test cannot
+    // come to rest on a picture that is merely stable.
+    let closed_by_thickness = vec![lit(), layer_in_mode(PaintMode::Gobo, 1.0, thinned(0.0))];
+    let image = render_snapshot(&closed_by_thickness, &test_config());
+    assert_uniformly_black(&image, "a gobo thinned to nothing");
+
+    let closed_by_blacking = vec![lit(), layer_in_mode(PaintMode::Gobo, 1.0, Vec::new())];
+    assert_uniformly_black(
+        &render_snapshot(&closed_by_blacking, &test_config()),
+        "a gobo with every segment blacked",
+    );
+
+    // A window still open is the control: the same gobo at a thickness that
+    // draws leaves some of the rings under it alight, so the black above is
+    // the aperture closing and not the fixture failing to light anything.
+    let open = vec![lit(), layer_in_mode(PaintMode::Gobo, 1.0, thinned(0.1))];
+    let open = render_snapshot(&open, &test_config());
+    assert!(
+        open.pixels().any(|px| px.0 != [0, 0, 0, 255]),
+        "a gobo with an open window blacked the whole frame"
+    );
+
+    compare_to_fixture(&image, "gobo_closed_aperture.png");
+}
+
+/// Assert every pixel is opaque black, naming what was drawn if one is not.
+fn assert_uniformly_black(image: &image::RgbaImage, what: &str) {
+    for (x, y, px) in image.enumerate_pixels() {
+        assert_eq!(px.0, [0, 0, 0, 255], "{what} left {:?} at ({x}, {y})", px.0);
+    }
+}
+
+/// A gobo's ground goes down at the layer's level, the shut aperture included.
+///
+/// A gobo blacked down to no shapes has none left to carry an alpha, so the
+/// level rides on the layer itself. Part way up the fader the shut aperture
+/// dims the frame instead of putting it out, and it is the top of the fader
+/// that blacks it outright — a blackout stays available at the end of the
+/// travel rather than being traded away for the fade.
+#[test]
+fn a_closed_gobo_shuts_as_far_as_its_fader_is_up() {
+    let lit = || {
+        default_layer(
+            1.0,
+            vec![
+                test_arc(0.0, 0.0, 0.2),
+                test_arc(0.0, 0.33, 0.35),
+                test_arc(0.0, 0.66, 0.45),
+            ],
+        )
+    };
+    let shut = |level| {
+        render_snapshot(
+            &vec![
+                lit(),
+                layer_in_mode_at(PaintMode::Gobo, level, 1.0, Vec::new()),
+            ],
+            &test_config(),
+        )
+    };
+
+    let open = shut(0.0);
+    let half = shut(0.5);
+    let closed = shut(1.0);
+    assert_uniformly_black(&closed, "a gobo shut at the top of its fader");
+    assert!(
+        total_light(&half) < total_light(&open),
+        "a gobo shut half way up its fader dimmed nothing"
+    );
+    assert!(
+        total_light(&half) > total_light(&closed),
+        "a gobo shut half way up its fader blacked the frame outright"
+    );
+
+    compare_to_fixture(&half, "gobo_closed_aperture_half_level.png");
+}
+
+/// A mask fades what it covers in over its fader rather than switching it out.
+///
+/// The bottom of the fader leaves the figure under it untouched, the top hides
+/// it, and half way is between the two. Luminance falling strictly across the
+/// three is what says the level reached the black the mask paints.
+#[test]
+fn a_mask_fades_in_over_its_fader() {
+    let cfg = test_config();
+    let masked = |level| {
+        render_snapshot(
+            &fixture::sprite_mask_at_level_snapshot(UnipolarFloat::new(level)),
+            &cfg,
+        )
+    };
+
+    let half = masked(0.5);
+    let (off, half_light, full) = (
+        total_light(&masked(0.0)),
+        total_light(&half),
+        total_light(&masked(1.0)),
+    );
+    assert!(off > 0, "the figure under the mask was never lit");
+    assert!(
+        full < half_light && half_light < off,
+        "a mask did not fade over its fader: {off} unmasked, {half_light} half way, {full} at the top"
+    );
+
+    compare_fill_to_fixture(&half, "sprite_mask_half_level.png");
+}
+
+/// A gobo fades in over its fader the way a mask does, on the other side of
+/// the outline.
+///
+/// What the window does not reach dims rather than goes out, and what it does
+/// reach is untouched at every level — a gobo half way up its fader is the
+/// figure under it with everything outside the window knocked back.
+#[test]
+fn a_gobo_fades_in_over_its_fader() {
+    let cfg = test_config();
+    let gobo = |level| {
+        render_snapshot(
+            &fixture::sprite_gobo_at_level_snapshot(UnipolarFloat::new(level)),
+            &cfg,
+        )
+    };
+
+    let half = gobo(0.5);
+    let (off, half_light, full) = (
+        total_light(&gobo(0.0)),
+        total_light(&half),
+        total_light(&gobo(1.0)),
+    );
+    assert!(off > 0, "the figure under the gobo was never lit");
+    assert!(
+        full < half_light && half_light < off,
+        "a gobo did not fade over its fader: {off} open, {half_light} half way, {full} at the top"
+    );
+
+    compare_fill_to_fixture(&half, "sprite_gobo_half_level.png");
+}
+
+/// How much light a render carries, summed over every colour channel.
+fn total_light(image: &image::RgbaImage) -> u64 {
+    image
+        .pixels()
+        .map(|px| u64::from(px.0[0]) + u64::from(px.0[1]) + u64::from(px.0[2]))
+        .sum()
 }
 
 /// A stroked outline takes its colour from the contour it follows, not from

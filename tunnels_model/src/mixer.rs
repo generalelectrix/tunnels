@@ -1,4 +1,4 @@
-use crate::layer::{Layer, LayerCollection};
+use crate::layer::{Layer, LayerCollection, PaintMode};
 use crate::render_context::RenderContext;
 use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
@@ -75,7 +75,7 @@ impl Mixer {
                 continue;
             }
             rendered.clear();
-            channel.render(UnipolarFloat::ONE, false, ctx, &mut rendered);
+            channel.render(UnipolarFloat::ONE, PaintMode::Normal, ctx, &mut rendered);
             for layer in rendered.drain(..) {
                 if layer.is_empty() {
                     continue;
@@ -97,7 +97,7 @@ impl Mixer {
             };
             emit(ChannelStateChange::Level(channel.level));
             emit(ChannelStateChange::Bump(channel.bump));
-            emit(ChannelStateChange::Mask(channel.mask));
+            emit(ChannelStateChange::Mode(channel.mode));
             emit(ChannelStateChange::ContainsLook(matches!(
                 channel.beam,
                 Beam::Look(_)
@@ -124,12 +124,17 @@ impl Mixer {
                 },
                 emitter,
             ),
-            ToggleMask => {
-                let toggled = !self.channels[msg.channel].mask;
+            ToggleMode(mode) => {
+                let current = self.channels[msg.channel].mode;
+                let toggled = if current == mode {
+                    PaintMode::Normal
+                } else {
+                    mode
+                };
                 self.handle_state_change(
                     StateChange {
                         channel: msg.channel,
-                        change: ChannelStateChange::Mask(toggled),
+                        change: ChannelStateChange::Mode(toggled),
                     },
                     emitter,
                 )
@@ -152,7 +157,7 @@ impl Mixer {
         match sc.change {
             Level(v) => self.channels[sc.channel].level = v,
             Bump(v) => self.channels[sc.channel].bump = v,
-            Mask(v) => self.channels[sc.channel].mask = v,
+            Mode(v) => self.channels[sc.channel].mode = v,
             VideoChannel((vc, active)) => {
                 if active {
                     self.channels[sc.channel].video_outs.insert(vc);
@@ -174,7 +179,7 @@ pub struct Channel {
     pub beam: Beam,
     pub level: UnipolarFloat,
     pub bump: bool,
-    pub mask: bool,
+    pub mode: PaintMode,
     pub video_outs: BTreeSet<VideoChannel>,
 }
 
@@ -186,7 +191,7 @@ impl Channel {
             beam,
             level: UnipolarFloat::ZERO,
             bump: false,
-            mask: false,
+            mode: PaintMode::Normal,
             video_outs,
         }
     }
@@ -200,7 +205,7 @@ impl Channel {
     pub fn render(
         &self,
         level_scale: UnipolarFloat,
-        mask: bool,
+        mode: PaintMode,
         ctx: RenderContext,
         out: &mut Vec<Layer>,
     ) {
@@ -214,7 +219,7 @@ impl Channel {
         if level == 0. {
             return;
         }
-        self.beam.render(level, self.mask || mask, ctx, out);
+        self.beam.render(level, mode.over(self.mode), ctx, out);
     }
 }
 
@@ -235,7 +240,14 @@ pub struct ControlMessage {
 #[derive(Debug)]
 pub enum ChannelControlMessage {
     Set(ChannelStateChange),
-    ToggleMask,
+    /// Put the channel into this mode, or back to normal if it is there
+    /// already.
+    ///
+    /// Naming the mode rather than stepping through them is what lets a
+    /// control surface give each mode its own button and its own lamp: a
+    /// button reads its channel's mode off its lamp, and one press of it
+    /// reaches that mode from any other.
+    ToggleMode(PaintMode),
     ToggleVideoChannel(VideoChannel),
 }
 
@@ -248,11 +260,64 @@ pub struct StateChange {
 pub enum ChannelStateChange {
     Level(UnipolarFloat),
     Bump(bool),
-    Mask(bool),
+    Mode(PaintMode),
     VideoChannel((VideoChannel, bool)),
     ContainsLook(bool),
 }
 
 pub trait EmitStateChange {
     fn emit_mixer_state_change(&mut self, sc: StateChange);
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::clock_bank::ClockBank;
+    use crate::palette::ColorPalette;
+    use crate::position_bank::PositionBank;
+    use crate::tunnel::Tunnel;
+
+    /// A channel taken off its upfader emits no layer, whatever mode it is in.
+    ///
+    /// This is what separates a gobo the operator has put away from one whose
+    /// aperture has been animated shut: the first never reaches a renderer,
+    /// and the second reaches it and blacks the frame. Without the level
+    /// deciding it here, there would be no way to hold a gobo channel ready
+    /// without blacking the video channel it is on.
+    #[test]
+    fn a_channel_off_at_the_upfader_emits_no_layer() {
+        let clocks = ClockBank::default().as_static();
+        let palette = ColorPalette::default();
+        let positions = PositionBank::default();
+        let ctx = RenderContext {
+            clocks: &clocks,
+            palette: &palette,
+            positions: &positions,
+            audio_envelope: UnipolarFloat::ZERO,
+        };
+        let channel = |level| Channel {
+            beam: Beam::Tunnel(Tunnel::default()),
+            level,
+            bump: false,
+            mode: PaintMode::Gobo,
+            video_outs: BTreeSet::new(),
+        };
+
+        let mut out = Vec::new();
+        channel(UnipolarFloat::ZERO).render(UnipolarFloat::ONE, PaintMode::Normal, ctx, &mut out);
+        assert!(
+            out.is_empty(),
+            "a gobo channel at zero level emitted {} layers, and so would have \
+             blacked the frame it was meant to be absent from",
+            out.len()
+        );
+
+        channel(UnipolarFloat::ONE).render(UnipolarFloat::ONE, PaintMode::Normal, ctx, &mut out);
+        assert_eq!(out.len(), 1, "a channel that is up emits its beam's layer");
+        assert_eq!(
+            out[0].mode(),
+            PaintMode::Gobo,
+            "the channel's own mode reaches the layer it emits"
+        );
+    }
 }

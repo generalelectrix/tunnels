@@ -1,4 +1,4 @@
-use crate::layer::Layer;
+use crate::layer::{Layer, PaintMode};
 use crate::mixer::Channel;
 use crate::render_context::RenderContext;
 use serde::de::{self, Deserializer};
@@ -32,12 +32,12 @@ impl Look {
     pub fn render(
         &self,
         level: UnipolarFloat,
-        mask: bool,
+        mode: PaintMode,
         ctx: RenderContext,
         out: &mut Vec<Layer>,
     ) {
         for channel in &self.channels {
-            channel.render(level, mask, ctx, out);
+            channel.render(level, mode, ctx, out);
         }
     }
 }
