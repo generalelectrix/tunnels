@@ -1,40 +1,30 @@
 //! Controls for pushing the bundled TouchOSC layout to a device.
 
 use eframe::egui;
-use gui_common::STATUS_COLORS;
 
-/// Render the layout server's status and its start/stop control, returning the
-/// action the user asked for.
+/// Render the sync control, and while the server is running the modal that
+/// holds the transfer in front of the user until they stop it.
 pub fn touchosc_server_ui(ui: &mut egui::Ui, running: bool) -> Option<TouchOscServerAction> {
     let mut action = None;
 
-    ui.horizontal(|ui| {
-        ui.strong("TouchOSC Sync");
-        ui.add_space(8.0);
+    if ui.button("Send Template To Device").clicked() {
+        action = Some(TouchOscServerAction::Start);
+    }
 
-        let (status_label, status_color) = if running {
-            ("Serving", STATUS_COLORS.active)
-        } else {
-            ("Idle", STATUS_COLORS.inactive)
-        };
-        ui.colored_label(status_color, status_label);
-        ui.add_space(8.0);
-
-        if running {
+    if running {
+        egui::Modal::new(egui::Id::new("touchosc_sync_modal")).show(ui.ctx(), |ui| {
+            ui.set_width(350.0);
+            ui.heading("TouchOSC Sync");
+            ui.add_space(8.0);
+            ui.label(
+                "Open TouchOSC Mk1 on your device, open Layout \u{2192} Add, \
+                 and select this computer to sync the template.",
+            );
+            ui.add_space(12.0);
             if ui.button("Stop").clicked() {
                 action = Some(TouchOscServerAction::Stop);
             }
-        } else if ui.button("Send Template To Device").clicked() {
-            action = Some(TouchOscServerAction::Start);
-        }
-    });
-
-    if running {
-        ui.label(
-            "Open TouchOSC Mk1 on your device, open Layout \u{2192} Add, and \
-             select this computer to sync the template. Stop the server when \
-             the transfer is done.",
-        );
+        });
     }
 
     action
@@ -53,10 +43,10 @@ mod tests {
     use egui_kittest::kittest::Queryable as _;
     use std::cell::Cell;
 
-    /// The control offers the action that changes the server's state, and
-    /// reports it when pressed.
+    /// The idle control starts a transfer; the modal that replaces it stops
+    /// one.
     #[test]
-    fn button_reports_the_action_for_each_state() {
+    fn each_state_offers_the_action_that_changes_it() {
         for (running, label, expected) in [
             (
                 false,
