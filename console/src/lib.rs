@@ -4,6 +4,7 @@ mod audio_panel;
 pub mod bootstrap_controller;
 mod midi_panel;
 pub mod startup_config;
+mod touchosc_panel;
 mod ui_util;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -135,6 +136,21 @@ impl eframe::App for ConfigApp {
                             client: &self.client,
                         };
                         let _ = ctx.send_command(cmd);
+                    }
+
+                    let touchosc_running = self.gui_state.touchosc_server_running.load();
+                    if let Some(action) = touchosc_panel::touchosc_server_ui(ui, touchosc_running) {
+                        let cmd = match action {
+                            touchosc_panel::TouchOscServerAction::Start => {
+                                MetaCommand::StartTouchOscServer
+                            }
+                            touchosc_panel::TouchOscServerAction::Stop => {
+                                MetaCommand::StopTouchOscServer
+                            }
+                        };
+                        if let Err(e) = self.client.send_command(cmd) {
+                            self.modal.show("Sync Server Failed", format!("{e:#}"));
+                        }
                     }
                 }
                 Tab::Audio => {

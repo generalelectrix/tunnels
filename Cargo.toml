@@ -13,6 +13,7 @@ members = [
     "zero_configure",
     "midi_harness",
     "stage_theme",
+    "touchosc_sync",
     "gui_common",
     "console",
     "client_lib",

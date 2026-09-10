@@ -10,6 +10,7 @@ pub mod midi_controls;
 pub mod osc;
 pub mod show;
 pub mod test_mode;
+pub mod touchosc_serve;
 
 // The show model and its render live in `tunnels_model` so that a render client
 // can depend on them without pulling in MIDI, OSC, audio or the GUI. They are

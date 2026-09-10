@@ -1,0 +1,19 @@
+[package]
+name = "touchosc_sync"
+version = "0.1.0"
+edition.workspace = true
+
+[features]
+default = ["zip"]
+# Unwrap `.touchosc` containers. Turn off when the layout is already XML.
+zip = ["dep:zip"]
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+gethostname = "1"
+mdns-sd = "0.18"
+tiny_http = "0.12"
+zip = { version = "2", default-features = false, features = [
+    "deflate",
+], optional = true }
