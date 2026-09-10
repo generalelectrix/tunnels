@@ -391,7 +391,7 @@ pub trait EmitStateChange {
 /// reach that many. A figure has no segments to count, so it is given a span of
 /// its own in the same units, chosen to decorrelate across it about as much as
 /// a run of segments does along its length.
-pub const NOISE_SPREAD: f64 = 64.0;
+pub const NOISE_SPREAD: f64 = 16.0;
 
 /// Where along the axis an animation decorrelates across a point sits.
 ///
@@ -505,27 +505,17 @@ impl OffsetSpan {
     }
 }
 
-/// Samples per unit of noise in a tabulated animation.
+/// The most samples an axis of a tabulated animation is given.
 ///
-/// Simplex features run about a unit across, so two samples a unit is the
-/// coarsest that represents one at all. From there the error falls as the
-/// square of the spacing, which is what a field this smooth interpolated
-/// bilinearly is worth: measured against the field itself across every
-/// periodicity and smoothing a control can reach, two samples a unit sits 0.86
-/// from it, four 0.31, eight 0.082, sixteen 0.023 — on a waveform whose own
-/// range is two.
+/// A table sized only from its domain would grow with the periodicity knob —
+/// fourteen times over, at the top of its travel — which puts what a frame
+/// costs under an operator's hand. A ceiling means a setting past it reads the
+/// field less exactly rather than more slowly, and what a frame costs has a
+/// bound that no control reaches past.
 ///
-/// Eight is where that stops being the largest error in the picture and where
-/// the table is still cheap. The offset axis alone spans [`NOISE_SPREAD`]
-/// units, so each doubling from here doubles the rows, and
-/// [`NOISE_TABLE_TOLERANCE`] is the other end of the same choice.
-const SAMPLES_PER_NOISE_UNIT: f64 = 8.0;
-
-/// How far a tabulated animation may sit from the noise it stands for.
-///
-/// Held beside the density that buys it, because a change to one without the
-/// other is a change to what a table promises.
-pub const NOISE_TABLE_TOLERANCE: f64 = 0.1;
+/// One number serves both axes because both span a comparable stretch of
+/// noise: a periodicity reaches fourteen units and [`NOISE_SPREAD`] is sixteen.
+const MAX_TABLE_SAMPLES: usize = 97;
 
 /// Samples along an axis that spans no noise at all.
 ///
@@ -533,6 +523,29 @@ pub const NOISE_TABLE_TOLERANCE: f64 = 0.1;
 /// something to sit between; both hold the same value, so what it reads is that
 /// value everywhere.
 const MIN_TABLE_SAMPLES: usize = 2;
+
+/// Samples of a noise unit below which a table stops standing for the field.
+///
+/// Simplex features run about a unit across, so two samples a unit is the
+/// coarsest that represents one at all. From there the error falls as the
+/// square of the spacing, which is what a field this smooth interpolated
+/// bilinearly is worth: measured against the field itself, two samples a unit
+/// sits 0.86 from it, four 0.31, eight 0.082, sixteen 0.023 — on a waveform
+/// whose own range is two.
+///
+/// Eight is where that stops being the largest error in the picture.
+const SAMPLES_FOR_TOLERANCE: f64 = 8.0;
+
+/// How far a tabulated animation sits from the noise it stands for, where it
+/// is sampled at least [`SAMPLES_FOR_TOLERANCE`] to the unit.
+///
+/// **Conditional, and it has to be.** An axis is sampled at that density until
+/// it reaches [`MAX_TABLE_SAMPLES`], and past there a wider domain is covered
+/// no more finely — so a periodicity or a smoothing far enough along its travel
+/// reads the field less exactly than this. Softer noise, in return for a cost
+/// no control can raise without limit. What does not vary is the relation
+/// between density and error, and that is what this fixes.
+pub const NOISE_TABLE_TOLERANCE: f64 = 0.1;
 
 /// One frame of an animation's noise, tabulated over the beam it is drawn on.
 ///
@@ -593,11 +606,30 @@ impl NoiseTable {
     }
 
     /// How many samples an axis spanning `extent` noise units is given.
+    ///
+    /// Enough for [`SAMPLES_FOR_TOLERANCE`] to the unit, until that would ask
+    /// for more than [`MAX_TABLE_SAMPLES`]. A narrow axis therefore costs what
+    /// it needs and no more, and a wide one costs the ceiling and reads the
+    /// field the less exactly for it.
     fn samples_across(extent: f64) -> usize {
-        let spanned = (SAMPLES_PER_NOISE_UNIT * extent).ceil();
+        let spanned = (SAMPLES_FOR_TOLERANCE * extent).ceil();
         // A NaN or an unbounded extent saturates rather than wrapping, and the
-        // minimum then puts it on a real count.
-        (spanned as usize).saturating_add(1).max(MIN_TABLE_SAMPLES)
+        // clamp then puts it on a real count.
+        (spanned as usize)
+            .saturating_add(1)
+            .clamp(MIN_TABLE_SAMPLES, MAX_TABLE_SAMPLES)
+    }
+
+    /// How densely an axis spanning `extent` noise units is sampled.
+    ///
+    /// An axis of no extent reads one value everywhere, so it is as dense as a
+    /// question can be answered and has no bound to fall short of.
+    #[cfg(test)]
+    pub fn samples_per_unit(extent: f64) -> f64 {
+        if extent <= 0.0 {
+            return f64::INFINITY;
+        }
+        (Self::samples_across(extent) - 1) as f64 / extent
     }
 
     /// The field at a point of the rectangle, interpolated between the four
@@ -888,6 +920,14 @@ mod test {
                 // against.
                 let direct = noise_animation(n_periods, smoothing, OffsetSpan::Segments(1));
 
+                // How densely the table covers this setting decides what it
+                // can promise: the same samples over a wider domain is a
+                // coarser reading, and the two axes span different amounts.
+                let sparsest = NoiseTable::samples_per_unit(f64::from(n_periods)).min(
+                    NoiseTable::samples_per_unit((1.0 - smoothing) * NOISE_SPREAD),
+                );
+                let held_to_tolerance = sparsest >= SAMPLES_FOR_TOLERANCE;
+
                 for i in 0..=steps {
                     for j in 0..=steps {
                         let phase = Phase::new(i as f64 / (steps + 1) as f64);
@@ -895,12 +935,15 @@ mod test {
                         let error = (tabulated.unit_value(phase, offset)
                             - direct.unit_value(phase, offset))
                         .abs();
-                        assert!(
-                            error <= NOISE_TABLE_TOLERANCE,
-                            "a table of noise over {n_periods} periods at a smoothing of \
-                             {smoothing} sat {error} from the field it stands for"
-                        );
-                        worst = worst.max(error);
+                        if held_to_tolerance {
+                            assert!(
+                                error <= NOISE_TABLE_TOLERANCE,
+                                "a table of noise over {n_periods} periods at a smoothing \
+                                 of {smoothing}, sampled {sparsest} to the unit, sat \
+                                 {error} from the field it stands for"
+                            );
+                            worst = worst.max(error);
+                        }
                     }
                 }
             }
