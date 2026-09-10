@@ -1,6 +1,7 @@
 use eframe::egui::{self, Color32};
 use egui_plot::{Line, Plot, PlotPoint, PlotPoints, Points};
-use tunnels_lib::number::Phase;
+use tunnels_lib::number::{Phase, UnipolarFloat};
+use tunnels_model::animation::OffsetSpan;
 
 use crate::animation::Animation;
 use crate::clock_server::SharedClockData;
@@ -10,15 +11,17 @@ use crate::clock_server::SharedClockData;
 pub struct AnimationSnapshot {
     pub animation: Animation,
     pub clocks: SharedClockData,
-    /// How many places along the beam the animation is resolved at.
+    /// How far the beam's offset axis runs, and how it is divided.
     ///
-    /// A waveform is asked for a value once per place, and which place is
-    /// asking is part of the question — noise reads it directly, and the
-    /// controls that spread an animation across a beam have nothing to act on
-    /// without it. So this decides the shape of the plot, not just how finely
-    /// it is sampled.
+    /// Which place along the beam is asking is part of the question a waveform
+    /// is asked — noise reads it directly, and the controls that spread an
+    /// animation across a beam have nothing to act on without it — and the two
+    /// kinds of beam measure it in different units. So this decides the shape
+    /// of the plot, not just how finely it is sampled.
+    pub spread: OffsetSpan,
+    /// How many places along the beam are drawn as points of their own.
     pub fixture_count: usize,
-    /// Whether each of those places is also drawn as a point of its own.
+    /// Whether those places are drawn as points at all.
     ///
     /// A run dense enough that its points merge into a line is already served
     /// by the line, so the points are for the case where there are few of them
@@ -38,26 +41,30 @@ const NUM_WAVE_POINTS: usize = 1000;
 impl VisualizerPanelState {
     /// Recompute plot data from the current animation snapshot.
     fn compute(&mut self, state: &AnimationSnapshot) {
-        let phase_offset_per_fixture = if state.fixture_count == 0 {
-            1.0
-        } else {
-            1.0 / state.fixture_count as f64
-        };
-
         // The animation is the same for every point being plotted, so resolve
-        // its frame-constant state once rather than a thousand times. The unit
-        // waveform ignores the amplitude, so one preparation serves all three
-        // plots.
-        let anim = state
-            .animation
-            .prepare(&state.clocks.clock_bank, state.clocks.audio_envelope);
+        // its frame-constant state once rather than a thousand times. Prepared
+        // against the beam's own spread, so what the plot draws is what the
+        // beam is drawn with and not an approximation of it. The unit waveform
+        // ignores the amplitude, so one preparation serves all three plots.
+        let anim = state.animation.prepare(
+            &state.clocks.clock_bank,
+            state.clocks.audio_envelope,
+            state.spread,
+        );
+
+        // The plot's own axis runs across the beam, so a sweep of it is a sweep
+        // of the offset axis as well: the two are the same traversal, read in
+        // the beam's units by the spread.
+        let fraction = |i: usize, count: usize| UnipolarFloat::new(i as f64 / count as f64);
 
         // Unit waveform (amplitude always 1).
         self.preview.clear();
         self.preview.extend((0..NUM_WAVE_POINTS).map(|i| {
-            let phase = i as f64 / NUM_WAVE_POINTS as f64;
-            let offset_index = (phase / phase_offset_per_fixture) as usize;
-            PlotPoint::new(phase, anim.unit_value(Phase::new(phase), offset_index))
+            let along = fraction(i, NUM_WAVE_POINTS);
+            PlotPoint::new(
+                along.val(),
+                anim.unit_value(Phase::new(along.val()), state.spread.at(along)),
+            )
         }));
 
         // Scaled waveform (applies audio envelope and animation scaling).
@@ -72,8 +79,11 @@ impl VisualizerPanelState {
         self.dots.clear();
         if state.show_fixture_values {
             self.dots.extend((0..state.fixture_count).map(|i| {
-                let phase = i as f64 * phase_offset_per_fixture;
-                PlotPoint::new(phase, anim.value(Phase::new(phase), i))
+                let along = fraction(i, state.fixture_count);
+                PlotPoint::new(
+                    along.val(),
+                    anim.value(Phase::new(along.val()), state.spread.at(along)),
+                )
             }));
         }
     }
@@ -130,6 +140,7 @@ mod tests {
     #[test]
     fn compute_with_fixtures() {
         let state = AnimationSnapshot {
+            spread: OffsetSpan::Segments(4),
             fixture_count: 4,
             show_fixture_values: true,
             ..Default::default()
@@ -205,6 +216,7 @@ mod tests {
         let plot = |show_fixture_values| {
             let mut panel = VisualizerPanelState::default();
             panel.compute(&AnimationSnapshot {
+                spread: OffsetSpan::Segments(126),
                 fixture_count: 126,
                 show_fixture_values,
                 ..Default::default()
@@ -242,7 +254,7 @@ mod tests {
             fn emit_animation_state_change(&mut self, _: StateChange) {}
         }
 
-        let plot = |smoothing: f64, fixture_count: usize| {
+        let plot = |smoothing: f64, spread: OffsetSpan| {
             let mut animation = Animation::default();
             for sc in [
                 StateChange::Waveform(Waveform::Noise),
@@ -259,30 +271,37 @@ mod tests {
             let mut panel = VisualizerPanelState::default();
             panel.compute(&AnimationSnapshot {
                 animation,
-                fixture_count,
+                spread,
                 ..Default::default()
             });
             panel.preview.iter().map(|p| p.y).collect::<Vec<_>>()
         };
 
-        let spread = |count| {
-            plot(0.0, count)
+        let reach = |spread| {
+            plot(0.0, spread)
                 .iter()
-                .zip(plot(1.0, count).iter())
+                .zip(plot(1.0, spread).iter())
                 .map(|(a, b)| (a - b).abs())
                 .fold(0.0_f64, f64::max)
         };
 
-        assert!(
-            spread(126) > 0.1,
-            "turning the control across a run of 126 places moved the waveform by \
-             {}, which is nothing a viewer would see",
-            spread(126)
-        );
-        // One place is the degenerate case the bug wore: every sample resolves
-        // at the first place, so there is no second place to differ from.
+        // Both kinds of beam, because the units the axis is measured in are the
+        // one thing that differs between them and a plot that knew only one
+        // would draw the other flat.
+        for beam in [OffsetSpan::Segments(126), OffsetSpan::Figure] {
+            assert!(
+                reach(beam) > 0.1,
+                "turning the control across {beam:?} moved the waveform by {}, \
+                 which is nothing a viewer would see",
+                reach(beam)
+            );
+        }
+
+        // A beam with nowhere to spread is the degenerate case the bug wore:
+        // every sample resolves at the same place, so there is no second place
+        // to differ from.
         assert_eq!(
-            spread(1),
+            reach(OffsetSpan::Segments(1)),
             0.0,
             "a run of one place somehow varies along itself"
         );

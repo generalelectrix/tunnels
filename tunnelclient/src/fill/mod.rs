@@ -480,6 +480,52 @@ impl Placed {
     }
 }
 
+/// An animation shaped so that its value reads where on the figure it is
+/// asked, aimed at `target`.
+///
+/// Noise is the only waveform that reads a second coordinate of the figure as
+/// well as the one its phase runs along, and unsmoothed it spends the whole of
+/// the figure's spread — which is the setting where a coordinate and a vertex
+/// index differ most.
+#[cfg(test)]
+pub(crate) fn noise_animation(
+    target: tunnels_model::animation_target::AnimationTarget,
+) -> tunnels_model::animation::TargetedAnimation<tunnels_model::animation::PreparedAnimation> {
+    use std::time::Duration;
+    use tunnels_lib::number::UnipolarFloat;
+    use tunnels_model::animation::{
+        Animation, ControlMessage, EmitStateChange, OffsetSpan, StateChange, TargetedAnimation,
+        Waveform,
+    };
+    use tunnels_model::clock_bank::ClockBank;
+
+    struct Noop;
+    impl EmitStateChange for Noop {
+        fn emit_animation_state_change(&mut self, _: StateChange) {}
+    }
+
+    let mut animation = Animation::default();
+    for sc in [
+        StateChange::Waveform(Waveform::Noise),
+        StateChange::NPeriods(1),
+        StateChange::Size(UnipolarFloat::ONE),
+        StateChange::Smoothing(UnipolarFloat::ZERO),
+    ] {
+        animation.control(ControlMessage::Set(sc), &mut Noop);
+    }
+    // Smoothing is reached over time rather than set. The animation runs at no
+    // speed, so nothing else moves while it gets there.
+    animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+    TargetedAnimation {
+        animation: animation.prepare(
+            &ClockBank::default(),
+            UnipolarFloat::ZERO,
+            OffsetSpan::Figure,
+        ),
+        target,
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

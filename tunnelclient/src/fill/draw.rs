@@ -12,7 +12,7 @@ use graphics::Graphics;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
 use tunnels_lib::number::Phase;
-use tunnels_model::animation::{PreparedAnimation, TargetedAnimation};
+use tunnels_model::animation::{PreparedAnimation, SpreadOffset, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
 use tunnels_model::layer::PhaseAxis;
 use tunnels_sprites::Point;
@@ -101,10 +101,11 @@ impl VertexBuffers {
         self.positions.clear();
         self.uvs.clear();
 
-        for (i, v) in mesh.points().enumerate() {
+        for v in mesh.points() {
             let polar = Polar::of(v, needs.angle, needs.radius);
             let along = polar.phase(v, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
+            let spread = spread_at(polar, v, work.field.phase);
+            let displacement = Displacement::of(&work, polar, along, spread).beyond(anchor);
 
             let (x, y) = if needs.rotates {
                 // The figure's own points, moved in polar terms because a
@@ -150,15 +151,16 @@ impl VertexBuffers {
         self.positions.clear();
         self.uvs.clear();
 
-        for (i, vertex) in mesh.vertices().enumerate() {
+        for vertex in mesh.vertices() {
             let polar = Polar::of(vertex.on_path, needs.angle, needs.radius);
             let along = polar.phase(vertex.on_path, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
+            let spread = spread_at(polar, vertex.on_path, work.field.phase);
+            let displacement = Displacement::of(&work, polar, along, spread).beyond(anchor);
 
             // The ribbon's own width, applied before anything moves the
             // point: the offset is in the figure's undisplaced coordinates,
             // which is where the contour point it is measured from lives.
-            let reach = work.taper_at(along, i);
+            let reach = work.taper_at(along, spread);
             let (x, y) = (
                 vertex.on_path.x() + (vertex.position.x() - vertex.on_path.x()) * reach,
                 vertex.on_path.y() + (vertex.position.y() - vertex.on_path.y()) * reach,
@@ -205,11 +207,11 @@ impl VertexWork<'_> {
     /// waveform at full amplitude troughs at exactly minus one, which is a
     /// ribbon of no width and a beam that has gone out.
     #[inline]
-    fn taper_at(&self, along: f32, index: usize) -> f32 {
+    fn taper_at(&self, along: f32, spread: SpreadOffset) -> f32 {
         // Summed the way a beam sums them, so a figure and a run of segments
         // answer a stack of thickness animations alike.
         let scale = self.taper.iter().fold(1.0, |acc, a| {
-            acc + a.animation.value(Phase::new(f64::from(along)), index) as f32
+            acc + a.animation.value(Phase::new(f64::from(along)), spread) as f32
         });
         (self.stroke_width * scale).clamp(0.0, 1.0)
     }
@@ -230,10 +232,21 @@ impl Needs {
     fn of(work: &VertexWork) -> Self {
         let rotates =
             work.spin_speed != 0.0 || work.warps.iter().any(|w| w.target == AnimationTarget::Spin);
+        // An animation that reads its offset is asked along the coordinate the
+        // phase does not use, so a layer carrying one pays for both of them.
+        let spreads = work
+            .warps
+            .iter()
+            .chain(work.taper)
+            .any(|a| a.animation.varies_across_spread());
         Self {
             rotates,
-            angle: rotates || work.field.phase == PhaseAxis::Angle,
-            radius: rotates || work.field.phase == PhaseAxis::Radius,
+            angle: rotates
+                || work.field.phase == PhaseAxis::Angle
+                || (spreads && work.field.phase == PhaseAxis::Radius),
+            radius: rotates
+                || work.field.phase == PhaseAxis::Radius
+                || (spreads && work.field.phase == PhaseAxis::Angle),
         }
     }
 }
@@ -251,7 +264,7 @@ struct Displacement {
 }
 
 impl Displacement {
-    fn of(work: &VertexWork, polar: Polar, along: f32, index: usize) -> Self {
+    fn of(work: &VertexWork, polar: Polar, along: f32, spread: SpreadOffset) -> Self {
         let mut out = Self {
             radial: 1.0,
             // A tunnel integrates this knob into an angle that grows without
@@ -266,7 +279,7 @@ impl Displacement {
             offset_y: 0.0,
         };
         for warp in work.warps {
-            let value = warp.animation.value(Phase::new(f64::from(along)), index) as f32;
+            let value = warp.animation.value(Phase::new(f64::from(along)), spread) as f32;
             // Where a target means something different on a figure than on a
             // run of segments, this is where it is reinterpreted. `Size` scales a
             // segment; here it scales each point's distance from the centre,
@@ -315,7 +328,7 @@ impl Displacement {
     /// A figure's placement is answered there, so this is the offset it already
     /// carries.
     fn anchor(work: &VertexWork) -> Self {
-        Self::of(work, Polar::default(), 0.0, 0)
+        Self::of(work, Polar::default(), 0.0, SpreadOffset::default())
     }
 
     /// This displacement with the offset the placement already carries taken
@@ -346,6 +359,16 @@ impl Displacement {
     }
 }
 
+/// Where a point sits along the offset axis, as an animation reads it.
+///
+/// A figure spreads a fixed span of noise across itself however finely it is
+/// divided, so this is a coordinate and not an index: a point halfway across
+/// answers the same whether the mesh has ten thousand vertices or forty.
+#[inline]
+fn spread_at(polar: Polar, v: Point, phase: PhaseAxis) -> SpreadOffset {
+    SpreadOffset::across_figure(f64::from(polar.spread(v, phase)))
+}
+
 /// A vertex's polar coordinates, computed only where they are wanted.
 #[derive(Clone, Copy, Default)]
 struct Polar {
@@ -373,6 +396,22 @@ impl Polar {
             PhaseAxis::Angle => self.angle / std::f32::consts::TAU + 0.5,
             PhaseAxis::Radius => self.radius / std::f32::consts::SQRT_2,
             PhaseAxis::Linear => (v.y() + 1.0) / 2.0,
+        }
+    }
+
+    /// Unit position along the coordinate the phase is *not* read along.
+    ///
+    /// This is what a figure spreads an animation's offset over. Taking it from
+    /// the phase's own coordinate would leave the two the same question asked
+    /// twice, and noise given two coordinates that move together reads a line
+    /// through its field rather than the field. A figure has two coordinates and
+    /// the phase takes one, so the offset takes the other.
+    #[inline]
+    fn spread(self, v: Point, phase: PhaseAxis) -> f32 {
+        match phase {
+            PhaseAxis::Angle => self.radius / std::f32::consts::SQRT_2,
+            PhaseAxis::Radius => self.angle / std::f32::consts::TAU + 0.5,
+            PhaseAxis::Linear => (v.x() + 1.0) / 2.0,
         }
     }
 }
@@ -498,15 +537,108 @@ fn project(m: Matrix2d, v: Point) -> [f32; 2] {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::fill::geom::{Triangle, TriangleList};
+    use crate::fill::mesh::{Level, MeshId, MeshLibrary};
+    use crate::fill::{Frame, noise_animation};
+    use std::collections::HashMap;
     use tunnels_lib::number::UnipolarFloat;
-    use tunnels_model::animation::Animation;
+    use tunnels_model::animation::{Animation, OffsetSpan};
     use tunnels_model::clock_bank::ClockBank;
+    use tunnels_model::layer::{FigureId, SpriteId};
+
+    /// How much a noise warp moved each point of a square, drawn at a density
+    /// chosen for `px_per_unit`, keyed by the point it moved.
+    ///
+    /// The square is held clear of the origin, where the mesh refines a dozen
+    /// times finer and would cost this a million triangles to say nothing more.
+    fn warped_square(px_per_unit: f64) -> HashMap<(u32, u32), f32> {
+        let (lo, hi) = (0.4, 1.0);
+        let mut source = TriangleList::default();
+        source.push(Triangle::new(
+            Point::new(lo, lo),
+            Point::new(hi, lo),
+            Point::new(hi, hi),
+        ));
+        source.push(Triangle::new(
+            Point::new(lo, lo),
+            Point::new(hi, hi),
+            Point::new(lo, hi),
+        ));
+
+        let warps = [noise_animation(AnimationTarget::PositionX)];
+        let work = VertexWork {
+            field: PhaseField {
+                phase: PhaseAxis::Linear,
+                cycles: 1.0,
+                span: RampSpan::Figure,
+            },
+            spin_speed: 0.0,
+            warps: &warps,
+            taper: &[],
+            stroke_width: 1.0,
+        };
+
+        let mut library = MeshLibrary::default();
+        let mesh = library.get(
+            MeshId {
+                figure: FigureId::Baked(SpriteId(0)),
+                level: Level::for_screen(px_per_unit, Level::FINEST),
+            },
+            &source,
+            Frame::default(),
+        );
+        let mut buffers = VertexBuffers::default();
+        buffers.vertex_pass(mesh, work);
+        // A position warp offsets a point and nothing else scales it, so what
+        // the pass moved it by is the animation's own value.
+        mesh.points()
+            .zip(buffers.positions())
+            .map(|(p, out)| ((p.x().to_bits(), p.y().to_bits()), out.x() - p.x()))
+            .collect()
+    }
+
+    /// A figure's noise belongs to the figure and not to how finely it was cut
+    /// up.
+    ///
+    /// Mesh density is chosen from how many pixels the figure covers, so noise
+    /// that moved with it would draw the same beam differently on two
+    /// projectors, and differently again the moment a client was told to refine
+    /// large figures.
+    #[test]
+    fn noise_on_a_figure_does_not_follow_the_mesh_density() {
+        // Two densities four times apart, so the finer mesh contains every
+        // vertex of the coarser one and a great many more.
+        let coarse = warped_square(56.0);
+        let fine = warped_square(224.0);
+
+        let mut compared = 0;
+        for (point, coarse_value) in &coarse {
+            let Some(fine_value) = fine.get(point) else {
+                continue;
+            };
+            assert!(
+                (coarse_value - fine_value).abs() < 1e-6,
+                "a point of the figure was warped by {coarse_value} on a coarse \
+                 mesh and by {fine_value} on a fine one"
+            );
+            compared += 1;
+        }
+        assert!(
+            compared > 8,
+            "only {compared} points were shared by the two meshes, which is too \
+             few to have shown anything"
+        );
+    }
 
     /// An animation aimed at `target`. Its value is never asked for here; only
     /// what it is aimed at decides which coordinates a layer pays for.
     fn warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation> {
         TargetedAnimation {
-            animation: Animation::default().prepare(&ClockBank::default(), UnipolarFloat::ZERO),
+            animation: Animation::default().prepare(
+                &ClockBank::default(),
+                UnipolarFloat::ZERO,
+                OffsetSpan::Figure,
+            ),
             target,
         }
     }
@@ -515,8 +647,7 @@ mod test {
     /// should ask for a coordinate only where something reads it.
     #[test]
     fn a_layer_asks_only_for_the_coordinates_something_reads() {
-        let needs = |phase, spin_speed, targets: &[AnimationTarget]| {
-            let warps: Vec<_> = targets.iter().copied().map(warp).collect();
+        let needs = |phase, spin_speed, warps: &[TargetedAnimation<PreparedAnimation>]| {
             Needs::of(&VertexWork {
                 field: PhaseField {
                     phase,
@@ -524,7 +655,7 @@ mod test {
                     span: RampSpan::Cycle,
                 },
                 spin_speed,
-                warps: &warps,
+                warps,
                 taper: &[],
                 stroke_width: 1.0,
             })
@@ -535,7 +666,10 @@ mod test {
         let deformed = needs(
             PhaseAxis::Linear,
             0.0,
-            &[AnimationTarget::Size, AnimationTarget::AspectRatio],
+            &[
+                warp(AnimationTarget::Size),
+                warp(AnimationTarget::AspectRatio),
+            ],
         );
         assert!(!deformed.radius, "a deformed layer asked for the radius");
         assert!(!deformed.angle, "a deformed layer asked for the angle");
@@ -546,12 +680,29 @@ mod test {
         // measured from.
         assert!(needs(PhaseAxis::Radius, 0.0, &[]).radius);
         assert!(needs(PhaseAxis::Linear, 0.5, &[]).radius);
-        assert!(needs(PhaseAxis::Linear, 0.0, &[AnimationTarget::Spin]).radius);
+        assert!(needs(PhaseAxis::Linear, 0.0, &[warp(AnimationTarget::Spin)]).radius);
 
         // The angle likewise.
         assert!(needs(PhaseAxis::Angle, 0.0, &[]).angle);
         assert!(!needs(PhaseAxis::Linear, 0.0, &[]).angle);
-        assert!(needs(PhaseAxis::Linear, 0.0, &[AnimationTarget::Spin]).angle);
+        assert!(needs(PhaseAxis::Linear, 0.0, &[warp(AnimationTarget::Spin)]).angle);
+
+        // And both are read where an animation spreads across the figure: noise
+        // takes the coordinate the phase does not, so such a layer pays for the
+        // pair while one carrying no such animation still pays for one.
+        let noise = [noise_animation(AnimationTarget::PositionX)];
+        assert!(
+            needs(PhaseAxis::Radius, 0.0, &noise).angle,
+            "a layer spreading noise across the figure did not ask for the coordinate it spreads along"
+        );
+        assert!(
+            needs(PhaseAxis::Angle, 0.0, &noise).radius,
+            "a layer spreading noise across the figure did not ask for the coordinate it spreads along"
+        );
+        assert!(
+            !needs(PhaseAxis::Radius, 0.0, &[warp(AnimationTarget::PositionX)]).angle,
+            "a layer with nothing spreading across the figure paid for a second coordinate"
+        );
     }
 
     /// An animation aimed at `target`, shaped so that its value runs across the
@@ -580,7 +731,11 @@ mod test {
         // no speed, so nothing else moves while it gets there.
         animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
         TargetedAnimation {
-            animation: animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO),
+            animation: animation.prepare(
+                &ClockBank::default(),
+                UnipolarFloat::ZERO,
+                OffsetSpan::Figure,
+            ),
             target,
         }
     }
@@ -610,7 +765,9 @@ mod test {
             stroke_width: 1.0,
         };
         let anchor = Displacement::anchor(&work);
-        let at = |along| Displacement::of(&work, Polar::default(), along, 0).beyond(anchor);
+        let at = |along| {
+            Displacement::of(&work, Polar::default(), along, SpreadOffset::default()).beyond(anchor)
+        };
 
         let start = at(0.0);
         assert_eq!(

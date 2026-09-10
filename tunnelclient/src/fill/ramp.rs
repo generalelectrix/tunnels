@@ -17,7 +17,7 @@
 use crate::draw::hsv_to_rgb;
 use image::{Rgba, RgbaImage};
 use tunnels_lib::number::Phase;
-use tunnels_model::animation::{PreparedAnimation, TargetedAnimation};
+use tunnels_model::animation::{PreparedAnimation, SpreadOffset, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
 use tunnels_model::layer::{ColorAdjust, ColorField};
 
@@ -127,7 +127,22 @@ pub fn build_into(
 
         let mut adjust = ColorAdjust::default();
         for anim in anims {
-            let value = anim.animation.value(phase, x as usize);
+            // A ramp is one coordinate wide, so the offset is measured along
+            // the same coordinate the phase is. That it is measured as a
+            // coordinate at all is what keeps a colour animation's noise the
+            // figure's: a table's length is chosen from what the colour needs,
+            // and a figure spreads the same span across itself however many
+            // texels that comes to.
+            //
+            // Worth knowing rather than rediscovering: both of noise's
+            // coordinates then come from this one, so how fast a colour
+            // animation's noise runs along the ramp is set by the periodicity
+            // and the smoothing together rather than by the periodicity alone.
+            // Smoothing has always reached a ramp's noise frequency, so this
+            // is the character a ramp already had.
+            let value = anim
+                .animation
+                .value(phase, SpreadOffset::across_figure(phase.val()));
             // The same adjustments a beam makes to its own colour, against
             // the ramp's coordinate instead of a segment index.
             match anim.target {
@@ -166,5 +181,57 @@ pub fn build_into(
                 (c[3].clamp(0.0, 1.0) * 255.0) as u8,
             ]),
         );
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::fill::noise_animation;
+    use tunnels_model::layer::PhaseAxis;
+
+    /// A figure's colour noise belongs to the figure and not to how long the
+    /// table holding its colour happens to be.
+    ///
+    /// A ramp's length is chosen from what the *colour* needs — a figure-wide
+    /// span is four times a cycle-wide one — so a noise field that followed the
+    /// texel grid would move under a knob that has nothing to do with noise,
+    /// and the same figure would be coloured differently according to whether
+    /// anything else on the layer had asked for the wider table.
+    #[test]
+    fn colour_noise_does_not_follow_the_length_of_the_ramp() {
+        let color = ColorField {
+            phase: PhaseAxis::Linear,
+            cycles: 1.0,
+            center: 0.0,
+            width: 1.0,
+            sat: 1.0,
+            val: 1.0,
+            level: 1.0,
+        };
+        let anims = [noise_animation(AnimationTarget::Color)];
+        let built = |texels: u32| {
+            let mut img = RgbaImage::new(texels, 1);
+            build_into(&mut img, RampSpan::Figure, &color, &anims);
+            img
+        };
+
+        // The two lengths a ramp is ever built at, which are four times apart
+        // and both powers of two — so every texel of the shorter table sits at
+        // exactly the coordinate of one of the longer's, and the colours there
+        // are comparable without any allowance for where they were sampled.
+        let short = built(CYCLE_TEXELS);
+        let long = built(FIGURE_TEXELS);
+        let step = FIGURE_TEXELS / CYCLE_TEXELS;
+
+        for x in 0..CYCLE_TEXELS {
+            assert_eq!(
+                short.get_pixel(x, 0),
+                long.get_pixel(x * step, 0),
+                "the point {} of the way across the figure is one colour in a \
+                 {CYCLE_TEXELS}-texel ramp and another in a {FIGURE_TEXELS}-texel one",
+                f64::from(x) / f64::from(CYCLE_TEXELS)
+            );
+        }
     }
 }
