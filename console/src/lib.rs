@@ -150,11 +150,9 @@ impl eframe::App for ConfigApp {
                                 MetaCommand::StopTouchOscServer
                             }
                         };
-                        let mut ctx = GuiContext {
-                            modal: &mut self.modal,
-                            client: &self.client,
-                        };
-                        let _ = ctx.send_command(cmd);
+                        if let Err(e) = self.client.send_command(cmd) {
+                            self.modal.show("Sync Server Failed", format!("{e:#}"));
+                        }
                     }
                 }
                 Tab::Audio => {

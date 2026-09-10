@@ -9,7 +9,7 @@ pub fn touchosc_server_ui(ui: &mut egui::Ui, running: bool) -> Option<TouchOscSe
     let mut action = None;
 
     ui.horizontal(|ui| {
-        ui.strong("TouchOSC Layout");
+        ui.strong("TouchOSC Sync");
         ui.add_space(8.0);
 
         let (status_label, status_color) = if running {
@@ -24,15 +24,16 @@ pub fn touchosc_server_ui(ui: &mut egui::Ui, running: bool) -> Option<TouchOscSe
             if ui.button("Stop").clicked() {
                 action = Some(TouchOscServerAction::Stop);
             }
-        } else if ui.button("Push To Device").clicked() {
+        } else if ui.button("Send Template To Device").clicked() {
             action = Some(TouchOscServerAction::Start);
         }
     });
 
     if running {
         ui.label(
-            "In TouchOSC Mk1, open Layout \u{2192} Add and select this computer \
-             to receive the layout. Stop the server when the transfer is done.",
+            "Open TouchOSC Mk1 on your device, open Layout \u{2192} Add, and \
+             select this computer to sync the template. Stop the server when \
+             the transfer is done.",
         );
     }
 
@@ -57,7 +58,11 @@ mod tests {
     #[test]
     fn button_reports_the_action_for_each_state() {
         for (running, label, expected) in [
-            (false, "Push To Device", TouchOscServerAction::Start),
+            (
+                false,
+                "Send Template To Device",
+                TouchOscServerAction::Start,
+            ),
             (true, "Stop", TouchOscServerAction::Stop),
         ] {
             let action = Cell::new(None);
