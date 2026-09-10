@@ -2,15 +2,13 @@
 
 use eframe::egui;
 
-/// Render the sync control, and while the server is running the modal that
-/// holds the transfer in front of the user until they stop it.
+/// Render the sync controls: the modal that holds a running transfer, and the
+/// button that starts one, pinned to the bottom of the available space.
 pub fn touchosc_server_ui(ui: &mut egui::Ui, running: bool) -> Option<TouchOscServerAction> {
     let mut action = None;
 
-    if ui.button("Send Template To Device").clicked() {
-        action = Some(TouchOscServerAction::Start);
-    }
-
+    // A window-level overlay rather than part of the panel's flow, so it is
+    // shown before the layout below claims the remaining space.
     if running {
         egui::Modal::new(egui::Id::new("touchosc_sync_modal")).show(ui.ctx(), |ui| {
             ui.set_width(350.0);
@@ -26,6 +24,12 @@ pub fn touchosc_server_ui(ui: &mut egui::Ui, running: bool) -> Option<TouchOscSe
             }
         });
     }
+
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+        if ui.button("Send Template To Device").clicked() {
+            action = Some(TouchOscServerAction::Start);
+        }
+    });
 
     action
 }

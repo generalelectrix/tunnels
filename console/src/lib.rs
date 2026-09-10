@@ -138,8 +138,6 @@ impl eframe::App for ConfigApp {
                         let _ = ctx.send_command(cmd);
                     }
 
-                    ui.add_space(16.0);
-                    ui.separator();
                     let touchosc_running = self.gui_state.touchosc_server_running.load();
                     if let Some(action) = touchosc_panel::touchosc_server_ui(ui, touchosc_running) {
                         let cmd = match action {
