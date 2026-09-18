@@ -29,6 +29,7 @@ use graphics::types::Color;
 use graphics::{Context, Graphics, Polygon, Transformed};
 use image::RgbaImage;
 use log::{error, info};
+use std::f64::consts::TAU;
 use texture::{CreateTexture, Filter, Format, TextureSettings, UpdateTexture, Wrap};
 use tunnels_lib::number::Phase;
 use tunnels_model::layer::{
@@ -607,6 +608,10 @@ struct Placed {
 impl Placed {
     /// Placed the way a segment is, so a figure and a beam at the same knob
     /// settings cover the same ground.
+    ///
+    /// The figure's own angle goes on last, inside the stretch to the two
+    /// half-extents, so it turns the figure and not the box the figure is
+    /// stretched into.
     fn of(fill: &FillLayer, c: &Context, cfg: &ClientConfig) -> Self {
         let p = &fill.placement;
         let placed = place(p, c, cfg);
@@ -615,7 +620,9 @@ impl Placed {
             p.extent_y * cfg.critical_size,
         );
         Self {
-            m: placed.scale(half_x, half_y),
+            m: placed
+                .scale(half_x, half_y)
+                .rot_rad(fill.figure_angle * TAU),
             px_per_unit: half_x.abs().max(half_y.abs()),
         }
     }
@@ -722,6 +729,7 @@ mod test {
                 extent_y: 0.5,
                 rot_angle: 0.,
             },
+            figure_angle: 0.,
             spin_speed: 0.,
             thickness: 0.,
             draw_mode: DrawMode::Fill,

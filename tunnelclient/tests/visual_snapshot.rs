@@ -709,6 +709,29 @@ fn sprite_spin() {
     compare_fill_to_fixture(&image, "sprite_spin.png");
 }
 
+/// The marquee turns a figure inside its box, so a wide figure stays wide
+/// and is sheared through the turn; the rotation knob turns the box too, so
+/// the same figure turns rigidly and its width goes with it. The two goldens
+/// are of the same figure at the same eighth of a turn.
+#[test]
+fn sprite_marquee_and_rotation_differ_on_a_wide_figure() {
+    let cfg = test_config();
+    let marquee = render_snapshot(&fixture::sprite_marquee_wide_snapshot(), &cfg);
+    compare_fill_to_fixture(&marquee, "sprite_marquee_wide.png");
+    let rotation = render_snapshot(&fixture::sprite_rotation_wide_snapshot(), &cfg);
+    compare_fill_to_fixture(&rotation, "sprite_rotation_wide.png");
+}
+
+/// A marquee animation reaches the figure's angle the way the knob does, so
+/// the same eighth of a turn from either draws the same picture.
+#[test]
+fn sprite_marquee_animation() {
+    let cfg = test_config();
+    let knob = render_snapshot(&fixture::sprite_marquee_wide_snapshot(), &cfg);
+    let animation = render_snapshot(&fixture::sprite_marquee_animation_snapshot(), &cfg);
+    assert_images_match(&animation, &knob, 0, "sprite_marquee_animation");
+}
+
 /// A radial animation run around the angle, which deforms the outline into
 /// petals rather than scaling the whole figure.
 #[test]

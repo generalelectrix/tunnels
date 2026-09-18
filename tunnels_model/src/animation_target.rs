@@ -43,8 +43,9 @@ impl AnimationTarget {
     /// the same thing everywhere on it is resolved into a single number before
     /// the layer is built and never has to reach the points. A rotation is one
     /// of those: a figure turns as a whole, and there is no second thing for a
-    /// second reading of the knob to turn. A marquee is the one that is simply
-    /// dead: it slides segments along a path, and a figure has no segments.
+    /// second reading of the knob to turn. A marquee is another: on a figure
+    /// it is a second rotation, applied inside the aspect stretch rather than
+    /// outside it, and a whole figure turns with that one too.
     ///
     /// Thickness is not one of those, though it reads like one. An outline has
     /// a width at every point of the contour it follows, so a periodicity of

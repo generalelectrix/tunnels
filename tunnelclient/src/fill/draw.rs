@@ -292,9 +292,9 @@ impl Displacement {
                 // The rest never arrive. A colour target is answered once per
                 // ramp texel; thickness is answered per vertex too, but on the
                 // outline alone, where it scales the ribbon's reach rather
-                // than moving the point; a rotation turns the whole figure and
-                // is folded into the placement; and a marquee resolves into
-                // nothing, a figure having no segments to slide along a path.
+                // than moving the point; and both rotations turn the whole
+                // figure and are folded into where it is placed, the marquee
+                // inside the aspect stretch and the rotation outside it.
                 AnimationTarget::Color
                 | AnimationTarget::ColorSpread
                 | AnimationTarget::ColorSaturation
