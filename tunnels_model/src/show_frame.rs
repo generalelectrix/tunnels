@@ -491,6 +491,19 @@ mod tests {
 
     /// Every float of a figure, under the name a failure should report.
     fn fill_fields(fill: &FillLayer) -> impl Iterator<Item = (&'static str, f64)> {
+        let FillLayer {
+            figure: _,
+            placement,
+            figure_angle,
+            spin_speed,
+            thickness,
+            draw_mode: _,
+            mode: _,
+            color,
+            color_anims: _,
+            warps: _,
+            taper: _,
+        } = fill;
         let ColorField {
             phase: _,
             cycles,
@@ -499,13 +512,13 @@ mod tests {
             sat,
             val,
             level,
-        } = fill.color;
-        placement_fields(fill.placement)
+        } = *color;
+        placement_fields(*placement)
             .into_iter()
             .chain([
-                ("figure_angle", fill.figure_angle),
-                ("spin_speed", fill.spin_speed),
-                ("thickness", fill.thickness),
+                ("figure_angle", *figure_angle),
+                ("spin_speed", *spin_speed),
+                ("thickness", *thickness),
             ])
             .chain([
                 ("cycles", cycles),
