@@ -213,12 +213,6 @@ pub fn update_tunnel_control(sc: StateChange, manager: &mut impl MidiOutput) {
                 },
                 &mut send,
             );
-            if !v.draws_segments() {
-                // The marquee slides segments along a path and this mode
-                // draws none, so a knob left where the last mode put it is
-                // reporting a setting that nothing reads.
-                send(event(MARQUEE_SPEED, bipolar_to_midi(BipolarFloat::ZERO)));
-            }
         }
         PhaseAxis(v) => {
             use tunnels_model::layer::PhaseAxis::*;

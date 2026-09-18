@@ -67,8 +67,8 @@ impl ShapeMode {
 
     /// Whether this mode draws a run of segments.
     ///
-    /// The controls that act on segments — the marquee and the render mode —
-    /// mean nothing to a mode that draws none.
+    /// The render mode names how a segment is drawn, and means nothing to a
+    /// mode that draws none.
     pub fn draws_segments(self) -> bool {
         self.segment_path().is_some()
     }
@@ -402,11 +402,9 @@ pub struct FillLayer {
     pub placement: Placement,
     /// How far the figure is turned within its own unit box, in turns.
     ///
-    /// Applied before the box is stretched to the placement's extents, where
-    /// the placement's own angle is applied after: a wide figure turned by
-    /// this stays wide, sheared through the turn the way segments are as they
-    /// travel around a wide ring, while one turned by the placement's angle
-    /// turns as a rigid whole and stands tall a quarter turn later.
+    /// Applied before the box is stretched to the placement's extents, so a
+    /// figure stretched wide stays wide as it turns and is sheared through
+    /// the turn rather than carried around rigidly.
     pub figure_angle: f64,
     /// The beam's spin knob, as the operator set it.
     pub spin_speed: f64,

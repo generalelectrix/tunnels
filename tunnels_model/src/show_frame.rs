@@ -503,6 +503,7 @@ mod tests {
         placement_fields(fill.placement)
             .into_iter()
             .chain([
+                ("figure_angle", fill.figure_angle),
                 ("spin_speed", fill.spin_speed),
                 ("thickness", fill.thickness),
             ])
