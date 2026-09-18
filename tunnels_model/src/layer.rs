@@ -400,6 +400,14 @@ pub struct Hsva {
 pub struct FillLayer {
     pub figure: FigureId,
     pub placement: Placement,
+    /// How far the figure is turned within its own unit box, in turns.
+    ///
+    /// Applied before the box is stretched to the placement's extents, where
+    /// the placement's own angle is applied after: a wide figure turned by
+    /// this stays wide, sheared through the turn the way segments are as they
+    /// travel around a wide ring, while one turned by the placement's angle
+    /// turns as a rigid whole and stands tall a quarter turn later.
+    pub figure_angle: f64,
     /// The beam's spin knob, as the operator set it.
     pub spin_speed: f64,
     /// The width an outline is stroked at where nothing tapers it, in the same

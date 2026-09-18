@@ -508,6 +508,11 @@ impl Tunnel {
         FillLayer {
             figure,
             placement,
+            // The marquee, which on a segment path slides the segments around
+            // the ring the placement describes, turns a figure inside that
+            // placement instead. Both leave the placement itself where it is.
+            figure_angle: (self.curr_marquee_angle + uniform(AnimationTarget::MarqueeRotation))
+                .val(),
             spin_speed: self.spin_speed.val(),
             // The knob alone. A thickness animation is not folded in here: on
             // a figure it tapers the outline point by point, so the width the
@@ -1221,6 +1226,60 @@ mod test {
         }
     }
 
+    /// The marquee turns a figure inside its own box, before the box is
+    /// stretched to the placement's extents, so a wide figure stays wide
+    /// while it turns. The knob integrates into the angle over time, and a
+    /// marquee animation adds to it the way a rotation animation adds to the
+    /// placement's angle.
+    #[test]
+    fn the_marquee_turns_a_figure_inside_its_box() {
+        let mut tunnel = Tunnel {
+            shape_mode: ShapeMode::Sprite,
+            ..Default::default()
+        };
+        let Layer::Fill(fill) = render_fixture(&tunnel) else {
+            panic!("a sprite mode renders a figure");
+        };
+        assert_eq!(fill.figure_angle, 0.0, "a fresh figure is not turned");
+
+        tunnel.handle_state_change(StateChange::MarqueeSpeed(BipolarFloat::ONE), &mut Silent);
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        let Layer::Fill(fill) = render_fixture(&tunnel) else {
+            panic!("a sprite mode renders a figure");
+        };
+        let turned = fill.figure_angle;
+        assert!(turned > 0.0, "the marquee knob did not turn the figure");
+        assert_eq!(
+            fill.placement.rot_angle, 0.0,
+            "the marquee turned the placement rather than the figure inside it"
+        );
+
+        // A constant waveform reads one everywhere, so the figure is turned by
+        // exactly the animation's size on top of the knob's travel.
+        tunnel.anims[0].target = AnimationTarget::MarqueeRotation;
+        for sc in [
+            AnimStateChange::Waveform(AnimWaveform::Constant),
+            AnimStateChange::Size(UnipolarFloat::new(0.125)),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut Silent);
+        }
+        let Layer::Fill(fill) = render_fixture(&tunnel) else {
+            panic!("a sprite mode renders a figure");
+        };
+        assert!(
+            (fill.figure_angle - (turned + 0.125)).abs() < 1e-9,
+            "the marquee animation did not add to the figure's angle: {} vs {}",
+            fill.figure_angle,
+            turned + 0.125
+        );
+        assert!(
+            fill.warps.is_empty(),
+            "the marquee animation was sent to displace points as well"
+        );
+    }
+
     /// The figure controls write the fields their mode reads and leave the
     /// others alone, so work done in one mode survives a trip through another.
     #[test]
@@ -1309,8 +1368,8 @@ mod test {
         }
 
         // The marquee knob is the one control a figure mode does not
-        // reinterpret: it turns a mark mode's marquee and nothing else, so it
-        // writes the same field whichever mode heard it.
+        // reinterpret: it drives the marquee angle in every mode, so it writes
+        // the same field whichever mode heard it.
         assert_eq!(
             tunnel.marquee_speed,
             BipolarFloat::ONE,
@@ -2784,6 +2843,64 @@ pub mod fixture {
     pub fn sprite_spin_snapshot() -> LayerCollection {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
         tunnel.spin_speed = BipolarFloat::new(0.25);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A figure stretched wide, which the two turning knobs act on differently.
+    ///
+    /// The aspect ratio is three quarters of the way up, so the box is one and
+    /// a half times as wide as it is tall and a turn of either kind is plain
+    /// to see. An eighth of a turn rather than a quarter: the snowflake is
+    /// six-fold, so a quarter turn reads too much like a sixth. Small enough
+    /// that the wide box stays inside the frame whichever way it is turned: a
+    /// golden clipped by the viewport hides whatever it clipped.
+    fn wide_sprite() -> Tunnel {
+        let mut tunnel = sprite_tunnel(SNOWFLAKE);
+        tunnel.aspect_ratio = Smoother::new(
+            UnipolarFloat::new(0.75),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        tunnel.size = Smoother::new(
+            UnipolarFloat::new(0.3),
+            Tunnel::GEOM_SMOOTH_TIME,
+            SmoothMode::Linear,
+        );
+        tunnel
+    }
+
+    /// A wide figure turned by the marquee: the box stays wide, and the
+    /// figure is sheared through the turn inside it.
+    pub fn sprite_marquee_wide_snapshot() -> LayerCollection {
+        let mut tunnel = wide_sprite();
+        tunnel.curr_marquee_angle = Phase::new(0.125);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A wide figure turned by the rotation knob, which turns box and all: the
+    /// figure is not sheared, and the width now lies along the diagonal.
+    pub fn sprite_rotation_wide_snapshot() -> LayerCollection {
+        let mut tunnel = wide_sprite();
+        tunnel.curr_rot_angle = Phase::new(0.125);
+        snapshot(render_default(&tunnel))
+    }
+
+    /// A wide figure turned by a marquee animation instead of the knob.
+    ///
+    /// A constant waveform at an eighth of a turn, so the picture is the one
+    /// the knob makes and the animation's route to the angle is what is
+    /// checked.
+    pub fn sprite_marquee_animation_snapshot() -> LayerCollection {
+        let mut tunnel = wide_sprite();
+        tunnel.anims[0].target = AnimationTarget::MarqueeRotation;
+        for sc in [
+            AnimStateChange::Waveform(Waveform::Constant),
+            AnimStateChange::Size(UnipolarFloat::new(0.125)),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
+        }
         snapshot(render_default(&tunnel))
     }
 
