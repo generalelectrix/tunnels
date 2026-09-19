@@ -1,8 +1,9 @@
 //! A multi-channel audio processor that derives per-band envelopes from its input.
 //!
 //! Processing chains:
-//!   Lowpass: per-channel lowpass → Hilbert |z(t)| → fast envelope → slow envelope
-//!   Wavelet: mono D4 decomposition → per-band Hilbert → fast → slow envelope
+//! Both run on the mono mix of the input channels:
+//!   Lowpass: lowpass → Hilbert |z(t)| → fast envelope → slow envelope
+//!   Wavelet: undecimated D4 decomposition → per-band Hilbert → fast → slow envelope
 //!
 //! Output: 8 normalized bands (1 lowpass + 7 wavelet), selectable via `active_band`.
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
@@ -15,8 +16,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::hilbert::HilbertTransform;
-use crate::ring_buffer::EnvelopeProducer;
-use crate::wavelet::{NUM_BANDS, NUM_LEVELS, WaveletDecomposition, WaveletType};
+use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
+use crate::wavelet::{NUM_LEVELS, WaveletDecomposition};
 
 /// Fast envelope follower: catches every peak within a cycle.
 const FAST_ATTACK: Duration = Duration::from_millis(1);
@@ -30,6 +31,25 @@ pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
 /// Band labels in frequency-ascending output order (index 0 = lowpass sub-bass).
 pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
+
+/// The envelope ring buffers for every output band: the producers feed a
+/// `Processor`, the streams are read by whoever displays or records them.
+pub struct EnvelopeRingBuffers {
+    pub producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
+    pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+}
+
+/// Create one envelope ring buffer per output band, each holding
+/// `ENVELOPE_HISTORY_CAPACITY` values.
+pub fn envelope_ring_buffers() -> EnvelopeRingBuffers {
+    let (producers, streams): (Vec<_>, Vec<_>) = (0..NUM_OUTPUT_BANDS)
+        .map(|_| envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY))
+        .unzip();
+    EnvelopeRingBuffers {
+        producers: producers.try_into().ok().expect("one producer per band"),
+        streams: streams.try_into().ok().expect("one stream per band"),
+    }
+}
 
 /// Audio callback rate in Hz (sample_rate / frames_per_buffer).
 #[derive(Debug, Clone, Copy)]
@@ -69,7 +89,6 @@ pub struct ProcessorSettingsInner {
     /// Ceiling tracking half-life in seconds (moderate — tracks recent peaks).
     pub norm_ceiling_halflife: AtomicF32,
     pub norm_floor_mode: AtomicTrackingMode,
-    pub norm_ceiling_mode: AtomicTrackingMode,
 
     /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
     pub active_band: AtomicU32,
@@ -94,8 +113,6 @@ impl ProcessorSettingsInner {
         self.norm_ceiling_halflife.set(5.0);
         self.norm_floor_mode
             .store(TrackingMode::Average, Ordering::Relaxed);
-        self.norm_ceiling_mode
-            .store(TrackingMode::Limit, Ordering::Relaxed);
     }
 }
 
@@ -113,7 +130,6 @@ impl Default for ProcessorSettingsInner {
             norm_floor_halflife: AtomicF32::new(10.0),
             norm_ceiling_halflife: AtomicF32::new(5.0),
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
-            norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
             active_band: AtomicU32::new(0),
         }
     }
@@ -126,39 +142,46 @@ pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
 ///
 /// Slews in dB (log) space so that equal perceptual changes (+6 dB vs -6 dB)
 /// take equal time at the same coefficient, independent of the current gain.
+/// All time constants are in seconds and derived from the update rate.
 struct AutoTrim {
-    /// Tracked peak level, decays slowly toward zero.
+    /// Tracked peak level: instant attack, slow decay.
     peak_tracker: f32,
     /// Current trim gain in dB.
     gain_db: f32,
     /// Current trim gain as a linear multiplier (cached from gain_db).
     gain: f32,
-    /// The clamped target gain the slew is heading toward (linear).
-    desired_gain: f32,
+    /// Update rate the cached coefficients were derived for.
+    update_rate: f32,
+    peak_fall_coeff: f32,
+    gain_coeff: f32,
 }
 
 impl AutoTrim {
-    /// Target peak level. Unity — downstream is all floating point,
-    /// so brief transient overshoot just means the envelope exceeds 1.0
-    /// momentarily (clamped at final output). The 20:1 asymmetry between
-    /// up (20s) and down (0.5s) time constants prevents oscillation.
+    /// Target peak level. Unity — downstream is all floating point, and a
+    /// momentary overshoot is harmless.
     const TARGET: f32 = 1.0;
     /// Gain range in dB.
     const MIN_GAIN_DB: f32 = -10.0;
     const MAX_GAIN_DB: f32 = 10.0;
-    /// Peak tracker release time constant (~10s at 1kHz buffer rate).
-    const PEAK_RELEASE_COEFF: f32 = 0.9999;
-    /// Gain adjustment rate upward: slow (~20s time constant at 1kHz).
-    const GAIN_UP_COEFF: f32 = 0.99995;
-    /// Gain adjustment rate downward: faster (~0.5s time constant at 1kHz).
-    const GAIN_DOWN_COEFF: f32 = 0.998;
+    /// Peak tracker fall half-life.
+    const PEAK_FALL_HALFLIFE: f32 = 10.0;
+    /// Gain slew half-life, the same in both directions. Overshoot is
+    /// harmless, so there is nothing to race toward, and the normalizers
+    /// downstream follow a slow change of level transparently, so a stray
+    /// peak that pulls the tracker up costs only a gentle, brief dip.
+    const GAIN_HALFLIFE: f32 = 5.0;
+    /// Buffer peak below which the trim holds still, so silence and idle
+    /// noise are never boosted toward the target.
+    const SILENCE: f32 = 0.01;
 
     fn new() -> Self {
         Self {
             peak_tracker: 0.0,
             gain_db: 0.0,
             gain: 1.0,
-            desired_gain: 1.0,
+            update_rate: 0.0,
+            peak_fall_coeff: 0.0,
+            gain_coeff: 0.0,
         }
     }
 
@@ -170,41 +193,50 @@ impl AutoTrim {
         20.0 * lin.log10()
     }
 
-    /// Update the trim based on the peak level observed in this buffer.
-    /// Returns the current trim gain to apply.
-    fn update(&mut self, buffer_peak: f32) -> f32 {
-        // Track the peak: instant attack, slow release.
+    /// Refresh the cached coefficients for the update rate. Safe to call
+    /// every buffer.
+    fn set_params(&mut self, update_rate: f32) {
+        if update_rate == self.update_rate {
+            return;
+        }
+        self.update_rate = update_rate;
+        self.peak_fall_coeff = halflife_to_coeff(Self::PEAK_FALL_HALFLIFE, update_rate);
+        self.gain_coeff = halflife_to_coeff(Self::GAIN_HALFLIFE, update_rate);
+    }
+
+    /// Update the trim from the peak level observed in this buffer.
+    fn update(&mut self, buffer_peak: f32) {
+        if buffer_peak < Self::SILENCE {
+            return;
+        }
+
         if buffer_peak > self.peak_tracker {
             self.peak_tracker = buffer_peak;
         } else {
-            self.peak_tracker = Self::PEAK_RELEASE_COEFF * self.peak_tracker
-                + (1.0 - Self::PEAK_RELEASE_COEFF) * buffer_peak;
+            self.peak_tracker = self.peak_fall_coeff * self.peak_tracker
+                + (1.0 - self.peak_fall_coeff) * buffer_peak;
         }
 
-        // Compute desired gain in dB to bring tracked peak to target.
-        if self.peak_tracker > 0.001 {
-            let desired_linear = Self::TARGET / self.peak_tracker;
-            let desired_db =
-                Self::linear_to_db(desired_linear).clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
-            self.desired_gain = Self::db_to_linear(desired_db);
-
-            // Slew in dB space: slow up, fast down.
-            let coeff = if desired_db > self.gain_db {
-                Self::GAIN_UP_COEFF
-            } else {
-                Self::GAIN_DOWN_COEFF
-            };
-            self.gain_db = coeff * self.gain_db + (1.0 - coeff) * desired_db;
-            self.gain = Self::db_to_linear(self.gain_db);
-        }
-
-        self.gain
+        let desired_db = Self::linear_to_db(Self::TARGET / self.peak_tracker)
+            .clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
+        self.gain_db = self.gain_coeff * self.gain_db + (1.0 - self.gain_coeff) * desired_db;
+        self.gain = Self::db_to_linear(self.gain_db);
     }
 }
 
-/// Tracking mode for floor/ceiling.
+/// One-pole EMA coefficient that halves the distance to the target every
+/// `halflife_secs` at `update_rate` updates per second. A non-positive
+/// half-life means no smoothing.
+fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
+    if halflife_secs <= 0.0 || update_rate <= 0.0 {
+        return 0.0;
+    }
+    (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
+}
+
+/// How the normalizer floor tracks the envelope.
 /// - Average: asymmetric EMA tracking the general level
-/// - Limit: tracks the instantaneous min (floor) or max (ceiling) with slow decay
+/// - Limit: drops instantly to the minimum and rises slowly from it
 #[derive(PartialEq, Eq)]
 #[atomic_enum::atomic_enum]
 pub enum TrackingMode {
@@ -212,15 +244,137 @@ pub enum TrackingMode {
     Limit = 1,
 }
 
-impl From<u32> for TrackingMode {
-    fn from(v: u32) -> Self {
-        if v == 1 { Self::Limit } else { Self::Average }
+/// The normalizer coefficients every band shares, derived from the settings
+/// and the buffer update rate. The expensive `exp()`s are recomputed only
+/// when a half-life or the update rate changes.
+struct NormalizerParams {
+    floor_mode: TrackingMode,
+    /// EMA coefficients for average-mode floor tracking.
+    floor_rise_coeff: f32,
+    floor_fall_coeff: f32,
+    /// EMA coefficient for limit-mode floor (slow rise from minimum).
+    floor_limit_rise_coeff: f32,
+    /// EMA coefficient for ceiling decay.
+    ceiling_fall_coeff: f32,
+    /// EMA coefficient for ceiling decay while nothing approaches it.
+    ceiling_fast_fall_coeff: f32,
+    /// EMA coefficient for the ceiling anchor's rise toward the ceiling.
+    anchor_rise_coeff: f32,
+    /// Seconds per update.
+    interval: f64,
+    /// The inputs the coefficients were derived from.
+    floor_halflife: f32,
+    ceiling_halflife: f32,
+    update_rate: f32,
+}
+
+impl NormalizerParams {
+    fn new() -> Self {
+        Self {
+            floor_mode: TrackingMode::Average,
+            floor_rise_coeff: 0.0,
+            floor_fall_coeff: 0.0,
+            floor_limit_rise_coeff: 0.0,
+            ceiling_fall_coeff: 0.0,
+            ceiling_fast_fall_coeff: 0.0,
+            anchor_rise_coeff: 0.0,
+            interval: 0.0,
+            floor_halflife: 0.0,
+            ceiling_halflife: 0.0,
+            update_rate: 0.0,
+        }
+    }
+
+    /// Refresh from the settings for the given update rate. Safe to call
+    /// every buffer.
+    fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: f32) {
+        self.floor_mode = settings.norm_floor_mode.load(Ordering::Relaxed);
+        let floor_halflife = settings.norm_floor_halflife.get();
+        let ceiling_halflife = settings.norm_ceiling_halflife.get();
+        if update_rate <= 0.0
+            || (floor_halflife == self.floor_halflife
+                && ceiling_halflife == self.ceiling_halflife
+                && update_rate == self.update_rate)
+        {
+            return;
+        }
+        self.floor_halflife = floor_halflife;
+        self.ceiling_halflife = ceiling_halflife;
+        self.update_rate = update_rate;
+        // Average mode: slow rise, faster fall.
+        self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_fall_coeff = halflife_to_coeff(floor_halflife * 0.2, update_rate);
+        // Limit mode: instant drop to min, slow rise back.
+        self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        // Ceiling: instant (bounded) attack, decays at ceiling halflife.
+        self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
+        self.ceiling_fast_fall_coeff =
+            halflife_to_coeff(AdaptiveNormalizer::CEILING_FAST_FALL_HALFLIFE, update_rate);
+        self.anchor_rise_coeff =
+            halflife_to_coeff(AdaptiveNormalizer::CEILING_ANCHOR_HALFLIFE, update_rate);
+        self.interval = 1.0 / f64::from(update_rate);
     }
 }
 
-impl From<TrackingMode> for u32 {
-    fn from(m: TrackingMode) -> Self {
-        m as u32
+/// Detects a change of level: distinct overshoots well above a reference,
+/// either several in quick succession or one that is sustained.
+struct OvershootDetector {
+    /// Start times of the most recent overshoots, oldest first.
+    starts: [f64; Self::CONFIRM_COUNT],
+    /// Whether the envelope is currently in an overshoot.
+    active: bool,
+    /// Peak envelope of the current overshoot; the overshoot ends once the
+    /// envelope falls below `OVERSHOOT_END` times this.
+    peak: f32,
+    /// Envelope on the previous update, so an overshoot only begins on a
+    /// rising envelope: the decaying tail of a spike never re-triggers.
+    prev_envelope: f32,
+}
+
+impl OvershootDetector {
+    /// An overshoot is an excursion this far above the reference. Ordinary
+    /// beat-to-beat variation in peak height stays well inside this, so only
+    /// a real jump in level counts.
+    const OVERSHOOT_MARGIN: f32 = 1.5;
+    /// An overshoot ends when the envelope falls to this fraction of its
+    /// peak, so consecutive beats count separately even while the reference
+    /// is still far below them.
+    const OVERSHOOT_END: f32 = 0.5;
+    /// This many distinct overshoots within `CONFIRM_WINDOW` seconds — or
+    /// one overshoot lasting that long — confirm a change of level. One loud
+    /// hit never confirms; a louder passage or a cold start confirms itself
+    /// in a few beats, a sustained tone by outlasting the window.
+    const CONFIRM_COUNT: usize = 3;
+    const CONFIRM_WINDOW: f64 = 1.5;
+
+    fn new() -> Self {
+        Self {
+            starts: [f64::NEG_INFINITY; Self::CONFIRM_COUNT],
+            active: false,
+            peak: 0.0,
+            prev_envelope: 0.0,
+        }
+    }
+
+    /// Feed one envelope value at time `now`; returns whether a change of
+    /// level is confirmed.
+    #[inline]
+    fn update(&mut self, envelope: f32, reference: f32, now: f64) -> bool {
+        if self.active {
+            self.peak = self.peak.max(envelope);
+            if envelope < Self::OVERSHOOT_END * self.peak {
+                self.active = false;
+            }
+        } else if envelope > reference * Self::OVERSHOOT_MARGIN && envelope > self.prev_envelope {
+            self.active = true;
+            self.peak = envelope;
+            self.starts.rotate_left(1);
+            self.starts[Self::CONFIRM_COUNT - 1] = now;
+        }
+        self.prev_envelope = envelope;
+        let latest = self.starts[Self::CONFIRM_COUNT - 1];
+        now - self.starts[0] <= Self::CONFIRM_WINDOW
+            || (self.active && now - latest > Self::CONFIRM_WINDOW)
     }
 }
 
@@ -229,96 +383,122 @@ impl From<TrackingMode> for u32 {
 struct AdaptiveNormalizer {
     floor: f32,
     ceiling: f32,
-    /// EMA coefficients for average-mode floor tracking.
-    floor_rise_coeff: f32,
-    floor_fall_coeff: f32,
-    /// EMA coefficient for limit-mode floor (slow rise from minimum).
-    floor_limit_rise_coeff: f32,
-    /// EMA coefficient for ceiling decay.
-    ceiling_fall_coeff: f32,
+    /// A lagged copy of the ceiling that bounds how far excursions above it
+    /// can push it: the ceiling rises to at most `CEILING_MAX_RISE` times
+    /// this anchor. The anchor follows the ceiling
+    /// up with `CEILING_ANCHOR_HALFLIFE` and down immediately, so excursions
+    /// in quick succession share one allowance instead of compounding.
+    ceiling_anchor: f32,
+    overshoots: OvershootDetector,
+    /// Elapsed processing time in seconds. Accumulated in f64: an f32 sum of
+    /// millisecond steps loses the step itself after a few hours.
+    now: f64,
+    /// When the envelope last reached `CEILING_REACH` of the ceiling.
+    last_reached: f64,
+    /// Envelope level below which the band outputs zero: `NOISE_GATE` scaled
+    /// by any fixed gain applied ahead of this band's envelope.
+    gate: f32,
 }
 
 impl AdaptiveNormalizer {
-    /// Minimum range between floor and ceiling. This caps the maximum gain
-    /// at 1/MIN_RANGE. With normalized input (~unity), 0.333 = max 3x gain.
-    const MIN_RANGE: f32 = 0.333;
+    /// Minimum normalization range as a fraction of the ceiling. Once the
+    /// floor has climbed to within this fraction of the ceiling the output
+    /// fades instead of being stretched back to full scale, and a band's
+    /// reach to full scale never depends on its absolute level.
+    const REL_MIN_RANGE: f32 = 0.25;
+    /// Input level below which the band outputs zero, so idle noise is
+    /// never normalized up to full scale.
+    const NOISE_GATE: f32 = 0.01;
+    /// Most the ceiling can exceed its anchor. A lone loud hit or a click
+    /// nudges the ceiling by this factor instead of setting it.
+    const CEILING_MAX_RISE: f32 = 1.2;
+    /// How quickly the anchor follows the ceiling up. Much longer than a
+    /// kick, so a kick gets one nudge and a burst of them still only a few;
+    /// a sustained excursion with no beats to confirm it compounds the nudge
+    /// at this rate.
+    const CEILING_ANCHOR_HALFLIFE: f32 = 1.0;
+    /// The envelope "reaches" the ceiling when it comes within this fraction
+    /// of it. During any beat-driven passage that happens every beat.
+    const CEILING_REACH: f32 = 0.8;
+    /// Once nothing has reached the ceiling for this long the level has
+    /// dropped, and the ceiling releases at `CEILING_FAST_FALL_HALFLIFE`
+    /// until something reaches it again.
+    const CEILING_UNREACHED_SECS: f64 = 2.0;
+    const CEILING_FAST_FALL_HALFLIFE: f32 = 0.5;
 
-    fn new() -> Self {
+    /// `pre_gain` is the fixed gain applied to this band's signal ahead of
+    /// envelope extraction, so the gate applies at input level.
+    fn new(pre_gain: f32) -> Self {
         Self {
             floor: 0.0,
             ceiling: 0.001,
-            floor_rise_coeff: 0.999,
-            floor_fall_coeff: 0.99,
-            floor_limit_rise_coeff: 0.999,
-            ceiling_fall_coeff: 0.999,
+            ceiling_anchor: 0.001,
+            overshoots: OvershootDetector::new(),
+            now: 0.0,
+            last_reached: 0.0,
+            gate: Self::NOISE_GATE * pre_gain,
         }
-    }
-
-    fn set_params(&mut self, floor_halflife: f32, ceiling_halflife: f32, update_rate: f32) {
-        if update_rate <= 0.0 {
-            return;
-        }
-        // Average mode: slow rise, faster fall.
-        self.floor_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
-        self.floor_fall_coeff = Self::halflife_to_coeff(floor_halflife * 0.2, update_rate);
-        // Limit mode: instant drop to min, slow rise back.
-        self.floor_limit_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
-        // Ceiling: instant attack, decays at ceiling halflife.
-        self.ceiling_fall_coeff = Self::halflife_to_coeff(ceiling_halflife, update_rate);
-    }
-
-    fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
-        if halflife_secs <= 0.0 {
-            return 0.0;
-        }
-        (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
     }
 
     #[inline]
-    fn process(
-        &mut self,
-        envelope: f32,
-        floor_mode: TrackingMode,
-        ceiling_mode: TrackingMode,
-    ) -> f32 {
-        // Update floor.
-        match floor_mode {
+    fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
+        self.now += p.interval;
+        let confirmed = self
+            .overshoots
+            .update(envelope, self.ceiling_anchor, self.now);
+
+        // Update ceiling: a bounded instant attack that snaps only once a
+        // change of level is confirmed, and a decay that speeds up once
+        // nothing reaches it any more.
+        if envelope > self.ceiling {
+            self.last_reached = self.now;
+            if confirmed {
+                self.ceiling = envelope;
+                self.ceiling_anchor = envelope;
+            } else {
+                self.ceiling = envelope.min(self.ceiling_anchor * Self::CEILING_MAX_RISE);
+            }
+        } else {
+            if envelope >= Self::CEILING_REACH * self.ceiling {
+                self.last_reached = self.now;
+            }
+            let coeff = if self.now - self.last_reached > Self::CEILING_UNREACHED_SECS {
+                p.ceiling_fast_fall_coeff
+            } else {
+                p.ceiling_fall_coeff
+            };
+            self.ceiling = coeff * self.ceiling + (1.0 - coeff) * envelope;
+        }
+        self.ceiling_anchor = self.ceiling_anchor.min(self.ceiling);
+        self.ceiling_anchor =
+            p.anchor_rise_coeff * self.ceiling_anchor + (1.0 - p.anchor_rise_coeff) * self.ceiling;
+
+        // Update floor. It tracks the envelope clamped to the ceiling, so an
+        // outlier the ceiling has refused cannot drag the floor up either.
+        let bounded = envelope.min(self.ceiling);
+        match p.floor_mode {
             TrackingMode::Average => {
-                let coeff = if envelope > self.floor {
-                    self.floor_rise_coeff
+                let coeff = if bounded > self.floor {
+                    p.floor_rise_coeff
                 } else {
-                    self.floor_fall_coeff
+                    p.floor_fall_coeff
                 };
-                self.floor = coeff * self.floor + (1.0 - coeff) * envelope;
+                self.floor = coeff * self.floor + (1.0 - coeff) * bounded;
             }
             TrackingMode::Limit => {
-                if envelope < self.floor {
-                    self.floor = envelope; // instant drop to minimum
+                if bounded < self.floor {
+                    self.floor = bounded; // instant drop to minimum
                 } else {
-                    self.floor = self.floor_limit_rise_coeff * self.floor
-                        + (1.0 - self.floor_limit_rise_coeff) * envelope;
+                    self.floor = p.floor_limit_rise_coeff * self.floor
+                        + (1.0 - p.floor_limit_rise_coeff) * bounded;
                 }
             }
         }
 
-        // Update ceiling.
-        match ceiling_mode {
-            TrackingMode::Average => {
-                // Symmetric EMA — same speed up and down.
-                self.ceiling = self.ceiling_fall_coeff * self.ceiling
-                    + (1.0 - self.ceiling_fall_coeff) * envelope;
-            }
-            TrackingMode::Limit => {
-                if envelope > self.ceiling {
-                    self.ceiling = envelope; // instant rise to maximum
-                } else {
-                    self.ceiling = self.ceiling_fall_coeff * self.ceiling
-                        + (1.0 - self.ceiling_fall_coeff) * envelope;
-                }
-            }
+        if envelope < self.gate {
+            return 0.0;
         }
-
-        let range = (self.ceiling - self.floor).max(Self::MIN_RANGE);
+        let range = (self.ceiling - self.floor).max(Self::REL_MIN_RANGE * self.ceiling);
         ((envelope - self.floor) / range).clamp(0.0, 1.0)
     }
 }
@@ -339,11 +519,12 @@ impl OnePoleSmoother {
 }
 
 /// A one-pole smoother coefficient derived from a time constant and the audio
-/// buffer update rate. Recomputes the expensive `exp()` only when the time
-/// constant changes.
+/// buffer update rate. Recomputes the expensive `exp()` only when either
+/// changes.
 #[derive(Default)]
 struct SmootherCoeff {
     time_secs: f32,
+    update_rate: f32,
     coeff: f32,
 }
 
@@ -351,10 +532,11 @@ impl SmootherCoeff {
     /// Refresh the cached coefficient from the current time constant and
     /// update rate. Safe to call every tick.
     fn refresh(&mut self, time_secs: f32, update_rate: f32) {
-        if time_secs == self.time_secs {
+        if time_secs == self.time_secs && update_rate == self.update_rate {
             return;
         }
         self.time_secs = time_secs;
+        self.update_rate = update_rate;
         self.coeff = if time_secs <= 0.0 || update_rate <= 0.0 {
             0.0
         } else {
@@ -367,56 +549,73 @@ impl SmootherCoeff {
     }
 }
 
-/// Per-audio-channel processing chain for the lowpass path.
-struct LowpassChannel {
-    filter: FilterProcessor<f32>,
-    hilbert: HilbertTransform,
-    fast_envelope: EnvelopeFollowerProcessor,
-    slow_envelope: EnvelopeFollowerProcessor,
-}
-
-impl LowpassChannel {
-    /// Run one input sample through the full chain:
-    /// lowpass → Hilbert |z(t)| → fast envelope → slow envelope.
-    fn process_sample(&mut self, sample: f32, ctx: &mut AudioContext) {
-        let filtered = self.filter.m_process(ctx, sample);
-        let amplitude = self.hilbert.envelope(filtered as f64) as f32;
-        self.fast_envelope.m_process(ctx, amplitude);
-        let fast_val = self.fast_envelope.handle().state();
-        self.slow_envelope.m_process(ctx, fast_val);
-    }
-
-    fn slow_envelope_state(&self) -> f32 {
-        self.slow_envelope.handle().state()
-    }
-}
-
-/// Per-frequency-band processing chain for the wavelet path. Operates on
-/// the mono mix at a band-specific (decimated) sample rate.
-struct WaveletBand {
+/// Envelope chain for one output band:
+/// Hilbert |z(t)| → fast envelope → slow envelope → smoother → normalizer.
+struct BandChain {
     hilbert: HilbertTransform,
     fast_envelope: EnvelopeFollowerProcessor,
     slow_envelope: EnvelopeFollowerProcessor,
     smoother: OnePoleSmoother,
     normalizer: AdaptiveNormalizer,
-    context: AudioContext,
 }
 
-impl WaveletBand {
-    /// Run one decimated sample through the full chain:
-    /// whitening → Hilbert → fast envelope → slow envelope.
-    fn process_sample(&mut self, sample: f32, whiten: f32) {
-        let amp = self.hilbert.envelope((sample * whiten) as f64) as f32;
-        self.fast_envelope.m_process(&mut self.context, amp);
-        let fast_val = self.fast_envelope.handle().state();
-        self.slow_envelope.m_process(&mut self.context, fast_val);
+impl BandChain {
+    /// `pre_gain` is the fixed gain applied to this band's signal ahead of
+    /// the chain, so the normalizer can gate at input level.
+    fn new(
+        context: &mut AudioContext,
+        slow_attack: Duration,
+        slow_release: Duration,
+        pre_gain: f32,
+    ) -> Self {
+        Self {
+            hilbert: HilbertTransform::new(),
+            fast_envelope: make_envelope(context, FAST_ATTACK, FAST_RELEASE),
+            slow_envelope: make_envelope(context, slow_attack, slow_release),
+            smoother: OnePoleSmoother::default(),
+            normalizer: AdaptiveNormalizer::new(pre_gain),
+        }
     }
 
-    /// Read the slow envelope and push it through the output smoother.
-    fn smoothed_envelope(&mut self, coeff: f32) -> f32 {
-        let env_val = self.slow_envelope.handle().state();
-        self.smoother.update(coeff, env_val)
+    /// Run one band-limited sample through the envelope followers.
+    fn process_sample(&mut self, sample: f32, ctx: &mut AudioContext) {
+        let amplitude = self.hilbert.envelope(f64::from(sample)) as f32;
+        self.fast_envelope.m_process(ctx, amplitude);
+        let fast_val = self.fast_envelope.handle().state();
+        self.slow_envelope.m_process(ctx, fast_val);
     }
+
+    /// Finish a buffer: smooth the slow envelope and normalize it, returning
+    /// the band's output.
+    fn finish(&mut self, smooth_coeff: f32, norm: &NormalizerParams) -> f32 {
+        let smoothed = self
+            .smoother
+            .update(smooth_coeff, self.slow_envelope.handle().state());
+        self.normalizer.process(smoothed, norm)
+    }
+
+    fn set_slow_envelope(&mut self, attack: Duration, release: Duration) {
+        self.slow_envelope.handle().set_attack(attack);
+        self.slow_envelope.handle().set_release(release);
+    }
+
+    fn stages(&self) -> BandStages {
+        BandStages {
+            smoothed: self.smoother.state,
+            floor: self.normalizer.floor,
+            ceiling: self.normalizer.ceiling,
+        }
+    }
+}
+
+/// One output band's intermediate values as of the most recently processed
+/// buffer: the smoothed envelope entering the normalizer, and the floor and
+/// ceiling the normalizer is currently tracking.
+#[derive(Debug, Clone, Copy)]
+pub struct BandStages {
+    pub smoothed: f32,
+    pub floor: f32,
+    pub ceiling: f32,
 }
 
 pub struct Processor {
@@ -430,24 +629,34 @@ pub struct Processor {
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
 
-    /// Lowpass chain: one per audio channel.
-    lowpass: Vec<LowpassChannel>,
-
-    /// Output smoother for the lowpass path (applied after per-channel averaging).
-    lowpass_smoother: OnePoleSmoother,
-    /// Adaptive normalizer for the lowpass envelope.
-    lowpass_normalizer: AdaptiveNormalizer,
-    /// Cached smoother coefficient shared across the lowpass smoother and
-    /// every wavelet-band smoother.
+    /// Lowpass filter feeding band 0.
+    lowpass_filter: FilterProcessor<f32>,
+    /// Wavelet decomposition feeding bands 1..NUM_OUTPUT_BANDS.
+    wavelet: WaveletDecomposition,
+    /// One envelope chain per output band, in output order: 0 is the
+    /// lowpass band, 1..NUM_OUTPUT_BANDS the wavelet bands in ascending
+    /// frequency order.
+    bands: [BandChain; NUM_OUTPUT_BANDS],
+    /// Cached smoother coefficient shared across every band's smoother.
     smooth_coeff: SmootherCoeff,
+    /// Normalizer coefficients shared across every band's normalizer.
+    norm_params: NormalizerParams,
 
     /// Automatic input gain trim.
     auto_trim: AutoTrim,
+}
 
-    /// Wavelet decomposition (D4) + per-band envelope extraction.
-    wavelet: WaveletDecomposition,
-    /// One chain per frequency band. Indexed by wavelet band, not audio channel.
-    wavelet_bands: [WaveletBand; NUM_BANDS],
+/// Fixed gain applied to an output band to flatten the 1/f power spectrum of
+/// music: `2^band`, so higher-frequency bands get more boost and the lowpass
+/// band none.
+fn whitening_gain(output_band: usize) -> f32 {
+    (1 << output_band) as f32
+}
+
+/// The output band that wavelet level `level` feeds: levels count down from
+/// the highest octave, output bands count up from the lowpass band.
+fn output_band_of_level(level: usize) -> usize {
+    NUM_LEVELS - level
 }
 
 fn make_envelope(
@@ -482,45 +691,17 @@ impl Processor {
         let slow_attack = Duration::from_secs_f32(envelope_attack);
         let slow_release = Duration::from_secs_f32(envelope_release);
 
-        let lowpass = (0..n)
-            .map(|_| {
-                let mut filter = FilterProcessor::new(FilterType::LowPass);
-                filter.set_cutoff(filter_cutoff);
-                filter.m_prepare(&mut context);
-                LowpassChannel {
-                    filter,
-                    hilbert: HilbertTransform::new(),
-                    fast_envelope: make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE),
-                    slow_envelope: make_envelope(&mut context, slow_attack, slow_release),
-                }
-            })
-            .collect();
+        let mut lowpass_filter = FilterProcessor::new(FilterType::LowPass);
+        lowpass_filter.set_cutoff(filter_cutoff);
+        lowpass_filter.m_prepare(&mut context);
 
-        // Per-band envelope chains for the wavelet decomposition. Each band
-        // runs at a decimated sample rate (base / 2^(level+1)).
-        let base_sr = sample_rate as f32;
-        let wavelet_bands = std::array::from_fn(|band| {
-            let level = if band < NUM_LEVELS {
-                band
-            } else {
-                NUM_LEVELS - 1
-            };
-            let band_sr = base_sr / (1 << (level + 1)) as f32;
-            let mut band_ctx: AudioContext = AudioProcessorSettings {
-                sample_rate: band_sr,
-                input_channels: 1,
-                output_channels: 1,
-                ..Default::default()
-            }
-            .into();
-            WaveletBand {
-                hilbert: HilbertTransform::new(),
-                fast_envelope: make_envelope(&mut band_ctx, FAST_ATTACK, FAST_RELEASE),
-                slow_envelope: make_envelope(&mut band_ctx, slow_attack, slow_release),
-                smoother: OnePoleSmoother::default(),
-                normalizer: AdaptiveNormalizer::new(),
-                context: band_ctx,
-            }
+        let bands = std::array::from_fn(|band| {
+            BandChain::new(
+                &mut context,
+                slow_attack,
+                slow_release,
+                whitening_gain(band),
+            )
         });
 
         Self {
@@ -531,14 +712,20 @@ impl Processor {
             channel_count: n,
             context,
             envelope_producers,
-            lowpass,
-            lowpass_smoother: OnePoleSmoother::default(),
-            lowpass_normalizer: AdaptiveNormalizer::new(),
+            lowpass_filter,
+            wavelet: WaveletDecomposition::new(),
+            bands,
             smooth_coeff: SmootherCoeff::default(),
+            norm_params: NormalizerParams::new(),
             auto_trim: AutoTrim::new(),
-            wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
-            wavelet_bands,
         }
+    }
+
+    /// Read an output band's intermediate stage values. Index 0 is the
+    /// lowpass band; 1..NUM_OUTPUT_BANDS are the wavelet bands in ascending
+    /// frequency order.
+    pub fn band_stages(&self, output_band: usize) -> Option<BandStages> {
+        self.bands.get(output_band).map(BandChain::stages)
     }
 
     fn maybe_update_parameters(&mut self, update_rate: f32) {
@@ -546,9 +733,7 @@ impl Processor {
         if new_filter_cutoff != self.filter_cutoff {
             debug!("Updating filter cutoff to {new_filter_cutoff}");
             self.filter_cutoff = new_filter_cutoff;
-            for chan in &mut self.lowpass {
-                chan.filter.set_cutoff(new_filter_cutoff);
-            }
+            self.lowpass_filter.set_cutoff(new_filter_cutoff);
         }
 
         let new_attack = self.settings.envelope_attack.get();
@@ -559,18 +744,14 @@ impl Processor {
             self.envelope_release = new_release;
             let attack = Duration::from_secs_f32(new_attack);
             let release = Duration::from_secs_f32(new_release);
-            for chan in &mut self.lowpass {
-                chan.slow_envelope.handle().set_attack(attack);
-                chan.slow_envelope.handle().set_release(release);
-            }
-            for band in &mut self.wavelet_bands {
-                band.slow_envelope.handle().set_attack(attack);
-                band.slow_envelope.handle().set_release(release);
+            for band in &mut self.bands {
+                band.set_slow_envelope(attack, release);
             }
         }
 
         self.smooth_coeff
             .refresh(self.settings.output_smoothing.get(), update_rate);
+        self.norm_params.refresh(&self.settings, update_rate);
     }
 
     /// Process a buffer of interleaved audio data.
@@ -589,7 +770,6 @@ impl Processor {
         self.maybe_update_parameters(update_rate);
 
         let mut raw_peak: f32 = 0.0;
-        let mut input_peak: f32 = 0.0;
         let auto_trim_enabled = self.settings.auto_trim_enabled.load(Ordering::Relaxed);
 
         // Either manual gain or auto-trim, never both.
@@ -602,76 +782,42 @@ impl Processor {
         let ch_count_f = self.channel_count as f32;
 
         for frame in interleaved_buffer.chunks(self.channel_count) {
-            // Compute mono mix for wavelet input.
-            let mono = frame.iter().sum::<f32>() / ch_count_f;
-
-            for (chan, raw_sample) in self.lowpass.iter_mut().zip(frame) {
+            // Both paths run on the mono mix; the trim watches the hottest
+            // channel, since headroom is per channel.
+            let mut sum = 0.0_f32;
+            for raw_sample in frame {
                 raw_peak = raw_peak.max(raw_sample.abs());
-                let sample = *raw_sample * effective_gain;
-                input_peak = input_peak.max(sample.abs());
-                chan.process_sample(sample, &mut self.context);
+                sum += raw_sample;
             }
+            let mono = sum / ch_count_f * effective_gain;
 
-            // Wavelet decomposition -> per-band envelope extraction.
-            // Whitening: multiply by 2^(NUM_LEVELS - level) to correct for
-            // the 1/f power spectrum of music. Higher bands get more boost.
-            let mono_gained = mono * effective_gain;
-            let bands = &mut self.wavelet_bands;
-            self.wavelet.push(mono_gained, |band, sample| {
-                // Skip the residual band (== lowpass, redundant with our LP chain).
-                if band == NUM_LEVELS {
+            let filtered = self.lowpass_filter.m_process(&mut self.context, mono);
+            self.bands[0].process_sample(filtered, &mut self.context);
+
+            let bands = &mut self.bands;
+            let ctx = &mut self.context;
+            self.wavelet.push(mono, |level, sample| {
+                // The residual is the lowpass band's job.
+                if level == NUM_LEVELS {
                     return;
                 }
-                let whiten = (1 << (NUM_LEVELS - band)) as f32;
-                bands[band].process_sample(sample, whiten);
+                let band = output_band_of_level(level);
+                bands[band].process_sample(sample * whitening_gain(band), ctx);
             });
         }
 
-        // Update auto-trim based on the pre-gain peak (raw signal level).
-        // We feed raw_peak, not input_peak, to avoid a feedback loop where
-        // the trim adjusts based on its own output.
+        // Update auto-trim from the pre-gain peak, so that the trim never
+        // feeds back on its own output.
         if auto_trim_enabled {
+            self.auto_trim.set_params(update_rate);
             self.auto_trim.update(raw_peak);
             self.settings.auto_trim_gain.set(self.auto_trim.gain);
         }
 
-        let ch_count = self.channel_count as f32;
-        let envelope = self
-            .lowpass
-            .iter()
-            .map(LowpassChannel::slow_envelope_state)
-            .sum::<f32>()
-            / ch_count;
-
         let coeff = self.smooth_coeff.get();
-        let smoothed_lowpass = self.lowpass_smoother.update(coeff, envelope);
-
-        // Normalization params (shared between lowpass and wavelet normalizers).
-        let floor_hl = self.settings.norm_floor_halflife.get();
-        let ceil_hl = self.settings.norm_ceiling_halflife.get();
-        let floor_mode = self.settings.norm_floor_mode.load(Ordering::Relaxed);
-        let ceil_mode = self.settings.norm_ceiling_mode.load(Ordering::Relaxed);
-
-        self.lowpass_normalizer
-            .set_params(floor_hl, ceil_hl, update_rate);
-        let lowpass_norm = self
-            .lowpass_normalizer
-            .process(smoothed_lowpass, floor_mode, ceil_mode);
-
-        // Wavelet band smoothing + normalization.
-        // Build the output array: [lowpass_norm, wavelet_band_6_norm, ..., wavelet_band_0_norm]
         let mut output_bands = [0.0_f32; NUM_OUTPUT_BANDS];
-        output_bands[0] = lowpass_norm;
-
-        for (i, band) in self.wavelet_bands.iter_mut().enumerate() {
-            band.normalizer.set_params(floor_hl, ceil_hl, update_rate);
-            let smoothed = band.smoothed_envelope(coeff);
-            let normalized = band.normalizer.process(smoothed, floor_mode, ceil_mode);
-            // Map wavelet bands 0-6 to output indices 7-1.
-            // output_index = NUM_LEVELS - wavelet_band_index (for bands 0..NUM_LEVELS).
-            if i < NUM_LEVELS {
-                output_bands[NUM_LEVELS - i] = normalized;
-            }
+        for (out, band) in output_bands.iter_mut().zip(&mut self.bands) {
+            *out = band.finish(coeff, &self.norm_params);
         }
 
         // Push normalized envelopes to ring buffers for the GUI viewer.
@@ -693,113 +839,93 @@ impl Processor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ring_buffer::envelope_ring_buffer;
 
     fn test_producers() -> [EnvelopeProducer; NUM_OUTPUT_BANDS] {
-        let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-        for _ in 0..NUM_OUTPUT_BANDS {
-            let (p, _c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-            producers.push(p);
+        envelope_ring_buffers().producers
+    }
+
+    /// A fresh auto-trim ticking at 1 kHz, so iteration counts read as ms.
+    fn trim_at_1khz() -> AutoTrim {
+        let mut trim = AutoTrim::new();
+        trim.set_params(1000.0);
+        trim
+    }
+
+    /// Feed `peak` to `trim` for `ms` milliseconds.
+    fn feed(trim: &mut AutoTrim, peak: f32, ms: usize) {
+        for _ in 0..ms {
+            trim.update(peak);
         }
-        producers.try_into().ok().expect("correct count")
     }
 
     #[test]
-    fn auto_trim_boosts_quiet_signal() {
-        let mut trim = AutoTrim::new();
-        assert!((trim.gain - 1.0).abs() < 1e-6);
-
-        // Feed a consistently quiet signal (0.2 peak) for many buffers.
-        // The upward adjustment is very slow (~20s at 1kHz), so we need
-        // ~30000 iterations to see significant movement.
-        for _ in 0..30000 {
-            trim.update(0.2);
-        }
+    fn auto_trim_follows_level_and_holds_on_silence() {
+        // Right at target: stays put.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, AutoTrim::TARGET, 5000);
         assert!(
-            trim.gain > 1.3,
-            "Trim should boost quiet signal, got {:.3}",
+            (trim.gain - 1.0).abs() < 0.05,
+            "at target the trim should hold near 1.0, got {:.3}",
+            trim.gain
+        );
+
+        // Silence and idle noise sit below the silence threshold, so the
+        // trim never boosts toward the target — including after music, when
+        // the tracked peak is still decaying.
+        feed(&mut trim, 0.0, 5000);
+        feed(&mut trim, 0.005, 5000);
+        assert!(
+            (trim.gain - 1.0).abs() < 0.01,
+            "silence should leave the trim at 1.0, got {:.3}",
+            trim.gain
+        );
+
+        // A consistently quiet signal (0.2 peak) wants +14 dB, clamped to
+        // +10 dB. With a 5 s gain half-life, 30 s gets within 2% of it.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 0.2, 30000);
+        assert!(
+            trim.gain > 2.8,
+            "a quiet signal should be boosted, got {:.3}",
             trim.gain
         );
         assert!(
             trim.gain <= AutoTrim::db_to_linear(AutoTrim::MAX_GAIN_DB) + 0.01,
-            "Trim should not exceed MAX_GAIN, got {:.3}",
+            "the trim should not exceed MAX_GAIN, got {:.3}",
             trim.gain
         );
-    }
 
-    #[test]
-    fn auto_trim_reduces_loud_signal() {
-        let mut trim = AutoTrim::new();
-
-        // Feed a consistently loud signal (1.5 peak) for many buffers.
-        // Desired = 0.85 / 1.5 ≈ 0.567.
-        for _ in 0..5000 {
-            trim.update(1.5);
-        }
+        // A consistently loud signal (1.5 peak) wants -3.5 dB. With a 5 s
+        // gain half-life, 15 s gets within 1 dB of it.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 1.5, 15000);
         assert!(
-            trim.gain < 0.7,
-            "Trim should reduce loud signal, got {:.3}",
+            trim.gain < 0.75,
+            "a loud signal should be reduced, got {:.3}",
             trim.gain
         );
         assert!(
             trim.gain >= AutoTrim::db_to_linear(AutoTrim::MIN_GAIN_DB) - 0.01,
-            "Trim should not go below MIN_GAIN, got {:.3}",
+            "the trim should not go below MIN_GAIN, got {:.3}",
             trim.gain
         );
     }
 
     #[test]
-    fn auto_trim_stays_near_unity_at_target() {
-        let mut trim = AutoTrim::new();
-
-        // Feed signal right at target level.
-        for _ in 0..5000 {
-            trim.update(AutoTrim::TARGET);
+    fn normalizer_clock_keeps_time_after_hours() {
+        let mut params = NormalizerParams::new();
+        params.refresh(&ProcessorSettingsInner::default(), 750.0);
+        let mut norm = AdaptiveNormalizer::new(1.0);
+        // Nine hours into a show.
+        norm.now = 9.0 * 3600.0;
+        let start = norm.now;
+        for _ in 0..750 {
+            norm.process(0.5, &params);
         }
+        let elapsed = norm.now - start;
         assert!(
-            (trim.gain - 1.0).abs() < 0.05,
-            "Trim should stay near 1.0 for target-level signal, got {:.3}",
-            trim.gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_downward_is_faster_than_upward() {
-        // Start from unity, feed loud signal, measure convergence speed.
-        let mut trim_down = AutoTrim::new();
-        for _ in 0..500 {
-            trim_down.update(1.5);
-        }
-        let down_deviation = (trim_down.gain - 1.0).abs();
-
-        // Start from unity, feed quiet signal, measure convergence speed.
-        let mut trim_up = AutoTrim::new();
-        for _ in 0..500 {
-            trim_up.update(0.2);
-        }
-        let up_deviation = (trim_up.gain - 1.0).abs();
-
-        assert!(
-            down_deviation > up_deviation,
-            "Downward adjustment ({:.4}) should be faster than upward ({:.4})",
-            down_deviation,
-            up_deviation
-        );
-    }
-
-    #[test]
-    fn auto_trim_ignores_silence() {
-        let mut trim = AutoTrim::new();
-
-        // Feed silence — trim should stay at 1.0 (peak tracker stays near 0,
-        // which is below the 0.001 threshold).
-        for _ in 0..5000 {
-            trim.update(0.0);
-        }
-        assert!(
-            (trim.gain - 1.0).abs() < 0.01,
-            "Trim should stay at 1.0 during silence, got {:.3}",
-            trim.gain
+            (elapsed - 1.0).abs() < 1e-3,
+            "750 updates at 750 Hz should advance the clock by 1 s, got {elapsed}"
         );
     }
 
@@ -825,26 +951,7 @@ mod tests {
     fn processor_produces_envelope_from_sine() {
         let settings = ProcessorSettings::default();
         settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disable trim for deterministic test
-        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
-
-        // Feed a 100Hz sine for 1 second.
-        let sample_rate = 48000.0_f32;
-        let total_samples = 48000;
-        let buffer_size = 48;
-        let mut idx = 0;
-        while idx < total_samples {
-            let end = (idx + buffer_size).min(total_samples);
-            let buffer: Vec<f32> = (idx..end)
-                .map(|i| {
-                    let t = i as f32 / sample_rate;
-                    (2.0 * std::f32::consts::PI * 100.0 * t).sin() * 0.7
-                })
-                .collect();
-            processor.process(&buffer);
-            idx = end;
-        }
-
-        let envelope = settings.envelope.get();
+        let envelope = run_processor_with_sine(0.7, 100.0, 1.0, &settings);
         assert!(
             envelope > 0.3,
             "Envelope should be non-trivial after 1s of 100Hz sine, got {:.3}",
@@ -885,8 +992,7 @@ mod tests {
     fn auto_trim_converges_quiet_signal_through_processor() {
         // Feed a quiet 100Hz sine (amplitude 0.1) through the full processor
         // with auto-trim enabled. Desired gain = 1.0/0.1 = +20 dB, clamped
-        // to +10 dB (3.162x). With a 20s upward time constant, 30s gets us
-        // ~78% of the way in dB space (0 dB toward +10 dB ≈ +7.8 dB ≈ 2.45x).
+        // to +10 dB (3.162x). With a 5 s half-life, 30 s gets within 2%.
         let settings = ProcessorSettings::default();
 
         let _envelope = run_processor_with_sine(0.1, 100.0, 30.0, &settings);
@@ -931,9 +1037,9 @@ mod tests {
         // Expected: gain ≈ TARGET / amplitude = 1.0 / 0.4 = 2.5
         let expected = AutoTrim::TARGET / amplitude;
 
-        // With a 20s upward time constant and 30s of signal, we reach ~78%
-        // of the way from 1.0 to the target. Allow enough tolerance for that,
-        // but catch the feedback loop bug (which converges near 1.0).
+        // With a 5 s half-life and 30 s of signal the gain is within 2% of
+        // the target. Allow generous tolerance, but catch the feedback loop
+        // bug (which converges near 1.0).
         let min_expected = 1.0 + (expected - 1.0) * 0.5; // at least halfway there
         assert!(
             trim_gain > min_expected,

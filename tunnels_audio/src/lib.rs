@@ -1,3 +1,14 @@
+//! Audio input and envelope extraction: one normalized envelope per band,
+//! derived on the audio thread and read by the show.
+//!
+//! The chain is pinned by `tests/envelope_golden.rs` (response shapes) and
+//! `tests/music_convergence.rs` (long-term stability). When either fails, or
+//! before changing the processor, run the characterisation harness:
+//! `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>`
+//! records every stage of every band per buffer for a suite of synthetic
+//! waveforms and prints their metrics; `--music tests/data/<clip> --loops N`
+//! does the same for a looped real-music clip.
+
 pub mod hilbert;
 pub mod log_scale;
 pub mod processor;
@@ -13,7 +24,6 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
-use tunnels_lib::transient_indicator::TransientIndicator;
 
 pub use self::processor::UpdateRate;
 use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, TrackingMode};
@@ -43,7 +53,6 @@ pub struct AudioSnapshot {
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
     pub norm_floor_mode: TrackingMode,
-    pub norm_ceiling_mode: TrackingMode,
 }
 
 impl Default for AudioSnapshot {
@@ -60,7 +69,6 @@ impl Default for AudioSnapshot {
             norm_floor_halflife: Duration::from_secs(10),
             norm_ceiling_halflife: Duration::from_secs(5),
             norm_floor_mode: TrackingMode::Average,
-            norm_ceiling_mode: TrackingMode::Limit,
         }
     }
 }
@@ -74,14 +82,11 @@ pub struct AudioInput {
     monitor: bool,
     /// How long has it been since we last updated the monitor?
     monitor_update_age: Duration,
-    /// Transient envelope clip indicator.
-    clip_indicator: TransientIndicator,
     /// Name of the audio device, or "Offline" if no device is connected.
     device_name: String,
 }
 
 impl AudioInput {
-    const CLIP_INDICATOR_DURATION: Duration = Duration::from_millis(100);
     /// Update the monitor at about 60 fps.
     const MONITOR_UPDATE_INTERVAL: Duration = Duration::from_micros(16_667);
 
@@ -100,7 +105,6 @@ impl AudioInput {
             envelope_value: UnipolarFloat::ZERO,
             monitor: false,
             monitor_update_age: Duration::ZERO,
-            clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
             device_name: OFFLINE_DEVICE_NAME.to_string(),
         }
     }
@@ -126,7 +130,6 @@ impl AudioInput {
             envelope_value: UnipolarFloat::ZERO,
             monitor: false,
             monitor_update_age: Duration::ZERO,
-            clip_indicator: TransientIndicator::new(Self::CLIP_INDICATOR_DURATION),
             device_name,
         })
     }
@@ -154,7 +157,6 @@ impl AudioInput {
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
             norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
-            norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
         }
     }
 
@@ -167,10 +169,6 @@ impl AudioInput {
             if self.monitor_update_age >= Self::MONITOR_UPDATE_INTERVAL {
                 self.monitor_update_age = Duration::ZERO;
                 emitter.emit_audio_state_change(StateChange::EnvelopeValue(self.envelope_value));
-            }
-            let clipping = envelope > 1.0;
-            if let Some(clip_state) = self.clip_indicator.update_state(delta_t, clipping) {
-                emitter.emit_audio_state_change(StateChange::IsClipping(clip_state));
             }
         }
     }
@@ -196,7 +194,6 @@ impl AudioInput {
                 .load(Ordering::Relaxed),
         ));
         emitter.emit_audio_state_change(InputGain(self.processor_settings.gain.get() as f64));
-        emitter.emit_audio_state_change(IsClipping(self.clip_indicator.state()));
         emitter.emit_audio_state_change(ActiveBand(
             self.processor_settings.active_band.load(Ordering::Relaxed),
         ));
@@ -211,11 +208,6 @@ impl AudioInput {
                 .norm_floor_mode
                 .load(Ordering::Relaxed),
         ));
-        emitter.emit_audio_state_change(NormCeilingMode(
-            self.processor_settings
-                .norm_ceiling_mode
-                .load(Ordering::Relaxed),
-        ));
     }
 
     /// Handle a control event.
@@ -228,13 +220,10 @@ impl AudioInput {
                 if !self.monitor {
                     emitter
                         .emit_audio_state_change(StateChange::EnvelopeValue(UnipolarFloat::ZERO));
-                    emitter.emit_audio_state_change(StateChange::IsClipping(false));
-                    self.clip_indicator.reset();
                 }
             }
             ResetParameters => {
                 self.processor_settings.reset_defaults();
-                self.clip_indicator.reset();
                 self.emit_state(emitter);
             }
             Set(sc) => self.handle_state_change(sc, emitter),
@@ -244,7 +233,7 @@ impl AudioInput {
     fn handle_state_change<E: EmitStateChange>(&mut self, sc: StateChange, emitter: &mut E) {
         use StateChange::*;
         match sc {
-            EnvelopeValue(_) | IsClipping(_) => return, // output only
+            EnvelopeValue(_) => return, // output only
             Monitor(v) => self.monitor = v,
             FilterCutoff(v) => {
                 if v <= 0. {
@@ -295,11 +284,6 @@ impl AudioInput {
                     .norm_floor_mode
                     .store(v, Ordering::Relaxed);
             }
-            NormCeilingMode(v) => {
-                self.processor_settings
-                    .norm_ceiling_mode
-                    .store(v, Ordering::Relaxed);
-            }
         };
         emitter.emit_audio_state_change(sc);
     }
@@ -318,11 +302,6 @@ impl AudioInput {
     pub fn monitor(&self) -> bool {
         self.monitor
     }
-
-    /// Return the clip indicator state.
-    pub fn is_clipping(&self) -> bool {
-        self.clip_indicator.state()
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -335,12 +314,10 @@ pub enum StateChange {
     OutputSmoothing(Duration),
     AutoTrimEnabled(bool),
     InputGain(f64),
-    IsClipping(bool),
     ActiveBand(u32),
     NormFloorHalflife(Duration),
     NormCeilingHalflife(Duration),
     NormFloorMode(processor::TrackingMode),
-    NormCeilingMode(processor::TrackingMode),
 }
 
 #[derive(Debug, Clone)]

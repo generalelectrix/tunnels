@@ -11,9 +11,10 @@ use std::thread;
 use std::time::Duration;
 
 use crate::processor::{
-    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
+    EnvelopeRingBuffers, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
+    envelope_ring_buffers,
 };
-use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
+use crate::ring_buffer::EnvelopeStream;
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -216,22 +217,11 @@ fn build_input_stream(
 
     let update_rate = UpdateRate::new(config.sample_rate.0, frame_count);
 
-    // Create envelope ring buffers — producers go to the processor, envelope_streams to the GUI.
-    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    let mut envelope_streams = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    for _ in 0..NUM_OUTPUT_BANDS {
-        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-        producers.push(p);
-        envelope_streams.push(c);
-    }
-    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] = producers
-        .try_into()
-        .ok()
-        .expect("correct number of producers");
-    let envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS] = envelope_streams
-        .try_into()
-        .ok()
-        .expect("correct number of envelope_streams");
+    // Producers go to the processor, streams to the GUI.
+    let EnvelopeRingBuffers {
+        producers,
+        streams: envelope_streams,
+    } = envelope_ring_buffers();
 
     let mut processor = Processor::new(
         processor_settings,

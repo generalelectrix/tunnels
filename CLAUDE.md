@@ -28,9 +28,10 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 - Control parameters are passed via atomic fields in `ProcessorSettings` (an `Arc`-shared struct). The audio thread polls for changes at the start of each buffer.
 - The GUI reads parameter state from an `AudioSnapshot` built by `AudioInput::snapshot()` and published through `GuiState::audio_state` (a `Notified<AudioSnapshot>`). Writes to the snapshot atomically wake the GUI.
 - Envelope data streams from the audio thread to the GUI via lock-free SPSC ring buffers (`EnvelopeProducer`/`EnvelopeStream` in `ring_buffer.rs`, backed by `rtrb`). On every successful device open — initial and each reconnect — the audio thread sends a fresh `EnvelopeStreams` bundle over an `mpsc` channel owned by the console's `ConfigApp`, which reattaches the envelope viewer without user intervention.
-- `Processor` structures its work as an array-of-structs: a `Vec<LowpassChannel>` (one per audio channel) and a `[WaveletBand; NUM_BANDS]`. Shared bookkeeping (`OnePoleSmoother` state, `SmootherCoeff` cache, `AdaptiveNormalizer`) lives on `Processor` itself; parameter propagation to the chains runs in `maybe_update_parameters`.
+- `Processor` runs both paths on the mono mix: an RBJ lowpass feeds output band 0 and an undecimated (à trous) D4 wavelet decomposition feeds bands 1–7. Every output band owns one `BandChain` (Hilbert, fast/slow followers, smoother, `AdaptiveNormalizer`), stored in output order; the shared `SmootherCoeff` cache and `AutoTrim` live on `Processor`; parameter propagation to the chains runs in `maybe_update_parameters`.
 - The `tunnels/src/audio/` module is a thin re-export layer plus the `ShowEmitter` adapter.
 - The render loop runs at 240fps. The audio buffer is ~1ms. The fast envelope follower's 4ms release matches the render frame budget.
+- The envelope chain is pinned by `tunnels_audio/tests/envelope_golden.rs` and `music_convergence.rs`. Measure before changing it: `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>` (see the crate docs in `tunnels_audio/src/lib.rs`).
 
 ## GUI architecture
 

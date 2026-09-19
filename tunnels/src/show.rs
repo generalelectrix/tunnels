@@ -951,7 +951,6 @@ mod test {
             );
             au("audio/auto_trim_enabled", AU::AutoTrimEnabled(true));
             au("audio/input_gain", AU::InputGain(2.0));
-            au("audio/is_clipping", AU::IsClipping(true));
         }
 
         changes
