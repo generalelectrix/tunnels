@@ -5,12 +5,9 @@
 
 mod common;
 
-use common::clip;
+use common::{clip, offline};
 use std::path::Path;
-use tunnels_audio::processor::{
-    BandStages, ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings,
-};
-use tunnels_audio::ring_buffer::{EnvelopeProducer, envelope_ring_buffer};
+use tunnels_audio::processor::{BandStages, ProcessorSettings};
 
 const FRAMES_PER_BUFFER: usize = 64;
 
@@ -23,44 +20,34 @@ struct LoopSummary {
 }
 
 fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
-    let channels = clip.channels as usize;
-    let settings = ProcessorSettings::default();
-    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    let mut streams = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    for _ in 0..NUM_OUTPUT_BANDS {
-        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-        producers.push(p);
-        streams.push(c);
-    }
-    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] =
-        producers.try_into().ok().expect("correct count");
-    let mut processor = Processor::new(settings.clone(), clip.sample_rate, channels, producers);
-
     // One continuous stream, as a device would deliver it: the buffer grid
     // does not restart at the loop seam.
-    let mut samples = Vec::with_capacity(clip.samples.len() * loops);
+    let one_loop = clip.stereo_frames();
+    let mut signal = Vec::with_capacity(one_loop.len() * loops);
     for _ in 0..loops {
-        samples.extend(clip.samples.iter().map(|&s| s as f32 / 32768.0));
+        signal.extend_from_slice(&one_loop);
     }
     let buffers_per_loop = clip.frames() / FRAMES_PER_BUFFER;
-    let mut drained = Vec::new();
+
+    let settings = ProcessorSettings::default();
     let mut summaries = Vec::with_capacity(loops);
     let mut band0 = Vec::with_capacity(buffers_per_loop);
-    for buffer in samples.chunks(FRAMES_PER_BUFFER * channels) {
-        processor.process(buffer);
-        for stream in &mut streams {
-            drained.clear();
-            stream.drain_into(&mut drained);
-        }
-        band0.push(settings.envelope.get());
-        if band0.len() == buffers_per_loop {
-            summaries.push(LoopSummary {
-                trim: settings.auto_trim_gain.get(),
-                stages: processor.band_stages(0).expect("band 0"),
-                band0: std::mem::take(&mut band0),
-            });
-        }
-    }
+    offline::run_stereo(
+        clip.sample_rate,
+        FRAMES_PER_BUFFER,
+        settings.clone(),
+        &signal,
+        |_, processor, outputs| {
+            band0.push(outputs[0]);
+            if band0.len() == buffers_per_loop {
+                summaries.push(LoopSummary {
+                    trim: settings.auto_trim_gain.get(),
+                    stages: processor.band_stages(0).expect("band 0"),
+                    band0: std::mem::take(&mut band0),
+                });
+            }
+        },
+    );
     summaries
 }
 

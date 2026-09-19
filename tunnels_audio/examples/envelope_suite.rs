@@ -23,6 +23,8 @@
 #[allow(dead_code)]
 #[path = "../tests/common/clip.rs"]
 mod clip;
+#[path = "../tests/common/offline.rs"]
+mod offline;
 #[allow(dead_code)]
 #[path = "../tests/common/signals.rs"]
 mod signals;
@@ -32,15 +34,12 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tunnels_audio::processor::{
-    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, TrackingMode,
-};
+use tunnels_audio::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, TrackingMode};
 
 use signals::{Lcg, Signal, kick_real, kick_simple, onsets, silence, sine};
 
 /// Whether runs use the limit-mode floor (`--floor-limit`).
 static FLOOR_LIMIT: AtomicBool = AtomicBool::new(false);
-use tunnels_audio::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
 
 /// One recorded buffer.
 struct Row {
@@ -73,50 +72,36 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
             .norm_floor_mode
             .store(TrackingMode::Limit, Ordering::Relaxed);
     }
-    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    let mut streams: Vec<EnvelopeStream> = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    for _ in 0..NUM_OUTPUT_BANDS {
-        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-        producers.push(p);
-        streams.push(c);
-    }
-    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] =
-        producers.try_into().ok().expect("correct count");
-    let mut processor = Processor::new(settings.clone(), cfg.sample_rate, 2, producers);
-
     let mut rows = Vec::with_capacity(signal.len() / cfg.frames + 1);
-    let mut interleaved = Vec::with_capacity(cfg.frames * 2);
-    let mut drained = Vec::new();
-    for (buf_idx, chunk) in signal.chunks(cfg.frames).enumerate() {
-        interleaved.clear();
-        let mut raw_peak = 0.0_f32;
-        for frame in chunk {
-            raw_peak = raw_peak.max(frame[0].abs()).max(frame[1].abs());
-            interleaved.extend_from_slice(frame);
-        }
-        processor.process(&interleaved);
-        let mut bands = [0.0; NUM_OUTPUT_BANDS];
-        for (band, stream) in streams.iter_mut().enumerate() {
-            drained.clear();
-            stream.drain_into(&mut drained);
-            bands[band] = *drained.last().expect("one value per buffer");
-        }
-        let stages = processor.band_stages(0).expect("band 0");
-        let all_stages = std::array::from_fn(|b| {
-            let st = processor.band_stages(b).expect("band in range");
-            [st.smoothed, st.floor, st.ceiling]
-        });
-        rows.push(Row {
-            t: (buf_idx * cfg.frames) as f32 / cfg.sample_rate as f32,
-            raw_peak,
-            trim: settings.auto_trim_gain.get(),
-            smoothed: stages.smoothed,
-            floor: stages.floor,
-            ceiling: stages.ceiling,
-            bands,
-            stages: all_stages,
-        });
-    }
+    offline::run_stereo(
+        cfg.sample_rate,
+        cfg.frames,
+        settings.clone(),
+        signal,
+        |buf_idx, processor, outputs| {
+            let chunk =
+                &signal[buf_idx * cfg.frames..((buf_idx + 1) * cfg.frames).min(signal.len())];
+            let raw_peak = chunk
+                .iter()
+                .map(|f| f[0].abs().max(f[1].abs()))
+                .fold(0.0, f32::max);
+            let stages = processor.band_stages(0).expect("band 0");
+            let all_stages = std::array::from_fn(|b| {
+                let st = processor.band_stages(b).expect("band in range");
+                [st.smoothed, st.floor, st.ceiling]
+            });
+            rows.push(Row {
+                t: (buf_idx * cfg.frames) as f32 / cfg.sample_rate as f32,
+                raw_peak,
+                trim: settings.auto_trim_gain.get(),
+                smoothed: stages.smoothed,
+                floor: stages.floor,
+                ceiling: stages.ceiling,
+                bands: *outputs,
+                stages: all_stages,
+            });
+        },
+    );
     rows
 }
 
@@ -755,13 +740,7 @@ fn load_clip(path: &str) -> Signal {
     let bytes = fs::read(path).expect("read clip");
     let clip = clip::decode(&bytes).expect("decode clip");
     assert_eq!(clip.sample_rate, PROD.sample_rate, "clip sample rate");
-    assert_eq!(clip.channels, 2, "clip channels");
-    clip.samples
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|&[l, r]| [l as f32 / 32768.0, r as f32 / 32768.0])
-        .collect()
+    clip.stereo_frames()
 }
 
 /// Per-band peak within 150 ms after each band-0 onset. An onset is a buffer

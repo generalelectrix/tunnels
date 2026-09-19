@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::hilbert::HilbertTransform;
-use crate::ring_buffer::EnvelopeProducer;
+use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
 use crate::wavelet::{NUM_LEVELS, WaveletDecomposition};
 
 /// Fast envelope follower: catches every peak within a cycle.
@@ -31,6 +31,25 @@ pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
 /// Band labels in frequency-ascending output order (index 0 = lowpass sub-bass).
 pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
+
+/// The envelope ring buffers for every output band: the producers feed a
+/// `Processor`, the streams are read by whoever displays or records them.
+pub struct EnvelopeRingBuffers {
+    pub producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
+    pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+}
+
+/// Create one envelope ring buffer per output band, each holding
+/// `ENVELOPE_HISTORY_CAPACITY` values.
+pub fn envelope_ring_buffers() -> EnvelopeRingBuffers {
+    let (producers, streams): (Vec<_>, Vec<_>) = (0..NUM_OUTPUT_BANDS)
+        .map(|_| envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY))
+        .unzip();
+    EnvelopeRingBuffers {
+        producers: producers.try_into().ok().expect("one producer per band"),
+        streams: streams.try_into().ok().expect("one stream per band"),
+    }
+}
 
 /// Audio callback rate in Hz (sample_rate / frames_per_buffer).
 #[derive(Debug, Clone, Copy)]
@@ -834,15 +853,9 @@ impl Processor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ring_buffer::envelope_ring_buffer;
 
     fn test_producers() -> [EnvelopeProducer; NUM_OUTPUT_BANDS] {
-        let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-        for _ in 0..NUM_OUTPUT_BANDS {
-            let (p, _c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-            producers.push(p);
-        }
-        producers.try_into().ok().expect("correct count")
+        envelope_ring_buffers().producers
     }
 
     /// An auto-trim ticking at 1 kHz, so iteration counts read as ms.

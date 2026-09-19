@@ -13,10 +13,7 @@ mod clip;
 
 use std::time::{Duration, Instant};
 
-use tunnels_audio::processor::{
-    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings,
-};
-use tunnels_audio::ring_buffer::{EnvelopeProducer, envelope_ring_buffer};
+use tunnels_audio::processor::{Processor, ProcessorSettings, envelope_ring_buffers};
 use tunnels_audio::wavelet::WaveletDecomposition;
 
 const FRAMES_PER_BUFFER: usize = 64;
@@ -48,27 +45,22 @@ fn main() {
     let clip = clip::decode(&std::fs::read(path).expect("read clip")).expect("decode clip");
     let channels = clip.channels as usize;
     let frames = clip.frames();
-    let samples: Vec<f32> = clip.samples.iter().map(|&s| s as f32 / 32768.0).collect();
-    let mono: Vec<f32> = samples
-        .chunks_exact(channels)
-        .map(|f| f.iter().sum::<f32>() / channels as f32)
-        .collect();
+    let stereo = clip.stereo_frames();
+    let samples: Vec<f32> = stereo.iter().flatten().copied().collect();
+    let mono: Vec<f32> = stereo.iter().map(|[l, r]| (l + r) / 2.0).collect();
     println!(
         "{frames} frames at {} Hz x{channels}, {FRAMES_PER_BUFFER}-frame buffers, best of {PASSES}",
         clip.sample_rate
     );
 
-    let settings = ProcessorSettings::default();
-    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    let mut streams = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    for _ in 0..NUM_OUTPUT_BANDS {
-        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-        producers.push(p);
-        streams.push(c);
-    }
-    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] =
-        producers.try_into().ok().expect("correct count");
-    let mut processor = Processor::new(settings, clip.sample_rate, channels, producers);
+    let buffers = envelope_ring_buffers();
+    let mut streams = buffers.streams;
+    let mut processor = Processor::new(
+        ProcessorSettings::default(),
+        clip.sample_rate,
+        channels,
+        buffers.producers,
+    );
     let mut drained = Vec::new();
     let elapsed = fastest(|| {
         for buffer in samples.chunks(FRAMES_PER_BUFFER * channels) {

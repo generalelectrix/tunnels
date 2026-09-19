@@ -3,4 +3,5 @@
 #![allow(dead_code)]
 
 pub mod clip;
+pub mod offline;
 pub mod signals;

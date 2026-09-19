@@ -9,14 +9,11 @@
 
 mod common;
 
-use common::{clip, signals};
+use common::{clip, offline, signals};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use tunnels_audio::processor::{
-    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings,
-};
-use tunnels_audio::ring_buffer::{EnvelopeProducer, envelope_ring_buffer};
+use tunnels_audio::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
 
 const FRAMES_PER_BUFFER: usize = 64;
 /// Every `STRIDE`th buffer is kept: 187 Hz against an 8 ms output smoother.
@@ -43,35 +40,20 @@ fn quantize(v: f32) -> u8 {
 }
 
 fn run(signal: &[[f32; 2]]) -> Golden {
-    let settings = ProcessorSettings::default();
-    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    let mut streams = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    for _ in 0..NUM_OUTPUT_BANDS {
-        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-        producers.push(p);
-        streams.push(c);
-    }
-    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] =
-        producers.try_into().ok().expect("correct count");
-    let mut processor = Processor::new(settings, signals::SAMPLE_RATE, 2, producers);
-
     let mut bands = vec![Vec::new(); NUM_OUTPUT_BANDS];
-    let mut interleaved = Vec::with_capacity(FRAMES_PER_BUFFER * 2);
-    let mut drained = Vec::new();
-    for (i, chunk) in signal.chunks(FRAMES_PER_BUFFER).enumerate() {
-        interleaved.clear();
-        for frame in chunk {
-            interleaved.extend_from_slice(frame);
-        }
-        processor.process(&interleaved);
-        for (band, stream) in streams.iter_mut().enumerate() {
-            drained.clear();
-            stream.drain_into(&mut drained);
+    offline::run_stereo(
+        signals::SAMPLE_RATE,
+        FRAMES_PER_BUFFER,
+        ProcessorSettings::default(),
+        signal,
+        |i, _, outputs| {
             if i % STRIDE == 0 {
-                bands[band].push(quantize(*drained.last().expect("one value per buffer")));
+                for (band, &v) in bands.iter_mut().zip(outputs) {
+                    band.push(quantize(v));
+                }
             }
-        }
-    }
+        },
+    );
     Golden {
         update_rate: signals::SAMPLE_RATE as f32 / FRAMES_PER_BUFFER as f32,
         stride: STRIDE,
@@ -170,14 +152,7 @@ fn envelope_goldens() {
     let clip_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/nightlife_8bars.clip");
     let clip = clip::decode(&std::fs::read(clip_path).expect("read clip")).expect("decode clip");
     assert_eq!(clip.sample_rate, signals::SAMPLE_RATE);
-    assert_eq!(clip.channels, 2);
-    let one_loop: Vec<[f32; 2]> = clip
-        .samples
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|&[l, r]| [l as f32 / 32768.0, r as f32 / 32768.0])
-        .collect();
+    let one_loop = clip.stereo_frames();
     let mut signal = Vec::with_capacity(one_loop.len() * MUSIC_LOOPS);
     for _ in 0..MUSIC_LOOPS {
         signal.extend_from_slice(&one_loop);
