@@ -1,5 +1,5 @@
-//! Synthetic test signals shared by the harness and the tests. Stereo,
-//! rendered up front at 48 kHz; deterministic (seeded) where random.
+//! Synthetic test signals: stereo, rendered up front at 48 kHz,
+//! deterministic (seeded) where random.
 
 /// A stereo signal rendered up front.
 pub type Signal = Vec<[f32; 2]>;

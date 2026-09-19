@@ -56,7 +56,7 @@ fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
         if band0.len() == buffers_per_loop {
             summaries.push(LoopSummary {
                 trim: settings.auto_trim_gain.get(),
-                stages: processor.band_stages(0),
+                stages: processor.band_stages(0).expect("band 0"),
                 band0: std::mem::take(&mut band0),
             });
         }

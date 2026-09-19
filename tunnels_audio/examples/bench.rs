@@ -17,7 +17,7 @@ use tunnels_audio::processor::{
     ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings,
 };
 use tunnels_audio::ring_buffer::{EnvelopeProducer, envelope_ring_buffer};
-use tunnels_audio::wavelet::{WaveletDecomposition, WaveletType};
+use tunnels_audio::wavelet::WaveletDecomposition;
 
 const FRAMES_PER_BUFFER: usize = 64;
 const PASSES: usize = 5;
@@ -81,7 +81,7 @@ fn main() {
     });
     report("Processor::process", elapsed, frames, clip.sample_rate);
 
-    let mut wavelet = WaveletDecomposition::new(WaveletType::Daubechies4);
+    let mut wavelet = WaveletDecomposition::new();
     let mut sink = 0.0_f32;
     let elapsed = fastest(|| {
         for &s in &mono {

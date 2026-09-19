@@ -19,8 +19,8 @@
 //!   Level 7: 187-375 Hz (high)
 //!   Residual: 0-187 Hz (low)
 
-/// Daubechies-4 (db4) filter coefficients — 8 taps.
-/// ~18 dB/octave transition steepness.
+/// Daubechies-4 (db4) lowpass filter coefficients — 8 taps, ~18 dB/octave
+/// transition steepness.
 const DB4_LO: [f32; 8] = [
     -0.010_597_402,
     0.032_883_01,
@@ -32,55 +32,27 @@ const DB4_LO: [f32; 8] = [
     0.230_377_81,
 ];
 
-/// Daubechies-8 (db8) filter coefficients — 16 taps.
-/// ~30 dB/octave transition steepness.
-const DB8_LO: [f32; 16] = [
-    -0.000_117_476_78,
-    0.000_675_449_4,
-    -0.000_391_740_38,
-    -0.004_870_353,
-    0.008_746_094,
-    0.013_981_027_5,
-    -0.044_088_256,
-    -0.017_369_3,
-    0.128_747_43,
-    0.000_472_484_56,
-    -0.284_015_54,
-    -0.015_829_105,
-    0.585_354_7,
-    0.675_630_75,
-    0.312_871_6,
-    0.054_415_84,
-];
-
-/// Derive the highpass filter from the lowpass using the QMF relation:
+/// The highpass filter derived from the lowpass by the QMF relation:
 /// h[n] = (-1)^n * g[N-1-n]
-fn qmf_highpass(lowpass: &[f32]) -> Vec<f32> {
-    let n = lowpass.len();
-    (0..n)
-        .map(|i| {
-            let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
-            sign * lowpass[n - 1 - i]
-        })
-        .collect()
-}
+const DB4_HI: [f32; 8] = qmf_highpass(DB4_LO);
 
-/// Which Daubechies wavelet to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WaveletType {
-    /// 8 taps, ~18 dB/oct, ~1.3ms latency at level 4
-    Daubechies4,
-    /// 16 taps, ~30 dB/oct, ~2.5ms latency at level 4
-    Daubechies8,
+const fn qmf_highpass<const N: usize>(lowpass: [f32; N]) -> [f32; N] {
+    let mut hi = [0.0; N];
+    let mut i = 0;
+    while i < N {
+        hi[i] = if i % 2 == 0 { 1.0 } else { -1.0 } * lowpass[N - 1 - i];
+        i += 1;
+    }
+    hi
 }
 
 /// A single decomposition level: lowpass + highpass FIR, dilated by the
 /// level's stride, producing an output for every input sample.
 struct Level {
-    /// Lowpass FIR coefficients.
-    lo_coeffs: Vec<f32>,
-    /// Highpass FIR coefficients.
-    hi_coeffs: Vec<f32>,
+    /// Lowpass FIR taps.
+    lo: [f32; 8],
+    /// Highpass FIR taps.
+    hi: [f32; 8],
     /// Spacing between taps in samples: `2^level`.
     stride: usize,
     /// Delay line for input samples, `taps * stride` long — a power of two,
@@ -91,24 +63,16 @@ struct Level {
 }
 
 impl Level {
-    fn new(lo_coeffs: &[f32], stride: usize) -> Self {
-        let hi_coeffs = qmf_highpass(lo_coeffs);
-        let len = lo_coeffs.len() * stride;
+    fn new(stride: usize) -> Self {
+        let len = DB4_LO.len() * stride;
         debug_assert!(len.is_power_of_two());
         Self {
-            lo_coeffs: lo_coeffs.to_vec(),
-            hi_coeffs,
+            lo: DB4_LO,
+            hi: DB4_HI,
             stride,
             delay: vec![0.0; len],
             delay_pos: 0,
         }
-    }
-
-    fn set_coeffs(&mut self, lo_coeffs: &[f32]) {
-        self.lo_coeffs = lo_coeffs.to_vec();
-        self.hi_coeffs = qmf_highpass(lo_coeffs);
-        self.delay.resize(lo_coeffs.len() * self.stride, 0.0);
-        self.reset();
     }
 
     /// Push one input sample and return the (low, high) subband outputs.
@@ -124,7 +88,7 @@ impl Level {
         let mut lo = 0.0_f32;
         let mut hi = 0.0_f32;
         let mut idx = self.delay_pos.wrapping_sub(1) & mask;
-        for (l, h) in self.lo_coeffs.iter().zip(&self.hi_coeffs) {
+        for (l, h) in self.lo.iter().zip(&self.hi) {
             let s = self.delay[idx];
             lo += s * l;
             hi += s * h;
@@ -132,12 +96,6 @@ impl Level {
         }
 
         (lo, hi)
-    }
-
-    /// Reset the delay line to zero.
-    fn reset(&mut self) {
-        self.delay.fill(0.0);
-        self.delay_pos = 0;
     }
 }
 
@@ -164,26 +122,11 @@ pub struct WaveletDecomposition {
 }
 
 impl WaveletDecomposition {
-    pub fn new(wavelet: WaveletType) -> Self {
-        let coeffs: &[f32] = match wavelet {
-            WaveletType::Daubechies4 => &DB4_LO,
-            WaveletType::Daubechies8 => &DB8_LO,
-        };
+    pub fn new() -> Self {
         let levels = (0..NUM_LEVELS)
-            .map(|level| Level::new(coeffs, 1 << level))
+            .map(|level| Level::new(1 << level))
             .collect();
         Self { levels }
-    }
-
-    /// Change the wavelet type. Resets all filter state.
-    pub fn set_wavelet(&mut self, wavelet: WaveletType) {
-        let coeffs: &[f32] = match wavelet {
-            WaveletType::Daubechies4 => &DB4_LO,
-            WaveletType::Daubechies8 => &DB8_LO,
-        };
-        for level in &mut self.levels {
-            level.set_coeffs(coeffs);
-        }
     }
 
     /// Process one input sample through the decomposition tree.
@@ -202,12 +145,11 @@ impl WaveletDecomposition {
         // The residual low subband from the deepest level.
         on_band(NUM_LEVELS, current);
     }
+}
 
-    /// Reset all filter state.
-    pub fn reset(&mut self) {
-        for level in &mut self.levels {
-            level.reset();
-        }
+impl Default for WaveletDecomposition {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -217,7 +159,7 @@ mod tests {
 
     #[test]
     fn decomposition_produces_output() {
-        let mut dwt = WaveletDecomposition::new(WaveletType::Daubechies4);
+        let mut dwt = WaveletDecomposition::new();
         let mut band_energy = [0.0_f32; NUM_BANDS];
 
         let sample_rate = 48000.0_f32;
@@ -241,7 +183,7 @@ mod tests {
 
     #[test]
     fn silence_produces_zero() {
-        let mut dwt = WaveletDecomposition::new(WaveletType::Daubechies4);
+        let mut dwt = WaveletDecomposition::new();
         let mut any_nonzero = false;
         for _ in 0..4800 {
             dwt.push(0.0, |_band, s| {
@@ -251,41 +193,5 @@ mod tests {
             });
         }
         assert!(!any_nonzero, "Expected silence in all bands");
-    }
-
-    #[test]
-    fn both_wavelet_types_work() {
-        for wtype in [WaveletType::Daubechies4, WaveletType::Daubechies8] {
-            let mut dwt = WaveletDecomposition::new(wtype);
-            let mut max_energy = 0.0_f32;
-            let sample_rate = 48000.0_f32;
-            for i in 0..4800 {
-                let t = i as f32 / sample_rate;
-                let sample = (2.0 * std::f32::consts::PI * 2000.0 * t).sin();
-                dwt.push(sample, |_band, s| {
-                    max_energy = max_energy.max(s.abs());
-                });
-            }
-            assert!(max_energy > 0.01, "No energy detected with {wtype:?}");
-        }
-    }
-
-    #[test]
-    fn reset_clears_state() {
-        let mut dwt = WaveletDecomposition::new(WaveletType::Daubechies4);
-        for i in 0..4800 {
-            dwt.push((i as f32 * 0.1).sin(), |_, _| {});
-        }
-        dwt.reset();
-        let mut any_nonzero = false;
-        // After reset, feeding silence should produce exactly zero.
-        for _ in 0..480 {
-            dwt.push(0.0, |_band, s| {
-                if s.abs() > 1e-10 {
-                    any_nonzero = true;
-                }
-            });
-        }
-        assert!(!any_nonzero, "Energy should be zero after reset + silence");
     }
 }

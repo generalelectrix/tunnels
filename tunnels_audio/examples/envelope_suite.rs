@@ -11,7 +11,10 @@
 //! With `--music <file.clip> --loops N` it instead loops a packed real-music
 //! clip N times through one processor and prints a per-loop convergence table
 //! for the adaptive parameters, plus a shift experiment: the same clip with a
-//! few samples of silence prepended, comparing per-band kick peaks.
+//! few samples of silence prepended, comparing per-band kick peaks. The chain
+//! is shift-invariant, so the experiment is a standing check that per-band
+//! peaks do not depend on where the input falls relative to any buffer or
+//! filter grid.
 //!
 //! `--floor-limit` runs either mode with the normalizer floor in limit mode
 //! instead of the default average mode.
@@ -24,8 +27,6 @@ mod clip;
 #[path = "../tests/common/signals.rs"]
 mod signals;
 
-use signals::{Lcg, Signal, kick_real, kick_simple, onsets, silence, sine};
-
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -34,6 +35,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tunnels_audio::processor::{
     ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, TrackingMode,
 };
+
+use signals::{Lcg, Signal, kick_real, kick_simple, onsets, silence, sine};
 
 /// Whether runs use the limit-mode floor (`--floor-limit`).
 static FLOOR_LIMIT: AtomicBool = AtomicBool::new(false);
@@ -98,9 +101,9 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
             stream.drain_into(&mut drained);
             bands[band] = *drained.last().expect("one value per buffer");
         }
-        let stages = processor.band_stages(0);
+        let stages = processor.band_stages(0).expect("band 0");
         let all_stages = std::array::from_fn(|b| {
-            let st = processor.band_stages(b);
+            let st = processor.band_stages(b).expect("band in range");
             [st.smoothed, st.floor, st.ceiling]
         });
         rows.push(Row {
@@ -541,7 +544,7 @@ fn suite() -> Vec<Case> {
     ));
 
     // W4e: simple kicks with ±20 ms random onset jitter, so kick onsets are
-    // not phase-locked to any decimation grid.
+    // not phase-locked to the buffer grid.
     cases.push(golden_kick_case("w04e_onset_jitter_120", |out, ks, _| {
         for b in 0..4 {
             let peaks: Vec<f32> = ks.iter().map(|k| k.bands_peak[b]).collect();
@@ -813,9 +816,8 @@ fn run_music(out_dir: &Path, path: &str, loops: usize) {
     let mut report = String::new();
     let _ = writeln!(
         report,
-        "=== music {path}: {loop_len} frames/loop ({:.2}s), {loops} loops, frames mod 128 = {} ===",
+        "=== music {path}: {loop_len} frames/loop ({:.2}s), {loops} loops ===",
         loop_len as f32 / PROD.sample_rate as f32,
-        loop_len % 128
     );
     let _ = writeln!(
         report,
