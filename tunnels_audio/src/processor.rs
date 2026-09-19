@@ -229,6 +229,9 @@ impl From<TrackingMode> for u32 {
 struct AdaptiveNormalizer {
     floor: f32,
     ceiling: f32,
+    /// Envelope level below which the band outputs zero: `NOISE_GATE` scaled
+    /// by any fixed gain applied ahead of this band's envelope.
+    gate: f32,
     /// EMA coefficients for average-mode floor tracking.
     floor_rise_coeff: f32,
     floor_fall_coeff: f32,
@@ -239,14 +242,22 @@ struct AdaptiveNormalizer {
 }
 
 impl AdaptiveNormalizer {
-    /// Minimum range between floor and ceiling. This caps the maximum gain
-    /// at 1/MIN_RANGE. With normalized input (~unity), 0.333 = max 3x gain.
-    const MIN_RANGE: f32 = 0.333;
+    /// Minimum normalization range as a fraction of the ceiling. Once the
+    /// floor has climbed to within this fraction of the ceiling the output
+    /// fades instead of being stretched back to full scale, and a band's
+    /// reach to full scale never depends on its absolute level.
+    const REL_MIN_RANGE: f32 = 0.25;
+    /// Input level below which the band outputs zero, so idle noise is
+    /// never normalized up to full scale.
+    const NOISE_GATE: f32 = 0.01;
 
-    fn new() -> Self {
+    /// `pre_gain` is the fixed gain applied to this band's signal ahead of
+    /// envelope extraction, so the gate applies at input level.
+    fn new(pre_gain: f32) -> Self {
         Self {
             floor: 0.0,
             ceiling: 0.001,
+            gate: Self::NOISE_GATE * pre_gain,
             floor_rise_coeff: 0.999,
             floor_fall_coeff: 0.99,
             floor_limit_rise_coeff: 0.999,
@@ -318,7 +329,10 @@ impl AdaptiveNormalizer {
             }
         }
 
-        let range = (self.ceiling - self.floor).max(Self::MIN_RANGE);
+        if envelope < self.gate {
+            return 0.0;
+        }
+        let range = (self.ceiling - self.floor).max(Self::REL_MIN_RANGE * self.ceiling);
         ((envelope - self.floor) / range).clamp(0.0, 1.0)
     }
 }
@@ -460,6 +474,12 @@ pub struct Processor {
     wavelet_bands: [WaveletBand; NUM_BANDS],
 }
 
+/// Fixed gain applied to a wavelet band to flatten the 1/f power spectrum of
+/// music: `2^(NUM_LEVELS - band)`, so higher-frequency bands get more boost.
+fn whitening_gain(band: usize) -> f32 {
+    (1 << (NUM_LEVELS - band)) as f32
+}
+
 fn make_envelope(
     context: &mut AudioContext,
     attack: Duration,
@@ -528,7 +548,7 @@ impl Processor {
                 fast_envelope: make_envelope(&mut band_ctx, FAST_ATTACK, FAST_RELEASE),
                 slow_envelope: make_envelope(&mut band_ctx, slow_attack, slow_release),
                 smoother: OnePoleSmoother::default(),
-                normalizer: AdaptiveNormalizer::new(),
+                normalizer: AdaptiveNormalizer::new(whitening_gain(band)),
                 context: band_ctx,
             }
         });
@@ -543,7 +563,7 @@ impl Processor {
             envelope_producers,
             lowpass,
             lowpass_smoother: OnePoleSmoother::default(),
-            lowpass_normalizer: AdaptiveNormalizer::new(),
+            lowpass_normalizer: AdaptiveNormalizer::new(1.0),
             smooth_coeff: SmootherCoeff::default(),
             auto_trim: AutoTrim::new(),
             wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
@@ -632,8 +652,6 @@ impl Processor {
             }
 
             // Wavelet decomposition -> per-band envelope extraction.
-            // Whitening: multiply by 2^(NUM_LEVELS - level) to correct for
-            // the 1/f power spectrum of music. Higher bands get more boost.
             let mono_gained = mono * effective_gain;
             let bands = &mut self.wavelet_bands;
             self.wavelet.push(mono_gained, |band, sample| {
@@ -641,8 +659,7 @@ impl Processor {
                 if band == NUM_LEVELS {
                     return;
                 }
-                let whiten = (1 << (NUM_LEVELS - band)) as f32;
-                bands[band].process_sample(sample, whiten);
+                bands[band].process_sample(sample, whitening_gain(band));
             });
         }
 

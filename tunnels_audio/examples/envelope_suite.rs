@@ -784,6 +784,31 @@ fn suite() -> Vec<Case> {
         |out, _, rows| report_band_peaks(out, "quiet kick alone", rows, 15.0, 20.0),
     ));
 
+    // W16: -50 dB hiss throughout; kicks for 10 s, then hiss alone for 20 s.
+    let ons = onsets(120.0, 0.5, 10.0);
+    let mut sig = silence(sr, 30.0);
+    let mut rng = Lcg(3);
+    for frame in sig.iter_mut() {
+        let v = 0.003 * rng.next_f32();
+        *frame = [v, v];
+    }
+    for &on in &ons {
+        kick_simple(&mut sig, sr, on, 0.8);
+    }
+    cases.push(Case {
+        name: "w16_hiss_then_silence",
+        cfg: PROD,
+        signal: sig,
+        report: Box::new(move |out, rows| {
+            let ks = kick_stats(rows, &ons);
+            report_kicks(out, "kicks over hiss", &ks);
+            for (a, b) in [(10.5, 12.0), (15.0, 20.0), (25.0, 30.0)] {
+                report_steady(out, "hiss only", rows, a, b);
+            }
+            report_band_peaks(out, "hiss only", rows, 25.0, 30.0);
+        }),
+    });
+
     cases
 }
 
