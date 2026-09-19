@@ -258,8 +258,6 @@ struct NormalizerParams {
     ceiling_fall_coeff: f32,
     /// EMA coefficient for ceiling decay while nothing approaches it.
     ceiling_fast_fall_coeff: f32,
-    /// EMA coefficient for the ceiling anchor's rise toward the ceiling.
-    anchor_rise_coeff: f32,
     /// Seconds per update.
     interval: f64,
     /// The inputs the coefficients were derived from.
@@ -277,7 +275,6 @@ impl NormalizerParams {
             floor_limit_rise_coeff: 0.0,
             ceiling_fall_coeff: 0.0,
             ceiling_fast_fall_coeff: 0.0,
-            anchor_rise_coeff: 0.0,
             interval: 0.0,
             floor_halflife: 0.0,
             ceiling_halflife: 0.0,
@@ -306,95 +303,48 @@ impl NormalizerParams {
         self.floor_fall_coeff = halflife_to_coeff(floor_halflife * 0.2, update_rate);
         // Limit mode: instant drop to min, slow rise back.
         self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
-        // Ceiling: instant (bounded) attack, decays at ceiling halflife.
+        // Ceiling: decays at the ceiling halflife toward the recent-peak
+        // statistic, faster while it is well above it.
         self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
         self.ceiling_fast_fall_coeff =
             halflife_to_coeff(AdaptiveNormalizer::CEILING_FAST_FALL_HALFLIFE, update_rate);
-        self.anchor_rise_coeff =
-            halflife_to_coeff(AdaptiveNormalizer::CEILING_ANCHOR_HALFLIFE, update_rate);
         self.interval = 1.0 / f64::from(update_rate);
-    }
-}
-
-/// Detects a change of level: distinct overshoots well above a reference,
-/// either several in quick succession or one that is sustained.
-struct OvershootDetector {
-    /// Start times of the most recent overshoots, oldest first.
-    starts: [f64; Self::CONFIRM_COUNT],
-    /// Whether the envelope is currently in an overshoot.
-    active: bool,
-    /// Peak envelope of the current overshoot; the overshoot ends once the
-    /// envelope falls below `OVERSHOOT_END` times this.
-    peak: f32,
-    /// Envelope on the previous update, so an overshoot only begins on a
-    /// rising envelope: the decaying tail of a spike never re-triggers.
-    prev_envelope: f32,
-}
-
-impl OvershootDetector {
-    /// An overshoot is an excursion this far above the reference. Ordinary
-    /// beat-to-beat variation in peak height stays well inside this, so only
-    /// a real jump in level counts.
-    const OVERSHOOT_MARGIN: f32 = 1.5;
-    /// An overshoot ends when the envelope falls to this fraction of its
-    /// peak, so consecutive beats count separately even while the reference
-    /// is still far below them.
-    const OVERSHOOT_END: f32 = 0.5;
-    /// This many distinct overshoots within `CONFIRM_WINDOW` seconds — or
-    /// one overshoot lasting that long — confirm a change of level. One loud
-    /// hit never confirms; a louder passage or a cold start confirms itself
-    /// in a few beats, a sustained tone by outlasting the window.
-    const CONFIRM_COUNT: usize = 3;
-    const CONFIRM_WINDOW: f64 = 1.5;
-
-    fn new() -> Self {
-        Self {
-            starts: [f64::NEG_INFINITY; Self::CONFIRM_COUNT],
-            active: false,
-            peak: 0.0,
-            prev_envelope: 0.0,
-        }
-    }
-
-    /// Feed one envelope value at time `now`; returns whether a change of
-    /// level is confirmed.
-    #[inline]
-    fn update(&mut self, envelope: f32, reference: f32, now: f64) -> bool {
-        if self.active {
-            self.peak = self.peak.max(envelope);
-            if envelope < Self::OVERSHOOT_END * self.peak {
-                self.active = false;
-            }
-        } else if envelope > reference * Self::OVERSHOOT_MARGIN && envelope > self.prev_envelope {
-            self.active = true;
-            self.peak = envelope;
-            self.starts.rotate_left(1);
-            self.starts[Self::CONFIRM_COUNT - 1] = now;
-        }
-        self.prev_envelope = envelope;
-        let latest = self.starts[Self::CONFIRM_COUNT - 1];
-        now - self.starts[0] <= Self::CONFIRM_WINDOW
-            || (self.active && now - latest > Self::CONFIRM_WINDOW)
     }
 }
 
 /// Adaptive envelope normalizer: tracks a floor and ceiling,
 /// outputs `(envelope - floor) / (ceiling - floor)` clamped to [0, 1].
+///
+/// The ceiling follows a rank statistic of recent peaks: the
+/// `CEILING_RANK`-th largest level recorded in the last `PEAK_WINDOW_SECS`.
+/// A level is recorded once per excursion — a rise and fall of the
+/// envelope, however long its tail — as its peak, or the floor plus its
+/// prominence if that is less (a rise off the tail of something louder
+/// counts only for what it added); and once every `SUSTAIN_SECS` as the
+/// lowest envelope over that time, which is the level actually held. One
+/// loud hit or click therefore never sets the ceiling, a real change of
+/// level is followed within `CEILING_RANK` beats at any tempo, and a
+/// sustained tone is its own level.
 struct AdaptiveNormalizer {
     floor: f32,
     ceiling: f32,
-    /// A lagged copy of the ceiling that bounds how far excursions above it
-    /// can push it: the ceiling rises to at most `CEILING_MAX_RISE` times
-    /// this anchor. The anchor follows the ceiling
-    /// up with `CEILING_ANCHOR_HALFLIFE` and down immediately, so excursions
-    /// in quick succession share one allowance instead of compounding.
-    ceiling_anchor: f32,
-    overshoots: OvershootDetector,
+    /// Peak of the excursion in progress, or zero between excursions.
+    excursion_peak: f32,
+    /// Envelope from which the excursion in progress rose.
+    excursion_start: f32,
+    /// Envelope on the previous update.
+    prev_envelope: f32,
+    /// When a level was last recorded.
+    last_recorded: f64,
+    /// Lowest envelope since a level was last recorded.
+    held: f32,
+    /// Recently recorded levels with their times, a ring overwritten oldest
+    /// first.
+    peaks: [(f64, f32); Self::PEAK_SLOTS],
+    peak_next: usize,
     /// Elapsed processing time in seconds. Accumulated in f64: an f32 sum of
     /// millisecond steps loses the step itself after a few hours.
     now: f64,
-    /// When the envelope last reached `CEILING_REACH` of the ceiling.
-    last_reached: f64,
     /// Envelope level below which the band outputs zero: `NOISE_GATE` scaled
     /// by any fixed gain applied ahead of this band's envelope.
     gate: f32,
@@ -409,21 +359,24 @@ impl AdaptiveNormalizer {
     /// Input level below which the band outputs zero, so idle noise is
     /// never normalized up to full scale.
     const NOISE_GATE: f32 = 0.01;
-    /// Most the ceiling can exceed its anchor. A lone loud hit or a click
-    /// nudges the ceiling by this factor instead of setting it.
-    const CEILING_MAX_RISE: f32 = 1.2;
-    /// How quickly the anchor follows the ceiling up. Much longer than a
-    /// kick, so a kick gets one nudge and a burst of them still only a few;
-    /// a sustained excursion with no beats to confirm it compounds the nudge
-    /// at this rate.
-    const CEILING_ANCHOR_HALFLIFE: f32 = 1.0;
-    /// The envelope "reaches" the ceiling when it comes within this fraction
-    /// of it. During any beat-driven passage that happens every beat.
+    /// An excursion ends when the envelope falls to this fraction of its
+    /// peak; whatever tail follows belongs to it, not to the next one.
+    const EXCURSION_END: f32 = 0.5;
+    /// While no excursion ends, the current level is recorded this often,
+    /// so a held tone counts as the level it holds.
+    const SUSTAIN_SECS: f64 = 0.5;
+    /// How far back recorded levels count toward the ceiling.
+    const PEAK_WINDOW_SECS: f64 = 3.0;
+    /// The ceiling is this-ranked largest of the recorded levels: one
+    /// exceptional level is ignored, two set the ceiling.
+    const CEILING_RANK: usize = 2;
+    /// Recorded levels kept; at more than this many excursions per window
+    /// the window shortens, which only happens on very busy material.
+    const PEAK_SLOTS: usize = 64;
+    /// The statistic "reaches" the ceiling when it comes within this
+    /// fraction of it; below that the level has dropped and the ceiling
+    /// releases at `CEILING_FAST_FALL_HALFLIFE` instead of its own.
     const CEILING_REACH: f32 = 0.8;
-    /// Once nothing has reached the ceiling for this long the level has
-    /// dropped, and the ceiling releases at `CEILING_FAST_FALL_HALFLIFE`
-    /// until something reaches it again.
-    const CEILING_UNREACHED_SECS: f64 = 2.0;
     const CEILING_FAST_FALL_HALFLIFE: f32 = 0.5;
 
     /// `pre_gain` is the fixed gain applied to this band's signal ahead of
@@ -431,47 +384,77 @@ impl AdaptiveNormalizer {
     fn new(pre_gain: f32) -> Self {
         Self {
             floor: 0.0,
-            ceiling: 0.001,
-            ceiling_anchor: 0.001,
-            overshoots: OvershootDetector::new(),
+            ceiling: 0.0,
+            excursion_peak: 0.0,
+            excursion_start: 0.0,
+            prev_envelope: 0.0,
+            last_recorded: 0.0,
+            held: 0.0,
+            peaks: [(f64::NEG_INFINITY, 0.0); Self::PEAK_SLOTS],
+            peak_next: 0,
             now: 0.0,
-            last_reached: 0.0,
             gate: Self::NOISE_GATE * pre_gain,
         }
+    }
+
+    fn record(&mut self, level: f32, envelope: f32) {
+        self.peaks[self.peak_next] = (self.now, level);
+        self.peak_next = (self.peak_next + 1) % Self::PEAK_SLOTS;
+        self.last_recorded = self.now;
+        self.held = envelope;
+    }
+
+    /// The `CEILING_RANK`-th largest level recorded within the window.
+    fn peak_statistic(&self) -> f32 {
+        const { assert!(AdaptiveNormalizer::CEILING_RANK == 2) };
+        let horizon = self.now - Self::PEAK_WINDOW_SECS;
+        let mut first = 0.0_f32;
+        let mut second = 0.0_f32;
+        for &(t, v) in &self.peaks {
+            if t < horizon {
+                continue;
+            }
+            if v > first {
+                second = first;
+                first = v;
+            } else if v > second {
+                second = v;
+            }
+        }
+        second
     }
 
     #[inline]
     fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
         self.now += p.interval;
-        let confirmed = self
-            .overshoots
-            .update(envelope, self.ceiling_anchor, self.now);
 
-        // Update ceiling: a bounded instant attack that snaps only once a
-        // change of level is confirmed, and a decay that speeds up once
-        // nothing reaches it any more.
-        if envelope > self.ceiling {
-            self.last_reached = self.now;
-            if confirmed {
-                self.ceiling = envelope;
-                self.ceiling_anchor = envelope;
-            } else {
-                self.ceiling = envelope.min(self.ceiling_anchor * Self::CEILING_MAX_RISE);
+        // Track excursions and record levels.
+        self.held = self.held.min(envelope);
+        if self.excursion_peak > 0.0 {
+            self.excursion_peak = self.excursion_peak.max(envelope);
+            if envelope < Self::EXCURSION_END * self.excursion_peak {
+                let prominence = self.excursion_peak - self.excursion_start;
+                let level = self.excursion_peak.min(self.floor + prominence);
+                self.record(level, envelope);
+                self.excursion_peak = 0.0;
             }
-        } else {
-            if envelope >= Self::CEILING_REACH * self.ceiling {
-                self.last_reached = self.now;
-            }
-            let coeff = if self.now - self.last_reached > Self::CEILING_UNREACHED_SECS {
-                p.ceiling_fast_fall_coeff
-            } else {
-                p.ceiling_fall_coeff
-            };
-            self.ceiling = coeff * self.ceiling + (1.0 - coeff) * envelope;
+        } else if envelope > self.prev_envelope && envelope >= self.gate {
+            self.excursion_peak = envelope;
+            self.excursion_start = self.prev_envelope;
         }
-        self.ceiling_anchor = self.ceiling_anchor.min(self.ceiling);
-        self.ceiling_anchor =
-            p.anchor_rise_coeff * self.ceiling_anchor + (1.0 - p.anchor_rise_coeff) * self.ceiling;
+        if self.now - self.last_recorded >= Self::SUSTAIN_SECS {
+            self.record(self.held, envelope);
+        }
+        self.prev_envelope = envelope;
+
+        // Update ceiling.
+        let stat = self.peak_statistic();
+        let coeff = if stat >= Self::CEILING_REACH * self.ceiling {
+            p.ceiling_fall_coeff
+        } else {
+            p.ceiling_fast_fall_coeff
+        };
+        self.ceiling = stat.max(self.ceiling * coeff);
 
         // Update floor. It tracks the envelope clamped to the ceiling, so an
         // outlier the ceiling has refused cannot drag the floor up either.
@@ -499,6 +482,10 @@ impl AdaptiveNormalizer {
             return 0.0;
         }
         let range = (self.ceiling - self.floor).max(Self::REL_MIN_RANGE * self.ceiling);
+        if range <= 0.0 {
+            // Nothing has formed a ceiling yet; the signal is above anything seen.
+            return 1.0;
+        }
         ((envelope - self.floor) / range).clamp(0.0, 1.0)
     }
 }
