@@ -260,12 +260,13 @@ struct AdaptiveNormalizer {
     /// EMA coefficient for the anchor's rise toward the ceiling.
     anchor_rise_coeff: f32,
     /// Seconds per update, for timing overshoots.
-    interval: f32,
-    /// Elapsed processing time in seconds.
-    now: f32,
+    interval: f64,
+    /// Elapsed processing time in seconds. Accumulated in f64: an f32 sum of
+    /// millisecond steps loses the step itself after a few hours.
+    now: f64,
     /// Start times of the most recent overshoots (excursions more than
     /// `OVERSHOOT_MARGIN` above the anchor), oldest first.
-    overshoots: [f32; Self::CONFIRM_COUNT],
+    overshoots: [f64; Self::CONFIRM_COUNT],
     /// Whether the envelope is currently in an overshoot.
     in_overshoot: bool,
     /// Peak envelope of the current overshoot; the overshoot ends once the
@@ -287,7 +288,7 @@ struct AdaptiveNormalizer {
     /// EMA coefficient for ceiling decay while nothing approaches it.
     ceiling_fast_fall_coeff: f32,
     /// When the envelope last reached `CEILING_REACH` of the ceiling.
-    last_reached: f32,
+    last_reached: f64,
 }
 
 impl AdaptiveNormalizer {
@@ -321,14 +322,14 @@ impl AdaptiveNormalizer {
     /// hit never confirms; a louder passage or a cold start confirms itself
     /// in a few beats, a sustained tone by outlasting the window.
     const CONFIRM_COUNT: usize = 3;
-    const CONFIRM_WINDOW: f32 = 1.5;
+    const CONFIRM_WINDOW: f64 = 1.5;
     /// The envelope "reaches" the ceiling when it comes within this fraction
     /// of it. During any beat-driven passage that happens every beat.
     const CEILING_REACH: f32 = 0.8;
     /// Once nothing has reached the ceiling for this long the level has
     /// dropped, and the ceiling releases at `CEILING_FAST_FALL_HALFLIFE`
     /// until something reaches it again.
-    const CEILING_UNREACHED_SECS: f32 = 2.0;
+    const CEILING_UNREACHED_SECS: f64 = 2.0;
     const CEILING_FAST_FALL_HALFLIFE: f32 = 0.5;
 
     /// `pre_gain` is the fixed gain applied to this band's signal ahead of
@@ -341,7 +342,7 @@ impl AdaptiveNormalizer {
             anchor_rise_coeff: 0.99,
             interval: 0.001,
             now: 0.0,
-            overshoots: [f32::NEG_INFINITY; Self::CONFIRM_COUNT],
+            overshoots: [f64::NEG_INFINITY; Self::CONFIRM_COUNT],
             in_overshoot: false,
             overshoot_peak: 0.0,
             prev_envelope: 0.0,
@@ -369,7 +370,7 @@ impl AdaptiveNormalizer {
         self.ceiling_fast_fall_coeff =
             halflife_to_coeff(Self::CEILING_FAST_FALL_HALFLIFE, update_rate);
         self.anchor_rise_coeff = halflife_to_coeff(Self::CEILING_ANCHOR_HALFLIFE, update_rate);
-        self.interval = 1.0 / update_rate;
+        self.interval = 1.0 / f64::from(update_rate);
     }
 
     #[inline]
@@ -940,6 +941,23 @@ mod tests {
             (trim.gain - 1.0).abs() < 0.01,
             "Trim should stay at 1.0 during silence, got {:.3}",
             trim.gain
+        );
+    }
+
+    #[test]
+    fn normalizer_clock_keeps_time_after_hours() {
+        let mut norm = AdaptiveNormalizer::new(1.0);
+        norm.set_params(10.0, 5.0, 750.0);
+        // Nine hours into a show.
+        norm.now = 9.0 * 3600.0;
+        let start = norm.now;
+        for _ in 0..750 {
+            norm.process(0.5, TrackingMode::Average, TrackingMode::Limit);
+        }
+        let elapsed = norm.now - start;
+        assert!(
+            (elapsed - 1.0).abs() < 1e-3,
+            "750 updates at 750 Hz should advance the clock by 1 s, got {elapsed}"
         );
     }
 
