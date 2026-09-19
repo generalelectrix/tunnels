@@ -17,7 +17,6 @@ pub trait AudioCommands {
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
     fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
     fn set_norm_floor_mode(&mut self, mode: TrackingMode);
-    fn set_norm_ceiling_mode(&mut self, mode: TrackingMode);
     fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
@@ -225,38 +224,20 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             }
             ui.end_row();
 
-            // Auto peak level: slider + mode on one line.
+            // Auto peak level.
             ui.label("Auto Peak Level:");
-            ui.horizontal(|ui| {
-                let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
-                if ui
-                    .add(
-                        egui::Slider::new(&mut ceil_hl_s, 0.5..=15.0)
-                            .suffix(" s")
-                            .logarithmic(true),
-                    )
-                    .changed()
-                {
-                    self.commands
-                        .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
-                }
-                let mut mode = self.snapshot.norm_ceiling_mode;
-                if ui
-                    .selectable_label(mode == TrackingMode::Average, "Avg")
-                    .clicked()
-                {
-                    mode = TrackingMode::Average;
-                }
-                if ui
-                    .selectable_label(mode == TrackingMode::Limit, "Max")
-                    .clicked()
-                {
-                    mode = TrackingMode::Limit;
-                }
-                if mode != self.snapshot.norm_ceiling_mode {
-                    self.commands.set_norm_ceiling_mode(mode);
-                }
-            });
+            let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
+            if ui
+                .add(
+                    egui::Slider::new(&mut ceil_hl_s, 0.5..=15.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                self.commands
+                    .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
+            }
             ui.end_row();
 
             // Auto floor level: slider + mode on one line.
@@ -329,7 +310,6 @@ mod tests {
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_floor_mode(&mut self, _mode: TrackingMode) {}
-        fn set_norm_ceiling_mode(&mut self, _mode: TrackingMode) {}
         fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {

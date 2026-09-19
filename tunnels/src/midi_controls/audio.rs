@@ -78,11 +78,7 @@ pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutpu
         OutputSmoothing(_) => {}
         AutoTrimEnabled(_) => {}
         InputGain(v) => send(event(GAIN, gain_to_midi(v))),
-        ActiveBand(_)
-        | NormFloorHalflife(_)
-        | NormCeilingHalflife(_)
-        | NormFloorMode(_)
-        | NormCeilingMode(_) => {}
+        ActiveBand(_) | NormFloorHalflife(_) | NormCeilingHalflife(_) | NormFloorMode(_) => {}
     }
 }
 

@@ -89,7 +89,6 @@ pub struct ProcessorSettingsInner {
     /// Ceiling tracking half-life in seconds (moderate — tracks recent peaks).
     pub norm_ceiling_halflife: AtomicF32,
     pub norm_floor_mode: AtomicTrackingMode,
-    pub norm_ceiling_mode: AtomicTrackingMode,
 
     /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
     pub active_band: AtomicU32,
@@ -114,8 +113,6 @@ impl ProcessorSettingsInner {
         self.norm_ceiling_halflife.set(5.0);
         self.norm_floor_mode
             .store(TrackingMode::Average, Ordering::Relaxed);
-        self.norm_ceiling_mode
-            .store(TrackingMode::Limit, Ordering::Relaxed);
     }
 }
 
@@ -133,7 +130,6 @@ impl Default for ProcessorSettingsInner {
             norm_floor_halflife: AtomicF32::new(10.0),
             norm_ceiling_halflife: AtomicF32::new(5.0),
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
-            norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
             active_band: AtomicU32::new(0),
         }
     }
@@ -238,9 +234,9 @@ fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
     (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
 }
 
-/// Tracking mode for floor/ceiling.
+/// How the normalizer floor tracks the envelope.
 /// - Average: asymmetric EMA tracking the general level
-/// - Limit: tracks the instantaneous min (floor) or max (ceiling) with slow decay
+/// - Limit: drops instantly to the minimum and rises slowly from it
 #[derive(PartialEq, Eq)]
 #[atomic_enum::atomic_enum]
 pub enum TrackingMode {
@@ -253,7 +249,6 @@ pub enum TrackingMode {
 /// when a half-life or the update rate changes.
 struct NormalizerParams {
     floor_mode: TrackingMode,
-    ceiling_mode: TrackingMode,
     /// EMA coefficients for average-mode floor tracking.
     floor_rise_coeff: f32,
     floor_fall_coeff: f32,
@@ -277,7 +272,6 @@ impl NormalizerParams {
     fn new() -> Self {
         Self {
             floor_mode: TrackingMode::Average,
-            ceiling_mode: TrackingMode::Limit,
             floor_rise_coeff: 0.0,
             floor_fall_coeff: 0.0,
             floor_limit_rise_coeff: 0.0,
@@ -295,7 +289,6 @@ impl NormalizerParams {
     /// every buffer.
     fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: f32) {
         self.floor_mode = settings.norm_floor_mode.load(Ordering::Relaxed);
-        self.ceiling_mode = settings.norm_ceiling_mode.load(Ordering::Relaxed);
         let floor_halflife = settings.norm_floor_halflife.get();
         let ceiling_halflife = settings.norm_ceiling_halflife.get();
         if update_rate <= 0.0
@@ -391,8 +384,8 @@ struct AdaptiveNormalizer {
     floor: f32,
     ceiling: f32,
     /// A lagged copy of the ceiling that bounds how far excursions above it
-    /// can push it: in limit mode the ceiling rises to at most
-    /// `CEILING_MAX_RISE` times this anchor. The anchor follows the ceiling
+    /// can push it: the ceiling rises to at most `CEILING_MAX_RISE` times
+    /// this anchor. The anchor follows the ceiling
     /// up with `CEILING_ANCHOR_HALFLIFE` and down immediately, so excursions
     /// in quick succession share one allowance instead of compounding.
     ceiling_anchor: f32,
@@ -454,38 +447,31 @@ impl AdaptiveNormalizer {
             .overshoots
             .update(envelope, self.ceiling_anchor, self.now);
 
-        // Update ceiling.
-        match p.ceiling_mode {
-            TrackingMode::Average => {
-                // Symmetric EMA — same speed up and down.
-                self.ceiling =
-                    p.ceiling_fall_coeff * self.ceiling + (1.0 - p.ceiling_fall_coeff) * envelope;
+        // Update ceiling: a bounded instant attack that snaps only once a
+        // change of level is confirmed, and a decay that speeds up once
+        // nothing reaches it any more.
+        if envelope > self.ceiling {
+            self.last_reached = self.now;
+            if confirmed {
+                self.ceiling = envelope;
+                self.ceiling_anchor = envelope;
+            } else {
+                self.ceiling = envelope.min(self.ceiling_anchor * Self::CEILING_MAX_RISE);
             }
-            TrackingMode::Limit => {
-                if envelope > self.ceiling {
-                    self.last_reached = self.now;
-                    if confirmed {
-                        self.ceiling = envelope;
-                        self.ceiling_anchor = envelope;
-                    } else {
-                        self.ceiling = envelope.min(self.ceiling_anchor * Self::CEILING_MAX_RISE);
-                    }
-                } else {
-                    if envelope >= Self::CEILING_REACH * self.ceiling {
-                        self.last_reached = self.now;
-                    }
-                    let coeff = if self.now - self.last_reached > Self::CEILING_UNREACHED_SECS {
-                        p.ceiling_fast_fall_coeff
-                    } else {
-                        p.ceiling_fall_coeff
-                    };
-                    self.ceiling = coeff * self.ceiling + (1.0 - coeff) * envelope;
-                }
-                self.ceiling_anchor = self.ceiling_anchor.min(self.ceiling);
-                self.ceiling_anchor = p.anchor_rise_coeff * self.ceiling_anchor
-                    + (1.0 - p.anchor_rise_coeff) * self.ceiling;
+        } else {
+            if envelope >= Self::CEILING_REACH * self.ceiling {
+                self.last_reached = self.now;
             }
+            let coeff = if self.now - self.last_reached > Self::CEILING_UNREACHED_SECS {
+                p.ceiling_fast_fall_coeff
+            } else {
+                p.ceiling_fall_coeff
+            };
+            self.ceiling = coeff * self.ceiling + (1.0 - coeff) * envelope;
         }
+        self.ceiling_anchor = self.ceiling_anchor.min(self.ceiling);
+        self.ceiling_anchor =
+            p.anchor_rise_coeff * self.ceiling_anchor + (1.0 - p.anchor_rise_coeff) * self.ceiling;
 
         // Update floor. It tracks the envelope clamped to the ceiling, so an
         // outlier the ceiling has refused cannot drag the floor up either.

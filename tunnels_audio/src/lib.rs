@@ -42,7 +42,6 @@ pub struct AudioSnapshot {
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
     pub norm_floor_mode: TrackingMode,
-    pub norm_ceiling_mode: TrackingMode,
 }
 
 impl Default for AudioSnapshot {
@@ -59,7 +58,6 @@ impl Default for AudioSnapshot {
             norm_floor_halflife: Duration::from_secs(10),
             norm_ceiling_halflife: Duration::from_secs(5),
             norm_floor_mode: TrackingMode::Average,
-            norm_ceiling_mode: TrackingMode::Limit,
         }
     }
 }
@@ -148,7 +146,6 @@ impl AudioInput {
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
             norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
-            norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
         }
     }
 
@@ -198,11 +195,6 @@ impl AudioInput {
         emitter.emit_audio_state_change(NormFloorMode(
             self.processor_settings
                 .norm_floor_mode
-                .load(Ordering::Relaxed),
-        ));
-        emitter.emit_audio_state_change(NormCeilingMode(
-            self.processor_settings
-                .norm_ceiling_mode
                 .load(Ordering::Relaxed),
         ));
     }
@@ -281,11 +273,6 @@ impl AudioInput {
                     .norm_floor_mode
                     .store(v, Ordering::Relaxed);
             }
-            NormCeilingMode(v) => {
-                self.processor_settings
-                    .norm_ceiling_mode
-                    .store(v, Ordering::Relaxed);
-            }
         };
         emitter.emit_audio_state_change(sc);
     }
@@ -320,7 +307,6 @@ pub enum StateChange {
     NormFloorHalflife(Duration),
     NormCeilingHalflife(Duration),
     NormFloorMode(processor::TrackingMode),
-    NormCeilingMode(processor::TrackingMode),
 }
 
 #[derive(Debug, Clone)]
