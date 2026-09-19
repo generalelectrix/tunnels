@@ -858,90 +858,69 @@ mod tests {
         envelope_ring_buffers().producers
     }
 
-    /// An auto-trim ticking at 1 kHz, so iteration counts read as ms.
+    /// A fresh auto-trim ticking at 1 kHz, so iteration counts read as ms.
     fn trim_at_1khz() -> AutoTrim {
         let mut trim = AutoTrim::new();
         trim.set_params(1000.0);
         trim
     }
 
-    #[test]
-    fn auto_trim_boosts_quiet_signal() {
-        let mut trim = trim_at_1khz();
-        assert!((trim.gain - 1.0).abs() < 1e-6);
-
-        // A consistently quiet signal (0.2 peak) wants +14 dB, clamped to
-        // +10 dB. With a 5 s gain half-life, 30 s gets within 2% of it.
-        for _ in 0..30000 {
-            trim.update(0.2);
+    /// Feed `peak` to `trim` for `ms` milliseconds.
+    fn feed(trim: &mut AutoTrim, peak: f32, ms: usize) {
+        for _ in 0..ms {
+            trim.update(peak);
         }
-        assert!(
-            trim.gain > 2.8,
-            "Trim should boost quiet signal, got {:.3}",
-            trim.gain
-        );
-        assert!(
-            trim.gain <= AutoTrim::db_to_linear(AutoTrim::MAX_GAIN_DB) + 0.01,
-            "Trim should not exceed MAX_GAIN, got {:.3}",
-            trim.gain
-        );
     }
 
     #[test]
-    fn auto_trim_reduces_loud_signal() {
+    fn auto_trim_follows_level_and_holds_on_silence() {
+        // Right at target: stays put.
         let mut trim = trim_at_1khz();
-
-        // A consistently loud signal (1.5 peak) wants -3.5 dB. With a 5 s
-        // gain half-life, 15 s gets within 1 dB of it.
-        for _ in 0..15000 {
-            trim.update(1.5);
-        }
-        assert!(
-            trim.gain < 0.75,
-            "Trim should reduce loud signal, got {:.3}",
-            trim.gain
-        );
-        assert!(
-            trim.gain >= AutoTrim::db_to_linear(AutoTrim::MIN_GAIN_DB) - 0.01,
-            "Trim should not go below MIN_GAIN, got {:.3}",
-            trim.gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_stays_near_unity_at_target() {
-        let mut trim = trim_at_1khz();
-
-        // Feed signal right at target level.
-        for _ in 0..5000 {
-            trim.update(AutoTrim::TARGET);
-        }
+        feed(&mut trim, AutoTrim::TARGET, 5000);
         assert!(
             (trim.gain - 1.0).abs() < 0.05,
-            "Trim should stay near 1.0 for target-level signal, got {:.3}",
+            "at target the trim should hold near 1.0, got {:.3}",
             trim.gain
         );
-    }
-
-    #[test]
-    fn auto_trim_ignores_silence() {
-        let mut trim = trim_at_1khz();
 
         // Silence and idle noise sit below the silence threshold, so the
         // trim never boosts toward the target — including after music, when
         // the tracked peak is still decaying.
-        for _ in 0..500 {
-            trim.update(1.0);
-        }
-        for _ in 0..5000 {
-            trim.update(0.0);
-        }
-        for _ in 0..5000 {
-            trim.update(0.005);
-        }
+        feed(&mut trim, 0.0, 5000);
+        feed(&mut trim, 0.005, 5000);
         assert!(
             (trim.gain - 1.0).abs() < 0.01,
-            "Trim should stay at 1.0 during silence, got {:.3}",
+            "silence should leave the trim at 1.0, got {:.3}",
+            trim.gain
+        );
+
+        // A consistently quiet signal (0.2 peak) wants +14 dB, clamped to
+        // +10 dB. With a 5 s gain half-life, 30 s gets within 2% of it.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 0.2, 30000);
+        assert!(
+            trim.gain > 2.8,
+            "a quiet signal should be boosted, got {:.3}",
+            trim.gain
+        );
+        assert!(
+            trim.gain <= AutoTrim::db_to_linear(AutoTrim::MAX_GAIN_DB) + 0.01,
+            "the trim should not exceed MAX_GAIN, got {:.3}",
+            trim.gain
+        );
+
+        // A consistently loud signal (1.5 peak) wants -3.5 dB. With a 5 s
+        // gain half-life, 15 s gets within 1 dB of it.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 1.5, 15000);
+        assert!(
+            trim.gain < 0.75,
+            "a loud signal should be reduced, got {:.3}",
+            trim.gain
+        );
+        assert!(
+            trim.gain >= AutoTrim::db_to_linear(AutoTrim::MIN_GAIN_DB) - 0.01,
+            "the trim should not go below MIN_GAIN, got {:.3}",
             trim.gain
         );
     }
@@ -986,26 +965,7 @@ mod tests {
     fn processor_produces_envelope_from_sine() {
         let settings = ProcessorSettings::default();
         settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disable trim for deterministic test
-        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
-
-        // Feed a 100Hz sine for 1 second.
-        let sample_rate = 48000.0_f32;
-        let total_samples = 48000;
-        let buffer_size = 48;
-        let mut idx = 0;
-        while idx < total_samples {
-            let end = (idx + buffer_size).min(total_samples);
-            let buffer: Vec<f32> = (idx..end)
-                .map(|i| {
-                    let t = i as f32 / sample_rate;
-                    (2.0 * std::f32::consts::PI * 100.0 * t).sin() * 0.7
-                })
-                .collect();
-            processor.process(&buffer);
-            idx = end;
-        }
-
-        let envelope = settings.envelope.get();
+        let envelope = run_processor_with_sine(0.7, 100.0, 1.0, &settings);
         assert!(
             envelope > 0.3,
             "Envelope should be non-trivial after 1s of 100Hz sine, got {:.3}",

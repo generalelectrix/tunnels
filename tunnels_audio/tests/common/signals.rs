@@ -77,14 +77,21 @@ pub struct KickSignal {
     pub onsets: Vec<f32>,
 }
 
-fn kicks(secs: f32, ons: Vec<f32>, amp: impl Fn(usize, f32) -> f32, real: bool) -> KickSignal {
-    let mut signal = silence(SAMPLE_RATE, secs);
+/// A kick placed at one onset: `kick_simple` or `kick_real`.
+pub type KickFn = fn(&mut Signal, u32, f32, f32);
+
+/// `secs` of silence with one kick at each onset, at the amplitude `amp`
+/// gives for that onset's index and time.
+pub fn kicks(
+    sr: u32,
+    secs: f32,
+    ons: Vec<f32>,
+    amp: impl Fn(usize, f32) -> f32,
+    kick: KickFn,
+) -> KickSignal {
+    let mut signal = silence(sr, secs);
     for (i, &on) in ons.iter().enumerate() {
-        if real {
-            kick_real(&mut signal, SAMPLE_RATE, on, amp(i, on));
-        } else {
-            kick_simple(&mut signal, SAMPLE_RATE, on, amp(i, on));
-        }
+        kick(&mut signal, sr, on, amp(i, on));
     }
     KickSignal {
         signal,
@@ -109,7 +116,7 @@ pub fn golden_case(name: &str) -> Option<KickSignal> {
     let sr = SAMPLE_RATE;
     Some(match name {
         // Realistic kicks at 120 BPM.
-        "w04b_realkick_120" => kicks(10.0, onsets(120.0, 0.5, 10.0), |_, _| 0.8, true),
+        "w04b_realkick_120" => kicks(sr, 10.0, onsets(120.0, 0.5, 10.0), |_, _| 0.8, kick_real),
         // Simple kicks with ±20 ms random onset jitter.
         "w04e_onset_jitter_120" => {
             let mut rng = Lcg(99);
@@ -117,25 +124,27 @@ pub fn golden_case(name: &str) -> Option<KickSignal> {
                 .into_iter()
                 .map(|t| t + 0.02 * rng.next_f32())
                 .collect();
-            kicks(10.0, ons, |_, _| 0.8, false)
+            kicks(sr, 10.0, ons, |_, _| 0.8, kick_simple)
         }
         // Quiet -> loud -> quiet, 10 s each.
         "w05_quiet_loud_quiet" => kicks(
+            sr,
             30.0,
             onsets(120.0, 0.5, 30.0),
             |_, on| if (10.0..20.0).contains(&on) { 0.8 } else { 0.1 },
-            false,
+            kick_simple,
         ),
         // One 2x hit at 5 s.
         "w06_one_loud_hit" => kicks(
+            sr,
             20.0,
             onsets(120.0, 0.5, 20.0),
             |_, on| if (on - 5.0).abs() < 0.01 { 1.6 } else { 0.8 },
-            false,
+            kick_simple,
         ),
         // One-buffer 2x spike at 5.25 s, between kicks.
         "w06b_one_buffer_spike" => {
-            let mut k = kicks(20.0, onsets(120.0, 0.5, 20.0), |_, _| 0.8, false);
+            let mut k = kicks(sr, 20.0, onsets(120.0, 0.5, 20.0), |_, _| 0.8, kick_simple);
             let spike_start = (5.25 * sr as f32) as usize;
             for frame in k.signal.iter_mut().skip(spike_start).take(64) {
                 *frame = [1.6, 1.6];

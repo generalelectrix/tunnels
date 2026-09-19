@@ -32,42 +32,47 @@ mod signals;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
-use tunnels_audio::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, TrackingMode};
+use tunnels_audio::processor::{BandStages, NUM_OUTPUT_BANDS, ProcessorSettings, TrackingMode};
 
-use signals::{Lcg, Signal, kick_real, kick_simple, onsets, silence, sine};
-
-/// Whether runs use the limit-mode floor (`--floor-limit`).
-static FLOOR_LIMIT: AtomicBool = AtomicBool::new(false);
+use signals::{KickSignal, Lcg, Signal, kick_real, kick_simple, kicks, onsets, silence, sine};
 
 /// One recorded buffer.
 struct Row {
     t: f32,
     raw_peak: f32,
     trim: f32,
-    smoothed: f32,
-    floor: f32,
-    ceiling: f32,
+    /// Normalized output per band.
     bands: [f32; NUM_OUTPUT_BANDS],
-    /// Per-band (smoothed, floor, ceiling) for the wavelet bands 1..8.
-    stages: [[f32; 3]; NUM_OUTPUT_BANDS],
+    /// Intermediate stages per band.
+    stages: [BandStages; NUM_OUTPUT_BANDS],
+}
+
+impl Row {
+    /// The lowpass band's stages.
+    fn lowpass(&self) -> &BandStages {
+        &self.stages[0]
+    }
 }
 
 #[derive(Clone, Copy)]
 struct RunConfig {
     sample_rate: u32,
     frames: usize,
+    /// Run the normalizer floor in limit mode instead of average mode.
+    floor_limit: bool,
 }
 
 const PROD: RunConfig = RunConfig {
     sample_rate: 48000,
     frames: 64,
+    floor_limit: false,
 };
 
 fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
     let settings = ProcessorSettings::default();
-    if FLOOR_LIMIT.load(Ordering::Relaxed) {
+    if cfg.floor_limit {
         settings
             .norm_floor_mode
             .store(TrackingMode::Limit, Ordering::Relaxed);
@@ -85,20 +90,12 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
                 .iter()
                 .map(|f| f[0].abs().max(f[1].abs()))
                 .fold(0.0, f32::max);
-            let stages = processor.band_stages(0).expect("band 0");
-            let all_stages = std::array::from_fn(|b| {
-                let st = processor.band_stages(b).expect("band in range");
-                [st.smoothed, st.floor, st.ceiling]
-            });
             rows.push(Row {
                 t: (buf_idx * cfg.frames) as f32 / cfg.sample_rate as f32,
                 raw_peak,
                 trim: settings.auto_trim_gain.get(),
-                smoothed: stages.smoothed,
-                floor: stages.floor,
-                ceiling: stages.ceiling,
                 bands: *outputs,
-                stages: all_stages,
+                stages: std::array::from_fn(|b| processor.band_stages(b).expect("band in range")),
             });
         },
     );
@@ -115,16 +112,17 @@ fn write_csv(path: &Path, rows: &[Row]) {
     }
     s.push('\n');
     for r in rows {
+        let lp = r.lowpass();
         let _ = write!(
             s,
             "{:.5},{:.5},{:.5},{:.5},{:.5},{:.5}",
-            r.t, r.raw_peak, r.trim, r.smoothed, r.floor, r.ceiling
+            r.t, r.raw_peak, r.trim, lp.smoothed, lp.floor, lp.ceiling
         );
         for b in r.bands {
             let _ = write!(s, ",{b:.5}");
         }
         for st in &r.stages[1..] {
-            let _ = write!(s, ",{:.5},{:.5},{:.5}", st[0], st[1], st[2]);
+            let _ = write!(s, ",{:.5},{:.5},{:.5}", st.smoothed, st.floor, st.ceiling);
         }
         s.push('\n');
     }
@@ -133,15 +131,17 @@ fn write_csv(path: &Path, rows: &[Row]) {
 
 // ------------------------------------------------------------------ metrics
 
-fn band0(rows: &[Row]) -> Vec<(f32, f32)> {
-    rows.iter().map(|r| (r.t, r.bands[0])).collect()
-}
-
 fn window(rows: &[Row], from: f32, to: f32) -> impl Iterator<Item = &Row> {
     rows.iter().filter(move |r| r.t >= from && r.t < to)
 }
 
-fn stats(vals: impl Iterator<Item = f32>) -> (f32, f32, f32) {
+struct Stats {
+    mean: f32,
+    min: f32,
+    max: f32,
+}
+
+fn stats(vals: impl Iterator<Item = f32>) -> Stats {
     let mut n = 0.0_f32;
     let mut sum = 0.0_f32;
     let mut min = f32::MAX;
@@ -152,7 +152,11 @@ fn stats(vals: impl Iterator<Item = f32>) -> (f32, f32, f32) {
         min = min.min(v);
         max = max.max(v);
     }
-    (sum / n.max(1.0), min, max)
+    Stats {
+        mean: sum / n.max(1.0),
+        min,
+        max,
+    }
 }
 
 struct KickStat {
@@ -183,7 +187,7 @@ fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
                     peak = r.bands[0];
                     peak_t = r.t;
                 }
-                peak_smoothed = peak_smoothed.max(r.smoothed);
+                peak_smoothed = peak_smoothed.max(r.lowpass().smoothed);
                 for (b, v) in bands_peak.iter_mut().zip(r.bands) {
                     *b = b.max(v);
                 }
@@ -195,8 +199,8 @@ fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
                 peak_smoothed,
                 trough: if trough == f32::MAX { 0.0 } else { trough },
                 trim: at_onset.trim,
-                ceiling: at_onset.ceiling,
-                floor: at_onset.floor,
+                ceiling: at_onset.lowpass().ceiling,
+                floor: at_onset.lowpass().floor,
                 bands_peak,
                 latency_ms: (peak_t - on) * 1000.0,
             }
@@ -216,15 +220,24 @@ fn cv(vals: &[f32]) -> f32 {
 
 fn report_kicks(out: &mut String, label: &str, ks: &[KickStat]) {
     let peaks: Vec<f32> = ks.iter().map(|k| k.peak).collect();
-    let (mean, min, max) = stats(peaks.iter().copied());
-    let (tmean, tmin, tmax) = stats(ks.iter().map(|k| k.trough));
-    let (lmean, lmin, lmax) = stats(ks.iter().map(|k| k.latency_ms));
+    let p = stats(peaks.iter().copied());
+    let t = stats(ks.iter().map(|k| k.trough));
+    let l = stats(ks.iter().map(|k| k.latency_ms));
     let registered = ks.iter().filter(|k| k.peak - k.trough >= 0.2).count();
     let _ = writeln!(
         out,
-        "  {label}: {} kicks, {registered} registered (rise>=0.2)\n    band0 peak mean {mean:.3} min {min:.3} max {max:.3} CV {:.3}\n    trough mean {tmean:.3} min {tmin:.3} max {tmax:.3}\n    onset->peak latency ms mean {lmean:.1} min {lmin:.1} max {lmax:.1}",
+        "  {label}: {} kicks, {registered} registered (rise>=0.2)\n    band0 peak mean {:.3} min {:.3} max {:.3} CV {:.3}\n    trough mean {:.3} min {:.3} max {:.3}\n    onset->peak latency ms mean {:.1} min {:.1} max {:.1}",
         ks.len(),
-        cv(&peaks)
+        p.mean,
+        p.min,
+        p.max,
+        cv(&peaks),
+        t.mean,
+        t.min,
+        t.max,
+        l.mean,
+        l.min,
+        l.max
     );
     let _ = writeln!(
         out,
@@ -275,31 +288,37 @@ fn report_suppression(out: &mut String, ks: &[KickStat], event: f32) {
 }
 
 fn report_steady(out: &mut String, label: &str, rows: &[Row], from: f32, to: f32) {
-    let (bm, bmin, bmax) = stats(window(rows, from, to).map(|r| r.bands[0]));
-    let (sm, smin, smax) = stats(window(rows, from, to).map(|r| r.smoothed));
+    let b = stats(window(rows, from, to).map(|r| r.bands[0]));
+    let sm = stats(window(rows, from, to).map(|r| r.lowpass().smoothed));
     let last = window(rows, from, to).last().expect("rows in window");
     let _ = writeln!(
         out,
-        "  {label} [{from:.1}-{to:.1}s]: band0 mean {bm:.3} ripple {:.4} | smoothed mean {sm:.4} ripple {:.4} | floor {:.4} ceil {:.4} trim {:.3}",
-        bmax - bmin,
-        smax - smin,
-        last.floor,
-        last.ceiling,
+        "  {label} [{from:.1}-{to:.1}s]: band0 mean {:.3} ripple {:.4} | smoothed mean {:.4} ripple {:.4} | floor {:.4} ceil {:.4} trim {:.3}",
+        b.mean,
+        b.max - b.min,
+        sm.mean,
+        sm.max - sm.min,
+        last.lowpass().floor,
+        last.lowpass().ceiling,
         last.trim
     );
 }
 
 fn report_burst(out: &mut String, rows: &[Row], on: f32, off: f32) {
-    let b = band0(rows);
-    let peak = b
-        .iter()
-        .filter(|(t, _)| *t >= on && *t < off)
-        .map(|(_, v)| *v)
+    let peak = window(rows, on, off)
+        .map(|r| r.bands[0])
         .fold(0.0, f32::max);
     let cross = |thr: f32, from: f32, rising: bool| -> Option<f32> {
-        b.iter()
-            .find(|(t, v)| *t >= from && if rising { *v >= thr } else { *v <= thr })
-            .map(|(t, _)| *t)
+        rows.iter()
+            .find(|r| {
+                r.t >= from
+                    && if rising {
+                        r.bands[0] >= thr
+                    } else {
+                        r.bands[0] <= thr
+                    }
+            })
+            .map(|r| r.t)
     };
     let t10 = cross(0.1 * peak, on, true);
     let t90 = cross(0.9 * peak, on, true);
@@ -344,45 +363,16 @@ struct Case {
     report: Report,
 }
 
+/// A case built from a kick signal, reported as kicks plus `extra`.
 fn kick_case(
     name: &'static str,
     cfg: RunConfig,
-    secs: f32,
-    ons: Vec<f32>,
-    amp: impl Fn(usize, f32) -> f32,
-    real: bool,
+    KickSignal { signal, onsets }: KickSignal,
     extra: impl Fn(&mut String, &[KickStat], &[Row]) + 'static,
 ) -> Case {
-    let sr = cfg.sample_rate;
-    let mut sig = silence(sr, secs);
-    for (i, &on) in ons.iter().enumerate() {
-        if real {
-            kick_real(&mut sig, sr, on, amp(i, on));
-        } else {
-            kick_simple(&mut sig, sr, on, amp(i, on));
-        }
-    }
     Case {
         name,
         cfg,
-        signal: sig,
-        report: Box::new(move |out, rows| {
-            let ks = kick_stats(rows, &ons);
-            report_kicks(out, name, &ks);
-            extra(out, &ks, rows);
-        }),
-    }
-}
-
-/// A case built from one of the shared golden signals, reported as kicks.
-fn golden_kick_case(
-    name: &'static str,
-    extra: impl Fn(&mut String, &[KickStat], &[Row]) + 'static,
-) -> Case {
-    let signals::KickSignal { signal, onsets } = signals::golden_case(name).expect("golden case");
-    Case {
-        name,
-        cfg: PROD,
         signal,
         report: Box::new(move |out, rows| {
             let ks = kick_stats(rows, &onsets);
@@ -390,6 +380,19 @@ fn golden_kick_case(
             extra(out, &ks, rows);
         }),
     }
+}
+
+/// A case built from one of the shared golden signals.
+fn golden_kick_case(
+    name: &'static str,
+    extra: impl Fn(&mut String, &[KickStat], &[Row]) + 'static,
+) -> Case {
+    kick_case(
+        name,
+        PROD,
+        signals::golden_case(name).expect("golden case"),
+        extra,
+    )
 }
 
 fn suite() -> Vec<Case> {
@@ -436,8 +439,8 @@ fn suite() -> Vec<Case> {
         cfg: PROD,
         signal: sig,
         report: Box::new(|out, rows| {
-            let (_, _, max) = stats(window(rows, 0.3, 0.5).map(|r| r.bands[0]));
-            let (_, _, smax) = stats(window(rows, 0.3, 0.5).map(|r| r.smoothed));
+            let max = stats(window(rows, 0.3, 0.5).map(|r| r.bands[0])).max;
+            let smax = stats(window(rows, 0.3, 0.5).map(|r| r.lowpass().smoothed)).max;
             let _ = writeln!(
                 out,
                 "  impulse: band0 peak {max:.3}, smoothed peak {smax:.4}"
@@ -450,15 +453,21 @@ fn suite() -> Vec<Case> {
     cases.push(kick_case(
         "w04_kicks_120",
         PROD,
-        10.0,
-        onsets(120.0, 0.5, 10.0),
-        |_, _| 0.8,
-        false,
+        kicks(
+            PROD.sample_rate,
+            10.0,
+            onsets(120.0, 0.5, 10.0),
+            |_, _| 0.8,
+            kick_simple,
+        ),
         |out, ks, rows| {
             // Startup: how long until the ceiling is within 10 % of the
             // kicks it is normalizing.
             let target = 0.9 * ks[ks.len() - 1].peak_smoothed;
-            let caught = rows.iter().find(|r| r.ceiling >= target).map(|r| r.t);
+            let caught = rows
+                .iter()
+                .find(|r| r.lowpass().ceiling >= target)
+                .map(|r| r.t);
             let _ = writeln!(
                 out,
                 "    ceiling reaches 90% of kick level at {}",
@@ -484,10 +493,7 @@ fn suite() -> Vec<Case> {
     cases.push(kick_case(
         "w04c_double_hits_140",
         PROD,
-        10.0,
-        ons,
-        |_, _| 0.8,
-        true,
+        kicks(PROD.sample_rate, 10.0, ons, |_, _| 0.8, kick_real),
         |_, _, _| {},
     ));
     // W4d: ±10 % amplitude jitter.
@@ -501,10 +507,7 @@ fn suite() -> Vec<Case> {
     cases.push(kick_case(
         "w04d_jitter_120",
         PROD,
-        10.0,
-        ons,
-        move |i, _| amps[i],
-        true,
+        kicks(PROD.sample_rate, 10.0, ons, move |i, _| amps[i], kick_real),
         move |out, ks, _| {
             let _ = writeln!(out, "    input amp vs band0 peak (ratio):");
             for (k, a) in ks.iter().zip(&amps2) {
@@ -533,10 +536,13 @@ fn suite() -> Vec<Case> {
     cases.push(golden_kick_case("w04e_onset_jitter_120", |out, ks, _| {
         for b in 0..4 {
             let peaks: Vec<f32> = ks.iter().map(|k| k.bands_peak[b]).collect();
-            let (mean, min, max) = stats(peaks.iter().copied());
+            let p = stats(peaks.iter().copied());
             let _ = writeln!(
                 out,
-                "    band{b} kick peaks: mean {mean:.3} min {min:.3} max {max:.3} CV {:.3}",
+                "    band{b} kick peaks: mean {:.3} min {:.3} max {:.3} CV {:.3}",
+                p.mean,
+                p.min,
+                p.max,
                 cv(&peaks)
             );
         }
@@ -649,37 +655,46 @@ fn suite() -> Vec<Case> {
     cases.push(kick_case(
         "w12_overload_2x",
         PROD,
-        10.0,
-        onsets(120.0, 0.5, 10.0),
-        |_, _| 2.0,
-        false,
+        kicks(
+            PROD.sample_rate,
+            10.0,
+            onsets(120.0, 0.5, 10.0),
+            |_, _| 2.0,
+            kick_simple,
+        ),
         |_, _, _| {},
     ));
     // W13: 512-frame buffers.
     cases.push(kick_case(
         "w13_kicks_512frames",
         RunConfig {
-            sample_rate: 48000,
             frames: 512,
+            ..PROD
         },
-        10.0,
-        onsets(120.0, 0.5, 10.0),
-        |_, _| 0.8,
-        false,
+        kicks(
+            48000,
+            10.0,
+            onsets(120.0, 0.5, 10.0),
+            |_, _| 0.8,
+            kick_simple,
+        ),
         |_, _, _| {},
     ));
     // W14: 44.1 kHz.
     let cfg441 = RunConfig {
         sample_rate: 44100,
-        frames: 64,
+        ..PROD
     };
     cases.push(kick_case(
         "w14_kicks_44k1",
         cfg441,
-        10.0,
-        onsets(120.0, 0.5, 10.0),
-        |_, _| 0.8,
-        false,
+        kicks(
+            cfg441.sample_rate,
+            10.0,
+            onsets(120.0, 0.5, 10.0),
+            |_, _| 0.8,
+            kick_simple,
+        ),
         |_, _, _| {},
     ));
 
@@ -692,10 +707,13 @@ fn suite() -> Vec<Case> {
     cases.push(kick_case(
         "w15b_quiet_kick_alone",
         PROD,
-        20.0,
-        onsets(120.0, 0.5, 20.0),
-        |_, _| 0.3,
-        false,
+        kicks(
+            PROD.sample_rate,
+            20.0,
+            onsets(120.0, 0.5, 20.0),
+            |_, _| 0.3,
+            kick_simple,
+        ),
         |out, _, rows| report_band_peaks(out, "quiet kick alone", rows, 15.0, 20.0),
     ));
 
@@ -745,7 +763,13 @@ fn load_clip(path: &str) -> Signal {
 
 /// Per-band peak within 150 ms after each band-0 onset. An onset is a buffer
 /// where band 0 rises at least 0.2 above the minimum of the preceding 50 ms.
-fn music_kicks(rows: &[Row]) -> Vec<(f32, [f32; NUM_OUTPUT_BANDS])> {
+/// A kick detected in a recording: its onset and each band's peak after it.
+struct MusicKick {
+    onset: f32,
+    peaks: [f32; NUM_OUTPUT_BANDS],
+}
+
+fn music_kicks(rows: &[Row]) -> Vec<MusicKick> {
     let mut kicks = Vec::new();
     let mut last_onset = f32::MIN;
     for (i, r) in rows.iter().enumerate() {
@@ -764,7 +788,7 @@ fn music_kicks(rows: &[Row]) -> Vec<(f32, [f32; NUM_OUTPUT_BANDS])> {
                 *p = p.max(v);
             }
         }
-        kicks.push((r.t, peaks));
+        kicks.push(MusicKick { onset: r.t, peaks });
         last_onset = r.t;
     }
     kicks
@@ -781,14 +805,14 @@ fn rms_distance(a: &[Row], b: &[Row]) -> f32 {
         .sqrt()
 }
 
-fn run_music(out_dir: &Path, path: &str, loops: usize) {
+fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
     let clip = load_clip(path);
     let loop_len = clip.len();
     let mut signal = Vec::with_capacity(loop_len * loops);
     for _ in 0..loops {
         signal.extend_from_slice(&clip);
     }
-    let rows = run(PROD, &signal);
+    let rows = run(cfg, &signal);
     write_csv(&out_dir.join("music_loops.csv"), &rows);
 
     let buffers_per_loop = loop_len / PROD.frames;
@@ -807,13 +831,13 @@ fn run_music(out_dir: &Path, path: &str, loops: usize) {
     for l in 0..loops {
         let chunk = &rows[l * buffers_per_loop..((l + 1) * buffers_per_loop).min(rows.len())];
         let end = chunk.last().expect("rows in loop");
-        let (_, bmin, bmax) = stats(chunk.iter().map(|r| r.bands[0]));
+        let b0 = stats(chunk.iter().map(|r| r.bands[0]));
         let kicks = music_kicks(chunk).len();
         let deltas = prev_end.map(|p| {
             (
                 end.trim - p.trim,
-                end.floor - p.floor,
-                end.ceiling - p.ceiling,
+                end.lowpass().floor - p.lowpass().floor,
+                end.lowpass().ceiling - p.lowpass().ceiling,
             )
         });
         let dist = prev.map(|p| rms_distance(p, chunk));
@@ -821,14 +845,14 @@ fn run_music(out_dir: &Path, path: &str, loops: usize) {
             report,
             "  {l:>4}   {:.4}  {:.4}  {:.4} | {:>8} {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks}",
             end.trim,
-            end.floor,
-            end.ceiling,
+            end.lowpass().floor,
+            end.lowpass().ceiling,
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.0)),
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.1)),
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.2)),
             dist.map_or("-".into(), |d| format!("{d:.4}")),
-            bmin,
-            bmax
+            b0.min,
+            b0.max
         );
         prev = Some(chunk);
         prev_end = Some(end);
@@ -839,7 +863,7 @@ fn run_music(out_dir: &Path, path: &str, loops: usize) {
     const SHIFT: usize = 37;
     let mut shifted = vec![[0.0, 0.0]; SHIFT];
     shifted.extend_from_slice(&clip);
-    let shifted_rows = run(PROD, &shifted);
+    let shifted_rows = run(cfg, &shifted);
     let base_kicks = music_kicks(&rows[..buffers_per_loop]);
     let shift_kicks = music_kicks(&shifted_rows);
     let shift_secs = SHIFT as f32 / PROD.sample_rate as f32;
@@ -854,13 +878,14 @@ fn run_music(out_dir: &Path, path: &str, loops: usize) {
     let mut abs_diff = [0.0_f32; NUM_OUTPUT_BANDS];
     let mut max_ratio = [1.0_f32; NUM_OUTPUT_BANDS];
     let mut mean_peak = [0.0_f32; NUM_OUTPUT_BANDS];
-    for (t, a) in &base_kicks {
-        let Some((_, b)) = shift_kicks
+    for base in &base_kicks {
+        let Some(shifted) = shift_kicks
             .iter()
-            .find(|(ts, _)| (ts - shift_secs - t).abs() < 0.01)
+            .find(|k| (k.onset - shift_secs - base.onset).abs() < 0.01)
         else {
             continue;
         };
+        let (a, b) = (&base.peaks, &shifted.peaks);
         matched += 1;
         for band in 0..NUM_OUTPUT_BANDS {
             abs_diff[band] += (a[band] - b[band]).abs();
@@ -898,7 +923,7 @@ fn main() {
         .expect("usage: envelope_suite <out_dir> [--music <clip> --loops N]");
     let out_dir = Path::new(out_dir);
     fs::create_dir_all(out_dir).expect("create out dir");
-    FLOOR_LIMIT.store(args.iter().any(|a| a == "--floor-limit"), Ordering::Relaxed);
+    let floor_limit = args.iter().any(|a| a == "--floor-limit");
 
     if let Some(i) = args.iter().position(|a| a == "--music") {
         let path = args.get(i + 1).expect("--music <clip>");
@@ -907,13 +932,25 @@ fn main() {
             .position(|a| a == "--loops")
             .and_then(|j| args.get(j + 1))
             .map_or(6, |n| n.parse().expect("--loops N"));
-        run_music(out_dir, path, loops);
+        run_music(
+            out_dir,
+            path,
+            loops,
+            RunConfig {
+                floor_limit,
+                ..PROD
+            },
+        );
         return;
     }
 
     let mut report = String::new();
     for case in suite() {
-        let rows = run(case.cfg, &case.signal);
+        let cfg = RunConfig {
+            floor_limit,
+            ..case.cfg
+        };
+        let rows = run(cfg, &case.signal);
         write_csv(&out_dir.join(format!("{}.csv", case.name)), &rows);
         let _ = writeln!(
             report,
