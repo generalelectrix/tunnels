@@ -1,19 +1,23 @@
-//! Streaming discrete wavelet transform (DWT) using Daubechies filters.
+//! Streaming stationary wavelet transform (SWT) using Daubechies filters.
 //!
-//! Decomposes audio into octave bands in real-time. Each level splits the
-//! signal into a low and high subband via halfband FIR filters with
-//! decimation by 2. The high subband at each level is one octave-wide band.
-//! The final low subband captures everything below the lowest split.
+//! Decomposes audio into octave bands in real time. Each level splits its
+//! input into a low and high subband with a pair of halfband FIR filters;
+//! the high subband is one octave-wide band and the low subband feeds the
+//! next level. Nothing is decimated: level `k` instead dilates its filters
+//! by `2^k` (the "à trous" construction), so every band is produced at the
+//! full sample rate and the transform is shift-invariant. A subband here is
+//! exactly the decimated transform's subband computed at every phase at
+//! once, with nothing folded in from above the band.
 //!
 //! At 48kHz with 7 levels:
-//!   Level 1: 12-24 kHz (high), running at 24kHz
-//!   Level 2: 6-12 kHz (high), running at 12kHz
-//!   Level 3: 3-6 kHz (high), running at 6kHz
-//!   Level 4: 1.5-3 kHz (high), running at 3kHz
-//!   Level 5: 750-1500 Hz (high), running at 1.5kHz
-//!   Level 6: 375-750 Hz (high), running at 750Hz
-//!   Level 7: 187-375 Hz (high), running at 375Hz
-//!   Residual: 0-187 Hz (low), running at 375Hz
+//!   Level 1: 12-24 kHz (high)
+//!   Level 2: 6-12 kHz (high)
+//!   Level 3: 3-6 kHz (high)
+//!   Level 4: 1.5-3 kHz (high)
+//!   Level 5: 750-1500 Hz (high)
+//!   Level 6: 375-750 Hz (high)
+//!   Level 7: 187-375 Hz (high)
+//!   Residual: 0-187 Hz (low)
 
 /// Daubechies-4 (db4) filter coefficients — 8 taps.
 /// ~18 dB/octave transition steepness.
@@ -70,67 +74,70 @@ pub enum WaveletType {
     Daubechies8,
 }
 
-/// A single decomposition level: lowpass + highpass FIR with decimation by 2.
+/// A single decomposition level: lowpass + highpass FIR, dilated by the
+/// level's stride, producing an output for every input sample.
 struct Level {
     /// Lowpass FIR coefficients.
     lo_coeffs: Vec<f32>,
     /// Highpass FIR coefficients.
     hi_coeffs: Vec<f32>,
-    /// Delay line for input samples.
+    /// Spacing between taps in samples: `2^level`.
+    stride: usize,
+    /// Delay line for input samples, `taps * stride` long — a power of two,
+    /// so positions wrap by masking.
     delay: Vec<f32>,
     /// Write position into the delay line.
     delay_pos: usize,
-    /// Decimation phase: process output every 2nd input sample.
-    phase: bool,
 }
 
 impl Level {
-    fn new(lo_coeffs: &[f32]) -> Self {
+    fn new(lo_coeffs: &[f32], stride: usize) -> Self {
         let hi_coeffs = qmf_highpass(lo_coeffs);
-        let taps = lo_coeffs.len();
+        let len = lo_coeffs.len() * stride;
+        debug_assert!(len.is_power_of_two());
         Self {
             lo_coeffs: lo_coeffs.to_vec(),
             hi_coeffs,
-            delay: vec![0.0; taps],
+            stride,
+            delay: vec![0.0; len],
             delay_pos: 0,
-            phase: false,
         }
     }
 
-    /// Push one input sample. Returns Some((low, high)) every 2nd sample
-    /// (decimation by 2), or None on the off-phase.
+    fn set_coeffs(&mut self, lo_coeffs: &[f32]) {
+        self.lo_coeffs = lo_coeffs.to_vec();
+        self.hi_coeffs = qmf_highpass(lo_coeffs);
+        self.delay.resize(lo_coeffs.len() * self.stride, 0.0);
+        self.reset();
+    }
+
+    /// Push one input sample and return the (low, high) subband outputs.
     #[inline]
-    fn push(&mut self, sample: f32) -> Option<(f32, f32)> {
-        let taps = self.lo_coeffs.len();
+    fn push(&mut self, sample: f32) -> (f32, f32) {
+        let mask = self.delay.len() - 1;
 
-        // Write into circular delay line.
         self.delay[self.delay_pos] = sample;
-        self.delay_pos = (self.delay_pos + 1) % taps;
+        self.delay_pos = (self.delay_pos + 1) & mask;
 
-        // Only compute output every other sample.
-        self.phase = !self.phase;
-        if !self.phase {
-            return None;
-        }
-
-        // Convolve with both filters.
+        // Convolve with both filters, taps `stride` samples apart, newest
+        // sample first.
         let mut lo = 0.0_f32;
         let mut hi = 0.0_f32;
-        for k in 0..taps {
-            let idx = (self.delay_pos + taps - 1 - k) % taps;
+        let mut idx = self.delay_pos.wrapping_sub(1) & mask;
+        for (l, h) in self.lo_coeffs.iter().zip(&self.hi_coeffs) {
             let s = self.delay[idx];
-            lo += s * self.lo_coeffs[k];
-            hi += s * self.hi_coeffs[k];
+            lo += s * l;
+            hi += s * h;
+            idx = idx.wrapping_sub(self.stride) & mask;
         }
 
-        Some((lo, hi))
+        (lo, hi)
     }
 
     /// Reset the delay line to zero.
     fn reset(&mut self) {
         self.delay.fill(0.0);
         self.delay_pos = 0;
-        self.phase = false;
     }
 }
 
@@ -151,8 +158,7 @@ pub const BAND_LABELS: [&str; NUM_BANDS] = [
 /// Streaming wavelet decomposition.
 ///
 /// Push one audio sample. A callback receives `(band_index, sample)` for
-/// each band that produces output on this call. Higher bands fire every
-/// call; lower bands fire less frequently due to decimation.
+/// every band on every call.
 pub struct WaveletDecomposition {
     levels: Vec<Level>,
 }
@@ -163,7 +169,9 @@ impl WaveletDecomposition {
             WaveletType::Daubechies4 => &DB4_LO,
             WaveletType::Daubechies8 => &DB8_LO,
         };
-        let levels = (0..NUM_LEVELS).map(|_| Level::new(coeffs)).collect();
+        let levels = (0..NUM_LEVELS)
+            .map(|level| Level::new(coeffs, 1 << level))
+            .collect();
         Self { levels }
     }
 
@@ -174,30 +182,21 @@ impl WaveletDecomposition {
             WaveletType::Daubechies8 => &DB8_LO,
         };
         for level in &mut self.levels {
-            level.lo_coeffs = coeffs.to_vec();
-            level.hi_coeffs = qmf_highpass(coeffs);
-            level.delay.resize(coeffs.len(), 0.0);
-            level.reset();
+            level.set_coeffs(coeffs);
         }
     }
 
     /// Process one input sample through the decomposition tree.
-    /// Calls `on_band(band_index, sample)` for each band that produces output.
+    /// Calls `on_band(band_index, sample)` for every band.
     /// Band 0 = highest frequency (12-24kHz), band NUM_LEVELS = residual low.
     #[inline]
     pub fn push(&mut self, sample: f32, mut on_band: impl FnMut(usize, f32)) {
         let mut current = sample;
 
-        for level_idx in 0..NUM_LEVELS {
-            match self.levels[level_idx].push(current) {
-                Some((lo, hi)) => {
-                    on_band(level_idx, hi);
-                    current = lo;
-                }
-                None => {
-                    return;
-                }
-            }
+        for (level_idx, level) in self.levels.iter_mut().enumerate() {
+            let (lo, hi) = level.push(current);
+            on_band(level_idx, hi);
+            current = lo;
         }
 
         // The residual low subband from the deepest level.

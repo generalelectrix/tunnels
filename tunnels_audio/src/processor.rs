@@ -2,7 +2,7 @@
 //!
 //! Processing chains:
 //!   Lowpass: per-channel lowpass → Hilbert |z(t)| → fast envelope → slow envelope
-//!   Wavelet: mono D4 decomposition → per-band Hilbert → fast → slow envelope
+//!   Wavelet: mono undecimated D4 decomposition → per-band Hilbert → fast → slow envelope
 //!
 //! Output: 8 normalized bands (1 lowpass + 7 wavelet), selectable via `active_band`.
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
@@ -532,7 +532,7 @@ impl LowpassChannel {
 }
 
 /// Per-frequency-band processing chain for the wavelet path. Operates on
-/// the mono mix at a band-specific (decimated) sample rate.
+/// the mono mix at the full sample rate.
 struct WaveletBand {
     hilbert: HilbertTransform,
     fast_envelope: EnvelopeFollowerProcessor,
@@ -652,18 +652,11 @@ impl Processor {
             })
             .collect();
 
-        // Per-band envelope chains for the wavelet decomposition. Each band
-        // runs at a decimated sample rate (base / 2^(level+1)).
-        let base_sr = sample_rate as f32;
+        // Per-band envelope chains for the wavelet decomposition. The
+        // transform is undecimated, so every band runs at the full rate.
         let wavelet_bands = std::array::from_fn(|band| {
-            let level = if band < NUM_LEVELS {
-                band
-            } else {
-                NUM_LEVELS - 1
-            };
-            let band_sr = base_sr / (1 << (level + 1)) as f32;
             let mut band_ctx: AudioContext = AudioProcessorSettings {
-                sample_rate: band_sr,
+                sample_rate: sample_rate as f32,
                 input_channels: 1,
                 output_channels: 1,
                 ..Default::default()
