@@ -8,7 +8,7 @@ mod common;
 use common::clip;
 use std::path::Path;
 use tunnels_audio::processor::{
-    ENVELOPE_HISTORY_CAPACITY, LowpassStages, NUM_OUTPUT_BANDS, Processor, ProcessorSettings,
+    BandStages, ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings,
 };
 use tunnels_audio::ring_buffer::{EnvelopeProducer, envelope_ring_buffer};
 
@@ -18,7 +18,7 @@ const FRAMES_PER_BUFFER: usize = 64;
 /// band's output over that pass.
 struct LoopSummary {
     trim: f32,
-    stages: LowpassStages,
+    stages: BandStages,
     band0: Vec<f32>,
 }
 
@@ -51,7 +51,7 @@ fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
             }
             LoopSummary {
                 trim: settings.auto_trim_gain.get(),
-                stages: processor.lowpass_stages(),
+                stages: processor.band_stages(0),
                 band0,
             }
         })

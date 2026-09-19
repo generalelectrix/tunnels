@@ -37,6 +37,8 @@ struct Row {
     floor: f32,
     ceiling: f32,
     bands: [f32; NUM_OUTPUT_BANDS],
+    /// Per-band (smoothed, floor, ceiling) for the wavelet bands 1..8.
+    stages: [[f32; 3]; NUM_OUTPUT_BANDS],
 }
 
 #[derive(Clone, Copy)]
@@ -83,7 +85,11 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
             stream.drain_into(&mut drained);
             bands[band] = *drained.last().expect("one value per buffer");
         }
-        let stages = processor.lowpass_stages();
+        let stages = processor.band_stages(0);
+        let all_stages = std::array::from_fn(|b| {
+            let st = processor.band_stages(b);
+            [st.smoothed, st.floor, st.ceiling]
+        });
         rows.push(Row {
             t: (buf_idx * cfg.frames) as f32 / cfg.sample_rate as f32,
             raw_peak,
@@ -92,6 +98,7 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
             floor: stages.floor,
             ceiling: stages.ceiling,
             bands,
+            stages: all_stages,
         });
     }
     rows
@@ -102,6 +109,9 @@ fn write_csv(path: &Path, rows: &[Row]) {
     for b in 0..NUM_OUTPUT_BANDS {
         let _ = write!(s, ",band{b}");
     }
+    for b in 1..NUM_OUTPUT_BANDS {
+        let _ = write!(s, ",sm{b},fl{b},ceil{b}");
+    }
     s.push('\n');
     for r in rows {
         let _ = write!(
@@ -111,6 +121,9 @@ fn write_csv(path: &Path, rows: &[Row]) {
         );
         for b in r.bands {
             let _ = write!(s, ",{b:.5}");
+        }
+        for st in &r.stages[1..] {
+            let _ = write!(s, ",{:.5},{:.5},{:.5}", st[0], st[1], st[2]);
         }
         s.push('\n');
     }
@@ -485,7 +498,17 @@ fn suite() -> Vec<Case> {
         onsets(120.0, 0.5, 10.0),
         |_, _| 0.8,
         false,
-        |_, _, _| {},
+        |out, ks, rows| {
+            // Startup: how long until the ceiling is within 10 % of the
+            // kicks it is normalizing.
+            let target = 0.9 * ks[ks.len() - 1].peak_smoothed;
+            let caught = rows.iter().find(|r| r.ceiling >= target).map(|r| r.t);
+            let _ = writeln!(
+                out,
+                "    ceiling reaches 90% of kick level at {}",
+                caught.map_or("never".into(), |t| format!("{t:.2}s"))
+            );
+        },
     ));
     // W4b: realistic kicks.
     cases.push(kick_case(

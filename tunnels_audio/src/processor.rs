@@ -229,6 +229,29 @@ impl From<TrackingMode> for u32 {
 struct AdaptiveNormalizer {
     floor: f32,
     ceiling: f32,
+    /// A lagged copy of the ceiling that bounds how far excursions above it
+    /// can push it: in limit mode the ceiling rises to at most
+    /// `CEILING_MAX_RISE` times this anchor. The anchor follows the ceiling
+    /// up with `CEILING_ANCHOR_HALFLIFE` and down immediately, so excursions
+    /// in quick succession share one allowance instead of compounding.
+    ceiling_anchor: f32,
+    /// EMA coefficient for the anchor's rise toward the ceiling.
+    anchor_rise_coeff: f32,
+    /// Seconds per update, for timing overshoots.
+    interval: f32,
+    /// Elapsed processing time in seconds.
+    now: f32,
+    /// Start times of the most recent overshoots (excursions more than
+    /// `OVERSHOOT_MARGIN` above the anchor), oldest first.
+    overshoots: [f32; Self::CONFIRM_COUNT],
+    /// Whether the envelope is currently in an overshoot.
+    in_overshoot: bool,
+    /// Peak envelope of the current overshoot; the overshoot ends once the
+    /// envelope falls below `OVERSHOOT_END` times this.
+    overshoot_peak: f32,
+    /// Envelope on the previous update, so an overshoot only begins on a
+    /// rising envelope: the decaying tail of a spike never re-triggers.
+    prev_envelope: f32,
     /// Envelope level below which the band outputs zero: `NOISE_GATE` scaled
     /// by any fixed gain applied ahead of this band's envelope.
     gate: f32,
@@ -250,6 +273,29 @@ impl AdaptiveNormalizer {
     /// Input level below which the band outputs zero, so idle noise is
     /// never normalized up to full scale.
     const NOISE_GATE: f32 = 0.01;
+    /// Most the ceiling can exceed its anchor. A lone loud hit or a click
+    /// nudges the ceiling by this factor instead of setting it.
+    const CEILING_MAX_RISE: f32 = 1.2;
+    /// How quickly the anchor follows the ceiling up. Much longer than a
+    /// kick, so a kick gets one nudge and a burst of them still only a few;
+    /// a sustained excursion with no beats to confirm it compounds the nudge
+    /// at this rate.
+    const CEILING_ANCHOR_HALFLIFE: f32 = 1.0;
+    /// An overshoot is an excursion this far above the anchor. Ordinary
+    /// beat-to-beat variation in peak height stays well inside this, so only
+    /// a real jump in level counts.
+    const OVERSHOOT_MARGIN: f32 = 1.5;
+    /// An overshoot ends when the envelope falls to this fraction of the
+    /// overshoot's peak, so consecutive beats count separately even while
+    /// the ceiling is still far below them.
+    const OVERSHOOT_END: f32 = 0.5;
+    /// This many distinct overshoots within `CONFIRM_WINDOW` seconds — or
+    /// one overshoot lasting that long — confirm a real change of level: the
+    /// ceiling then snaps to the envelope instead of being nudged. One loud
+    /// hit never confirms; a louder passage or a cold start confirms itself
+    /// in a few beats, a sustained tone by outlasting the window.
+    const CONFIRM_COUNT: usize = 3;
+    const CONFIRM_WINDOW: f32 = 1.5;
 
     /// `pre_gain` is the fixed gain applied to this band's signal ahead of
     /// envelope extraction, so the gate applies at input level.
@@ -257,6 +303,14 @@ impl AdaptiveNormalizer {
         Self {
             floor: 0.0,
             ceiling: 0.001,
+            ceiling_anchor: 0.001,
+            anchor_rise_coeff: 0.99,
+            interval: 0.001,
+            now: 0.0,
+            overshoots: [f32::NEG_INFINITY; Self::CONFIRM_COUNT],
+            in_overshoot: false,
+            overshoot_peak: 0.0,
+            prev_envelope: 0.0,
             gate: Self::NOISE_GATE * pre_gain,
             floor_rise_coeff: 0.999,
             floor_fall_coeff: 0.99,
@@ -274,8 +328,11 @@ impl AdaptiveNormalizer {
         self.floor_fall_coeff = Self::halflife_to_coeff(floor_halflife * 0.2, update_rate);
         // Limit mode: instant drop to min, slow rise back.
         self.floor_limit_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
-        // Ceiling: instant attack, decays at ceiling halflife.
+        // Ceiling: instant (bounded) attack, decays at ceiling halflife.
         self.ceiling_fall_coeff = Self::halflife_to_coeff(ceiling_halflife, update_rate);
+        self.anchor_rise_coeff =
+            Self::halflife_to_coeff(Self::CEILING_ANCHOR_HALFLIFE, update_rate);
+        self.interval = 1.0 / update_rate;
     }
 
     fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
@@ -292,25 +349,27 @@ impl AdaptiveNormalizer {
         floor_mode: TrackingMode,
         ceiling_mode: TrackingMode,
     ) -> f32 {
-        // Update floor.
-        match floor_mode {
-            TrackingMode::Average => {
-                let coeff = if envelope > self.floor {
-                    self.floor_rise_coeff
-                } else {
-                    self.floor_fall_coeff
-                };
-                self.floor = coeff * self.floor + (1.0 - coeff) * envelope;
+        self.now += self.interval;
+
+        // Track overshoots: distinct excursions well above the ceiling's
+        // anchor. Several in quick succession confirm a change of level.
+        if self.in_overshoot {
+            self.overshoot_peak = self.overshoot_peak.max(envelope);
+            if envelope < Self::OVERSHOOT_END * self.overshoot_peak {
+                self.in_overshoot = false;
             }
-            TrackingMode::Limit => {
-                if envelope < self.floor {
-                    self.floor = envelope; // instant drop to minimum
-                } else {
-                    self.floor = self.floor_limit_rise_coeff * self.floor
-                        + (1.0 - self.floor_limit_rise_coeff) * envelope;
-                }
-            }
+        } else if envelope > self.ceiling_anchor * Self::OVERSHOOT_MARGIN
+            && envelope > self.prev_envelope
+        {
+            self.in_overshoot = true;
+            self.overshoot_peak = envelope;
+            self.overshoots.rotate_left(1);
+            self.overshoots[Self::CONFIRM_COUNT - 1] = self.now;
         }
+        self.prev_envelope = envelope;
+        let latest = self.overshoots[Self::CONFIRM_COUNT - 1];
+        let confirmed = self.now - self.overshoots[0] <= Self::CONFIRM_WINDOW
+            || (self.in_overshoot && self.now - latest > Self::CONFIRM_WINDOW);
 
         // Update ceiling.
         match ceiling_mode {
@@ -321,10 +380,40 @@ impl AdaptiveNormalizer {
             }
             TrackingMode::Limit => {
                 if envelope > self.ceiling {
-                    self.ceiling = envelope; // instant rise to maximum
+                    if confirmed {
+                        self.ceiling = envelope;
+                        self.ceiling_anchor = envelope;
+                    } else {
+                        self.ceiling = envelope.min(self.ceiling_anchor * Self::CEILING_MAX_RISE);
+                    }
                 } else {
                     self.ceiling = self.ceiling_fall_coeff * self.ceiling
                         + (1.0 - self.ceiling_fall_coeff) * envelope;
+                }
+                self.ceiling_anchor = self.ceiling_anchor.min(self.ceiling);
+                self.ceiling_anchor = self.anchor_rise_coeff * self.ceiling_anchor
+                    + (1.0 - self.anchor_rise_coeff) * self.ceiling;
+            }
+        }
+
+        // Update floor. It tracks the envelope clamped to the ceiling, so an
+        // outlier the ceiling has refused cannot drag the floor up either.
+        let bounded = envelope.min(self.ceiling);
+        match floor_mode {
+            TrackingMode::Average => {
+                let coeff = if bounded > self.floor {
+                    self.floor_rise_coeff
+                } else {
+                    self.floor_fall_coeff
+                };
+                self.floor = coeff * self.floor + (1.0 - coeff) * bounded;
+            }
+            TrackingMode::Limit => {
+                if bounded < self.floor {
+                    self.floor = bounded; // instant drop to minimum
+                } else {
+                    self.floor = self.floor_limit_rise_coeff * self.floor
+                        + (1.0 - self.floor_limit_rise_coeff) * bounded;
                 }
             }
         }
@@ -433,11 +522,11 @@ impl WaveletBand {
     }
 }
 
-/// The lowpass band's intermediate values as of the most recently processed
+/// One output band's intermediate values as of the most recently processed
 /// buffer: the smoothed envelope entering the normalizer, and the floor and
 /// ceiling the normalizer is currently tracking.
 #[derive(Debug, Clone, Copy)]
-pub struct LowpassStages {
+pub struct BandStages {
     pub smoothed: f32,
     pub floor: f32,
     pub ceiling: f32,
@@ -571,12 +660,22 @@ impl Processor {
         }
     }
 
-    /// Read the lowpass band's intermediate stage values.
-    pub fn lowpass_stages(&self) -> LowpassStages {
-        LowpassStages {
-            smoothed: self.lowpass_smoother.state,
-            floor: self.lowpass_normalizer.floor,
-            ceiling: self.lowpass_normalizer.ceiling,
+    /// Read an output band's intermediate stage values. Index 0 is the
+    /// lowpass band; 1..NUM_OUTPUT_BANDS are the wavelet bands in ascending
+    /// frequency order. Out-of-range indices read as band 0.
+    pub fn band_stages(&self, output_band: usize) -> BandStages {
+        if output_band == 0 || output_band >= NUM_OUTPUT_BANDS {
+            return BandStages {
+                smoothed: self.lowpass_smoother.state,
+                floor: self.lowpass_normalizer.floor,
+                ceiling: self.lowpass_normalizer.ceiling,
+            };
+        }
+        let band = &self.wavelet_bands[NUM_LEVELS - output_band];
+        BandStages {
+            smoothed: band.smoother.state,
+            floor: band.normalizer.floor,
+            ceiling: band.normalizer.ceiling,
         }
     }
 
