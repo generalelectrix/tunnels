@@ -283,6 +283,10 @@ struct AdaptiveNormalizer {
     floor_limit_rise_coeff: f32,
     /// EMA coefficient for ceiling decay.
     ceiling_fall_coeff: f32,
+    /// EMA coefficient for ceiling decay while nothing approaches it.
+    ceiling_fast_fall_coeff: f32,
+    /// When the envelope last reached `CEILING_REACH` of the ceiling.
+    last_reached: f32,
 }
 
 impl AdaptiveNormalizer {
@@ -317,6 +321,14 @@ impl AdaptiveNormalizer {
     /// in a few beats, a sustained tone by outlasting the window.
     const CONFIRM_COUNT: usize = 3;
     const CONFIRM_WINDOW: f32 = 1.5;
+    /// The envelope "reaches" the ceiling when it comes within this fraction
+    /// of it. During any beat-driven passage that happens every beat.
+    const CEILING_REACH: f32 = 0.8;
+    /// Once nothing has reached the ceiling for this long the level has
+    /// dropped, and the ceiling releases at `CEILING_FAST_FALL_HALFLIFE`
+    /// until something reaches it again.
+    const CEILING_UNREACHED_SECS: f32 = 2.0;
+    const CEILING_FAST_FALL_HALFLIFE: f32 = 0.5;
 
     /// `pre_gain` is the fixed gain applied to this band's signal ahead of
     /// envelope extraction, so the gate applies at input level.
@@ -337,6 +349,8 @@ impl AdaptiveNormalizer {
             floor_fall_coeff: 0.99,
             floor_limit_rise_coeff: 0.999,
             ceiling_fall_coeff: 0.999,
+            ceiling_fast_fall_coeff: 0.99,
+            last_reached: 0.0,
         }
     }
 
@@ -351,6 +365,8 @@ impl AdaptiveNormalizer {
         self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
         // Ceiling: instant (bounded) attack, decays at ceiling halflife.
         self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
+        self.ceiling_fast_fall_coeff =
+            halflife_to_coeff(Self::CEILING_FAST_FALL_HALFLIFE, update_rate);
         self.anchor_rise_coeff = halflife_to_coeff(Self::CEILING_ANCHOR_HALFLIFE, update_rate);
         self.interval = 1.0 / update_rate;
     }
@@ -393,6 +409,7 @@ impl AdaptiveNormalizer {
             }
             TrackingMode::Limit => {
                 if envelope > self.ceiling {
+                    self.last_reached = self.now;
                     if confirmed {
                         self.ceiling = envelope;
                         self.ceiling_anchor = envelope;
@@ -400,8 +417,15 @@ impl AdaptiveNormalizer {
                         self.ceiling = envelope.min(self.ceiling_anchor * Self::CEILING_MAX_RISE);
                     }
                 } else {
-                    self.ceiling = self.ceiling_fall_coeff * self.ceiling
-                        + (1.0 - self.ceiling_fall_coeff) * envelope;
+                    if envelope >= Self::CEILING_REACH * self.ceiling {
+                        self.last_reached = self.now;
+                    }
+                    let coeff = if self.now - self.last_reached > Self::CEILING_UNREACHED_SECS {
+                        self.ceiling_fast_fall_coeff
+                    } else {
+                        self.ceiling_fall_coeff
+                    };
+                    self.ceiling = coeff * self.ceiling + (1.0 - coeff) * envelope;
                 }
                 self.ceiling_anchor = self.ceiling_anchor.min(self.ceiling);
                 self.ceiling_anchor = self.anchor_rise_coeff * self.ceiling_anchor

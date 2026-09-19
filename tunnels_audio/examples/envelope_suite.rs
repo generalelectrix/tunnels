@@ -12,6 +12,9 @@
 //! clip N times through one processor and prints a per-loop convergence table
 //! for the adaptive parameters, plus a shift experiment: the same clip with a
 //! few samples of silence prepended, comparing per-band kick peaks.
+//!
+//! `--floor-limit` runs either mode with the normalizer floor in limit mode
+//! instead of the default average mode.
 
 // The shared codec is included by path; this binary only uses its decoder.
 #[allow(dead_code)]
@@ -22,10 +25,14 @@ use std::f32::consts::PI;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tunnels_audio::processor::{
-    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings,
+    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, TrackingMode,
 };
+
+/// Whether runs use the limit-mode floor (`--floor-limit`).
+static FLOOR_LIMIT: AtomicBool = AtomicBool::new(false);
 use tunnels_audio::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
 
 /// One recorded buffer.
@@ -57,6 +64,11 @@ type Signal = Vec<[f32; 2]>;
 
 fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
     let settings = ProcessorSettings::default();
+    if FLOOR_LIMIT.load(Ordering::Relaxed) {
+        settings
+            .norm_floor_mode
+            .store(TrackingMode::Limit, Ordering::Relaxed);
+    }
     let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
     let mut streams: Vec<EnvelopeStream> = Vec::with_capacity(NUM_OUTPUT_BANDS);
     for _ in 0..NUM_OUTPUT_BANDS {
@@ -1006,6 +1018,7 @@ fn main() {
         .expect("usage: envelope_suite <out_dir> [--music <clip> --loops N]");
     let out_dir = Path::new(out_dir);
     fs::create_dir_all(out_dir).expect("create out dir");
+    FLOOR_LIMIT.store(args.iter().any(|a| a == "--floor-limit"), Ordering::Relaxed);
 
     if let Some(i) = args.iter().position(|a| a == "--music") {
         let path = args.get(i + 1).expect("--music <clip>");
