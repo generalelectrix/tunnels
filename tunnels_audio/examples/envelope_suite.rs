@@ -284,6 +284,9 @@ fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
 fn cv(vals: &[f32]) -> f32 {
     let n = vals.len() as f32;
     let mean = vals.iter().sum::<f32>() / n;
+    if mean == 0.0 {
+        return 0.0;
+    }
     let var = vals.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / n;
     var.sqrt() / mean
 }

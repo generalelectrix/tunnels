@@ -1,8 +1,9 @@
 //! A multi-channel audio processor that derives per-band envelopes from its input.
 //!
 //! Processing chains:
-//!   Lowpass: per-channel lowpass → Hilbert |z(t)| → fast envelope → slow envelope
-//!   Wavelet: mono undecimated D4 decomposition → per-band Hilbert → fast → slow envelope
+//! Both run on the mono mix of the input channels:
+//!   Lowpass: lowpass → Hilbert |z(t)| → fast envelope → slow envelope
+//!   Wavelet: undecimated D4 decomposition → per-band Hilbert → fast → slow envelope
 //!
 //! Output: 8 normalized bands (1 lowpass + 7 wavelet), selectable via `active_band`.
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
@@ -507,15 +508,15 @@ impl SmootherCoeff {
     }
 }
 
-/// Per-audio-channel processing chain for the lowpass path.
-struct LowpassChannel {
+/// Processing chain for the lowpass path.
+struct LowpassChain {
     filter: FilterProcessor<f32>,
     hilbert: HilbertTransform,
     fast_envelope: EnvelopeFollowerProcessor,
     slow_envelope: EnvelopeFollowerProcessor,
 }
 
-impl LowpassChannel {
+impl LowpassChain {
     /// Run one input sample through the full chain:
     /// lowpass → Hilbert |z(t)| → fast envelope → slow envelope.
     fn process_sample(&mut self, sample: f32, ctx: &mut AudioContext) {
@@ -580,10 +581,10 @@ pub struct Processor {
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
 
-    /// Lowpass chain: one per audio channel.
-    lowpass: Vec<LowpassChannel>,
+    /// Lowpass chain on the mono mix.
+    lowpass: LowpassChain,
 
-    /// Output smoother for the lowpass path (applied after per-channel averaging).
+    /// Output smoother for the lowpass path.
     lowpass_smoother: OnePoleSmoother,
     /// Adaptive normalizer for the lowpass envelope.
     lowpass_normalizer: AdaptiveNormalizer,
@@ -638,19 +639,15 @@ impl Processor {
         let slow_attack = Duration::from_secs_f32(envelope_attack);
         let slow_release = Duration::from_secs_f32(envelope_release);
 
-        let lowpass = (0..n)
-            .map(|_| {
-                let mut filter = FilterProcessor::new(FilterType::LowPass);
-                filter.set_cutoff(filter_cutoff);
-                filter.m_prepare(&mut context);
-                LowpassChannel {
-                    filter,
-                    hilbert: HilbertTransform::new(),
-                    fast_envelope: make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE),
-                    slow_envelope: make_envelope(&mut context, slow_attack, slow_release),
-                }
-            })
-            .collect();
+        let mut filter = FilterProcessor::new(FilterType::LowPass);
+        filter.set_cutoff(filter_cutoff);
+        filter.m_prepare(&mut context);
+        let lowpass = LowpassChain {
+            filter,
+            hilbert: HilbertTransform::new(),
+            fast_envelope: make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE),
+            slow_envelope: make_envelope(&mut context, slow_attack, slow_release),
+        };
 
         // Per-band envelope chains for the wavelet decomposition. The
         // transform is undecimated, so every band runs at the full rate.
@@ -714,9 +711,7 @@ impl Processor {
         if new_filter_cutoff != self.filter_cutoff {
             debug!("Updating filter cutoff to {new_filter_cutoff}");
             self.filter_cutoff = new_filter_cutoff;
-            for chan in &mut self.lowpass {
-                chan.filter.set_cutoff(new_filter_cutoff);
-            }
+            self.lowpass.filter.set_cutoff(new_filter_cutoff);
         }
 
         let new_attack = self.settings.envelope_attack.get();
@@ -727,10 +722,8 @@ impl Processor {
             self.envelope_release = new_release;
             let attack = Duration::from_secs_f32(new_attack);
             let release = Duration::from_secs_f32(new_release);
-            for chan in &mut self.lowpass {
-                chan.slow_envelope.handle().set_attack(attack);
-                chan.slow_envelope.handle().set_release(release);
-            }
+            self.lowpass.slow_envelope.handle().set_attack(attack);
+            self.lowpass.slow_envelope.handle().set_release(release);
             for band in &mut self.wavelet_bands {
                 band.slow_envelope.handle().set_attack(attack);
                 band.slow_envelope.handle().set_release(release);
@@ -757,7 +750,6 @@ impl Processor {
         self.maybe_update_parameters(update_rate);
 
         let mut raw_peak: f32 = 0.0;
-        let mut input_peak: f32 = 0.0;
         let auto_trim_enabled = self.settings.auto_trim_enabled.load(Ordering::Relaxed);
 
         // Either manual gain or auto-trim, never both.
@@ -770,20 +762,20 @@ impl Processor {
         let ch_count_f = self.channel_count as f32;
 
         for frame in interleaved_buffer.chunks(self.channel_count) {
-            // Compute mono mix for wavelet input.
-            let mono = frame.iter().sum::<f32>() / ch_count_f;
-
-            for (chan, raw_sample) in self.lowpass.iter_mut().zip(frame) {
+            // Both paths run on the mono mix; the trim watches the hottest
+            // channel, since headroom is per channel.
+            let mut sum = 0.0_f32;
+            for raw_sample in frame {
                 raw_peak = raw_peak.max(raw_sample.abs());
-                let sample = *raw_sample * effective_gain;
-                input_peak = input_peak.max(sample.abs());
-                chan.process_sample(sample, &mut self.context);
+                sum += raw_sample;
             }
+            let mono = sum / ch_count_f * effective_gain;
+
+            self.lowpass.process_sample(mono, &mut self.context);
 
             // Wavelet decomposition -> per-band envelope extraction.
-            let mono_gained = mono * effective_gain;
             let bands = &mut self.wavelet_bands;
-            self.wavelet.push(mono_gained, |band, sample| {
+            self.wavelet.push(mono, |band, sample| {
                 // Skip the residual band (== lowpass, redundant with our LP chain).
                 if band == NUM_LEVELS {
                     return;
@@ -792,25 +784,18 @@ impl Processor {
             });
         }
 
-        // Update auto-trim based on the pre-gain peak (raw signal level).
-        // We feed raw_peak, not input_peak, to avoid a feedback loop where
-        // the trim adjusts based on its own output.
+        // Update auto-trim from the pre-gain peak, so that the trim never
+        // feeds back on its own output.
         if auto_trim_enabled {
             self.auto_trim.set_params(update_rate);
             self.auto_trim.update(raw_peak);
             self.settings.auto_trim_gain.set(self.auto_trim.gain);
         }
 
-        let ch_count = self.channel_count as f32;
-        let envelope = self
-            .lowpass
-            .iter()
-            .map(LowpassChannel::slow_envelope_state)
-            .sum::<f32>()
-            / ch_count;
-
         let coeff = self.smooth_coeff.get();
-        let smoothed_lowpass = self.lowpass_smoother.update(coeff, envelope);
+        let smoothed_lowpass = self
+            .lowpass_smoother
+            .update(coeff, self.lowpass.slow_envelope_state());
 
         // Normalization params (shared between lowpass and wavelet normalizers).
         let floor_hl = self.settings.norm_floor_halflife.get();
