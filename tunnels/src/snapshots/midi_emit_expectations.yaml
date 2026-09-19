@@ -283,21 +283,14 @@ anim_target/thickness: |
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 44 }, value: 0 }
 audio/auto_trim_enabled: ''
 audio/envelope: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 1, control: 0 }, value: 63 }
   CMD MM-1: Event { mapping: Mapping { event_type: ControlChange, channel: 4, control: 81 }, value: 55 }
-audio/envelope_attack: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 1, control: 2 }, value: 9 }
-audio/envelope_release: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 1, control: 3 }, value: 49 }
-audio/filter_cutoff: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 1, control: 1 }, value: 50 }
-audio/input_gain: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 1, control: 4 }, value: 38 }
+audio/envelope_attack: ''
+audio/envelope_release: ''
+audio/filter_cutoff: ''
+audio/input_gain: ''
 audio/monitor_off: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 1, control: 4 }, value: 0 }
   CMD MM-1: Event { mapping: Mapping { event_type: NoteOn, channel: 4, control: 18 }, value: 0 }
 audio/monitor_on: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 1, control: 4 }, value: 1 }
   CMD MM-1: Event { mapping: Mapping { event_type: NoteOn, channel: 4, control: 18 }, value: 1 }
 audio/output_smoothing: ''
 clock/ch0_level: |
