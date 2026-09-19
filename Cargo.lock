@@ -646,16 +646,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "augmented-dsp-filters"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "510993d8f1a334fef32da30c5d93992c1bb39938b8f21db232d34db0fca6e5ce"
-dependencies = [
- "audio-processor-traits",
- "num",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6030,7 +6020,6 @@ dependencies = [
  "atomic_enum",
  "audio-processor-analysis",
  "audio-processor-traits",
- "augmented-dsp-filters",
  "cpal",
  "log",
  "postcard",

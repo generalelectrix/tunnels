@@ -1,15 +1,14 @@
 //! A multi-channel audio processor that derives per-band envelopes from its input.
 //!
 //! Processing chains:
-//! Both run on the mono mix of the input channels:
-//!   Lowpass: lowpass → Hilbert |z(t)| → fast envelope → slow envelope
-//!   Wavelet: undecimated D4 decomposition → per-band Hilbert → fast → slow envelope
+//! On the mono mix of the input channels: undecimated D4 decomposition into
+//! seven octave bands and the sub-bass residual → per-band Hilbert |z(t)| →
+//! fast envelope → slow envelope → smoother → adaptive normalizer.
 //!
-//! Output: 8 normalized bands (1 lowpass + 7 wavelet), selectable via `active_band`.
+//! Output: 8 normalized bands (residual + 7 octaves), selectable via `active_band`.
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
 use audio_processor_traits::AudioProcessorSettings;
 use audio_processor_traits::{AtomicF32, AudioContext, simple_processor::MonoAudioProcessor};
-use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -23,13 +22,13 @@ use crate::wavelet::{NUM_LEVELS, WaveletDecomposition};
 const FAST_ATTACK: Duration = Duration::from_millis(1);
 const FAST_RELEASE: Duration = Duration::new(0, 4_000_000); // 4ms
 
-/// Number of output bands: 1 lowpass sub-bass + 7 wavelet bands.
+/// Number of output bands: the sub-bass residual + 7 octave bands.
 pub const NUM_OUTPUT_BANDS: usize = 8;
 
 /// Ring buffer capacity: ~16 seconds of history at ~1kHz buffer rate.
 pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
-/// Band labels in frequency-ascending output order (index 0 = lowpass sub-bass).
+/// Band labels in frequency-ascending output order (index 0 = sub-bass residual).
 pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
 
 /// The envelope ring buffers for every output band: the producers feed a
@@ -72,7 +71,6 @@ impl UpdateRate {
 pub struct ProcessorSettingsInner {
     /// Current envelope value for the show loop (from active_band).
     pub envelope: AtomicF32,
-    pub filter_cutoff: AtomicF32,    // Hz
     pub envelope_attack: AtomicF32,  // sec (slow stage)
     pub envelope_release: AtomicF32, // sec (slow stage)
     /// Input signal gain multiplier (linear scale).
@@ -86,19 +84,17 @@ pub struct ProcessorSettingsInner {
     pub norm_ceiling_halflife: AtomicF32,
     pub norm_floor_mode: AtomicTrackingMode,
 
-    /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
+    /// Which band feeds `envelope`: 0 = sub-bass residual, 1-7 = octave bands.
     pub active_band: AtomicU32,
 }
 
 impl ProcessorSettingsInner {
-    const DEFAULT_FILTER_CUTOFF: f32 = 187.;
     const DEFAULT_ENVELOPE_ATTACK: f32 = 0.010;
     const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
     const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
 
     pub fn reset_defaults(&self) {
-        self.filter_cutoff.set(Self::DEFAULT_FILTER_CUTOFF);
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
@@ -115,7 +111,6 @@ impl Default for ProcessorSettingsInner {
     fn default() -> Self {
         Self {
             envelope: AtomicF32::new(0.0),
-            filter_cutoff: AtomicF32::new(Self::DEFAULT_FILTER_CUTOFF),
             envelope_attack: AtomicF32::new(Self::DEFAULT_ENVELOPE_ATTACK),
             envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
             gain: AtomicF32::new(1.0),
@@ -503,7 +498,6 @@ pub struct BandStages {
 
 pub struct Processor {
     settings: ProcessorSettings,
-    filter_cutoff: f32,
     envelope_attack: f32,
     envelope_release: f32,
     channel_count: usize,
@@ -512,13 +506,11 @@ pub struct Processor {
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
 
-    /// Lowpass filter feeding band 0.
-    lowpass_filter: FilterProcessor<f32>,
-    /// Wavelet decomposition feeding bands 1..NUM_OUTPUT_BANDS.
+    /// Wavelet decomposition feeding every band.
     wavelet: WaveletDecomposition,
     /// One envelope chain per output band, in output order: 0 is the
-    /// lowpass band, 1..NUM_OUTPUT_BANDS the wavelet bands in ascending
-    /// frequency order.
+    /// residual sub-bass band, 1..NUM_OUTPUT_BANDS the octave bands in
+    /// ascending frequency order.
     bands: [BandChain; NUM_OUTPUT_BANDS],
     /// Cached smoother coefficient shared across every band's smoother.
     smooth_coeff: SmootherCoeff,
@@ -527,7 +519,7 @@ pub struct Processor {
 }
 
 /// The output band that wavelet level `level` feeds: levels count down from
-/// the highest octave, output bands count up from the lowpass band.
+/// the highest octave, output bands count up from the residual.
 fn output_band_of_level(level: usize) -> usize {
     NUM_LEVELS - level
 }
@@ -558,28 +550,21 @@ impl Processor {
         .into();
         let n = context.settings.input_channels;
 
-        let filter_cutoff = handle.filter_cutoff.get();
         let envelope_attack = handle.envelope_attack.get();
         let envelope_release = handle.envelope_release.get();
         let slow_attack = Duration::from_secs_f32(envelope_attack);
         let slow_release = Duration::from_secs_f32(envelope_release);
 
-        let mut lowpass_filter = FilterProcessor::new(FilterType::LowPass);
-        lowpass_filter.set_cutoff(filter_cutoff);
-        lowpass_filter.m_prepare(&mut context);
-
         let bands =
             std::array::from_fn(|_| BandChain::new(&mut context, slow_attack, slow_release));
 
         Self {
-            filter_cutoff,
             envelope_attack,
             envelope_release,
             settings: handle,
             channel_count: n,
             context,
             envelope_producers,
-            lowpass_filter,
             wavelet: WaveletDecomposition::new(),
             bands,
             smooth_coeff: SmootherCoeff::default(),
@@ -588,20 +573,13 @@ impl Processor {
     }
 
     /// Read an output band's intermediate stage values. Index 0 is the
-    /// lowpass band; 1..NUM_OUTPUT_BANDS are the wavelet bands in ascending
-    /// frequency order.
+    /// sub-bass residual; 1..NUM_OUTPUT_BANDS are the octave bands in
+    /// ascending frequency order.
     pub fn band_stages(&self, output_band: usize) -> Option<BandStages> {
         self.bands.get(output_band).map(BandChain::stages)
     }
 
     fn maybe_update_parameters(&mut self, update_rate: f32) {
-        let new_filter_cutoff = self.settings.filter_cutoff.get();
-        if new_filter_cutoff != self.filter_cutoff {
-            debug!("Updating filter cutoff to {new_filter_cutoff}");
-            self.filter_cutoff = new_filter_cutoff;
-            self.lowpass_filter.set_cutoff(new_filter_cutoff);
-        }
-
         let new_attack = self.settings.envelope_attack.get();
         let new_release = self.settings.envelope_release.get();
         if new_attack != self.envelope_attack || new_release != self.envelope_release {
@@ -642,16 +620,9 @@ impl Processor {
             // Both paths run on the mono mix.
             let mono = frame.iter().sum::<f32>() / ch_count_f * gain;
 
-            let filtered = self.lowpass_filter.m_process(&mut self.context, mono);
-            self.bands[0].process_sample(filtered, &mut self.context);
-
             let bands = &mut self.bands;
             let ctx = &mut self.context;
             self.wavelet.push(mono, |level, sample| {
-                // The residual is the lowpass band's job.
-                if level == NUM_LEVELS {
-                    return;
-                }
                 bands[output_band_of_level(level)].process_sample(sample, ctx);
             });
         }

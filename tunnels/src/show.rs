@@ -936,7 +936,6 @@ mod test {
             au("audio/monitor_on", AU::Monitor(true));
             au("audio/monitor_off", AU::Monitor(false));
             au("audio/envelope", AU::EnvelopeValue(uni));
-            au("audio/filter_cutoff", AU::FilterCutoff(440.0));
             au(
                 "audio/envelope_attack",
                 AU::EnvelopeAttack(Duration::from_millis(10)),

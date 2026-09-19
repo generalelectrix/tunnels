@@ -22,14 +22,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
         let _ = self.ctx.send_command(MetaCommand::SetAudioDevice(device));
     }
 
-    fn set_filter_cutoff(&mut self, hz: f32) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::FilterCutoff(hz),
-            )));
-    }
-
     fn set_envelope_attack(&mut self, duration: Duration) {
         let _ = self
             .ctx

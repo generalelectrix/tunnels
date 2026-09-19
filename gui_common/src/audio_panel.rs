@@ -7,7 +7,6 @@ use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
     fn set_device(&mut self, device: Option<String>);
-    fn set_filter_cutoff(&mut self, hz: f32);
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
@@ -124,21 +123,6 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
                 .changed()
             {
                 self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
-            }
-            ui.end_row();
-
-            // Lowpass cutoff.
-            ui.label("Lowpass:");
-            let mut cutoff = self.snapshot.filter_cutoff_hz;
-            if ui
-                .add(
-                    egui::Slider::new(&mut cutoff, 40.0..=240.0)
-                        .suffix(" Hz")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands.set_filter_cutoff(cutoff);
             }
             ui.end_row();
 
@@ -288,7 +272,6 @@ mod tests {
 
     impl AudioCommands for MockAudioCommands {
         fn set_device(&mut self, _device: Option<String>) {}
-        fn set_filter_cutoff(&mut self, _hz: f32) {}
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}

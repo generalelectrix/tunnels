@@ -43,7 +43,6 @@ pub struct EnvelopeStreams {
 #[derive(Debug, Clone)]
 pub struct AudioSnapshot {
     pub device_name: String,
-    pub filter_cutoff_hz: f32,
     pub envelope_attack: Duration,
     pub envelope_release: Duration,
     pub output_smoothing: Duration,
@@ -58,7 +57,6 @@ impl Default for AudioSnapshot {
     fn default() -> Self {
         Self {
             device_name: OFFLINE_DEVICE_NAME.to_string(),
-            filter_cutoff_hz: 200.0,
             envelope_attack: Duration::from_millis(10),
             envelope_release: Duration::from_millis(50),
             output_smoothing: Duration::from_millis(8),
@@ -145,7 +143,6 @@ impl AudioInput {
         let ps = &self.processor_settings;
         AudioSnapshot {
             device_name: self.device_name.clone(),
-            filter_cutoff_hz: ps.filter_cutoff.get(),
             envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
             envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
             output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
@@ -175,7 +172,6 @@ impl AudioInput {
         use StateChange::*;
         emitter.emit_audio_state_change(EnvelopeValue(self.envelope_value));
         emitter.emit_audio_state_change(Monitor(self.monitor));
-        emitter.emit_audio_state_change(FilterCutoff(self.processor_settings.filter_cutoff.get()));
         emitter.emit_audio_state_change(EnvelopeAttack(Duration::from_secs_f32(
             self.processor_settings.envelope_attack.get(),
         )));
@@ -227,13 +223,6 @@ impl AudioInput {
         match sc {
             EnvelopeValue(_) => return, // output only
             Monitor(v) => self.monitor = v,
-            FilterCutoff(v) => {
-                if v <= 0. {
-                    warn!("Invalid filter cutoff frequency {v} (<= 0).");
-                    return;
-                }
-                self.processor_settings.filter_cutoff.set(v);
-            }
             EnvelopeAttack(v) => self.processor_settings.envelope_attack.set(v.as_secs_f32()),
             EnvelopeRelease(v) => self
                 .processor_settings
@@ -295,7 +284,6 @@ impl AudioInput {
 pub enum StateChange {
     Monitor(bool),
     EnvelopeValue(UnipolarFloat),
-    FilterCutoff(f32),
     EnvelopeAttack(Duration),
     EnvelopeRelease(Duration),
     OutputSmoothing(Duration),

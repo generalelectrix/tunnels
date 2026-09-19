@@ -33,17 +33,32 @@ const DB4_DEC_LO: [f32; 8] = [
     0.230_377_81,
 ];
 
+/// The orthonormal taps have a passband gain of √2 per level; scaled by
+/// this, every band has unit passband gain, so a level means the same in
+/// each and the residual is not 2^(levels/2) louder than its input.
+const UNIT_GAIN: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
 /// The lowpass taps as applied, newest sample first. Daubechies filters are
 /// not linear phase, so orientation sets the group delay: with the large
 /// taps on the newest samples each level delays by about one stride, with
 /// them on the oldest by about six. Nothing is reconstructed from these
 /// bands, so the low-delay orientation costs nothing; magnitude response is
 /// identical either way.
-const DB4_LO: [f32; 8] = reversed(DB4_DEC_LO);
+const DB4_LO: [f32; 8] = scaled(reversed(DB4_DEC_LO), UNIT_GAIN);
 
 /// The highpass taps, from the QMF relation `h[n] = (-1)^n g[N-1-n]` on the
 /// conventional lowpass, which already puts the large taps first.
-const DB4_HI: [f32; 8] = qmf_highpass(DB4_DEC_LO);
+const DB4_HI: [f32; 8] = scaled(qmf_highpass(DB4_DEC_LO), UNIT_GAIN);
+
+const fn scaled<const N: usize>(taps: [f32; N], by: f32) -> [f32; N] {
+    let mut out = [0.0; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = taps[i] * by;
+        i += 1;
+    }
+    out
+}
 
 const fn reversed<const N: usize>(taps: [f32; N]) -> [f32; N] {
     let mut out = [0.0; N];
@@ -126,10 +141,10 @@ pub const NUM_LEVELS: usize = 7;
 pub const NUM_BANDS: usize = NUM_LEVELS + 1;
 
 /// Band labels in frequency-ascending order, matching the output band indices
-/// used by the processor (index 0 = lowpass sub-bass, 7 = highest wavelet band).
+/// used by the processor (index 0 = the residual, 7 = highest octave band).
 /// Valid for 48kHz sample rate with NUM_LEVELS = 7.
 pub const BAND_LABELS: [&str; NUM_BANDS] = [
-    "Lowpass", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
+    "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
 ];
 
 /// Streaming wavelet decomposition.

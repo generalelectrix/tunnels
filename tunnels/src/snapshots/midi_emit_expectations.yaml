@@ -285,7 +285,6 @@ audio/envelope: |
   CMD MM-1: Event { mapping: Mapping { event_type: ControlChange, channel: 4, control: 81 }, value: 55 }
 audio/envelope_attack: ''
 audio/envelope_release: ''
-audio/filter_cutoff: ''
 audio/input_gain: ''
 audio/monitor_off: |
   CMD MM-1: Event { mapping: Mapping { event_type: NoteOn, channel: 4, control: 18 }, value: 0 }
