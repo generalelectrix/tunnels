@@ -126,39 +126,46 @@ pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
 ///
 /// Slews in dB (log) space so that equal perceptual changes (+6 dB vs -6 dB)
 /// take equal time at the same coefficient, independent of the current gain.
+/// All time constants are in seconds and derived from the update rate.
 struct AutoTrim {
-    /// Tracked peak level, decays slowly toward zero.
+    /// Tracked peak level: instant attack, slow decay.
     peak_tracker: f32,
     /// Current trim gain in dB.
     gain_db: f32,
     /// Current trim gain as a linear multiplier (cached from gain_db).
     gain: f32,
-    /// The clamped target gain the slew is heading toward (linear).
-    desired_gain: f32,
+    /// Update rate the cached coefficients were derived for.
+    update_rate: f32,
+    peak_fall_coeff: f32,
+    gain_coeff: f32,
 }
 
 impl AutoTrim {
-    /// Target peak level. Unity — downstream is all floating point,
-    /// so brief transient overshoot just means the envelope exceeds 1.0
-    /// momentarily (clamped at final output). The 20:1 asymmetry between
-    /// up (20s) and down (0.5s) time constants prevents oscillation.
+    /// Target peak level. Unity — downstream is all floating point, and a
+    /// momentary overshoot is harmless.
     const TARGET: f32 = 1.0;
     /// Gain range in dB.
     const MIN_GAIN_DB: f32 = -10.0;
     const MAX_GAIN_DB: f32 = 10.0;
-    /// Peak tracker release time constant (~10s at 1kHz buffer rate).
-    const PEAK_RELEASE_COEFF: f32 = 0.9999;
-    /// Gain adjustment rate upward: slow (~20s time constant at 1kHz).
-    const GAIN_UP_COEFF: f32 = 0.99995;
-    /// Gain adjustment rate downward: faster (~0.5s time constant at 1kHz).
-    const GAIN_DOWN_COEFF: f32 = 0.998;
+    /// Peak tracker fall half-life.
+    const PEAK_FALL_HALFLIFE: f32 = 10.0;
+    /// Gain slew half-life, the same in both directions. Overshoot is
+    /// harmless, so there is nothing to race toward, and the normalizers
+    /// downstream follow a slow change of level transparently, so a stray
+    /// peak that pulls the tracker up costs only a gentle, brief dip.
+    const GAIN_HALFLIFE: f32 = 5.0;
+    /// Buffer peak below which the trim holds still, so silence and idle
+    /// noise are never boosted toward the target.
+    const SILENCE: f32 = 0.01;
 
     fn new() -> Self {
         Self {
             peak_tracker: 0.0,
             gain_db: 0.0,
             gain: 1.0,
-            desired_gain: 1.0,
+            update_rate: 0.0,
+            peak_fall_coeff: 0.0,
+            gain_coeff: 0.0,
         }
     }
 
@@ -170,36 +177,50 @@ impl AutoTrim {
         20.0 * lin.log10()
     }
 
+    /// Refresh the cached coefficients for the update rate. Safe to call
+    /// every buffer.
+    fn set_params(&mut self, update_rate: f32) {
+        if update_rate == self.update_rate {
+            return;
+        }
+        self.update_rate = update_rate;
+        self.peak_fall_coeff = halflife_to_coeff(Self::PEAK_FALL_HALFLIFE, update_rate);
+        self.gain_coeff = halflife_to_coeff(Self::GAIN_HALFLIFE, update_rate);
+    }
+
     /// Update the trim based on the peak level observed in this buffer.
     /// Returns the current trim gain to apply.
     fn update(&mut self, buffer_peak: f32) -> f32 {
-        // Track the peak: instant attack, slow release.
+        if buffer_peak < Self::SILENCE {
+            return self.gain;
+        }
+
         if buffer_peak > self.peak_tracker {
             self.peak_tracker = buffer_peak;
         } else {
-            self.peak_tracker = Self::PEAK_RELEASE_COEFF * self.peak_tracker
-                + (1.0 - Self::PEAK_RELEASE_COEFF) * buffer_peak;
+            self.peak_tracker = self.peak_fall_coeff * self.peak_tracker
+                + (1.0 - self.peak_fall_coeff) * buffer_peak;
         }
 
-        // Compute desired gain in dB to bring tracked peak to target.
-        if self.peak_tracker > 0.001 {
-            let desired_linear = Self::TARGET / self.peak_tracker;
-            let desired_db =
-                Self::linear_to_db(desired_linear).clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
-            self.desired_gain = Self::db_to_linear(desired_db);
-
-            // Slew in dB space: slow up, fast down.
-            let coeff = if desired_db > self.gain_db {
-                Self::GAIN_UP_COEFF
-            } else {
-                Self::GAIN_DOWN_COEFF
-            };
-            self.gain_db = coeff * self.gain_db + (1.0 - coeff) * desired_db;
+        {
+            let desired_db = Self::linear_to_db(Self::TARGET / self.peak_tracker)
+                .clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
+            self.gain_db = self.gain_coeff * self.gain_db + (1.0 - self.gain_coeff) * desired_db;
             self.gain = Self::db_to_linear(self.gain_db);
         }
 
         self.gain
     }
+}
+
+/// One-pole EMA coefficient that halves the distance to the target every
+/// `halflife_secs` at `update_rate` updates per second. A non-positive
+/// half-life means no smoothing.
+fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
+    if halflife_secs <= 0.0 || update_rate <= 0.0 {
+        return 0.0;
+    }
+    (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
 }
 
 /// Tracking mode for floor/ceiling.
@@ -324,22 +345,14 @@ impl AdaptiveNormalizer {
             return;
         }
         // Average mode: slow rise, faster fall.
-        self.floor_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
-        self.floor_fall_coeff = Self::halflife_to_coeff(floor_halflife * 0.2, update_rate);
+        self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_fall_coeff = halflife_to_coeff(floor_halflife * 0.2, update_rate);
         // Limit mode: instant drop to min, slow rise back.
-        self.floor_limit_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
         // Ceiling: instant (bounded) attack, decays at ceiling halflife.
-        self.ceiling_fall_coeff = Self::halflife_to_coeff(ceiling_halflife, update_rate);
-        self.anchor_rise_coeff =
-            Self::halflife_to_coeff(Self::CEILING_ANCHOR_HALFLIFE, update_rate);
+        self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
+        self.anchor_rise_coeff = halflife_to_coeff(Self::CEILING_ANCHOR_HALFLIFE, update_rate);
         self.interval = 1.0 / update_rate;
-    }
-
-    fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
-        if halflife_secs <= 0.0 {
-            return 0.0;
-        }
-        (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
     }
 
     #[inline]
@@ -766,6 +779,7 @@ impl Processor {
         // We feed raw_peak, not input_peak, to avoid a feedback loop where
         // the trim adjusts based on its own output.
         if auto_trim_enabled {
+            self.auto_trim.set_params(update_rate);
             self.auto_trim.update(raw_peak);
             self.settings.auto_trim_gain.set(self.auto_trim.gain);
         }
@@ -839,19 +853,25 @@ mod tests {
         producers.try_into().ok().expect("correct count")
     }
 
+    /// An auto-trim ticking at 1 kHz, so iteration counts read as ms.
+    fn trim_at_1khz() -> AutoTrim {
+        let mut trim = AutoTrim::new();
+        trim.set_params(1000.0);
+        trim
+    }
+
     #[test]
     fn auto_trim_boosts_quiet_signal() {
-        let mut trim = AutoTrim::new();
+        let mut trim = trim_at_1khz();
         assert!((trim.gain - 1.0).abs() < 1e-6);
 
-        // Feed a consistently quiet signal (0.2 peak) for many buffers.
-        // The upward adjustment is very slow (~20s at 1kHz), so we need
-        // ~30000 iterations to see significant movement.
+        // A consistently quiet signal (0.2 peak) wants +14 dB, clamped to
+        // +10 dB. With a 5 s gain half-life, 30 s gets within 2% of it.
         for _ in 0..30000 {
             trim.update(0.2);
         }
         assert!(
-            trim.gain > 1.3,
+            trim.gain > 2.8,
             "Trim should boost quiet signal, got {:.3}",
             trim.gain
         );
@@ -864,15 +884,15 @@ mod tests {
 
     #[test]
     fn auto_trim_reduces_loud_signal() {
-        let mut trim = AutoTrim::new();
+        let mut trim = trim_at_1khz();
 
-        // Feed a consistently loud signal (1.5 peak) for many buffers.
-        // Desired = 0.85 / 1.5 ≈ 0.567.
-        for _ in 0..5000 {
+        // A consistently loud signal (1.5 peak) wants -3.5 dB. With a 5 s
+        // gain half-life, 15 s gets within 1 dB of it.
+        for _ in 0..15000 {
             trim.update(1.5);
         }
         assert!(
-            trim.gain < 0.7,
+            trim.gain < 0.75,
             "Trim should reduce loud signal, got {:.3}",
             trim.gain
         );
@@ -885,7 +905,7 @@ mod tests {
 
     #[test]
     fn auto_trim_stays_near_unity_at_target() {
-        let mut trim = AutoTrim::new();
+        let mut trim = trim_at_1khz();
 
         // Feed signal right at target level.
         for _ in 0..5000 {
@@ -899,37 +919,20 @@ mod tests {
     }
 
     #[test]
-    fn auto_trim_downward_is_faster_than_upward() {
-        // Start from unity, feed loud signal, measure convergence speed.
-        let mut trim_down = AutoTrim::new();
-        for _ in 0..500 {
-            trim_down.update(1.5);
-        }
-        let down_deviation = (trim_down.gain - 1.0).abs();
-
-        // Start from unity, feed quiet signal, measure convergence speed.
-        let mut trim_up = AutoTrim::new();
-        for _ in 0..500 {
-            trim_up.update(0.2);
-        }
-        let up_deviation = (trim_up.gain - 1.0).abs();
-
-        assert!(
-            down_deviation > up_deviation,
-            "Downward adjustment ({:.4}) should be faster than upward ({:.4})",
-            down_deviation,
-            up_deviation
-        );
-    }
-
-    #[test]
     fn auto_trim_ignores_silence() {
-        let mut trim = AutoTrim::new();
+        let mut trim = trim_at_1khz();
 
-        // Feed silence — trim should stay at 1.0 (peak tracker stays near 0,
-        // which is below the 0.001 threshold).
+        // Silence and idle noise sit below the silence threshold, so the
+        // trim never boosts toward the target — including after music, when
+        // the tracked peak is still decaying.
+        for _ in 0..500 {
+            trim.update(1.0);
+        }
         for _ in 0..5000 {
             trim.update(0.0);
+        }
+        for _ in 0..5000 {
+            trim.update(0.005);
         }
         assert!(
             (trim.gain - 1.0).abs() < 0.01,
@@ -1020,8 +1023,7 @@ mod tests {
     fn auto_trim_converges_quiet_signal_through_processor() {
         // Feed a quiet 100Hz sine (amplitude 0.1) through the full processor
         // with auto-trim enabled. Desired gain = 1.0/0.1 = +20 dB, clamped
-        // to +10 dB (3.162x). With a 20s upward time constant, 30s gets us
-        // ~78% of the way in dB space (0 dB toward +10 dB ≈ +7.8 dB ≈ 2.45x).
+        // to +10 dB (3.162x). With a 5 s half-life, 30 s gets within 2%.
         let settings = ProcessorSettings::default();
 
         let _envelope = run_processor_with_sine(0.1, 100.0, 30.0, &settings);
@@ -1066,9 +1068,9 @@ mod tests {
         // Expected: gain ≈ TARGET / amplitude = 1.0 / 0.4 = 2.5
         let expected = AutoTrim::TARGET / amplitude;
 
-        // With a 20s upward time constant and 30s of signal, we reach ~78%
-        // of the way from 1.0 to the target. Allow enough tolerance for that,
-        // but catch the feedback loop bug (which converges near 1.0).
+        // With a 5 s half-life and 30 s of signal the gain is within 2% of
+        // the target. Allow generous tolerance, but catch the feedback loop
+        // bug (which converges near 1.0).
         let min_expected = 1.0 + (expected - 1.0) * 0.5; // at least halfway there
         assert!(
             trim_gain > min_expected,

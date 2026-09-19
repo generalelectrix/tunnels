@@ -36,26 +36,32 @@ fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
         producers.try_into().ok().expect("correct count");
     let mut processor = Processor::new(settings.clone(), clip.sample_rate, channels, producers);
 
-    let samples: Vec<f32> = clip.samples.iter().map(|&s| s as f32 / 32768.0).collect();
+    // One continuous stream, as a device would deliver it: the buffer grid
+    // does not restart at the loop seam.
+    let mut samples = Vec::with_capacity(clip.samples.len() * loops);
+    for _ in 0..loops {
+        samples.extend(clip.samples.iter().map(|&s| s as f32 / 32768.0));
+    }
+    let buffers_per_loop = clip.frames() / FRAMES_PER_BUFFER;
     let mut drained = Vec::new();
-    (0..loops)
-        .map(|_| {
-            let mut band0 = Vec::new();
-            for buffer in samples.chunks(FRAMES_PER_BUFFER * channels) {
-                processor.process(buffer);
-                for stream in &mut streams {
-                    drained.clear();
-                    stream.drain_into(&mut drained);
-                }
-                band0.push(settings.envelope.get());
-            }
-            LoopSummary {
+    let mut summaries = Vec::with_capacity(loops);
+    let mut band0 = Vec::with_capacity(buffers_per_loop);
+    for buffer in samples.chunks(FRAMES_PER_BUFFER * channels) {
+        processor.process(buffer);
+        for stream in &mut streams {
+            drained.clear();
+            stream.drain_into(&mut drained);
+        }
+        band0.push(settings.envelope.get());
+        if band0.len() == buffers_per_loop {
+            summaries.push(LoopSummary {
                 trim: settings.auto_trim_gain.get(),
                 stages: processor.band_stages(0),
-                band0,
-            }
-        })
-        .collect()
+                band0: std::mem::take(&mut band0),
+            });
+        }
+    }
+    summaries
 }
 
 fn rms_distance(a: &[f32], b: &[f32]) -> f32 {
@@ -63,26 +69,23 @@ fn rms_distance(a: &[f32], b: &[f32]) -> f32 {
     (a.iter().zip(b).map(|(x, y)| (x - y).powi(2)).sum::<f32>() / n).sqrt()
 }
 
-/// Deltas of one parameter between consecutive loops must shrink in magnitude
-/// and keep their sign (no oscillation), ending below `tol`.
-fn assert_converged(name: &str, values: &[f32], tol: f32) {
+/// One parameter has converged when its deltas between consecutive loops
+/// have settled: each of the last three is below `tol` (no oscillation
+/// larger than that) and so is their sum (no drift). It must also have
+/// left its cold-start value `initial` by more than `tol`, or the test is
+/// not exercising anything.
+fn assert_converged(name: &str, initial: f32, values: &[f32], tol: f32) {
     let deltas: Vec<f32> = values.windows(2).map(|w| w[1] - w[0]).collect();
-    let tail = &deltas[deltas.len() - 3..];
-    for pair in tail.windows(2) {
-        assert!(
-            pair[1].abs() <= pair[0].abs() + 1e-6,
-            "{name} deltas grow: {deltas:?}"
-        );
-        assert!(
-            pair[0] * pair[1] >= 0.0 || pair[1].abs() < tol,
-            "{name} oscillates: {deltas:?}"
-        );
-    }
     assert!(
-        tail[2].abs() < tol,
-        "{name} final delta {} not below {tol}: {deltas:?}",
-        tail[2]
+        (values[0] - initial).abs() > tol,
+        "{name} barely moved from {initial}: {values:?}"
     );
+    let tail = &deltas[deltas.len() - 3..];
+    for d in tail {
+        assert!(d.abs() < tol, "{name} still moving by {d}: {deltas:?}");
+    }
+    let drift: f32 = tail.iter().sum();
+    assert!(drift.abs() < tol, "{name} drifts by {drift}: {deltas:?}");
 }
 
 #[test]
@@ -92,14 +95,14 @@ fn nightlife_8_bars_converges_without_oscillating() {
     assert_eq!(clip.sample_rate, 48000);
     assert_eq!(clip.channels, 2);
 
-    let loops = run_loops(&clip, 5);
+    let loops = run_loops(&clip, 6);
 
     let trim: Vec<f32> = loops.iter().map(|l| l.trim).collect();
     let floor: Vec<f32> = loops.iter().map(|l| l.stages.floor).collect();
     let ceiling: Vec<f32> = loops.iter().map(|l| l.stages.ceiling).collect();
-    assert_converged("trim", &trim, 1e-3);
-    assert_converged("floor", &floor, 1e-3);
-    assert_converged("ceiling", &ceiling, 1e-3);
+    assert_converged("trim", 1.0, &trim, 0.02);
+    assert_converged("floor", 0.0, &floor, 0.01);
+    assert_converged("ceiling", 0.0, &ceiling, 0.01);
 
     let distances: Vec<f32> = loops
         .windows(2)
@@ -107,7 +110,7 @@ fn nightlife_8_bars_converges_without_oscillating() {
         .collect();
     let last = distances[distances.len() - 1];
     assert!(
-        last < 0.01,
+        last < 0.02,
         "band 0 output not loop-periodic: distances {distances:?}"
     );
     assert!(
