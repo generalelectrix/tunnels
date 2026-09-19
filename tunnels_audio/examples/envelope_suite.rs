@@ -719,6 +719,30 @@ fn suite() -> Vec<Case> {
         report_band_peaks(out, "hiss only", rows, 25.0, 30.0);
     }));
 
+    // W17: kicks, then a 50 Hz sub held for 3 s (a drop), 2 s of silence,
+    // then kicks again. How does a sustained sub-bass hit read and release?
+    let mut sig = silence(sr, 16.0);
+    for on in onsets(120.0, 0.5, 5.0) {
+        kick_simple(&mut sig, sr, on, 0.8);
+    }
+    sine(&mut sig, sr, 5.0, 3.0, 50.0, 0.8);
+    for on in onsets(120.0, 10.0, 16.0) {
+        kick_simple(&mut sig, sr, on, 0.8);
+    }
+    cases.push(Case {
+        name: "w17_sustained_sub_drop",
+        cfg: PROD,
+        signal: sig,
+        report: Box::new(|out, rows| {
+            for (a, b) in [(5.0, 5.5), (5.5, 6.0), (6.0, 7.0), (7.0, 8.0)] {
+                report_steady(out, "held sub", rows, a, b);
+            }
+            report_burst(out, rows, 5.0, 8.0);
+            let ks = kick_stats(rows, &onsets(120.0, 10.0, 16.0));
+            report_kicks(out, "kicks after the drop", &ks);
+        }),
+    });
+
     cases
 }
 
