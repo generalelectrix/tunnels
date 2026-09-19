@@ -20,7 +20,6 @@ const ENVELOPE_ATTACK: Mapping = cc(1, 2);
 const ENVELOPE_RELEASE: Mapping = cc(1, 3);
 const GAIN: Mapping = cc(1, 4);
 const RESET: Mapping = note_on_ch1(5);
-const IS_CLIPPING: Mapping = note_on_ch1(6);
 
 // Midi mappings for CMD MM-1.
 const CMD_MM1_VU_METER: Mapping = cc(4, 81);
@@ -79,7 +78,6 @@ pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutpu
         OutputSmoothing(_) => {}
         AutoTrimEnabled(_) => {}
         InputGain(v) => send(event(GAIN, gain_to_midi(v))),
-        IsClipping(v) => send(event(IS_CLIPPING, v as u8)),
         ActiveBand(_)
         | NormFloorHalflife(_)
         | NormCeilingHalflife(_)

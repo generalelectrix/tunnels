@@ -293,8 +293,6 @@ audio/filter_cutoff: |
   TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 1, control: 1 }, value: 50 }
 audio/input_gain: |
   TouchOSC Bridge: Event { mapping: Mapping { event_type: ControlChange, channel: 1, control: 4 }, value: 38 }
-audio/is_clipping: |
-  TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 1, control: 6 }, value: 1 }
 audio/monitor_off: |
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 1, control: 4 }, value: 0 }
   CMD MM-1: Event { mapping: Mapping { event_type: NoteOn, channel: 4, control: 18 }, value: 0 }
