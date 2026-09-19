@@ -13,3 +13,7 @@ atomic_enum = "0.3"
 rtrb = "0.3"
 anyhow.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+postcard.workspace = true

@@ -16,12 +16,16 @@
 //! `--floor-limit` runs either mode with the normalizer floor in limit mode
 //! instead of the default average mode.
 
-// The shared codec is included by path; this binary only uses its decoder.
+// Shared with the integration tests by path; this binary uses only parts.
 #[allow(dead_code)]
 #[path = "../tests/common/clip.rs"]
 mod clip;
+#[allow(dead_code)]
+#[path = "../tests/common/signals.rs"]
+mod signals;
 
-use std::f32::consts::PI;
+use signals::{Lcg, Signal, kick_real, kick_simple, onsets, silence, sine};
+
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -58,9 +62,6 @@ const PROD: RunConfig = RunConfig {
     sample_rate: 48000,
     frames: 64,
 };
-
-/// A stereo signal rendered up front.
-type Signal = Vec<[f32; 2]>;
 
 fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
     let settings = ProcessorSettings::default();
@@ -140,72 +141,6 @@ fn write_csv(path: &Path, rows: &[Row]) {
         s.push('\n');
     }
     fs::write(path, s).expect("write csv");
-}
-
-// ---------------------------------------------------------------- generators
-
-struct Lcg(u64);
-impl Lcg {
-    fn next_f32(&mut self) -> f32 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.0 >> 33) as f32 / (1u64 << 31) as f32) * 2.0 - 1.0
-    }
-}
-
-fn silence(sr: u32, secs: f32) -> Signal {
-    vec![[0.0, 0.0]; (sr as f32 * secs) as usize]
-}
-
-fn add_mono(sig: &mut Signal, sr: u32, start: f32, f: impl Fn(f32) -> Option<f32>) {
-    let start_idx = (start * sr as f32) as usize;
-    for (i, frame) in sig.iter_mut().enumerate().skip(start_idx) {
-        let t = (i - start_idx) as f32 / sr as f32;
-        match f(t) {
-            Some(v) => {
-                frame[0] += v;
-                frame[1] += v;
-            }
-            None => break,
-        }
-    }
-}
-
-fn sine(sig: &mut Signal, sr: u32, start: f32, len: f32, freq: f32, amp: f32) {
-    add_mono(sig, sr, start, |t| {
-        (t < len).then(|| amp * (2.0 * PI * freq * t).sin())
-    });
-}
-
-/// Simple kick: fixed-pitch decaying sine.
-fn kick_simple(sig: &mut Signal, sr: u32, start: f32, amp: f32) {
-    add_mono(sig, sr, start, |t| {
-        (t < 0.25).then(|| amp * (2.0 * PI * 60.0 * t).sin() * (-t / 0.05).exp())
-    });
-}
-
-/// Realistic kick: pitch sweeps 150 -> 50 Hz with a 40 ms time constant,
-/// amplitude decays with an 80 ms time constant, truncated at 400 ms.
-fn kick_real(sig: &mut Signal, sr: u32, start: f32, amp: f32) {
-    add_mono(sig, sr, start, |t| {
-        (t < 0.4).then(|| {
-            let phase = 2.0 * PI * (50.0 * t + 100.0 * 0.04 * (1.0 - (-t / 0.04).exp()));
-            amp * phase.sin() * (-t / 0.08).exp()
-        })
-    });
-}
-
-fn onsets(bpm: f32, from: f32, to: f32) -> Vec<f32> {
-    let period = 60.0 / bpm;
-    let mut v = Vec::new();
-    let mut t = from;
-    while t < to {
-        v.push(t);
-        t += period;
-    }
-    v
 }
 
 // ------------------------------------------------------------------ metrics
@@ -451,6 +386,24 @@ fn kick_case(
     }
 }
 
+/// A case built from one of the shared golden signals, reported as kicks.
+fn golden_kick_case(
+    name: &'static str,
+    extra: impl Fn(&mut String, &[KickStat], &[Row]) + 'static,
+) -> Case {
+    let signals::KickSignal { signal, onsets } = signals::golden_case(name).expect("golden case");
+    Case {
+        name,
+        cfg: PROD,
+        signal,
+        report: Box::new(move |out, rows| {
+            let ks = kick_stats(rows, &onsets);
+            report_kicks(out, name, &ks);
+            extra(out, &ks, rows);
+        }),
+    }
+}
+
 fn suite() -> Vec<Case> {
     let sr = PROD.sample_rate;
     let mut cases = Vec::new();
@@ -526,15 +479,7 @@ fn suite() -> Vec<Case> {
         },
     ));
     // W4b: realistic kicks.
-    cases.push(kick_case(
-        "w04b_realkick_120",
-        PROD,
-        10.0,
-        onsets(120.0, 0.5, 10.0),
-        |_, _| 0.8,
-        true,
-        |_, _, _| {},
-    ));
+    cases.push(golden_kick_case("w04b_realkick_120", |_, _, _| {}));
     // W4c: 140 BPM with a 16th-note double hit on beat 1 of every bar.
     let mut ons = Vec::new();
     let period = 60.0 / 140.0;
@@ -596,76 +541,33 @@ fn suite() -> Vec<Case> {
     ));
 
     // W4e: simple kicks with ±20 ms random onset jitter, so kick onsets are
-    // not phase-locked to the wavelet decimation grid.
-    let mut rng = Lcg(99);
-    let ons: Vec<f32> = onsets(120.0, 0.5, 10.0)
-        .into_iter()
-        .map(|t| t + 0.02 * rng.next_f32())
-        .collect();
-    cases.push(kick_case(
-        "w04e_onset_jitter_120",
-        PROD,
-        10.0,
-        ons,
-        |_, _| 0.8,
-        false,
-        |out, ks, _| {
-            for b in 0..4 {
-                let peaks: Vec<f32> = ks.iter().map(|k| k.bands_peak[b]).collect();
-                let (mean, min, max) = stats(peaks.iter().copied());
-                let _ = writeln!(
-                    out,
-                    "    band{b} kick peaks: mean {mean:.3} min {min:.3} max {max:.3} CV {:.3}",
-                    cv(&peaks)
-                );
-            }
-        },
-    ));
+    // not phase-locked to any decimation grid.
+    cases.push(golden_kick_case("w04e_onset_jitter_120", |out, ks, _| {
+        for b in 0..4 {
+            let peaks: Vec<f32> = ks.iter().map(|k| k.bands_peak[b]).collect();
+            let (mean, min, max) = stats(peaks.iter().copied());
+            let _ = writeln!(
+                out,
+                "    band{b} kick peaks: mean {mean:.3} min {min:.3} max {max:.3} CV {:.3}",
+                cv(&peaks)
+            );
+        }
+    }));
 
     // W5: quiet -> loud -> quiet, 10 s each.
-    cases.push(kick_case(
-        "w05_quiet_loud_quiet",
-        PROD,
-        30.0,
-        onsets(120.0, 0.5, 30.0),
-        |_, on| if (10.0..20.0).contains(&on) { 0.8 } else { 0.1 },
-        false,
-        |out, ks, _| {
-            report_suppression(out, ks, 10.0);
-            report_suppression(out, ks, 20.0);
-        },
-    ));
+    cases.push(golden_kick_case("w05_quiet_loud_quiet", |out, ks, _| {
+        report_suppression(out, ks, 10.0);
+        report_suppression(out, ks, 20.0);
+    }));
 
     // W6: one 2x hit at 5 s, 20 s run.
-    cases.push(kick_case(
-        "w06_one_loud_hit",
-        PROD,
-        20.0,
-        onsets(120.0, 0.5, 20.0),
-        |_, on| if (on - 5.0).abs() < 0.01 { 1.6 } else { 0.8 },
-        false,
-        |out, ks, _| report_suppression(out, ks, 5.0),
-    ));
+    cases.push(golden_kick_case("w06_one_loud_hit", |out, ks, _| {
+        report_suppression(out, ks, 5.0)
+    }));
     // W6b: one-buffer 2x spike at 5.25 s (between kicks).
-    let ons = onsets(120.0, 0.5, 20.0);
-    let mut sig = silence(sr, 20.0);
-    for &on in &ons {
-        kick_simple(&mut sig, sr, on, 0.8);
-    }
-    let spike_start = (5.25 * sr as f32) as usize;
-    for frame in sig.iter_mut().skip(spike_start).take(64) {
-        *frame = [1.6, 1.6];
-    }
-    cases.push(Case {
-        name: "w06b_one_buffer_spike",
-        cfg: PROD,
-        signal: sig,
-        report: Box::new(move |out, rows| {
-            let ks = kick_stats(rows, &ons);
-            report_kicks(out, "spike", &ks);
-            report_suppression(out, &ks, 5.25);
-        }),
-    });
+    cases.push(golden_kick_case("w06b_one_buffer_spike", |out, ks, _| {
+        report_suppression(out, ks, 5.25)
+    }));
 
     // W7: kicks on a sustained 55 Hz tone.
     let ons = onsets(120.0, 0.5, 20.0);
@@ -795,22 +697,9 @@ fn suite() -> Vec<Case> {
 
     // W15: quiet kick under louder 1 kHz content — the full-band peak sets
     // the trim, the sub-bass envelope is small relative to it.
-    let ons = onsets(120.0, 0.5, 20.0);
-    let mut sig = silence(sr, 20.0);
-    sine(&mut sig, sr, 0.0, 20.0, 1000.0, 0.7);
-    for &on in &ons {
-        kick_simple(&mut sig, sr, on, 0.3);
-    }
-    cases.push(Case {
-        name: "w15_kick_under_1khz",
-        cfg: PROD,
-        signal: sig,
-        report: Box::new(move |out, rows| {
-            let ks = kick_stats(rows, &ons);
-            report_kicks(out, "kick under 1kHz", &ks);
-            report_band_peaks(out, "kick under 1kHz", rows, 15.0, 20.0);
-        }),
-    });
+    cases.push(golden_kick_case("w15_kick_under_1khz", |out, _, rows| {
+        report_band_peaks(out, "kick under 1kHz", rows, 15.0, 20.0)
+    }));
     // W15b: same kick alone, for comparison.
     cases.push(kick_case(
         "w15b_quiet_kick_alone",
@@ -823,29 +712,12 @@ fn suite() -> Vec<Case> {
     ));
 
     // W16: -50 dB hiss throughout; kicks for 10 s, then hiss alone for 20 s.
-    let ons = onsets(120.0, 0.5, 10.0);
-    let mut sig = silence(sr, 30.0);
-    let mut rng = Lcg(3);
-    for frame in sig.iter_mut() {
-        let v = 0.003 * rng.next_f32();
-        *frame = [v, v];
-    }
-    for &on in &ons {
-        kick_simple(&mut sig, sr, on, 0.8);
-    }
-    cases.push(Case {
-        name: "w16_hiss_then_silence",
-        cfg: PROD,
-        signal: sig,
-        report: Box::new(move |out, rows| {
-            let ks = kick_stats(rows, &ons);
-            report_kicks(out, "kicks over hiss", &ks);
-            for (a, b) in [(10.5, 12.0), (15.0, 20.0), (25.0, 30.0)] {
-                report_steady(out, "hiss only", rows, a, b);
-            }
-            report_band_peaks(out, "hiss only", rows, 25.0, 30.0);
-        }),
-    });
+    cases.push(golden_kick_case("w16_hiss_then_silence", |out, _, rows| {
+        for (a, b) in [(10.5, 12.0), (15.0, 20.0), (25.0, 30.0)] {
+            report_steady(out, "hiss only", rows, a, b);
+        }
+        report_band_peaks(out, "hiss only", rows, 25.0, 30.0);
+    }));
 
     cases
 }

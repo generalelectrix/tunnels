@@ -1,5 +1,5 @@
 //! Pack raw interleaved 16-bit little-endian PCM (as produced by
-//! `ffmpeg -f s16le`) into the test clip container.
+//! `ffmpeg -f s16le`) into a test clip.
 //!
 //! Usage: `clip_pack <in.pcm> <sample_rate> <channels> <out.clip>`
 
