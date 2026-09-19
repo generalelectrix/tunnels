@@ -31,6 +31,7 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 - `Processor` runs both paths on the mono mix: an RBJ lowpass feeds output band 0 and an undecimated (à trous) D4 wavelet decomposition feeds bands 1–7. Every output band owns one `BandChain` (Hilbert, fast/slow followers, smoother, `AdaptiveNormalizer`), stored in output order; the shared `SmootherCoeff` cache and `AutoTrim` live on `Processor`; parameter propagation to the chains runs in `maybe_update_parameters`.
 - The `tunnels/src/audio/` module is a thin re-export layer plus the `ShowEmitter` adapter.
 - The render loop runs at 240fps. The audio buffer is ~1ms. The fast envelope follower's 4ms release matches the render frame budget.
+- The envelope chain is pinned by `tunnels_audio/tests/envelope_golden.rs` and `music_convergence.rs`. Measure before changing it: `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>` (see the crate docs in `tunnels_audio/src/lib.rs`).
 
 ## GUI architecture
 

@@ -1,3 +1,14 @@
+//! Audio input and envelope extraction: one normalized envelope per band,
+//! derived on the audio thread and read by the show.
+//!
+//! The chain is pinned by `tests/envelope_golden.rs` (response shapes) and
+//! `tests/music_convergence.rs` (long-term stability). When either fails, or
+//! before changing the processor, run the characterisation harness:
+//! `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>`
+//! records every stage of every band per buffer for a suite of synthetic
+//! waveforms and prints their metrics; `--music tests/data/<clip> --loops N`
+//! does the same for a looped real-music clip.
+
 pub mod hilbert;
 pub mod log_scale;
 pub mod processor;
