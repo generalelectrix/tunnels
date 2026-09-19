@@ -419,6 +419,16 @@ impl WaveletBand {
     }
 }
 
+/// The lowpass band's intermediate values as of the most recently processed
+/// buffer: the smoothed envelope entering the normalizer, and the floor and
+/// ceiling the normalizer is currently tracking.
+#[derive(Debug, Clone, Copy)]
+pub struct LowpassStages {
+    pub smoothed: f32,
+    pub floor: f32,
+    pub ceiling: f32,
+}
+
 pub struct Processor {
     settings: ProcessorSettings,
     filter_cutoff: f32,
@@ -538,6 +548,15 @@ impl Processor {
             auto_trim: AutoTrim::new(),
             wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
             wavelet_bands,
+        }
+    }
+
+    /// Read the lowpass band's intermediate stage values.
+    pub fn lowpass_stages(&self) -> LowpassStages {
+        LowpassStages {
+            smoothed: self.lowpass_smoother.state,
+            floor: self.lowpass_normalizer.floor,
+            ceiling: self.lowpass_normalizer.ceiling,
         }
     }
 
