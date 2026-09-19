@@ -1,8 +1,8 @@
 //! Offline characterisation of the envelope chain.
 //!
 //! Drives `Processor` with synthetic waveforms under production conditions
-//! (stereo, 64-frame buffers, auto-trim on) and records every stage per
-//! buffer: raw peak, trim gain, the lowpass band's smoothed envelope, floor
+//! (stereo, 64-frame buffers) and records every stage per
+//! buffer: raw peak, the lowpass band's smoothed envelope, floor
 //! and ceiling, and all eight normalized bands. Each waveform writes a CSV to
 //! the output directory and prints a metrics block to stdout.
 //!
@@ -42,7 +42,6 @@ use signals::{KickSignal, Lcg, Signal, kick_real, kick_simple, kicks, onsets, si
 struct Row {
     t: f32,
     raw_peak: f32,
-    trim: f32,
     /// Normalized output per band.
     bands: [f32; NUM_OUTPUT_BANDS],
     /// Intermediate stages per band.
@@ -93,7 +92,6 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
             rows.push(Row {
                 t: (buf_idx * cfg.frames) as f32 / cfg.sample_rate as f32,
                 raw_peak,
-                trim: settings.auto_trim_gain.get(),
                 bands: *outputs,
                 stages: std::array::from_fn(|b| processor.band_stages(b).expect("band in range")),
             });
@@ -103,7 +101,7 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
 }
 
 fn write_csv(path: &Path, rows: &[Row]) {
-    let mut s = String::from("t,raw_peak,trim,smoothed,floor,ceiling");
+    let mut s = String::from("t,raw_peak,smoothed,floor,ceiling");
     for b in 0..NUM_OUTPUT_BANDS {
         let _ = write!(s, ",band{b}");
     }
@@ -115,8 +113,8 @@ fn write_csv(path: &Path, rows: &[Row]) {
         let lp = r.lowpass();
         let _ = write!(
             s,
-            "{:.5},{:.5},{:.5},{:.5},{:.5},{:.5}",
-            r.t, r.raw_peak, r.trim, lp.smoothed, lp.floor, lp.ceiling
+            "{:.5},{:.5},{:.5},{:.5},{:.5}",
+            r.t, r.raw_peak, lp.smoothed, lp.floor, lp.ceiling
         );
         for b in r.bands {
             let _ = write!(s, ",{b:.5}");
@@ -164,7 +162,6 @@ struct KickStat {
     peak: f32,
     peak_smoothed: f32,
     trough: f32,
-    trim: f32,
     ceiling: f32,
     floor: f32,
     bands_peak: [f32; NUM_OUTPUT_BANDS],
@@ -198,7 +195,6 @@ fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
                 peak,
                 peak_smoothed,
                 trough: if trough == f32::MAX { 0.0 } else { trough },
-                trim: at_onset.trim,
                 ceiling: at_onset.lowpass().ceiling,
                 floor: at_onset.lowpass().floor,
                 bands_peak,
@@ -241,18 +237,17 @@ fn report_kicks(out: &mut String, label: &str, ks: &[KickStat]) {
     );
     let _ = writeln!(
         out,
-        "    per-kick: onset  band0  smoothed  floor  ceil   trim   | band1  band2  band3"
+        "    per-kick: onset  band0  smoothed  floor  ceil   | band1  band2  band3"
     );
     for k in ks {
         let _ = writeln!(
             out,
-            "             {:5.2}  {:.3}  {:.3}     {:.3}  {:.3}  {:.3}  | {:.3}  {:.3}  {:.3}",
+            "             {:5.2}  {:.3}  {:.3}     {:.3}  {:.3}  | {:.3}  {:.3}  {:.3}",
             k.onset,
             k.peak,
             k.peak_smoothed,
             k.floor,
             k.ceiling,
-            k.trim,
             k.bands_peak[1],
             k.bands_peak[2],
             k.bands_peak[3]
@@ -293,14 +288,13 @@ fn report_steady(out: &mut String, label: &str, rows: &[Row], from: f32, to: f32
     let last = window(rows, from, to).last().expect("rows in window");
     let _ = writeln!(
         out,
-        "  {label} [{from:.1}-{to:.1}s]: band0 mean {:.3} ripple {:.4} | smoothed mean {:.4} ripple {:.4} | floor {:.4} ceil {:.4} trim {:.3}",
+        "  {label} [{from:.1}-{to:.1}s]: band0 mean {:.3} ripple {:.4} | smoothed mean {:.4} ripple {:.4} | floor {:.4} ceil {:.4}",
         b.mean,
         b.max - b.min,
         sm.mean,
         sm.max - sm.min,
         last.lowpass().floor,
         last.lowpass().ceiling,
-        last.trim
     );
 }
 
@@ -698,8 +692,8 @@ fn suite() -> Vec<Case> {
         |_, _, _| {},
     ));
 
-    // W15: quiet kick under louder 1 kHz content — the full-band peak sets
-    // the trim, the sub-bass envelope is small relative to it.
+    // W15: quiet kick under louder 1 kHz content — the sub-bass envelope is
+    // small relative to the full-band level.
     cases.push(golden_kick_case("w15_kick_under_1khz", |out, _, rows| {
         report_band_peaks(out, "kick under 1kHz", rows, 15.0, 20.0)
     }));
@@ -876,7 +870,7 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
     );
     let _ = writeln!(
         report,
-        "  loop   trim    floor   ceil   |  dtrim    dfloor   dceil   | b0 dist | b0 min  b0 max  kicks"
+        "  loop   floor   ceil   |  dfloor   dceil   | b0 dist | b0 min  b0 max  kicks"
     );
     let mut prev: Option<&[Row]> = None;
     let mut prev_end: Option<&Row> = None;
@@ -887,7 +881,6 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
         let kicks = music_kicks(chunk).len();
         let deltas = prev_end.map(|p| {
             (
-                end.trim - p.trim,
                 end.lowpass().floor - p.lowpass().floor,
                 end.lowpass().ceiling - p.lowpass().ceiling,
             )
@@ -895,13 +888,11 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
         let dist = prev.map(|p| rms_distance(p, chunk));
         let _ = writeln!(
             report,
-            "  {l:>4}   {:.4}  {:.4}  {:.4} | {:>8} {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks}",
-            end.trim,
+            "  {l:>4}   {:.4}  {:.4} | {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks}",
             end.lowpass().floor,
             end.lowpass().ceiling,
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.0)),
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.1)),
-            deltas.map_or("-".into(), |d| format!("{:+.4}", d.2)),
             dist.map_or("-".into(), |d| format!("{d:.4}")),
             b0.min,
             b0.max

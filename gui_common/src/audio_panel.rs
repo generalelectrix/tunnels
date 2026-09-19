@@ -12,7 +12,6 @@ pub trait AudioCommands {
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
     fn set_gain(&mut self, gain_linear: f64);
-    fn set_auto_trim_enabled(&mut self, enabled: bool);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
     fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
@@ -118,26 +117,15 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.add_space(4.0);
 
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
-            // Auto input level toggle.
-            ui.label("Auto Input Level:");
-            let mut enabled = self.snapshot.auto_trim_enabled;
-            if ui.checkbox(&mut enabled, "").changed() {
-                self.commands.set_auto_trim_enabled(enabled);
+            ui.label("Gain:");
+            let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
+            if ui
+                .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
+                .changed()
+            {
+                self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
             }
             ui.end_row();
-
-            // Manual gain — only shown when auto input level is off.
-            if !self.snapshot.auto_trim_enabled {
-                ui.label("Gain:");
-                let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
-                if ui
-                    .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
-                    .changed()
-                {
-                    self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
-                }
-                ui.end_row();
-            }
 
             // Lowpass cutoff.
             ui.label("Lowpass:");
@@ -305,7 +293,6 @@ mod tests {
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
         fn set_gain(&mut self, _gain_linear: f64) {}
-        fn set_auto_trim_enabled(&mut self, _enabled: bool) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
@@ -364,27 +351,5 @@ mod tests {
         });
         harness.run();
         harness.snapshot("audio_panel_with_devices");
-    }
-
-    #[test]
-    fn render_auto_trim_disabled() {
-        use egui_kittest::Harness;
-        let mut commands = MockAudioCommands::new(vec![]);
-        let mut state = AudioPanelState::new(vec![]);
-        let snapshot = AudioSnapshot {
-            device_name: "Scarlett 2i2 USB".to_string(),
-            auto_trim_enabled: false,
-            ..default_snapshot()
-        };
-        let mut harness = Harness::new_ui(|ui| {
-            AudioPanel {
-                commands: &mut commands,
-                state: &mut state,
-                snapshot: &snapshot,
-            }
-            .ui(ui);
-        });
-        harness.run();
-        harness.snapshot("audio_panel_auto_trim_disabled");
     }
 }

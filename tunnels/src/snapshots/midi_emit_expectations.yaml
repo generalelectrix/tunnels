@@ -281,7 +281,6 @@ anim_target/thickness: |
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 42 }, value: 0 }
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 43 }, value: 0 }
   TouchOSC Bridge: Event { mapping: Mapping { event_type: NoteOn, channel: 0, control: 44 }, value: 0 }
-audio/auto_trim_enabled: ''
 audio/envelope: |
   CMD MM-1: Event { mapping: Mapping { event_type: ControlChange, channel: 4, control: 81 }, value: 55 }
 audio/envelope_attack: ''

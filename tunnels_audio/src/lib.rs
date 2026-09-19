@@ -48,7 +48,6 @@ pub struct AudioSnapshot {
     pub envelope_release: Duration,
     pub output_smoothing: Duration,
     pub gain_linear: f64,
-    pub auto_trim_enabled: bool,
     pub active_band: u32,
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
@@ -64,7 +63,6 @@ impl Default for AudioSnapshot {
             envelope_release: Duration::from_millis(50),
             output_smoothing: Duration::from_millis(8),
             gain_linear: 1.0,
-            auto_trim_enabled: true,
             active_band: 0,
             norm_floor_halflife: Duration::from_secs(10),
             norm_ceiling_halflife: Duration::from_secs(5),
@@ -152,7 +150,6 @@ impl AudioInput {
             envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
             output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
             gain_linear: ps.gain.get() as f64,
-            auto_trim_enabled: ps.auto_trim_enabled.load(Ordering::Relaxed),
             active_band: ps.active_band.load(Ordering::Relaxed),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
@@ -188,11 +185,6 @@ impl AudioInput {
         emitter.emit_audio_state_change(OutputSmoothing(Duration::from_secs_f32(
             self.processor_settings.output_smoothing.get(),
         )));
-        emitter.emit_audio_state_change(AutoTrimEnabled(
-            self.processor_settings
-                .auto_trim_enabled
-                .load(Ordering::Relaxed),
-        ));
         emitter.emit_audio_state_change(InputGain(self.processor_settings.gain.get() as f64));
         emitter.emit_audio_state_change(ActiveBand(
             self.processor_settings.active_band.load(Ordering::Relaxed),
@@ -251,11 +243,6 @@ impl AudioInput {
                 .processor_settings
                 .output_smoothing
                 .set(v.as_secs_f32()),
-            AutoTrimEnabled(v) => {
-                self.processor_settings
-                    .auto_trim_enabled
-                    .store(v, Ordering::Relaxed);
-            }
             InputGain(v) => {
                 if v < 0. {
                     warn!("Invalid input gain {v} (< 0).");
@@ -312,7 +299,6 @@ pub enum StateChange {
     EnvelopeAttack(Duration),
     EnvelopeRelease(Duration),
     OutputSmoothing(Duration),
-    AutoTrimEnabled(bool),
     InputGain(f64),
     ActiveBand(u32),
     NormFloorHalflife(Duration),

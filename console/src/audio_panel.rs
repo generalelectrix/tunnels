@@ -62,14 +62,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_auto_trim_enabled(&mut self, enabled: bool) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::AutoTrimEnabled(enabled),
-            )));
-    }
-
     fn set_active_band(&mut self, band: u32) {
         let _ = self
             .ctx
