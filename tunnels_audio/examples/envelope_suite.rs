@@ -749,6 +749,58 @@ fn suite() -> Vec<Case> {
         }),
     });
 
+    // W18: sparse kicks — 70 BPM (half-time at 140) from cold, then 30 BPM.
+    // Does the ceiling ever catch up when hits are further apart than the
+    // confirmation window?
+    for (name, bpm) in [("w18a_kicks_70", 70.0), ("w18b_kicks_30", 30.0)] {
+        cases.push(kick_case(
+            name,
+            PROD,
+            kicks(
+                PROD.sample_rate,
+                30.0,
+                onsets(bpm, 0.5, 30.0),
+                |_, _| 0.8,
+                kick_simple,
+            ),
+            |out, ks, rows| {
+                let target = 0.9 * ks[ks.len() - 1].peak_smoothed;
+                let caught = rows
+                    .iter()
+                    .find(|r| r.lowpass().ceiling >= target)
+                    .map(|r| r.t);
+                let _ = writeln!(
+                    out,
+                    "    ceiling reaches 90% of kick level at {}",
+                    caught.map_or("never".into(), |t| format!("{t:.2}s"))
+                );
+            },
+        ));
+    }
+    // W19: steady kicks with one 4-hit 16th-note fill at 1.6x at 5 s.
+    let mut ons = onsets(120.0, 0.5, 15.0);
+    let mut amps: Vec<f32> = vec![0.8; ons.len()];
+    for i in 0..4 {
+        ons.push(5.0 + 0.125 * i as f32);
+        amps.push(1.6);
+    }
+    let mut order: Vec<usize> = (0..ons.len()).collect();
+    order.sort_by(|a, b| ons[*a].partial_cmp(&ons[*b]).expect("finite"));
+    let ons: Vec<f32> = order.iter().map(|&i| ons[i]).collect();
+    let amps: Vec<f32> = order.iter().map(|&i| amps[i]).collect();
+    cases.push(kick_case(
+        "w19_fill_1p6x",
+        PROD,
+        kicks(
+            PROD.sample_rate,
+            15.0,
+            ons,
+            move |i, _| amps[i],
+            kick_simple,
+        ),
+        |out, ks, _| report_suppression(out, ks, 5.4),
+    ));
+
     cases
 }
 
@@ -916,6 +968,44 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
     fs::write(out_dir.join("music_metrics.txt"), report).expect("write metrics");
 }
 
+/// The W6b click at several positions within the beat: does a click's
+/// effect on the following kick depend on where it lands?
+fn click_offset_sweep(out_dir: &Path, floor_limit: bool) {
+    let cfg = RunConfig {
+        floor_limit,
+        ..PROD
+    };
+    let sr = PROD.sample_rate;
+    let ons = onsets(120.0, 0.5, 8.0);
+    let mut report = String::from(
+        "=== click offset sweep: 1.6 one-buffer click at 5.0 s + offset; next kick's peak per band ===\n  offset  band0  band1  band2  band3\n",
+    );
+    for step in 0..10 {
+        let offset = 0.05 * step as f32;
+        let mut sig = silence(sr, 8.0);
+        for &on in &ons {
+            kick_simple(&mut sig, sr, on, 0.8);
+        }
+        let start = ((5.0 + offset) * sr as f32) as usize;
+        for frame in sig.iter_mut().skip(start).take(64) {
+            *frame = [1.6, 1.6];
+        }
+        let rows = run(cfg, &sig);
+        let ks = kick_stats(&rows, &ons);
+        let next = ks
+            .iter()
+            .find(|k| k.onset > 5.0 + offset + 0.01)
+            .expect("a kick after the click");
+        let _ = writeln!(
+            report,
+            "  {offset:.2}    {:.3}  {:.3}  {:.3}  {:.3}",
+            next.peak, next.bands_peak[1], next.bands_peak[2], next.bands_peak[3]
+        );
+    }
+    print!("{report}");
+    fs::write(out_dir.join("click_offset_sweep.txt"), report).expect("write sweep");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out_dir = args
@@ -945,6 +1035,8 @@ fn main() {
     }
 
     let mut report = String::new();
+    click_offset_sweep(out_dir, floor_limit);
+
     for case in suite() {
         let cfg = RunConfig {
             floor_limit,
