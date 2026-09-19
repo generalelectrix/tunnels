@@ -229,6 +229,143 @@ pub enum TrackingMode {
     Limit = 1,
 }
 
+/// The normalizer coefficients every band shares, derived from the settings
+/// and the buffer update rate. The expensive `exp()`s are recomputed only
+/// when a half-life or the update rate changes.
+struct NormalizerParams {
+    floor_mode: TrackingMode,
+    ceiling_mode: TrackingMode,
+    /// EMA coefficients for average-mode floor tracking.
+    floor_rise_coeff: f32,
+    floor_fall_coeff: f32,
+    /// EMA coefficient for limit-mode floor (slow rise from minimum).
+    floor_limit_rise_coeff: f32,
+    /// EMA coefficient for ceiling decay.
+    ceiling_fall_coeff: f32,
+    /// EMA coefficient for ceiling decay while nothing approaches it.
+    ceiling_fast_fall_coeff: f32,
+    /// EMA coefficient for the ceiling anchor's rise toward the ceiling.
+    anchor_rise_coeff: f32,
+    /// Seconds per update.
+    interval: f64,
+    /// The inputs the coefficients were derived from.
+    floor_halflife: f32,
+    ceiling_halflife: f32,
+    update_rate: f32,
+}
+
+impl NormalizerParams {
+    fn new() -> Self {
+        Self {
+            floor_mode: TrackingMode::Average,
+            ceiling_mode: TrackingMode::Limit,
+            floor_rise_coeff: 0.0,
+            floor_fall_coeff: 0.0,
+            floor_limit_rise_coeff: 0.0,
+            ceiling_fall_coeff: 0.0,
+            ceiling_fast_fall_coeff: 0.0,
+            anchor_rise_coeff: 0.0,
+            interval: 0.0,
+            floor_halflife: 0.0,
+            ceiling_halflife: 0.0,
+            update_rate: 0.0,
+        }
+    }
+
+    /// Refresh from the settings for the given update rate. Safe to call
+    /// every buffer.
+    fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: f32) {
+        self.floor_mode = settings.norm_floor_mode.load(Ordering::Relaxed);
+        self.ceiling_mode = settings.norm_ceiling_mode.load(Ordering::Relaxed);
+        let floor_halflife = settings.norm_floor_halflife.get();
+        let ceiling_halflife = settings.norm_ceiling_halflife.get();
+        if update_rate <= 0.0
+            || (floor_halflife == self.floor_halflife
+                && ceiling_halflife == self.ceiling_halflife
+                && update_rate == self.update_rate)
+        {
+            return;
+        }
+        self.floor_halflife = floor_halflife;
+        self.ceiling_halflife = ceiling_halflife;
+        self.update_rate = update_rate;
+        // Average mode: slow rise, faster fall.
+        self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_fall_coeff = halflife_to_coeff(floor_halflife * 0.2, update_rate);
+        // Limit mode: instant drop to min, slow rise back.
+        self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        // Ceiling: instant (bounded) attack, decays at ceiling halflife.
+        self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
+        self.ceiling_fast_fall_coeff =
+            halflife_to_coeff(AdaptiveNormalizer::CEILING_FAST_FALL_HALFLIFE, update_rate);
+        self.anchor_rise_coeff =
+            halflife_to_coeff(AdaptiveNormalizer::CEILING_ANCHOR_HALFLIFE, update_rate);
+        self.interval = 1.0 / f64::from(update_rate);
+    }
+}
+
+/// Detects a change of level: distinct overshoots well above a reference,
+/// either several in quick succession or one that is sustained.
+struct OvershootDetector {
+    /// Start times of the most recent overshoots, oldest first.
+    starts: [f64; Self::CONFIRM_COUNT],
+    /// Whether the envelope is currently in an overshoot.
+    active: bool,
+    /// Peak envelope of the current overshoot; the overshoot ends once the
+    /// envelope falls below `OVERSHOOT_END` times this.
+    peak: f32,
+    /// Envelope on the previous update, so an overshoot only begins on a
+    /// rising envelope: the decaying tail of a spike never re-triggers.
+    prev_envelope: f32,
+}
+
+impl OvershootDetector {
+    /// An overshoot is an excursion this far above the reference. Ordinary
+    /// beat-to-beat variation in peak height stays well inside this, so only
+    /// a real jump in level counts.
+    const OVERSHOOT_MARGIN: f32 = 1.5;
+    /// An overshoot ends when the envelope falls to this fraction of its
+    /// peak, so consecutive beats count separately even while the reference
+    /// is still far below them.
+    const OVERSHOOT_END: f32 = 0.5;
+    /// This many distinct overshoots within `CONFIRM_WINDOW` seconds — or
+    /// one overshoot lasting that long — confirm a change of level. One loud
+    /// hit never confirms; a louder passage or a cold start confirms itself
+    /// in a few beats, a sustained tone by outlasting the window.
+    const CONFIRM_COUNT: usize = 3;
+    const CONFIRM_WINDOW: f64 = 1.5;
+
+    fn new() -> Self {
+        Self {
+            starts: [f64::NEG_INFINITY; Self::CONFIRM_COUNT],
+            active: false,
+            peak: 0.0,
+            prev_envelope: 0.0,
+        }
+    }
+
+    /// Feed one envelope value at time `now`; returns whether a change of
+    /// level is confirmed.
+    #[inline]
+    fn update(&mut self, envelope: f32, reference: f32, now: f64) -> bool {
+        if self.active {
+            self.peak = self.peak.max(envelope);
+            if envelope < Self::OVERSHOOT_END * self.peak {
+                self.active = false;
+            }
+        } else if envelope > reference * Self::OVERSHOOT_MARGIN && envelope > self.prev_envelope {
+            self.active = true;
+            self.peak = envelope;
+            self.starts.rotate_left(1);
+            self.starts[Self::CONFIRM_COUNT - 1] = now;
+        }
+        self.prev_envelope = envelope;
+        let latest = self.starts[Self::CONFIRM_COUNT - 1];
+        now - self.starts[0] <= Self::CONFIRM_WINDOW
+            || (self.active && now - latest > Self::CONFIRM_WINDOW)
+    }
+}
+
 /// Adaptive envelope normalizer: tracks a floor and ceiling,
 /// outputs `(envelope - floor) / (ceiling - floor)` clamped to [0, 1].
 struct AdaptiveNormalizer {
@@ -240,38 +377,15 @@ struct AdaptiveNormalizer {
     /// up with `CEILING_ANCHOR_HALFLIFE` and down immediately, so excursions
     /// in quick succession share one allowance instead of compounding.
     ceiling_anchor: f32,
-    /// EMA coefficient for the anchor's rise toward the ceiling.
-    anchor_rise_coeff: f32,
-    /// Seconds per update, for timing overshoots.
-    interval: f64,
+    overshoots: OvershootDetector,
     /// Elapsed processing time in seconds. Accumulated in f64: an f32 sum of
     /// millisecond steps loses the step itself after a few hours.
     now: f64,
-    /// Start times of the most recent overshoots (excursions more than
-    /// `OVERSHOOT_MARGIN` above the anchor), oldest first.
-    overshoots: [f64; Self::CONFIRM_COUNT],
-    /// Whether the envelope is currently in an overshoot.
-    in_overshoot: bool,
-    /// Peak envelope of the current overshoot; the overshoot ends once the
-    /// envelope falls below `OVERSHOOT_END` times this.
-    overshoot_peak: f32,
-    /// Envelope on the previous update, so an overshoot only begins on a
-    /// rising envelope: the decaying tail of a spike never re-triggers.
-    prev_envelope: f32,
+    /// When the envelope last reached `CEILING_REACH` of the ceiling.
+    last_reached: f64,
     /// Envelope level below which the band outputs zero: `NOISE_GATE` scaled
     /// by any fixed gain applied ahead of this band's envelope.
     gate: f32,
-    /// EMA coefficients for average-mode floor tracking.
-    floor_rise_coeff: f32,
-    floor_fall_coeff: f32,
-    /// EMA coefficient for limit-mode floor (slow rise from minimum).
-    floor_limit_rise_coeff: f32,
-    /// EMA coefficient for ceiling decay.
-    ceiling_fall_coeff: f32,
-    /// EMA coefficient for ceiling decay while nothing approaches it.
-    ceiling_fast_fall_coeff: f32,
-    /// When the envelope last reached `CEILING_REACH` of the ceiling.
-    last_reached: f64,
 }
 
 impl AdaptiveNormalizer {
@@ -291,21 +405,6 @@ impl AdaptiveNormalizer {
     /// a sustained excursion with no beats to confirm it compounds the nudge
     /// at this rate.
     const CEILING_ANCHOR_HALFLIFE: f32 = 1.0;
-    /// An overshoot is an excursion this far above the anchor. Ordinary
-    /// beat-to-beat variation in peak height stays well inside this, so only
-    /// a real jump in level counts.
-    const OVERSHOOT_MARGIN: f32 = 1.5;
-    /// An overshoot ends when the envelope falls to this fraction of the
-    /// overshoot's peak, so consecutive beats count separately even while
-    /// the ceiling is still far below them.
-    const OVERSHOOT_END: f32 = 0.5;
-    /// This many distinct overshoots within `CONFIRM_WINDOW` seconds — or
-    /// one overshoot lasting that long — confirm a real change of level: the
-    /// ceiling then snaps to the envelope instead of being nudged. One loud
-    /// hit never confirms; a louder passage or a cold start confirms itself
-    /// in a few beats, a sustained tone by outlasting the window.
-    const CONFIRM_COUNT: usize = 3;
-    const CONFIRM_WINDOW: f64 = 1.5;
     /// The envelope "reaches" the ceiling when it comes within this fraction
     /// of it. During any beat-driven passage that happens every beat.
     const CEILING_REACH: f32 = 0.8;
@@ -322,75 +421,26 @@ impl AdaptiveNormalizer {
             floor: 0.0,
             ceiling: 0.001,
             ceiling_anchor: 0.001,
-            anchor_rise_coeff: 0.99,
-            interval: 0.001,
+            overshoots: OvershootDetector::new(),
             now: 0.0,
-            overshoots: [f64::NEG_INFINITY; Self::CONFIRM_COUNT],
-            in_overshoot: false,
-            overshoot_peak: 0.0,
-            prev_envelope: 0.0,
-            gate: Self::NOISE_GATE * pre_gain,
-            floor_rise_coeff: 0.999,
-            floor_fall_coeff: 0.99,
-            floor_limit_rise_coeff: 0.999,
-            ceiling_fall_coeff: 0.999,
-            ceiling_fast_fall_coeff: 0.99,
             last_reached: 0.0,
+            gate: Self::NOISE_GATE * pre_gain,
         }
-    }
-
-    fn set_params(&mut self, floor_halflife: f32, ceiling_halflife: f32, update_rate: f32) {
-        if update_rate <= 0.0 {
-            return;
-        }
-        // Average mode: slow rise, faster fall.
-        self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
-        self.floor_fall_coeff = halflife_to_coeff(floor_halflife * 0.2, update_rate);
-        // Limit mode: instant drop to min, slow rise back.
-        self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
-        // Ceiling: instant (bounded) attack, decays at ceiling halflife.
-        self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
-        self.ceiling_fast_fall_coeff =
-            halflife_to_coeff(Self::CEILING_FAST_FALL_HALFLIFE, update_rate);
-        self.anchor_rise_coeff = halflife_to_coeff(Self::CEILING_ANCHOR_HALFLIFE, update_rate);
-        self.interval = 1.0 / f64::from(update_rate);
     }
 
     #[inline]
-    fn process(
-        &mut self,
-        envelope: f32,
-        floor_mode: TrackingMode,
-        ceiling_mode: TrackingMode,
-    ) -> f32 {
-        self.now += self.interval;
-
-        // Track overshoots: distinct excursions well above the ceiling's
-        // anchor. Several in quick succession confirm a change of level.
-        if self.in_overshoot {
-            self.overshoot_peak = self.overshoot_peak.max(envelope);
-            if envelope < Self::OVERSHOOT_END * self.overshoot_peak {
-                self.in_overshoot = false;
-            }
-        } else if envelope > self.ceiling_anchor * Self::OVERSHOOT_MARGIN
-            && envelope > self.prev_envelope
-        {
-            self.in_overshoot = true;
-            self.overshoot_peak = envelope;
-            self.overshoots.rotate_left(1);
-            self.overshoots[Self::CONFIRM_COUNT - 1] = self.now;
-        }
-        self.prev_envelope = envelope;
-        let latest = self.overshoots[Self::CONFIRM_COUNT - 1];
-        let confirmed = self.now - self.overshoots[0] <= Self::CONFIRM_WINDOW
-            || (self.in_overshoot && self.now - latest > Self::CONFIRM_WINDOW);
+    fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
+        self.now += p.interval;
+        let confirmed = self
+            .overshoots
+            .update(envelope, self.ceiling_anchor, self.now);
 
         // Update ceiling.
-        match ceiling_mode {
+        match p.ceiling_mode {
             TrackingMode::Average => {
                 // Symmetric EMA — same speed up and down.
-                self.ceiling = self.ceiling_fall_coeff * self.ceiling
-                    + (1.0 - self.ceiling_fall_coeff) * envelope;
+                self.ceiling =
+                    p.ceiling_fall_coeff * self.ceiling + (1.0 - p.ceiling_fall_coeff) * envelope;
             }
             TrackingMode::Limit => {
                 if envelope > self.ceiling {
@@ -406,27 +456,27 @@ impl AdaptiveNormalizer {
                         self.last_reached = self.now;
                     }
                     let coeff = if self.now - self.last_reached > Self::CEILING_UNREACHED_SECS {
-                        self.ceiling_fast_fall_coeff
+                        p.ceiling_fast_fall_coeff
                     } else {
-                        self.ceiling_fall_coeff
+                        p.ceiling_fall_coeff
                     };
                     self.ceiling = coeff * self.ceiling + (1.0 - coeff) * envelope;
                 }
                 self.ceiling_anchor = self.ceiling_anchor.min(self.ceiling);
-                self.ceiling_anchor = self.anchor_rise_coeff * self.ceiling_anchor
-                    + (1.0 - self.anchor_rise_coeff) * self.ceiling;
+                self.ceiling_anchor = p.anchor_rise_coeff * self.ceiling_anchor
+                    + (1.0 - p.anchor_rise_coeff) * self.ceiling;
             }
         }
 
         // Update floor. It tracks the envelope clamped to the ceiling, so an
         // outlier the ceiling has refused cannot drag the floor up either.
         let bounded = envelope.min(self.ceiling);
-        match floor_mode {
+        match p.floor_mode {
             TrackingMode::Average => {
                 let coeff = if bounded > self.floor {
-                    self.floor_rise_coeff
+                    p.floor_rise_coeff
                 } else {
-                    self.floor_fall_coeff
+                    p.floor_fall_coeff
                 };
                 self.floor = coeff * self.floor + (1.0 - coeff) * bounded;
             }
@@ -434,8 +484,8 @@ impl AdaptiveNormalizer {
                 if bounded < self.floor {
                     self.floor = bounded; // instant drop to minimum
                 } else {
-                    self.floor = self.floor_limit_rise_coeff * self.floor
-                        + (1.0 - self.floor_limit_rise_coeff) * bounded;
+                    self.floor = p.floor_limit_rise_coeff * self.floor
+                        + (1.0 - p.floor_limit_rise_coeff) * bounded;
                 }
             }
         }
@@ -464,11 +514,12 @@ impl OnePoleSmoother {
 }
 
 /// A one-pole smoother coefficient derived from a time constant and the audio
-/// buffer update rate. Recomputes the expensive `exp()` only when the time
-/// constant changes.
+/// buffer update rate. Recomputes the expensive `exp()` only when either
+/// changes.
 #[derive(Default)]
 struct SmootherCoeff {
     time_secs: f32,
+    update_rate: f32,
     coeff: f32,
 }
 
@@ -476,10 +527,11 @@ impl SmootherCoeff {
     /// Refresh the cached coefficient from the current time constant and
     /// update rate. Safe to call every tick.
     fn refresh(&mut self, time_secs: f32, update_rate: f32) {
-        if time_secs == self.time_secs {
+        if time_secs == self.time_secs && update_rate == self.update_rate {
             return;
         }
         self.time_secs = time_secs;
+        self.update_rate = update_rate;
         self.coeff = if time_secs <= 0.0 || update_rate <= 0.0 {
             0.0
         } else {
@@ -530,21 +582,11 @@ impl BandChain {
 
     /// Finish a buffer: smooth the slow envelope and normalize it, returning
     /// the band's output.
-    fn finish(
-        &mut self,
-        smooth_coeff: f32,
-        floor_halflife: f32,
-        ceiling_halflife: f32,
-        update_rate: f32,
-        floor_mode: TrackingMode,
-        ceiling_mode: TrackingMode,
-    ) -> f32 {
+    fn finish(&mut self, smooth_coeff: f32, norm: &NormalizerParams) -> f32 {
         let smoothed = self
             .smoother
             .update(smooth_coeff, self.slow_envelope.handle().state());
-        self.normalizer
-            .set_params(floor_halflife, ceiling_halflife, update_rate);
-        self.normalizer.process(smoothed, floor_mode, ceiling_mode)
+        self.normalizer.process(smoothed, norm)
     }
 
     fn set_slow_envelope(&mut self, attack: Duration, release: Duration) {
@@ -592,6 +634,8 @@ pub struct Processor {
     bands: [BandChain; NUM_OUTPUT_BANDS],
     /// Cached smoother coefficient shared across every band's smoother.
     smooth_coeff: SmootherCoeff,
+    /// Normalizer coefficients shared across every band's normalizer.
+    norm_params: NormalizerParams,
 
     /// Automatic input gain trim.
     auto_trim: AutoTrim,
@@ -667,6 +711,7 @@ impl Processor {
             wavelet: WaveletDecomposition::new(),
             bands,
             smooth_coeff: SmootherCoeff::default(),
+            norm_params: NormalizerParams::new(),
             auto_trim: AutoTrim::new(),
         }
     }
@@ -701,6 +746,7 @@ impl Processor {
 
         self.smooth_coeff
             .refresh(self.settings.output_smoothing.get(), update_rate);
+        self.norm_params.refresh(&self.settings, update_rate);
     }
 
     /// Process a buffer of interleaved audio data.
@@ -764,14 +810,9 @@ impl Processor {
         }
 
         let coeff = self.smooth_coeff.get();
-        let floor_hl = self.settings.norm_floor_halflife.get();
-        let ceil_hl = self.settings.norm_ceiling_halflife.get();
-        let floor_mode = self.settings.norm_floor_mode.load(Ordering::Relaxed);
-        let ceil_mode = self.settings.norm_ceiling_mode.load(Ordering::Relaxed);
-
         let mut output_bands = [0.0_f32; NUM_OUTPUT_BANDS];
         for (out, band) in output_bands.iter_mut().zip(&mut self.bands) {
-            *out = band.finish(coeff, floor_hl, ceil_hl, update_rate, floor_mode, ceil_mode);
+            *out = band.finish(coeff, &self.norm_params);
         }
 
         // Push normalized envelopes to ring buffers for the GUI viewer.
@@ -894,13 +935,14 @@ mod tests {
 
     #[test]
     fn normalizer_clock_keeps_time_after_hours() {
+        let mut params = NormalizerParams::new();
+        params.refresh(&ProcessorSettingsInner::default(), 750.0);
         let mut norm = AdaptiveNormalizer::new(1.0);
-        norm.set_params(10.0, 5.0, 750.0);
         // Nine hours into a show.
         norm.now = 9.0 * 3600.0;
         let start = norm.now;
         for _ in 0..750 {
-            norm.process(0.5, TrackingMode::Average, TrackingMode::Limit);
+            norm.process(0.5, &params);
         }
         let elapsed = norm.now - start;
         assert!(
