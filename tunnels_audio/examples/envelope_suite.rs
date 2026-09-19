@@ -795,6 +795,51 @@ fn suite() -> Vec<Case> {
         |out, ks, _| report_suppression(out, ks, 5.4),
     ));
 
+    // W20: a tone at the centre of each band in turn. The report is the
+    // cross-talk matrix: each band's pre-normalizer level under each tone,
+    // in dB relative to that band's level under its own tone.
+    let centres: [f32; NUM_OUTPUT_BANDS] =
+        [60.0, 265.0, 530.0, 1061.0, 2121.0, 4243.0, 8485.0, 16971.0];
+    let mut sig = silence(sr, 2.0 * centres.len() as f32);
+    for (i, &f) in centres.iter().enumerate() {
+        sine(&mut sig, sr, 2.0 * i as f32, 2.0, f, 0.5);
+    }
+    cases.push(Case {
+        name: "w20_band_centres",
+        cfg: PROD,
+        signal: sig,
+        report: Box::new(move |out, rows| {
+            let level = |tone: usize, band: usize| {
+                let a = 2.0 * tone as f32 + 1.0;
+                stats(window(rows, a, a + 1.0).map(|r| r.stages[band].smoothed)).mean
+            };
+            let _ = writeln!(
+                out,
+                "  cross-talk, dB re own band (rows: tone at band centre; cols: band read)"
+            );
+            let _ = write!(out, "  tone Hz  ");
+            for b in 0..NUM_OUTPUT_BANDS {
+                let _ = write!(out, "   b{b}  ");
+            }
+            let _ = writeln!(out);
+            for (tone, &f) in centres.iter().enumerate() {
+                let _ = write!(out, "  {f:>7.0}  ");
+                for b in 0..NUM_OUTPUT_BANDS {
+                    let db = 20.0 * (level(tone, b) / level(b, b).max(1e-9)).max(1e-9).log10();
+                    let _ = write!(out, "{db:>6.1} ");
+                }
+                let _ = writeln!(out);
+            }
+            let _ = writeln!(
+                out,
+                "  own-band levels (0.5 amplitude tone): {:?}",
+                (0..NUM_OUTPUT_BANDS)
+                    .map(|b| (level(b, b) * 1000.0).round() / 1000.0)
+                    .collect::<Vec<_>>()
+            );
+        }),
+    });
+
     cases
 }
 

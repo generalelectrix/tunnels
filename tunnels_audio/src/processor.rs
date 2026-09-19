@@ -231,8 +231,9 @@ struct AdaptiveNormalizer {
     ceiling: f32,
     /// Peak of the excursion in progress, or zero between excursions.
     excursion_peak: f32,
-    /// Envelope from which the excursion in progress rose.
-    excursion_start: f32,
+    /// Lowest envelope since the last excursion ended: the trough an
+    /// excursion's prominence is measured from.
+    trough: f32,
     /// Envelope on the previous update.
     prev_envelope: f32,
     /// When a level was last recorded.
@@ -284,7 +285,7 @@ impl AdaptiveNormalizer {
             floor: 0.0,
             ceiling: 0.0,
             excursion_peak: 0.0,
-            excursion_start: 0.0,
+            trough: 0.0,
             prev_envelope: 0.0,
             last_recorded: 0.0,
             held: 0.0,
@@ -331,14 +332,17 @@ impl AdaptiveNormalizer {
         if self.excursion_peak > 0.0 {
             self.excursion_peak = self.excursion_peak.max(envelope);
             if envelope < Self::EXCURSION_END * self.excursion_peak {
-                let prominence = self.excursion_peak - self.excursion_start;
+                let prominence = self.excursion_peak - self.trough;
                 let level = self.excursion_peak.min(self.floor + prominence);
                 self.record(level, envelope);
                 self.excursion_peak = 0.0;
+                self.trough = envelope;
             }
-        } else if envelope > self.prev_envelope && envelope >= self.gate {
-            self.excursion_peak = envelope;
-            self.excursion_start = self.prev_envelope;
+        } else {
+            self.trough = self.trough.min(envelope);
+            if envelope > self.prev_envelope && envelope >= self.gate {
+                self.excursion_peak = envelope;
+            }
         }
         if self.now - self.last_recorded >= Self::SUSTAIN_SECS {
             self.record(self.held, envelope);
