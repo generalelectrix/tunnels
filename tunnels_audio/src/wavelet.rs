@@ -19,9 +19,10 @@
 //!   Level 7: 187-375 Hz (high)
 //!   Residual: 0-187 Hz (low)
 
-/// Daubechies-4 (db4) lowpass filter coefficients — 8 taps, ~18 dB/octave
-/// transition steepness.
-const DB4_LO: [f32; 8] = [
+/// Daubechies-4 (db4) lowpass decomposition filter — 8 taps, ~18 dB/octave
+/// transition steepness — in its conventional orientation, with the large
+/// taps last.
+const DB4_DEC_LO: [f32; 8] = [
     -0.010_597_402,
     0.032_883_01,
     0.030_841_382,
@@ -32,9 +33,27 @@ const DB4_LO: [f32; 8] = [
     0.230_377_81,
 ];
 
-/// The highpass filter derived from the lowpass by the QMF relation:
-/// h[n] = (-1)^n * g[N-1-n]
-const DB4_HI: [f32; 8] = qmf_highpass(DB4_LO);
+/// The lowpass taps as applied, newest sample first. Daubechies filters are
+/// not linear phase, so orientation sets the group delay: with the large
+/// taps on the newest samples each level delays by about one stride, with
+/// them on the oldest by about six. Nothing is reconstructed from these
+/// bands, so the low-delay orientation costs nothing; magnitude response is
+/// identical either way.
+const DB4_LO: [f32; 8] = reversed(DB4_DEC_LO);
+
+/// The highpass taps, from the QMF relation `h[n] = (-1)^n g[N-1-n]` on the
+/// conventional lowpass, which already puts the large taps first.
+const DB4_HI: [f32; 8] = qmf_highpass(DB4_DEC_LO);
+
+const fn reversed<const N: usize>(taps: [f32; N]) -> [f32; N] {
+    let mut out = [0.0; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = taps[N - 1 - i];
+        i += 1;
+    }
+    out
+}
 
 const fn qmf_highpass<const N: usize>(lowpass: [f32; N]) -> [f32; N] {
     let mut hi = [0.0; N];
