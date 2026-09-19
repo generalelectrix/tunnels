@@ -7,6 +7,16 @@
 //! the output directory and prints a metrics block to stdout.
 //!
 //! Usage: `cargo run -p tunnels_audio --release --example envelope_suite -- <out_dir>`
+//!
+//! With `--music <file.clip> --loops N` it instead loops a packed real-music
+//! clip N times through one processor and prints a per-loop convergence table
+//! for the adaptive parameters, plus a shift experiment: the same clip with a
+//! few samples of silence prepended, comparing per-band kick peaks.
+
+// The shared codec is included by path; this binary only uses its decoder.
+#[allow(dead_code)]
+#[path = "../tests/common/clip.rs"]
+mod clip;
 
 use std::f32::consts::PI;
 use std::fmt::Write as _;
@@ -777,12 +787,188 @@ fn suite() -> Vec<Case> {
     cases
 }
 
+// -------------------------------------------------------------------- music
+
+fn load_clip(path: &str) -> Signal {
+    let bytes = fs::read(path).expect("read clip");
+    let clip = clip::decode(&bytes).expect("decode clip");
+    assert_eq!(clip.sample_rate, PROD.sample_rate, "clip sample rate");
+    assert_eq!(clip.channels, 2, "clip channels");
+    clip.samples
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[l, r]| [l as f32 / 32768.0, r as f32 / 32768.0])
+        .collect()
+}
+
+/// Per-band peak within 150 ms after each band-0 onset. An onset is a buffer
+/// where band 0 rises at least 0.2 above the minimum of the preceding 50 ms.
+fn music_kicks(rows: &[Row]) -> Vec<(f32, [f32; NUM_OUTPUT_BANDS])> {
+    let mut kicks = Vec::new();
+    let mut last_onset = f32::MIN;
+    for (i, r) in rows.iter().enumerate() {
+        if r.t - last_onset < 0.15 {
+            continue;
+        }
+        let trough = window(rows, r.t - 0.05, r.t)
+            .map(|x| x.bands[0])
+            .fold(f32::MAX, f32::min);
+        if trough == f32::MAX || r.bands[0] - trough < 0.2 {
+            continue;
+        }
+        let mut peaks = [0.0_f32; NUM_OUTPUT_BANDS];
+        for x in rows[i..].iter().take_while(|x| x.t < r.t + 0.15) {
+            for (p, v) in peaks.iter_mut().zip(x.bands) {
+                *p = p.max(v);
+            }
+        }
+        kicks.push((r.t, peaks));
+        last_onset = r.t;
+    }
+    kicks
+}
+
+fn rms_distance(a: &[Row], b: &[Row]) -> f32 {
+    let n = a.len().min(b.len());
+    (a.iter()
+        .zip(b)
+        .take(n)
+        .map(|(x, y)| (x.bands[0] - y.bands[0]).powi(2))
+        .sum::<f32>()
+        / n as f32)
+        .sqrt()
+}
+
+fn run_music(out_dir: &Path, path: &str, loops: usize) {
+    let clip = load_clip(path);
+    let loop_len = clip.len();
+    let mut signal = Vec::with_capacity(loop_len * loops);
+    for _ in 0..loops {
+        signal.extend_from_slice(&clip);
+    }
+    let rows = run(PROD, &signal);
+    write_csv(&out_dir.join("music_loops.csv"), &rows);
+
+    let buffers_per_loop = loop_len / PROD.frames;
+    let mut report = String::new();
+    let _ = writeln!(
+        report,
+        "=== music {path}: {loop_len} frames/loop ({:.2}s), {loops} loops, frames mod 128 = {} ===",
+        loop_len as f32 / PROD.sample_rate as f32,
+        loop_len % 128
+    );
+    let _ = writeln!(
+        report,
+        "  loop   trim    floor   ceil   |  dtrim    dfloor   dceil   | b0 dist | b0 min  b0 max  kicks"
+    );
+    let mut prev: Option<&[Row]> = None;
+    let mut prev_end: Option<&Row> = None;
+    for l in 0..loops {
+        let chunk = &rows[l * buffers_per_loop..((l + 1) * buffers_per_loop).min(rows.len())];
+        let end = chunk.last().expect("rows in loop");
+        let (_, bmin, bmax) = stats(chunk.iter().map(|r| r.bands[0]));
+        let kicks = music_kicks(chunk).len();
+        let deltas = prev_end.map(|p| {
+            (
+                end.trim - p.trim,
+                end.floor - p.floor,
+                end.ceiling - p.ceiling,
+            )
+        });
+        let dist = prev.map(|p| rms_distance(p, chunk));
+        let _ = writeln!(
+            report,
+            "  {l:>4}   {:.4}  {:.4}  {:.4} | {:>8} {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks}",
+            end.trim,
+            end.floor,
+            end.ceiling,
+            deltas.map_or("-".into(), |d| format!("{:+.4}", d.0)),
+            deltas.map_or("-".into(), |d| format!("{:+.4}", d.1)),
+            deltas.map_or("-".into(), |d| format!("{:+.4}", d.2)),
+            dist.map_or("-".into(), |d| format!("{d:.4}")),
+            bmin,
+            bmax
+        );
+        prev = Some(chunk);
+        prev_end = Some(end);
+    }
+
+    // Shift experiment: the same clip with SHIFT samples of silence in front,
+    // compared kick by kick against the unshifted run's first loop.
+    const SHIFT: usize = 37;
+    let mut shifted = vec![[0.0, 0.0]; SHIFT];
+    shifted.extend_from_slice(&clip);
+    let shifted_rows = run(PROD, &shifted);
+    let base_kicks = music_kicks(&rows[..buffers_per_loop]);
+    let shift_kicks = music_kicks(&shifted_rows);
+    let shift_secs = SHIFT as f32 / PROD.sample_rate as f32;
+    let _ = writeln!(
+        report,
+        "  shift experiment: {SHIFT} samples ({:.2} ms) prepended; {} vs {} kicks detected",
+        shift_secs * 1000.0,
+        base_kicks.len(),
+        shift_kicks.len()
+    );
+    let mut matched = 0;
+    let mut abs_diff = [0.0_f32; NUM_OUTPUT_BANDS];
+    let mut max_ratio = [1.0_f32; NUM_OUTPUT_BANDS];
+    let mut mean_peak = [0.0_f32; NUM_OUTPUT_BANDS];
+    for (t, a) in &base_kicks {
+        let Some((_, b)) = shift_kicks
+            .iter()
+            .find(|(ts, _)| (ts - shift_secs - t).abs() < 0.01)
+        else {
+            continue;
+        };
+        matched += 1;
+        for band in 0..NUM_OUTPUT_BANDS {
+            abs_diff[band] += (a[band] - b[band]).abs();
+            mean_peak[band] += a[band];
+            let (lo, hi) = if a[band] < b[band] {
+                (a[band], b[band])
+            } else {
+                (b[band], a[band])
+            };
+            if lo > 0.05 {
+                max_ratio[band] = max_ratio[band].max(hi / lo);
+            }
+        }
+    }
+    let _ = writeln!(
+        report,
+        "  {matched} kicks matched; per band: mean|diff|/mean peak, max ratio"
+    );
+    for band in 0..NUM_OUTPUT_BANDS {
+        let _ = writeln!(
+            report,
+            "    band{band}: {:.3}  {:.2}x",
+            abs_diff[band] / mean_peak[band].max(1e-6),
+            max_ratio[band]
+        );
+    }
+    print!("{report}");
+    fs::write(out_dir.join("music_metrics.txt"), report).expect("write metrics");
+}
+
 fn main() {
-    let out_dir = std::env::args()
-        .nth(1)
-        .expect("usage: envelope_suite <out_dir>");
-    let out_dir = Path::new(&out_dir);
+    let args: Vec<String> = std::env::args().collect();
+    let out_dir = args
+        .get(1)
+        .expect("usage: envelope_suite <out_dir> [--music <clip> --loops N]");
+    let out_dir = Path::new(out_dir);
     fs::create_dir_all(out_dir).expect("create out dir");
+
+    if let Some(i) = args.iter().position(|a| a == "--music") {
+        let path = args.get(i + 1).expect("--music <clip>");
+        let loops = args
+            .iter()
+            .position(|a| a == "--loops")
+            .and_then(|j| args.get(j + 1))
+            .map_or(6, |n| n.parse().expect("--loops N"));
+        run_music(out_dir, path, loops);
+        return;
+    }
 
     let mut report = String::new();
     for case in suite() {
