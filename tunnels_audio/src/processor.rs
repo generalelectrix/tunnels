@@ -42,8 +42,11 @@ pub const NUM_OUTPUT_BANDS: usize = 8;
 /// Ring buffer capacity: ~16 seconds of history at ~1kHz buffer rate.
 pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
-/// Band labels in frequency-ascending output order (index 0 = sub-bass residual).
-pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
+/// Band labels in output order (index 0 = the sub-bass residual, 7 = the
+/// highest octave), for a 48 kHz sample rate.
+pub const OUTPUT_BAND_LABELS: [&str; NUM_OUTPUT_BANDS] = [
+    "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
+];
 
 /// The envelope ring buffers for every output band: the producers feed a
 /// `Processor`, the streams are read by whoever displays or records them.

@@ -188,8 +188,7 @@ fn build_input_stream(
     // 1000 updates/sec
     let target_latency = 1. / 1000.;
 
-    // Compute target samples; use a power of 2, and multiply by the number of
-    // channels (always gonna be 2)
+    // Frames per buffer for the target latency, rounded up to a power of 2.
     let frame_count = ((target_latency / sample_duration).round() as u32).next_power_of_two();
 
     // Check if this is valid for the device.

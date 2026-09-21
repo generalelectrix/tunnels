@@ -1,6 +1,6 @@
 //! Long-term behaviour on real music: loop a packed clip through one
 //! processor and require the adaptive parameters (normalizer floor and
-//! ceiling) to converge without oscillating, and the lowpass band's
+//! ceiling) to converge without oscillating, and the sub-bass band's
 //! output to become loop-periodic.
 
 mod common;
@@ -11,7 +11,7 @@ use tunnels_audio::processor::{BandStages, ProcessorSettings};
 
 const FRAMES_PER_BUFFER: usize = 64;
 
-/// Adaptive state at the end of one pass through the clip, plus the lowpass
+/// Adaptive state at the end of one pass through the clip, plus the sub-bass
 /// band's output over that pass.
 struct LoopSummary {
     stages: BandStages,

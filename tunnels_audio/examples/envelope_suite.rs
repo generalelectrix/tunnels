@@ -2,8 +2,8 @@
 //!
 //! Drives `Processor` with synthetic waveforms under production conditions
 //! (stereo, 64-frame buffers) and records every stage per
-//! buffer: raw peak, the lowpass band's smoothed envelope, floor
-//! and ceiling, and all eight normalized bands. Each waveform writes a CSV to
+//! buffer: raw peak, all eight normalized bands, and every band's smoothed
+//! envelope, floor and ceiling. Each waveform writes a CSV to
 //! the output directory and prints a metrics block to stdout.
 //!
 //! Usage: `cargo run -p tunnels_audio --release --example envelope_suite -- <out_dir>`
@@ -48,8 +48,8 @@ struct Row {
 }
 
 impl Row {
-    /// The lowpass band's stages.
-    fn lowpass(&self) -> &BandStages {
+    /// The sub-bass band's stages.
+    fn sub(&self) -> &BandStages {
         &self.stages[0]
     }
 }
@@ -92,25 +92,20 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
 }
 
 fn write_csv(path: &Path, rows: &[Row]) {
-    let mut s = String::from("t,raw_peak,smoothed,floor,ceiling");
+    let mut s = String::from("t,raw_peak");
     for b in 0..NUM_OUTPUT_BANDS {
         let _ = write!(s, ",band{b}");
     }
-    for b in 1..NUM_OUTPUT_BANDS {
+    for b in 0..NUM_OUTPUT_BANDS {
         let _ = write!(s, ",sm{b},fl{b},ceil{b}");
     }
     s.push('\n');
     for r in rows {
-        let lp = r.lowpass();
-        let _ = write!(
-            s,
-            "{:.5},{:.5},{:.5},{:.5},{:.5}",
-            r.t, r.raw_peak, lp.smoothed, lp.floor, lp.ceiling
-        );
+        let _ = write!(s, "{:.5},{:.5}", r.t, r.raw_peak);
         for b in r.bands {
             let _ = write!(s, ",{b:.5}");
         }
-        for st in &r.stages[1..] {
+        for st in &r.stages {
             let _ = write!(s, ",{:.5},{:.5},{:.5}", st.smoothed, st.floor, st.ceiling);
         }
         s.push('\n');
@@ -175,7 +170,7 @@ fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
                     peak = r.bands[0];
                     peak_t = r.t;
                 }
-                peak_smoothed = peak_smoothed.max(r.lowpass().smoothed);
+                peak_smoothed = peak_smoothed.max(r.sub().smoothed);
                 for (b, v) in bands_peak.iter_mut().zip(r.bands) {
                     *b = b.max(v);
                 }
@@ -186,8 +181,8 @@ fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
                 peak,
                 peak_smoothed,
                 trough: if trough == f32::MAX { 0.0 } else { trough },
-                ceiling: at_onset.lowpass().ceiling,
-                floor: at_onset.lowpass().floor,
+                ceiling: at_onset.sub().ceiling,
+                floor: at_onset.sub().floor,
                 bands_peak,
                 latency_ms: (peak_t - on) * 1000.0,
             }
@@ -275,7 +270,7 @@ fn report_suppression(out: &mut String, ks: &[KickStat], event: f32) {
 
 fn report_steady(out: &mut String, label: &str, rows: &[Row], from: f32, to: f32) {
     let b = stats(window(rows, from, to).map(|r| r.bands[0]));
-    let sm = stats(window(rows, from, to).map(|r| r.lowpass().smoothed));
+    let sm = stats(window(rows, from, to).map(|r| r.sub().smoothed));
     let last = window(rows, from, to).last().expect("rows in window");
     let _ = writeln!(
         out,
@@ -284,8 +279,8 @@ fn report_steady(out: &mut String, label: &str, rows: &[Row], from: f32, to: f32
         b.max - b.min,
         sm.mean,
         sm.max - sm.min,
-        last.lowpass().floor,
-        last.lowpass().ceiling,
+        last.sub().floor,
+        last.sub().ceiling,
     );
 }
 
@@ -425,7 +420,7 @@ fn suite() -> Vec<Case> {
         signal: sig,
         report: Box::new(|out, rows| {
             let max = stats(window(rows, 0.3, 0.5).map(|r| r.bands[0])).max;
-            let smax = stats(window(rows, 0.3, 0.5).map(|r| r.lowpass().smoothed)).max;
+            let smax = stats(window(rows, 0.3, 0.5).map(|r| r.sub().smoothed)).max;
             let _ = writeln!(
                 out,
                 "  impulse: band0 peak {max:.3}, smoothed peak {smax:.4}"
@@ -449,10 +444,7 @@ fn suite() -> Vec<Case> {
             // Startup: how long until the ceiling is within 10 % of the
             // kicks it is normalizing.
             let target = 0.9 * ks[ks.len() - 1].peak_smoothed;
-            let caught = rows
-                .iter()
-                .find(|r| r.lowpass().ceiling >= target)
-                .map(|r| r.t);
+            let caught = rows.iter().find(|r| r.sub().ceiling >= target).map(|r| r.t);
             let _ = writeln!(
                 out,
                 "    ceiling reaches 90% of kick level at {}",
@@ -735,8 +727,8 @@ fn suite() -> Vec<Case> {
     });
 
     // W18: sparse kicks — 70 BPM (half-time at 140) from cold, then 30 BPM.
-    // Does the ceiling ever catch up when hits are further apart than the
-    // confirmation window?
+    // How many hits does the ceiling need, and does the answer depend on the
+    // tempo?
     for (name, bpm) in [("w18a_kicks_70", 70.0), ("w18b_kicks_30", 30.0)] {
         cases.push(kick_case(
             name,
@@ -750,10 +742,7 @@ fn suite() -> Vec<Case> {
             ),
             |out, ks, rows| {
                 let target = 0.9 * ks[ks.len() - 1].peak_smoothed;
-                let caught = rows
-                    .iter()
-                    .find(|r| r.lowpass().ceiling >= target)
-                    .map(|r| r.t);
+                let caught = rows.iter().find(|r| r.sub().ceiling >= target).map(|r| r.t);
                 let _ = writeln!(
                     out,
                     "    ceiling reaches 90% of kick level at {}",
@@ -917,16 +906,16 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
         let kicks = music_kicks(chunk).len();
         let deltas = prev_end.map(|p| {
             (
-                end.lowpass().floor - p.lowpass().floor,
-                end.lowpass().ceiling - p.lowpass().ceiling,
+                end.sub().floor - p.sub().floor,
+                end.sub().ceiling - p.sub().ceiling,
             )
         });
         let dist = prev.map(|p| rms_distance(p, chunk));
         let _ = writeln!(
             report,
             "  {l:>4}   {:.4}  {:.4} | {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks}",
-            end.lowpass().floor,
-            end.lowpass().ceiling,
+            end.sub().floor,
+            end.sub().ceiling,
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.0)),
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.1)),
             dist.map_or("-".into(), |d| format!("{d:.4}")),

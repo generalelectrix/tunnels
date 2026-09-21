@@ -140,17 +140,9 @@ pub const NUM_LEVELS: usize = 7;
 /// Total number of output bands: NUM_LEVELS high bands + 1 residual low band.
 pub const NUM_BANDS: usize = NUM_LEVELS + 1;
 
-/// Band labels in frequency-ascending order, matching the output band indices
-/// used by the processor (index 0 = the residual, 7 = highest octave band).
-/// Valid for 48kHz sample rate with NUM_LEVELS = 7.
-pub const BAND_LABELS: [&str; NUM_BANDS] = [
-    "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
-];
-
 /// Streaming wavelet decomposition.
 ///
-/// Push one audio sample. A callback receives `(band_index, sample)` for
-/// every band on every call.
+/// Push one audio sample; a callback receives every level's output on every call.
 pub struct WaveletDecomposition {
     levels: Vec<Level>,
 }
@@ -164,8 +156,8 @@ impl WaveletDecomposition {
     }
 
     /// Process one input sample through the decomposition tree.
-    /// Calls `on_band(band_index, sample)` for every band.
-    /// Band 0 = highest frequency (12-24kHz), band NUM_LEVELS = residual low.
+    /// Calls `on_band(level, sample)` for every level: level 0 is the
+    /// highest octave, level `NUM_LEVELS` the residual below the lowest.
     #[inline]
     pub fn push(&mut self, sample: f32, mut on_band: impl FnMut(usize, f32)) {
         let mut current = sample;

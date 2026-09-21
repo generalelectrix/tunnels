@@ -10,7 +10,6 @@
 //! does the same for a looped real-music clip.
 
 pub mod hilbert;
-pub mod log_scale;
 pub mod processor;
 pub mod reconnect;
 pub mod ring_buffer;
@@ -26,7 +25,7 @@ use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 pub use self::processor::UpdateRate;
-use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
+use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, ProcessorSettingsInner};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
 
@@ -51,17 +50,24 @@ pub struct AudioSnapshot {
     pub norm_floor_halflife: Duration,
 }
 
+impl AudioSnapshot {
+    /// The parameter state a settings handle currently holds.
+    fn read(device_name: &str, ps: &ProcessorSettingsInner) -> Self {
+        Self {
+            device_name: device_name.to_string(),
+            envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
+            envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
+            output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
+            gain_linear: ps.gain.get() as f64,
+            active_band: ps.active_band.load(Ordering::Relaxed),
+            norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
+        }
+    }
+}
+
 impl Default for AudioSnapshot {
     fn default() -> Self {
-        Self {
-            device_name: OFFLINE_DEVICE_NAME.to_string(),
-            envelope_attack: Duration::from_millis(10),
-            envelope_release: Duration::from_millis(50),
-            output_smoothing: Duration::from_millis(8),
-            gain_linear: 1.0,
-            active_band: 0,
-            norm_floor_halflife: Duration::from_secs(10),
-        }
+        Self::read(OFFLINE_DEVICE_NAME, &ProcessorSettingsInner::default())
     }
 }
 
@@ -136,16 +142,7 @@ impl AudioInput {
     /// Individual fields are self-consistent; the overall struct is not a
     /// torn-free snapshot across all fields.
     pub fn snapshot(&self) -> AudioSnapshot {
-        let ps = &self.processor_settings;
-        AudioSnapshot {
-            device_name: self.device_name.clone(),
-            envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
-            envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
-            output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
-            gain_linear: ps.gain.get() as f64,
-            active_band: ps.active_band.load(Ordering::Relaxed),
-            norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
-        }
+        AudioSnapshot::read(&self.device_name, &self.processor_settings)
     }
 
     /// Update the state of audio control.

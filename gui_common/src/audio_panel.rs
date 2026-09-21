@@ -13,10 +13,8 @@ pub trait AudioCommands {
     fn set_gain(&mut self, gain_linear: f64);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
-    fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
-    fn report_error(&mut self, error: impl std::fmt::Display);
 }
 
 pub struct AudioPanelState {
@@ -130,7 +128,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             let selected_text = OUTPUT_BAND_LABELS
                 .get(band as usize)
                 .copied()
-                .unwrap_or("Lowpass");
+                .unwrap_or(OUTPUT_BAND_LABELS[0]);
             egui::ComboBox::from_id_salt("active_band")
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
@@ -244,12 +242,10 @@ mod tests {
         fn set_gain(&mut self, _gain_linear: f64) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
-        fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {
             self.devices.clone()
         }
-        fn report_error(&mut self, _error: impl std::fmt::Display) {}
     }
 
     fn default_snapshot() -> AudioSnapshot {

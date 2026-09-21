@@ -69,12 +69,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn toggle_monitor(&mut self) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::ToggleMonitor));
-    }
-
     fn reset_parameters(&mut self) {
         let _ = self
             .ctx
@@ -90,10 +84,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
                 vec![]
             }
         }
-    }
-
-    fn report_error(&mut self, error: impl std::fmt::Display) {
-        self.ctx.report_error(error);
     }
 }
 
