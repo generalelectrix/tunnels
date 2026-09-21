@@ -6,21 +6,35 @@
 //! fast envelope → slow envelope → smoother → adaptive normalizer.
 //!
 //! Output: 8 normalized bands (residual + 7 octaves), selectable via `active_band`.
-use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
-use audio_processor_traits::AudioProcessorSettings;
-use audio_processor_traits::{AtomicF32, AudioContext, simple_processor::MonoAudioProcessor};
-use log::debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
 
 use crate::hilbert::HilbertTransform;
 use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
 use crate::wavelet::{NUM_LEVELS, WaveletDecomposition};
 
-/// Fast envelope follower: catches every peak within a cycle.
-const FAST_ATTACK: Duration = Duration::from_millis(1);
-const FAST_RELEASE: Duration = Duration::new(0, 4_000_000); // 4ms
+/// Fast envelope follower half-lives in seconds: catches every peak within
+/// a cycle.
+const FAST_ATTACK: f32 = 0.001;
+const FAST_RELEASE: f32 = 0.004;
+
+/// An `f32` shared between threads, stored as its bit pattern.
+#[derive(Debug)]
+pub struct AtomicF32(AtomicU32);
+
+impl AtomicF32 {
+    pub fn new(value: f32) -> Self {
+        Self(AtomicU32::new(value.to_bits()))
+    }
+
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+
+    pub fn set(&self, value: f32) {
+        self.0.store(value.to_bits(), Ordering::Relaxed);
+    }
+}
 
 /// Number of output bands: the sub-bass residual + 7 octave bands.
 pub const NUM_OUTPUT_BANDS: usize = 8;
@@ -261,10 +275,6 @@ impl AdaptiveNormalizer {
             return 0.0;
         }
         let range = (self.ceiling - self.floor).max(Self::REL_MIN_RANGE * self.ceiling);
-        if range <= 0.0 {
-            // Nothing has formed a ceiling yet; the signal is above anything seen.
-            return 1.0;
-        }
         ((envelope - self.floor) / range).clamp(0.0, 1.0)
     }
 }
@@ -280,6 +290,38 @@ struct OnePoleSmoother {
 impl OnePoleSmoother {
     fn update(&mut self, coeff: f32, input: f32) -> f32 {
         self.state = coeff * self.state + (1.0 - coeff) * input;
+        self.state
+    }
+}
+
+/// One-pole follower with separate coefficients for rising and falling
+/// input: `y[n] = c * y[n-1] + (1 - c) * x[n]` with `c` the rise coefficient
+/// while `x[n] > y[n-1]` and the fall coefficient otherwise. A coefficient of
+/// zero follows the input at once in that direction.
+#[derive(Debug, Default, Clone, Copy)]
+struct AsymmetricOnePole {
+    rise: f32,
+    fall: f32,
+    state: f32,
+}
+
+impl AsymmetricOnePole {
+    fn new(rise: f32, fall: f32) -> Self {
+        Self {
+            rise,
+            fall,
+            state: 0.0,
+        }
+    }
+
+    #[inline]
+    fn step(&mut self, input: f32) -> f32 {
+        let c = if input > self.state {
+            self.rise
+        } else {
+            self.fall
+        };
+        self.state = c * self.state + (1.0 - c) * input;
         self.state
     }
 }
@@ -319,43 +361,50 @@ impl SmootherCoeff {
 /// Hilbert |z(t)| → fast envelope → slow envelope → smoother → normalizer.
 struct BandChain {
     hilbert: HilbertTransform,
-    fast_envelope: EnvelopeFollowerProcessor,
-    slow_envelope: EnvelopeFollowerProcessor,
+    fast_envelope: AsymmetricOnePole,
+    slow_envelope: AsymmetricOnePole,
     smoother: OnePoleSmoother,
     normalizer: AdaptiveNormalizer,
 }
 
 impl BandChain {
-    fn new(context: &mut AudioContext, slow_attack: Duration, slow_release: Duration) -> Self {
+    /// `sample_rate` in Hz; the slow follower's attack and release are
+    /// half-lives in seconds.
+    fn new(sample_rate: f32, slow_attack: f32, slow_release: f32) -> Self {
         Self {
             hilbert: HilbertTransform::new(),
-            fast_envelope: make_envelope(context, FAST_ATTACK, FAST_RELEASE),
-            slow_envelope: make_envelope(context, slow_attack, slow_release),
+            fast_envelope: AsymmetricOnePole::new(
+                halflife_to_coeff(FAST_ATTACK, sample_rate),
+                halflife_to_coeff(FAST_RELEASE, sample_rate),
+            ),
+            slow_envelope: AsymmetricOnePole::new(
+                halflife_to_coeff(slow_attack, sample_rate),
+                halflife_to_coeff(slow_release, sample_rate),
+            ),
             smoother: OnePoleSmoother::default(),
             normalizer: AdaptiveNormalizer::new(),
         }
     }
 
     /// Run one band-limited sample through the envelope followers.
-    fn process_sample(&mut self, sample: f32, ctx: &mut AudioContext) {
+    #[inline]
+    fn process_sample(&mut self, sample: f32) {
         let amplitude = self.hilbert.envelope(f64::from(sample)) as f32;
-        self.fast_envelope.m_process(ctx, amplitude);
-        let fast_val = self.fast_envelope.handle().state();
-        self.slow_envelope.m_process(ctx, fast_val);
+        let fast = self.fast_envelope.step(amplitude);
+        self.slow_envelope.step(fast);
     }
 
     /// Finish a buffer: smooth the slow envelope and normalize it, returning
     /// the band's output.
     fn finish(&mut self, smooth_coeff: f32, norm: &NormalizerParams) -> f32 {
-        let smoothed = self
-            .smoother
-            .update(smooth_coeff, self.slow_envelope.handle().state());
+        let smoothed = self.smoother.update(smooth_coeff, self.slow_envelope.state);
         self.normalizer.process(smoothed, norm)
     }
 
-    fn set_slow_envelope(&mut self, attack: Duration, release: Duration) {
-        self.slow_envelope.handle().set_attack(attack);
-        self.slow_envelope.handle().set_release(release);
+    /// Set the slow follower's attack and release half-lives in seconds.
+    fn set_slow_envelope(&mut self, attack: f32, release: f32, sample_rate: f32) {
+        self.slow_envelope.rise = halflife_to_coeff(attack, sample_rate);
+        self.slow_envelope.fall = halflife_to_coeff(release, sample_rate);
     }
 
     fn stages(&self) -> BandStages {
@@ -382,7 +431,7 @@ pub struct Processor {
     envelope_attack: f32,
     envelope_release: f32,
     channel_count: usize,
-    context: AudioContext,
+    sample_rate: f32,
 
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
@@ -405,16 +454,6 @@ fn output_band_of_level(level: usize) -> usize {
     NUM_LEVELS - level
 }
 
-fn make_envelope(
-    context: &mut AudioContext,
-    attack: Duration,
-    release: Duration,
-) -> EnvelopeFollowerProcessor {
-    let mut env = EnvelopeFollowerProcessor::new(attack, release);
-    env.m_prepare(context);
-    env
-}
-
 impl Processor {
     pub fn new(
         handle: ProcessorSettings,
@@ -422,29 +461,18 @@ impl Processor {
         channel_count: usize,
         envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
     ) -> Self {
-        let mut context: AudioContext = AudioProcessorSettings {
-            sample_rate: sample_rate as f32,
-            input_channels: channel_count,
-            output_channels: channel_count,
-            ..Default::default()
-        }
-        .into();
-        let n = context.settings.input_channels;
-
+        let sample_rate = sample_rate as f32;
         let envelope_attack = handle.envelope_attack.get();
         let envelope_release = handle.envelope_release.get();
-        let slow_attack = Duration::from_secs_f32(envelope_attack);
-        let slow_release = Duration::from_secs_f32(envelope_release);
-
         let bands =
-            std::array::from_fn(|_| BandChain::new(&mut context, slow_attack, slow_release));
+            std::array::from_fn(|_| BandChain::new(sample_rate, envelope_attack, envelope_release));
 
         Self {
             envelope_attack,
             envelope_release,
             settings: handle,
-            channel_count: n,
-            context,
+            channel_count,
+            sample_rate,
             envelope_producers,
             wavelet: WaveletDecomposition::new(),
             bands,
@@ -464,13 +492,10 @@ impl Processor {
         let new_attack = self.settings.envelope_attack.get();
         let new_release = self.settings.envelope_release.get();
         if new_attack != self.envelope_attack || new_release != self.envelope_release {
-            debug!("Updating envelope parameters to {new_attack}, {new_release}");
             self.envelope_attack = new_attack;
             self.envelope_release = new_release;
-            let attack = Duration::from_secs_f32(new_attack);
-            let release = Duration::from_secs_f32(new_release);
             for band in &mut self.bands {
-                band.set_slow_envelope(attack, release);
+                band.set_slow_envelope(new_attack, new_release, self.sample_rate);
             }
         }
 
@@ -486,11 +511,10 @@ impl Processor {
         }
 
         let frames = interleaved_buffer.len() / self.channel_count.max(1);
-        let update_rate = if frames > 0 {
-            self.context.settings.sample_rate / frames as f32
-        } else {
-            1000.0
-        };
+        if frames == 0 {
+            return;
+        }
+        let update_rate = self.sample_rate / frames as f32;
 
         self.maybe_update_parameters(update_rate);
 
@@ -502,9 +526,8 @@ impl Processor {
             let mono = frame.iter().sum::<f32>() / ch_count_f * gain;
 
             let bands = &mut self.bands;
-            let ctx = &mut self.context;
             self.wavelet.push(mono, |level, sample| {
-                bands[output_band_of_level(level)].process_sample(sample, ctx);
+                bands[output_band_of_level(level)].process_sample(sample);
             });
         }
 
