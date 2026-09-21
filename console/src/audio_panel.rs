@@ -70,14 +70,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_norm_ceiling_halflife(&mut self, halflife: Duration) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::NormCeilingHalflife(halflife),
-            )));
-    }
-
     fn set_norm_floor_mode(&mut self, mode: TrackingMode) {
         let _ = self
             .ctx

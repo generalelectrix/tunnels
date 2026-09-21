@@ -13,7 +13,6 @@ pub trait AudioCommands {
     fn set_gain(&mut self, gain_linear: f64);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
-    fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
     fn set_norm_floor_mode(&mut self, mode: TrackingMode);
     fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
@@ -196,22 +195,6 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             }
             ui.end_row();
 
-            // Auto peak level.
-            ui.label("Auto Peak Level:");
-            let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
-            if ui
-                .add(
-                    egui::Slider::new(&mut ceil_hl_s, 0.5..=15.0)
-                        .suffix(" s")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands
-                    .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
-            }
-            ui.end_row();
-
             // Auto floor level: slider + mode on one line.
             ui.label("Auto Floor Level:");
             ui.horizontal(|ui| {
@@ -278,7 +261,6 @@ mod tests {
         fn set_gain(&mut self, _gain_linear: f64) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
-        fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_floor_mode(&mut self, _mode: TrackingMode) {}
         fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}

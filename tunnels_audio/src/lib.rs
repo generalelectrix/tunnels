@@ -49,7 +49,6 @@ pub struct AudioSnapshot {
     pub gain_linear: f64,
     pub active_band: u32,
     pub norm_floor_halflife: Duration,
-    pub norm_ceiling_halflife: Duration,
     pub norm_floor_mode: TrackingMode,
 }
 
@@ -63,7 +62,6 @@ impl Default for AudioSnapshot {
             gain_linear: 1.0,
             active_band: 0,
             norm_floor_halflife: Duration::from_secs(10),
-            norm_ceiling_halflife: Duration::from_secs(5),
             norm_floor_mode: TrackingMode::Average,
         }
     }
@@ -149,7 +147,6 @@ impl AudioInput {
             gain_linear: ps.gain.get() as f64,
             active_band: ps.active_band.load(Ordering::Relaxed),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
-            norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
             norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
         }
     }
@@ -187,9 +184,6 @@ impl AudioInput {
         ));
         emitter.emit_audio_state_change(NormFloorHalflife(Duration::from_secs_f32(
             self.processor_settings.norm_floor_halflife.get(),
-        )));
-        emitter.emit_audio_state_change(NormCeilingHalflife(Duration::from_secs_f32(
-            self.processor_settings.norm_ceiling_halflife.get(),
         )));
         emitter.emit_audio_state_change(NormFloorMode(
             self.processor_settings
@@ -250,11 +244,6 @@ impl AudioInput {
                     .norm_floor_halflife
                     .set(v.as_secs_f32());
             }
-            NormCeilingHalflife(v) => {
-                self.processor_settings
-                    .norm_ceiling_halflife
-                    .set(v.as_secs_f32());
-            }
             NormFloorMode(v) => {
                 self.processor_settings
                     .norm_floor_mode
@@ -290,7 +279,6 @@ pub enum StateChange {
     InputGain(f64),
     ActiveBand(u32),
     NormFloorHalflife(Duration),
-    NormCeilingHalflife(Duration),
     NormFloorMode(processor::TrackingMode),
 }
 

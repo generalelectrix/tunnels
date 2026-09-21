@@ -31,13 +31,7 @@ pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutpu
     match sc {
         EnvelopeValue(v) => send(event(CMD_MM1_VU_METER, 48 + (v.val() * 15.) as u8)),
         Monitor(v) => send(event(CMD_MM1_MONITOR_TOGGLE, v as u8)),
-        EnvelopeAttack(_)
-        | EnvelopeRelease(_)
-        | OutputSmoothing(_)
-        | InputGain(_)
-        | ActiveBand(_)
-        | NormFloorHalflife(_)
-        | NormCeilingHalflife(_)
-        | NormFloorMode(_) => {}
+        EnvelopeAttack(_) | EnvelopeRelease(_) | OutputSmoothing(_) | InputGain(_)
+        | ActiveBand(_) | NormFloorHalflife(_) | NormFloorMode(_) => {}
     }
 }

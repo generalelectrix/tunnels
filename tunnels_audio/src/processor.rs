@@ -80,8 +80,6 @@ pub struct ProcessorSettingsInner {
 
     /// Floor tracking half-life in seconds (slow — adapts to ambient level).
     pub norm_floor_halflife: AtomicF32,
-    /// Ceiling tracking half-life in seconds (moderate — tracks recent peaks).
-    pub norm_ceiling_halflife: AtomicF32,
     pub norm_floor_mode: AtomicTrackingMode,
 
     /// Which band feeds `envelope`: 0 = sub-bass residual, 1-7 = octave bands.
@@ -101,7 +99,6 @@ impl ProcessorSettingsInner {
         self.gain.set(1.0);
         self.active_band.store(0, Ordering::Relaxed);
         self.norm_floor_halflife.set(10.0);
-        self.norm_ceiling_halflife.set(5.0);
         self.norm_floor_mode
             .store(TrackingMode::Average, Ordering::Relaxed);
     }
@@ -116,7 +113,6 @@ impl Default for ProcessorSettingsInner {
             gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             norm_floor_halflife: AtomicF32::new(10.0),
-            norm_ceiling_halflife: AtomicF32::new(5.0),
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
             active_band: AtomicU32::new(0),
         }
@@ -155,15 +151,8 @@ struct NormalizerParams {
     floor_fall_coeff: f32,
     /// EMA coefficient for limit-mode floor (slow rise from minimum).
     floor_limit_rise_coeff: f32,
-    /// EMA coefficient for ceiling decay.
-    ceiling_fall_coeff: f32,
-    /// EMA coefficient for ceiling decay while nothing approaches it.
-    ceiling_fast_fall_coeff: f32,
-    /// Seconds per update.
-    interval: f64,
     /// The inputs the coefficients were derived from.
     floor_halflife: f32,
-    ceiling_halflife: f32,
     update_rate: f32,
 }
 
@@ -174,11 +163,7 @@ impl NormalizerParams {
             floor_rise_coeff: 0.0,
             floor_fall_coeff: 0.0,
             floor_limit_rise_coeff: 0.0,
-            ceiling_fall_coeff: 0.0,
-            ceiling_fast_fall_coeff: 0.0,
-            interval: 0.0,
             floor_halflife: 0.0,
-            ceiling_halflife: 0.0,
             update_rate: 0.0,
         }
     }
@@ -188,65 +173,36 @@ impl NormalizerParams {
     fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: f32) {
         self.floor_mode = settings.norm_floor_mode.load(Ordering::Relaxed);
         let floor_halflife = settings.norm_floor_halflife.get();
-        let ceiling_halflife = settings.norm_ceiling_halflife.get();
         if update_rate <= 0.0
-            || (floor_halflife == self.floor_halflife
-                && ceiling_halflife == self.ceiling_halflife
-                && update_rate == self.update_rate)
+            || (floor_halflife == self.floor_halflife && update_rate == self.update_rate)
         {
             return;
         }
         self.floor_halflife = floor_halflife;
-        self.ceiling_halflife = ceiling_halflife;
         self.update_rate = update_rate;
         // Average mode: slow rise, faster fall.
         self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
         self.floor_fall_coeff = halflife_to_coeff(floor_halflife * 0.2, update_rate);
         // Limit mode: instant drop to min, slow rise back.
         self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
-        // Ceiling: decays at the ceiling halflife toward the recent-peak
-        // statistic, faster while it is well above it.
-        self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
-        self.ceiling_fast_fall_coeff =
-            halflife_to_coeff(AdaptiveNormalizer::CEILING_FAST_FALL_HALFLIFE, update_rate);
-        self.interval = 1.0 / f64::from(update_rate);
     }
 }
 
 /// Adaptive envelope normalizer: tracks a floor and ceiling,
 /// outputs `(envelope - floor) / (ceiling - floor)` clamped to [0, 1].
 ///
-/// The ceiling follows a rank statistic of recent peaks: the
-/// `CEILING_RANK`-th largest level recorded in the last `PEAK_WINDOW_SECS`.
-/// A level is recorded once per excursion — a rise and fall of the
-/// envelope, however long its tail — as its peak, or the floor plus its
-/// prominence if that is less (a rise off the tail of something louder
-/// counts only for what it added); and once every `SUSTAIN_SECS` as the
-/// lowest envelope over that time, which is the level actually held. One
-/// loud hit or click therefore never sets the ceiling, a real change of
-/// level is followed within `CEILING_RANK` beats at any tempo, and a
-/// sustained tone is its own level.
+/// The ceiling is a peak follower whose decay is clocked by the envelope's
+/// own motion rather than by time: it rises to any envelope above it at once
+/// and forgets `CEILING_FORGET` nepers for every neper the log envelope
+/// moves, up or down. A hit therefore costs the ceiling the same whether
+/// the music is fast or slow, a level drop is forgotten within a few hits
+/// at any tempo, and a pause or a held tone — no motion — leaves the
+/// ceiling where it was.
 struct AdaptiveNormalizer {
     floor: f32,
     ceiling: f32,
-    /// Peak of the excursion in progress, or zero between excursions.
-    excursion_peak: f32,
-    /// Lowest envelope since the last excursion ended: the trough an
-    /// excursion's prominence is measured from.
-    trough: f32,
-    /// Envelope on the previous update.
-    prev_envelope: f32,
-    /// When a level was last recorded.
-    last_recorded: f64,
-    /// Lowest envelope since a level was last recorded.
-    held: f32,
-    /// Recently recorded levels with their times, a ring overwritten oldest
-    /// first.
-    peaks: [(f64, f32); Self::PEAK_SLOTS],
-    peak_next: usize,
-    /// Elapsed processing time in seconds. Accumulated in f64: an f32 sum of
-    /// millisecond steps loses the step itself after a few hours.
-    now: f64,
+    /// Log envelope on the previous update, clamped at the gate.
+    prev_log_envelope: f32,
     /// Envelope level below which the band outputs zero.
     gate: f32,
 }
@@ -260,106 +216,27 @@ impl AdaptiveNormalizer {
     /// Input level below which the band outputs zero, so idle noise is
     /// never normalized up to full scale.
     const NOISE_GATE: f32 = 0.01;
-    /// An excursion ends when the envelope falls to this fraction of its
-    /// peak; whatever tail follows belongs to it, not to the next one.
-    const EXCURSION_END: f32 = 0.5;
-    /// While no excursion ends, the current level is recorded this often,
-    /// so a held tone counts as the level it holds.
-    const SUSTAIN_SECS: f64 = 0.5;
-    /// How far back recorded levels count toward the ceiling.
-    const PEAK_WINDOW_SECS: f64 = 3.0;
-    /// The ceiling is this-ranked largest of the recorded levels: one
-    /// exceptional level is ignored, two set the ceiling.
-    const CEILING_RANK: usize = 2;
-    /// Recorded levels kept; at more than this many excursions per window
-    /// the window shortens, which only happens on very busy material.
-    const PEAK_SLOTS: usize = 64;
-    /// The statistic "reaches" the ceiling when it comes within this
-    /// fraction of it; below that the level has dropped and the ceiling
-    /// releases at `CEILING_FAST_FALL_HALFLIFE` instead of its own.
-    const CEILING_REACH: f32 = 0.8;
-    const CEILING_FAST_FALL_HALFLIFE: f32 = 0.5;
+    /// Nepers the ceiling decays per neper of log-envelope motion.
+    const CEILING_FORGET: f32 = 0.1;
 
     fn new() -> Self {
         Self {
             floor: 0.0,
             ceiling: 0.0,
-            excursion_peak: 0.0,
-            trough: 0.0,
-            prev_envelope: 0.0,
-            last_recorded: 0.0,
-            held: 0.0,
-            peaks: [(f64::NEG_INFINITY, 0.0); Self::PEAK_SLOTS],
-            peak_next: 0,
-            now: 0.0,
+            prev_log_envelope: Self::NOISE_GATE.ln(),
             gate: Self::NOISE_GATE,
         }
     }
 
-    fn record(&mut self, level: f32, envelope: f32) {
-        self.peaks[self.peak_next] = (self.now, level);
-        self.peak_next = (self.peak_next + 1) % Self::PEAK_SLOTS;
-        self.last_recorded = self.now;
-        self.held = envelope;
-    }
-
-    /// The `CEILING_RANK`-th largest level recorded within the window.
-    fn peak_statistic(&self) -> f32 {
-        const { assert!(AdaptiveNormalizer::CEILING_RANK == 2) };
-        let horizon = self.now - Self::PEAK_WINDOW_SECS;
-        let mut first = 0.0_f32;
-        let mut second = 0.0_f32;
-        for &(t, v) in &self.peaks {
-            if t < horizon {
-                continue;
-            }
-            if v > first {
-                second = first;
-                first = v;
-            } else if v > second {
-                second = v;
-            }
-        }
-        second
-    }
-
     #[inline]
     fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
-        self.now += p.interval;
+        // Update ceiling: instant attack, decay per unit of envelope motion.
+        let log_envelope = envelope.max(self.gate).ln();
+        let motion = (log_envelope - self.prev_log_envelope).abs();
+        self.prev_log_envelope = log_envelope;
+        self.ceiling = envelope.max(self.ceiling * (-Self::CEILING_FORGET * motion).exp());
 
-        // Track excursions and record levels.
-        self.held = self.held.min(envelope);
-        if self.excursion_peak > 0.0 {
-            self.excursion_peak = self.excursion_peak.max(envelope);
-            if envelope < Self::EXCURSION_END * self.excursion_peak {
-                let prominence = self.excursion_peak - self.trough;
-                let level = self.excursion_peak.min(self.floor + prominence);
-                self.record(level, envelope);
-                self.excursion_peak = 0.0;
-                self.trough = envelope;
-            }
-        } else {
-            self.trough = self.trough.min(envelope);
-            if envelope > self.prev_envelope && envelope >= self.gate {
-                self.excursion_peak = envelope;
-            }
-        }
-        if self.now - self.last_recorded >= Self::SUSTAIN_SECS {
-            self.record(self.held, envelope);
-        }
-        self.prev_envelope = envelope;
-
-        // Update ceiling.
-        let stat = self.peak_statistic();
-        let coeff = if stat >= Self::CEILING_REACH * self.ceiling {
-            p.ceiling_fall_coeff
-        } else {
-            p.ceiling_fast_fall_coeff
-        };
-        self.ceiling = stat.max(self.ceiling * coeff);
-
-        // Update floor. It tracks the envelope clamped to the ceiling, so an
-        // outlier the ceiling has refused cannot drag the floor up either.
+        // Update floor. It never exceeds the ceiling.
         let bounded = envelope.min(self.ceiling);
         match p.floor_mode {
             TrackingMode::Average => {
@@ -659,24 +536,6 @@ mod tests {
 
     fn test_producers() -> [EnvelopeProducer; NUM_OUTPUT_BANDS] {
         envelope_ring_buffers().producers
-    }
-
-    #[test]
-    fn normalizer_clock_keeps_time_after_hours() {
-        let mut params = NormalizerParams::new();
-        params.refresh(&ProcessorSettingsInner::default(), 750.0);
-        let mut norm = AdaptiveNormalizer::new();
-        // Nine hours into a show.
-        norm.now = 9.0 * 3600.0;
-        let start = norm.now;
-        for _ in 0..750 {
-            norm.process(0.5, &params);
-        }
-        let elapsed = norm.now - start;
-        assert!(
-            (elapsed - 1.0).abs() < 1e-3,
-            "750 updates at 750 Hz should advance the clock by 1 s, got {elapsed}"
-        );
     }
 
     #[test]
