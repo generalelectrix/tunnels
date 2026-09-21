@@ -2,7 +2,7 @@
 //! fixed-size buffers, ring buffers drained after each.
 
 use tunnels_audio::processor::{
-    NUM_OUTPUT_BANDS, Processor, ProcessorSettings, envelope_ring_buffers,
+    NUM_OUTPUT_BANDS, NormalizerTuning, Processor, ProcessorSettings, envelope_ring_buffers,
 };
 
 /// Run a stereo signal through a fresh processor in buffers of
@@ -13,11 +13,31 @@ pub fn run_stereo(
     frames_per_buffer: usize,
     settings: ProcessorSettings,
     signal: &[[f32; 2]],
+    per_buffer: impl FnMut(usize, &Processor, &[f32; NUM_OUTPUT_BANDS]),
+) {
+    run_stereo_tuned(
+        sample_rate,
+        frames_per_buffer,
+        settings,
+        NormalizerTuning::DEFAULT,
+        signal,
+        per_buffer,
+    );
+}
+
+/// `run_stereo` with the processor's normalizer tuning replaced.
+pub fn run_stereo_tuned(
+    sample_rate: u32,
+    frames_per_buffer: usize,
+    settings: ProcessorSettings,
+    tuning: NormalizerTuning,
+    signal: &[[f32; 2]],
     mut per_buffer: impl FnMut(usize, &Processor, &[f32; NUM_OUTPUT_BANDS]),
 ) {
     let buffers = envelope_ring_buffers();
     let mut streams = buffers.streams;
     let mut processor = Processor::new(settings, sample_rate, 2, buffers.producers);
+    processor.set_normalizer_tuning(tuning);
     let mut interleaved = Vec::with_capacity(frames_per_buffer * 2);
     let mut drained = Vec::new();
     for (i, chunk) in signal.chunks(frames_per_buffer).enumerate() {

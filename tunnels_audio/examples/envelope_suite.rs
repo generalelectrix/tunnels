@@ -16,13 +16,16 @@
 //! peaks do not depend on where the input falls relative to any buffer or
 //! filter grid.
 //!
-//! `--floor-limit` runs either mode with the normalizer floor in limit mode
-//! instead of the default average mode.
+//! `--ceiling-forget F` runs either mode with the normalizer's ceiling
+//! forgetting F nepers per neper of envelope motion instead of the default,
+//! so runs at several values can be laid side by side. Every kick case ends
+//! with a `SUMMARY` line and the suite ends with all of them as one table.
 
 // Shared with the integration tests by path; this binary uses only parts.
 #[allow(dead_code)]
 #[path = "../tests/common/clip.rs"]
 mod clip;
+#[allow(dead_code)]
 #[path = "../tests/common/offline.rs"]
 mod offline;
 #[allow(dead_code)]
@@ -33,7 +36,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use tunnels_audio::processor::{BandStages, NUM_OUTPUT_BANDS, ProcessorSettings};
+use tunnels_audio::processor::{BandStages, NUM_OUTPUT_BANDS, NormalizerTuning, ProcessorSettings};
 
 use signals::{KickSignal, Lcg, Signal, kick_real, kick_simple, kicks, onsets, silence, sine};
 
@@ -58,20 +61,26 @@ impl Row {
 struct RunConfig {
     sample_rate: u32,
     frames: usize,
+    tuning: NormalizerTuning,
 }
 
 const PROD: RunConfig = RunConfig {
     sample_rate: 48000,
     frames: 64,
+    tuning: NormalizerTuning::DEFAULT,
 };
+
+/// Output at or above this counts as full scale.
+const FULL_SCALE: f32 = 0.995;
 
 fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
     let settings = ProcessorSettings::default();
     let mut rows = Vec::with_capacity(signal.len() / cfg.frames + 1);
-    offline::run_stereo(
+    offline::run_stereo_tuned(
         cfg.sample_rate,
         cfg.frames,
         settings.clone(),
+        cfg.tuning,
         signal,
         |buf_idx, processor, outputs| {
             let chunk =
@@ -145,6 +154,8 @@ fn stats(vals: impl Iterator<Item = f32>) -> Stats {
 
 struct KickStat {
     onset: f32,
+    /// Input amplitude the kick was rendered at, when known.
+    amp: Option<f32>,
     peak: f32,
     peak_smoothed: f32,
     trough: f32,
@@ -152,32 +163,115 @@ struct KickStat {
     floor: f32,
     bands_peak: [f32; NUM_OUTPUT_BANDS],
     latency_ms: f32,
+    /// Onset to the first full-scale row, if the output got there.
+    latency_full_ms: Option<f32>,
+    /// Time the output spends at full scale in the 150 ms after onset.
+    full_ms: f32,
+    /// The ceiling's maximum over the hit and its minimum before the next
+    /// onset.
+    ceil_peak: f32,
+    ceil_min: f32,
+    /// Smoothed-envelope crest in nepers over the 50 ms before onset.
+    crest_np: f32,
+    /// Output peak-to-10 % time over the smoothed envelope's, if both fall
+    /// that far before the next onset.
+    tail_ratio: Option<f32>,
+    /// Pearson correlation between output and smoothed envelope over the
+    /// 150 ms after onset.
+    shape_corr: f32,
+}
+
+impl KickStat {
+    /// Fraction of the ceiling lost between this hit's peak and the next
+    /// onset, if the hit reached the ceiling at all.
+    fn sawtooth_depth(&self) -> Option<f32> {
+        (self.ceil_peak > 0.0).then(|| 1.0 - self.ceil_min / self.ceil_peak)
+    }
+}
+
+fn pearson(xs: &[f32], ys: &[f32]) -> f32 {
+    let n = xs.len() as f32;
+    if n < 2.0 {
+        return f32::NAN;
+    }
+    let mx = xs.iter().sum::<f32>() / n;
+    let my = ys.iter().sum::<f32>() / n;
+    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+    for (x, y) in xs.iter().zip(ys) {
+        sxy += (x - mx) * (y - my);
+        sxx += (x - mx).powi(2);
+        syy += (y - my).powi(2);
+    }
+    sxy / (sxx * syy).sqrt().max(1e-12)
 }
 
 fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
+    kick_stats_amp(rows, onsets, |_| None)
+}
+
+/// Kick statistics with the input amplitude each onset was rendered at.
+fn kick_stats_amp(
+    rows: &[Row],
+    onsets: &[f32],
+    amp: impl Fn(usize) -> Option<f32>,
+) -> Vec<KickStat> {
+    let dt = rows.get(1).map_or(0.0, |r| r.t - rows[0].t);
     onsets
         .iter()
-        .map(|&on| {
+        .enumerate()
+        .map(|(i, &on)| {
+            let next = onsets.get(i + 1).copied().unwrap_or(on + 0.5);
             let trough = window(rows, on - 0.05, on)
                 .map(|r| r.bands[0])
                 .fold(f32::MAX, f32::min);
+            let pre_smoothed = window(rows, on - 0.05, on)
+                .map(|r| r.sub().smoothed)
+                .fold(f32::MAX, f32::min)
+                .max(0.01);
             let mut peak = 0.0_f32;
             let mut peak_t = on;
             let mut peak_smoothed = 0.0_f32;
+            let mut peak_smoothed_t = on;
+            let mut ceil_peak = 0.0_f32;
             let mut bands_peak = [0.0_f32; NUM_OUTPUT_BANDS];
+            let mut full_rows = 0_usize;
+            let mut latency_full_ms = None;
+            let mut out_shape = Vec::new();
+            let mut in_shape = Vec::new();
             for r in window(rows, on, on + 0.15) {
                 if r.bands[0] > peak {
                     peak = r.bands[0];
                     peak_t = r.t;
                 }
-                peak_smoothed = peak_smoothed.max(r.sub().smoothed);
+                ceil_peak = ceil_peak.max(r.sub().ceiling);
+                if r.sub().smoothed > peak_smoothed {
+                    peak_smoothed = r.sub().smoothed;
+                    peak_smoothed_t = r.t;
+                }
+                if r.bands[0] >= FULL_SCALE {
+                    full_rows += 1;
+                    latency_full_ms.get_or_insert((r.t - on) * 1000.0);
+                }
                 for (b, v) in bands_peak.iter_mut().zip(r.bands) {
                     *b = b.max(v);
                 }
+                out_shape.push(r.bands[0]);
+                in_shape.push(r.sub().smoothed);
             }
+            let ceil_min = window(rows, on, next)
+                .map(|r| r.sub().ceiling)
+                .fold(f32::MAX, f32::min);
+            let fall_time = |from: f32, level: f32, value: fn(&Row) -> f32| {
+                window(rows, from, next)
+                    .find(|r| value(r) <= level)
+                    .map(|r| r.t - from)
+            };
+            let out_tail = fall_time(peak_t, 0.1 * peak, |r| r.bands[0]);
+            let in_tail = fall_time(peak_smoothed_t, 0.1 * peak_smoothed, |r| r.sub().smoothed);
             let at_onset = rows.iter().find(|r| r.t >= on).expect("onset within run");
             KickStat {
                 onset: on,
+                amp: amp(i),
                 peak,
                 peak_smoothed,
                 trough: if trough == f32::MAX { 0.0 } else { trough },
@@ -185,9 +279,93 @@ fn kick_stats(rows: &[Row], onsets: &[f32]) -> Vec<KickStat> {
                 floor: at_onset.sub().floor,
                 bands_peak,
                 latency_ms: (peak_t - on) * 1000.0,
+                latency_full_ms,
+                full_ms: full_rows as f32 * dt * 1000.0,
+                ceil_peak,
+                ceil_min: if ceil_min == f32::MAX {
+                    ceil_peak
+                } else {
+                    ceil_min
+                },
+                crest_np: (peak_smoothed / pre_smoothed).max(1e-6).ln(),
+                tail_ratio: match (out_tail, in_tail) {
+                    (Some(o), Some(i)) if i > 0.0 => Some(o / i),
+                    _ => None,
+                },
+                shape_corr: pearson(&out_shape, &in_shape),
             }
         })
         .collect()
+}
+
+/// Mean of the values an iterator yields, or NaN if it yields none.
+fn mean(vals: impl Iterator<Item = f32>) -> f32 {
+    let (mut n, mut sum) = (0.0_f32, 0.0_f32);
+    for v in vals {
+        n += 1.0;
+        sum += v;
+    }
+    if n == 0.0 { f32::NAN } else { sum / n }
+}
+
+/// A mean formatted to one decimal, or "n/a" when there were no values.
+fn fmt_mean(vals: impl Iterator<Item = f32>) -> String {
+    let m = mean(vals);
+    if m.is_nan() {
+        "n/a".to_string()
+    } else {
+        format!("{m:.1}")
+    }
+}
+
+/// Fraction of rows in a window whose band-0 output is at full scale.
+fn full_fraction(rows: &[Row], from: f32, to: f32) -> f32 {
+    let (mut n, mut full) = (0.0_f32, 0.0_f32);
+    for r in window(rows, from, to) {
+        n += 1.0;
+        if r.bands[0] >= FULL_SCALE {
+            full += 1.0;
+        }
+    }
+    full / n.max(1.0)
+}
+
+/// Nepers per second the log of a band's smoothed envelope moves: the rate
+/// the normalizer's motion clock advances at.
+fn motion_rate(rows: &[Row], band: usize, from: f32, to: f32) -> f32 {
+    let mut prev: Option<f32> = None;
+    let mut total = 0.0_f32;
+    for r in window(rows, from, to) {
+        let lg = r.stages[band].smoothed.max(0.01).ln();
+        if let Some(p) = prev {
+            total += (lg - p).abs();
+        }
+        prev = Some(lg);
+    }
+    total / (to - from)
+}
+
+/// The line every kick report ends with, in a form that lines up across
+/// cases and runs. Hits before 3 s are cold-start and left out.
+fn summary_line(name: &str, ks: &[KickStat], rows: &[Row]) -> String {
+    let settled: Vec<&KickStat> = ks.iter().filter(|k| k.onset >= 3.0).collect();
+    let settled = if settled.is_empty() {
+        ks.iter().collect()
+    } else {
+        settled
+    };
+    format!(
+        "  SUMMARY {name:<26} hits {:>3}  peak {:.3}  full {:5.1} ms/hit  ->full {:>5} ms  full-frac {:4.1}%  sawtooth {:.3}  crest {:.2} np  tail x{:.2}  corr {:.3}",
+        ks.len(),
+        mean(settled.iter().map(|k| k.peak)),
+        mean(settled.iter().map(|k| k.full_ms)),
+        fmt_mean(settled.iter().filter_map(|k| k.latency_full_ms)),
+        100.0 * full_fraction(rows, 3.0, f32::MAX),
+        mean(settled.iter().filter_map(|k| k.sawtooth_depth())),
+        mean(settled.iter().map(|k| k.crest_np)),
+        mean(settled.iter().filter_map(|k| k.tail_ratio)),
+        mean(settled.iter().map(|k| k.shape_corr)),
+    )
 }
 
 fn cv(vals: &[f32]) -> f32 {
@@ -200,7 +378,7 @@ fn cv(vals: &[f32]) -> f32 {
     var.sqrt() / mean
 }
 
-fn report_kicks(out: &mut String, label: &str, ks: &[KickStat]) {
+fn report_kicks(out: &mut String, label: &str, ks: &[KickStat], rows: &[Row]) {
     let peaks: Vec<f32> = ks.iter().map(|k| k.peak).collect();
     let p = stats(peaks.iter().copied());
     let t = stats(ks.iter().map(|k| k.trough));
@@ -221,24 +399,41 @@ fn report_kicks(out: &mut String, label: &str, ks: &[KickStat]) {
         l.min,
         l.max
     );
+    let depth = stats(ks.iter().filter_map(|k| k.sawtooth_depth()));
     let _ = writeln!(
         out,
-        "    per-kick: onset  band0  smoothed  floor  ceil   | band1  band2  band3"
+        "    full scale: {:.1} ms/hit, onset->full {} ms, {:.1}% of run from 3 s\n    ceiling per hit: sawtooth depth mean {:.3} min {:.3} max {:.3}, crest mean {:.2} np\n    shape: tail ratio mean x{:.2}, corr mean {:.3}",
+        mean(ks.iter().map(|k| k.full_ms)),
+        fmt_mean(ks.iter().filter_map(|k| k.latency_full_ms)),
+        100.0 * full_fraction(rows, 3.0, f32::MAX),
+        depth.mean,
+        depth.min,
+        depth.max,
+        mean(ks.iter().map(|k| k.crest_np)),
+        mean(ks.iter().filter_map(|k| k.tail_ratio)),
+        mean(ks.iter().map(|k| k.shape_corr)),
+    );
+    let _ = writeln!(
+        out,
+        "    per-kick: onset  band0  smoothed  floor  ceil   full ms  depth | band1  band2  band3"
     );
     for k in ks {
         let _ = writeln!(
             out,
-            "             {:5.2}  {:.3}  {:.3}     {:.3}  {:.3}  | {:.3}  {:.3}  {:.3}",
+            "             {:5.2}  {:.3}  {:.3}     {:.3}  {:.3}  {:5.1}   {:.3} | {:.3}  {:.3}  {:.3}",
             k.onset,
             k.peak,
             k.peak_smoothed,
             k.floor,
             k.ceiling,
+            k.full_ms,
+            k.sawtooth_depth().unwrap_or(f32::NAN),
             k.bands_peak[1],
             k.bands_peak[2],
             k.bands_peak[3]
         );
     }
+    let _ = writeln!(out, "{}", summary_line(label, ks, rows));
 }
 
 /// Suppression after an event: first post-event kick peak relative to the
@@ -255,14 +450,14 @@ fn report_suppression(out: &mut String, ks: &[KickStat], event: f32) {
     let first = post.first().map(|k| k.peak).unwrap_or(0.0);
     let recovered = post
         .iter()
-        .find(|k| k.peak >= 0.9 * pre_mean)
-        .map(|k| k.onset - event);
+        .position(|k| k.peak >= 0.9 * pre_mean)
+        .map(|i| (post[i].onset - event, i + 1));
     let _ = writeln!(
         out,
         "  suppression @ {event:.2}s: pre-event mean peak {pre_mean:.3}, first post-event peak {first:.3} (depth {:.2}x), recovery to 90%: {}",
         first / pre_mean.max(1e-6),
         match recovered {
-            Some(s) => format!("{s:.2}s"),
+            Some((s, hits)) => format!("{s:.2}s ({hits} hits)"),
             None => "never".to_string(),
         }
     );
@@ -356,7 +551,7 @@ fn kick_case(
         signal,
         report: Box::new(move |out, rows| {
             let ks = kick_stats(rows, &onsets);
-            report_kicks(out, name, &ks);
+            report_kicks(out, name, &ks, rows);
             extra(out, &ks, rows);
         }),
     }
@@ -553,7 +748,7 @@ fn suite() -> Vec<Case> {
         signal: sig,
         report: Box::new(move |out, rows| {
             let ks = kick_stats(rows, &ons);
-            report_kicks(out, "kick+tone", &ks);
+            report_kicks(out, "kick+tone", &ks, rows);
         }),
     });
 
@@ -623,7 +818,7 @@ fn suite() -> Vec<Case> {
         signal: sig,
         report: Box::new(move |out, rows| {
             let ks = kick_stats(rows, &ons);
-            report_kicks(out, "antiphase", &ks);
+            report_kicks(out, "antiphase", &ks, rows);
             report_band_peaks(out, "antiphase", rows, 5.0, 10.0);
         }),
     });
@@ -722,7 +917,7 @@ fn suite() -> Vec<Case> {
             }
             report_burst(out, rows, 5.0, 8.0);
             let ks = kick_stats(rows, &onsets(120.0, 10.0, 16.0));
-            report_kicks(out, "kicks after the drop", &ks);
+            report_kicks(out, "kicks after the drop", &ks, rows);
         }),
     });
 
@@ -820,7 +1015,249 @@ fn suite() -> Vec<Case> {
         }),
     });
 
+    // W21: accent contrast. Every fourth (a) or second (b) kick is at 0.8,
+    // the rest at 0.4: does the output keep the 0.5 ratio between them?
+    for (name, every) in [("w21a_accent_every_4", 4usize), ("w21b_accent_every_2", 2)] {
+        let amps = move |i: usize| if i.is_multiple_of(every) { 0.8 } else { 0.4 };
+        let ks = kicks(
+            sr,
+            15.0,
+            onsets(120.0, 0.5, 15.0),
+            move |i, _| amps(i),
+            kick_simple,
+        );
+        let onsets_copy = ks.onsets.clone();
+        cases.push(Case {
+            name,
+            cfg: PROD,
+            signal: ks.signal,
+            report: Box::new(move |out, rows| {
+                let ks = kick_stats_amp(rows, &onsets_copy, |i| Some(amps(i)));
+                report_kicks(out, name, &ks, rows);
+                report_contrast(out, &ks);
+            }),
+        });
+    }
+
+    // W21c: the every-4 accent pattern over a held 55 Hz tone at 0.2, so the
+    // hits' crest above the bed is what real bass lines give (~1.5 np)
+    // rather than the ~4 np of kicks in silence.
+    {
+        let amps = |i: usize| if i.is_multiple_of(4) { 0.8 } else { 0.4 };
+        let mut ks = kicks(
+            sr,
+            15.0,
+            onsets(120.0, 0.5, 15.0),
+            move |i, _| amps(i),
+            kick_simple,
+        );
+        sine(&mut ks.signal, sr, 0.0, 15.0, 55.0, 0.2);
+        let onsets_copy = ks.onsets.clone();
+        cases.push(Case {
+            name: "w21c_accent_over_bed",
+            cfg: PROD,
+            signal: ks.signal,
+            report: Box::new(move |out, rows| {
+                let ks = kick_stats_amp(rows, &onsets_copy, |i| Some(amps(i)));
+                report_kicks(out, "w21c_accent_over_bed", &ks, rows);
+                report_contrast(out, &ks);
+            }),
+        });
+    }
+
+    // W22: velocity ladder, ascending and descending: 0.3/0.5/0.7/1.0 of 0.8.
+    // Is the ordering kept, how compressed is it, and does the same hit read
+    // differently depending on what came before it?
+    const LADDER: [f32; 4] = [0.3, 0.5, 0.7, 1.0];
+    for (name, ascending) in [("w22a_ladder_up", true), ("w22b_ladder_down", false)] {
+        let amps = move |i: usize| {
+            let step = if ascending { i % 4 } else { 3 - i % 4 };
+            0.8 * LADDER[step]
+        };
+        let ks = kicks(
+            sr,
+            12.0,
+            onsets(120.0, 0.5, 12.0),
+            move |i, _| amps(i),
+            kick_simple,
+        );
+        let onsets_copy = ks.onsets.clone();
+        cases.push(Case {
+            name,
+            cfg: PROD,
+            signal: ks.signal,
+            report: Box::new(move |out, rows| {
+                let ks = kick_stats_amp(rows, &onsets_copy, |i| Some(amps(i)));
+                report_kicks(out, name, &ks, rows);
+                report_ladder(out, &ks);
+            }),
+        });
+    }
+
+    // W23: decrescendo. Kicks fade by e over 4 s from 5 s to 15 s (−2.2 dB/s),
+    // then hold. Does the fade read as a fade?
+    let amps = |_: usize, on: f32| 0.8 * (-(on - 5.0).clamp(0.0, 10.0) / 4.0).exp();
+    let ks = kicks(sr, 20.0, onsets(120.0, 0.5, 20.0), amps, kick_simple);
+    let onsets_copy = ks.onsets.clone();
+    cases.push(Case {
+        name: "w23_decrescendo",
+        cfg: PROD,
+        signal: ks.signal,
+        report: Box::new(move |out, rows| {
+            let ks = kick_stats_amp(rows, &onsets_copy, |i| Some(amps(i, onsets_copy[i])));
+            report_kicks(out, "w23_decrescendo", &ks, rows);
+            report_fade(out, &ks, 5.0, 15.0);
+        }),
+    });
+
+    // W24: shaker. A white-noise bed at 0.3 for the whole run, kicks from
+    // 10 s. A noise-like envelope keeps the motion clock running: what do
+    // the upper bands do on the bed alone, and under kicks?
+    let mut sig = silence(sr, 20.0);
+    let mut rng = Lcg(7);
+    for frame in sig.iter_mut() {
+        let v = 0.3 * rng.next_f32();
+        frame[0] += v;
+        frame[1] += v;
+    }
+    let ons = onsets(120.0, 10.0, 20.0);
+    for &on in &ons {
+        kick_simple(&mut sig, sr, on, 0.8);
+    }
+    cases.push(Case {
+        name: "w24_shaker_bed",
+        cfg: PROD,
+        signal: sig,
+        report: Box::new(move |out, rows| {
+            for (label, from, to) in [("bed alone", 2.0, 10.0), ("bed + kicks", 10.0, 20.0)] {
+                let _ = writeln!(out, "  {label} [{from:.0}-{to:.0}s]:");
+                for band in [0, 3, 5, 6, 7] {
+                    let vals: Vec<f32> = window(rows, from, to).map(|r| r.bands[band]).collect();
+                    let st = stats(vals.iter().copied());
+                    let full = vals.iter().filter(|&&v| v >= FULL_SCALE).count() as f32
+                        / vals.len().max(1) as f32;
+                    let _ = writeln!(
+                        out,
+                        "    band{band}: mean {:.3} CV {:.2} full {:4.1}%  motion {:.1} np/s",
+                        st.mean,
+                        cv(&vals),
+                        100.0 * full,
+                        motion_rate(rows, band, from, to)
+                    );
+                }
+            }
+            let ks = kick_stats(rows, &ons);
+            report_kicks(out, "kicks over the bed", &ks, rows);
+        }),
+    });
+
+    // W25: W5's quiet → loud → quiet at two tempos: is recovery a number of
+    // hits or a number of seconds?
+    for (name, bpm) in [("w25a_level_step_70", 70.0), ("w25b_level_step_170", 170.0)] {
+        cases.push(kick_case(
+            name,
+            PROD,
+            kicks(
+                sr,
+                30.0,
+                onsets(bpm, 0.5, 30.0),
+                |_, on| if (10.0..20.0).contains(&on) { 0.8 } else { 0.1 },
+                kick_simple,
+            ),
+            |out, ks, _| {
+                report_suppression(out, ks, 10.0);
+                report_suppression(out, ks, 20.0);
+            },
+        ));
+    }
+
     cases
+}
+
+/// Accented against unaccented hits (from 3 s): the output ratio beside the
+/// input amplitude ratio.
+fn report_contrast(out: &mut String, ks: &[KickStat]) {
+    let settled = ks.iter().filter(|k| k.onset >= 3.0);
+    let top = ks.iter().filter_map(|k| k.amp).fold(0.0, f32::max);
+    let (mut acc, mut unacc) = (Vec::new(), Vec::new());
+    let (mut acc_in, mut unacc_in) = (Vec::new(), Vec::new());
+    for k in settled {
+        let Some(amp) = k.amp else { continue };
+        if amp >= top {
+            acc.push(k.peak);
+            acc_in.push(amp);
+        } else {
+            unacc.push(k.peak);
+            unacc_in.push(amp);
+        }
+    }
+    let out_ratio = mean(unacc.iter().copied()) / mean(acc.iter().copied());
+    let in_ratio = mean(unacc_in.iter().copied()) / mean(acc_in.iter().copied());
+    let _ = writeln!(
+        out,
+        "  contrast: unaccented/accented output {out_ratio:.3} vs input {in_ratio:.3} ({:+.1} dB)",
+        20.0 * (out_ratio / in_ratio).log10()
+    );
+}
+
+/// A velocity ladder (from 3 s): mean output per input level, adjacent-pair
+/// inversions, and the log-log slope of output against input (1 = faithful).
+fn report_ladder(out: &mut String, ks: &[KickStat]) {
+    let mut levels: Vec<f32> = ks.iter().filter_map(|k| k.amp).collect();
+    levels.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+    levels.dedup();
+    let settled: Vec<&KickStat> = ks
+        .iter()
+        .filter(|k| k.onset >= 3.0 && k.amp.is_some())
+        .collect();
+    let _ = write!(out, "  ladder: mean output per input level");
+    for &lv in &levels {
+        let m = mean(settled.iter().filter(|k| k.amp == Some(lv)).map(|k| k.peak));
+        let _ = write!(out, "  {lv:.2}->{m:.3}");
+    }
+    let inversions = settled
+        .windows(2)
+        .filter(|w| {
+            let (a, b) = (w[0], w[1]);
+            (a.amp < b.amp && a.peak > b.peak) || (a.amp > b.amp && a.peak < b.peak)
+        })
+        .count();
+    // Least-squares slope of ln(peak) on ln(amp).
+    let xs: Vec<f32> = settled.iter().map(|k| k.amp.expect("amp").ln()).collect();
+    let ys: Vec<f32> = settled.iter().map(|k| k.peak.max(1e-6).ln()).collect();
+    let slope = pearson(&xs, &ys) * stddev(&ys) / stddev(&xs).max(1e-9);
+    let _ = writeln!(
+        out,
+        "\n  ladder: {inversions} inversions in {} hits, log-log slope {slope:.2}",
+        settled.len()
+    );
+}
+
+fn stddev(vals: &[f32]) -> f32 {
+    let m = mean(vals.iter().copied());
+    (vals.iter().map(|v| (v - m).powi(2)).sum::<f32>() / vals.len().max(1) as f32).sqrt()
+}
+
+/// A fade between two times: the output peaks' slope in dB/s against the
+/// input amplitudes', and the fraction of the fade that shows.
+fn report_fade(out: &mut String, ks: &[KickStat], from: f32, to: f32) {
+    let hits: Vec<&KickStat> = ks
+        .iter()
+        .filter(|k| k.onset >= from && k.onset < to && k.amp.is_some())
+        .collect();
+    let ts: Vec<f32> = hits.iter().map(|k| k.onset).collect();
+    let db = |v: f32| 20.0 * v.max(1e-6).log10();
+    let out_db: Vec<f32> = hits.iter().map(|k| db(k.peak)).collect();
+    let in_db: Vec<f32> = hits.iter().map(|k| db(k.amp.expect("amp"))).collect();
+    let slope = |ys: &[f32]| pearson(&ts, ys) * stddev(ys) / stddev(&ts).max(1e-9);
+    let (so, si) = (slope(&out_db), slope(&in_db));
+    let _ = writeln!(
+        out,
+        "  fade [{from:.0}-{to:.0}s]: output {so:.2} dB/s vs input {si:.2} dB/s ({:.0}% of the fade shows); output first {:.3} last {:.3}",
+        100.0 * so / si,
+        hits.first().map_or(f32::NAN, |k| k.peak),
+        hits.last().map_or(f32::NAN, |k| k.peak)
+    );
 }
 
 // -------------------------------------------------------------------- music
@@ -895,7 +1332,7 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
     );
     let _ = writeln!(
         report,
-        "  loop   floor   ceil   |  dfloor   dceil   | b0 dist | b0 min  b0 max  kicks"
+        "  loop   floor   ceil   |  dfloor   dceil   | b0 dist | b0 min  b0 max  kicks  | b0 hit peaks p10/p50/p90  full%"
     );
     let mut prev: Option<&[Row]> = None;
     let mut prev_end: Option<&Row> = None;
@@ -911,19 +1348,44 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
             )
         });
         let dist = prev.map(|p| rms_distance(p, chunk));
+        let mut peaks: Vec<f32> = music_kicks(chunk).iter().map(|k| k.peaks[0]).collect();
+        peaks.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+        let pct = |q: f32| {
+            peaks
+                .get(((peaks.len() as f32 - 1.0) * q).round() as usize)
+                .copied()
+                .unwrap_or(f32::NAN)
+        };
+        let full = chunk.iter().filter(|r| r.bands[0] >= FULL_SCALE).count() as f32
+            / chunk.len().max(1) as f32;
         let _ = writeln!(
             report,
-            "  {l:>4}   {:.4}  {:.4} | {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks}",
+            "  {l:>4}   {:.4}  {:.4} | {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks:>3}    | {:.2} / {:.2} / {:.2}   {:4.1}",
             end.sub().floor,
             end.sub().ceiling,
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.0)),
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.1)),
             dist.map_or("-".into(), |d| format!("{d:.4}")),
             b0.min,
-            b0.max
+            b0.max,
+            pct(0.1),
+            pct(0.5),
+            pct(0.9),
+            100.0 * full
         );
         prev = Some(chunk);
         prev_end = Some(end);
+    }
+
+    if loops > 0 {
+        let last =
+            &rows[(loops - 1) * buffers_per_loop..(loops * buffers_per_loop).min(rows.len())];
+        let (from, to) = (last[0].t, last[last.len() - 1].t);
+        let _ = write!(report, "  motion rate on the last loop, np/s per band:");
+        for band in 0..NUM_OUTPUT_BANDS {
+            let _ = write!(report, " {:.1}", motion_rate(&rows, band, from, to));
+        }
+        let _ = writeln!(report);
     }
 
     // Shift experiment: the same clip with SHIFT samples of silence in front,
@@ -1023,17 +1485,21 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out_dir = args
         .get(1)
-        .expect("usage: envelope_suite <out_dir> [--music <clip> --loops N]");
+        .expect("usage: envelope_suite <out_dir> [--music <clip> --loops N] [--ceiling-forget F]");
     let out_dir = Path::new(out_dir);
     fs::create_dir_all(out_dir).expect("create out dir");
-    if let Some(i) = args.iter().position(|a| a == "--music") {
-        let path = args.get(i + 1).expect("--music <clip>");
-        let loops = args
-            .iter()
-            .position(|a| a == "--loops")
+    let flag = |name: &str| {
+        args.iter()
+            .position(|a| a == name)
             .and_then(|j| args.get(j + 1))
-            .map_or(6, |n| n.parse().expect("--loops N"));
-        run_music(out_dir, path, loops, PROD);
+    };
+    let mut cfg = PROD;
+    if let Some(f) = flag("--ceiling-forget") {
+        cfg.tuning.ceiling_forget = f.parse().expect("--ceiling-forget F");
+    }
+    if let Some(path) = flag("--music") {
+        let loops = flag("--loops").map_or(6, |n| n.parse().expect("--loops N"));
+        run_music(out_dir, path, loops, cfg);
         return;
     }
 
@@ -1041,7 +1507,11 @@ fn main() {
     click_offset_sweep(out_dir);
 
     for case in suite() {
-        let rows = run(case.cfg, &case.signal);
+        let case_cfg = RunConfig {
+            tuning: cfg.tuning,
+            ..case.cfg
+        };
+        let rows = run(case_cfg, &case.signal);
         write_csv(&out_dir.join(format!("{}.csv", case.name)), &rows);
         let _ = writeln!(
             report,
@@ -1054,6 +1524,18 @@ fn main() {
         (case.report)(&mut report, &rows);
         report.push('\n');
     }
+    let _ = writeln!(
+        report,
+        "=== summary (ceiling forget {}; hits from 3 s) ===",
+        cfg.tuning.ceiling_forget
+    );
+    let summary: Vec<&str> = report
+        .lines()
+        .filter(|l| l.starts_with("  SUMMARY "))
+        .collect();
+    let table = summary.join("\n");
+    report.push_str(&table);
+    report.push('\n');
     print!("{report}");
     fs::write(out_dir.join("metrics.txt"), report).expect("write metrics");
 }

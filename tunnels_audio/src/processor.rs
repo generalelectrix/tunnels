@@ -144,10 +144,41 @@ fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
     (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
 }
 
+/// The normalizer's fixed constants: what it treats as silence, how little
+/// range it will stretch to full scale, and how fast the ceiling forgets.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalizerTuning {
+    /// Nepers the ceiling decays per neper of log-envelope motion.
+    pub ceiling_forget: f32,
+    /// Minimum normalization range as a fraction of the ceiling. Once the
+    /// floor has climbed to within this fraction of the ceiling the output
+    /// fades instead of being stretched back to full scale, and a band's
+    /// reach to full scale never depends on its absolute level.
+    pub rel_min_range: f32,
+    /// Input level below which the band outputs zero, so idle noise is
+    /// never normalized up to full scale.
+    pub noise_gate: f32,
+}
+
+impl NormalizerTuning {
+    pub const DEFAULT: Self = Self {
+        ceiling_forget: 0.1,
+        rel_min_range: 0.25,
+        noise_gate: 0.01,
+    };
+}
+
+impl Default for NormalizerTuning {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// The normalizer coefficients every band shares, derived from the settings
 /// and the buffer update rate. The expensive `exp()`s are recomputed only
 /// when a half-life or the update rate changes.
 struct NormalizerParams {
+    tuning: NormalizerTuning,
     /// Floor follower coefficients: the floor rises at the floor half-life
     /// and falls at a fifth of it.
     floor_rise_coeff: f32,
@@ -161,8 +192,9 @@ impl NormalizerParams {
     /// The floor falls this much faster than it rises.
     const FLOOR_FALL_RATIO: f32 = 0.2;
 
-    fn new() -> Self {
+    fn new(tuning: NormalizerTuning) -> Self {
         Self {
+            tuning,
             floor_rise_coeff: 0.0,
             floor_fall_coeff: 0.0,
             floor_halflife: 0.0,
@@ -202,50 +234,37 @@ struct AdaptiveNormalizer {
     /// output is measured from.
     floor: AsymmetricOnePole,
     ceiling: f32,
-    /// Log envelope on the previous update, clamped at the gate.
+    /// Log envelope on the previous update, clamped at the noise gate.
     prev_log_envelope: f32,
-    /// Envelope level below which the band outputs zero.
-    gate: f32,
 }
 
 impl AdaptiveNormalizer {
-    /// Minimum normalization range as a fraction of the ceiling. Once the
-    /// floor has climbed to within this fraction of the ceiling the output
-    /// fades instead of being stretched back to full scale, and a band's
-    /// reach to full scale never depends on its absolute level.
-    const REL_MIN_RANGE: f32 = 0.25;
-    /// Input level below which the band outputs zero, so idle noise is
-    /// never normalized up to full scale.
-    const NOISE_GATE: f32 = 0.01;
-    /// Nepers the ceiling decays per neper of log-envelope motion.
-    const CEILING_FORGET: f32 = 0.1;
-
-    fn new() -> Self {
+    fn new(tuning: &NormalizerTuning) -> Self {
         Self {
             floor: AsymmetricOnePole::default(),
             ceiling: 0.0,
-            prev_log_envelope: Self::NOISE_GATE.ln(),
-            gate: Self::NOISE_GATE,
+            prev_log_envelope: tuning.noise_gate.ln(),
         }
     }
 
     #[inline]
     fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
+        let t = &p.tuning;
         // Update ceiling: instant attack, decay per unit of envelope motion.
-        let log_envelope = envelope.max(self.gate).ln();
+        let log_envelope = envelope.max(t.noise_gate).ln();
         let motion = (log_envelope - self.prev_log_envelope).abs();
         self.prev_log_envelope = log_envelope;
-        self.ceiling = envelope.max(self.ceiling * (-Self::CEILING_FORGET * motion).exp());
+        self.ceiling = envelope.max(self.ceiling * (-t.ceiling_forget * motion).exp());
 
         // Update floor. It never exceeds the ceiling.
         self.floor.rise = p.floor_rise_coeff;
         self.floor.fall = p.floor_fall_coeff;
         let floor = self.floor.step(envelope.min(self.ceiling));
 
-        if envelope < self.gate {
+        if envelope < t.noise_gate {
             return 0.0;
         }
-        let range = (self.ceiling - floor).max(Self::REL_MIN_RANGE * self.ceiling);
+        let range = (self.ceiling - floor).max(t.rel_min_range * self.ceiling);
         ((envelope - floor) / range).clamp(0.0, 1.0)
     }
 }
@@ -341,7 +360,12 @@ struct BandChain {
 impl BandChain {
     /// `sample_rate` in Hz; the slow follower's attack and release are
     /// half-lives in seconds.
-    fn new(sample_rate: f32, slow_attack: f32, slow_release: f32) -> Self {
+    fn new(
+        sample_rate: f32,
+        slow_attack: f32,
+        slow_release: f32,
+        tuning: &NormalizerTuning,
+    ) -> Self {
         Self {
             hilbert: HilbertTransform::new(),
             fast_envelope: AsymmetricOnePole::new(
@@ -353,7 +377,7 @@ impl BandChain {
                 halflife_to_coeff(slow_release, sample_rate),
             ),
             smoother: OnePoleSmoother::default(),
-            normalizer: AdaptiveNormalizer::new(),
+            normalizer: AdaptiveNormalizer::new(tuning),
         }
     }
 
@@ -435,8 +459,10 @@ impl Processor {
         let sample_rate = sample_rate as f32;
         let envelope_attack = handle.envelope_attack.get();
         let envelope_release = handle.envelope_release.get();
-        let bands =
-            std::array::from_fn(|_| BandChain::new(sample_rate, envelope_attack, envelope_release));
+        let tuning = NormalizerTuning::DEFAULT;
+        let bands = std::array::from_fn(|_| {
+            BandChain::new(sample_rate, envelope_attack, envelope_release, &tuning)
+        });
 
         Self {
             envelope_attack,
@@ -448,7 +474,16 @@ impl Processor {
             wavelet: WaveletDecomposition::new(),
             bands,
             smooth_coeff: SmootherCoeff::default(),
-            norm_params: NormalizerParams::new(),
+            norm_params: NormalizerParams::new(tuning),
+        }
+    }
+
+    /// Replace the normalizer tuning and restart every band's normalizer
+    /// from its initial state.
+    pub fn set_normalizer_tuning(&mut self, tuning: NormalizerTuning) {
+        self.norm_params = NormalizerParams::new(tuning);
+        for band in &mut self.bands {
+            band.normalizer = AdaptiveNormalizer::new(&tuning);
         }
     }
 
