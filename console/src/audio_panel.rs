@@ -4,7 +4,6 @@ use gui_common::audio_panel::{
     AudioCommands, AudioPanel as SharedAudioPanel, AudioPanelState as SharedAudioPanelState,
     AudioSnapshot,
 };
-use tunnels::audio::processor::TrackingMode;
 use tunnels::audio::{AudioInput, ControlMessage, StateChange};
 use tunnels::control::MetaCommand;
 
@@ -67,14 +66,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             .ctx
             .send_command(MetaCommand::AudioControl(ControlMessage::Set(
                 StateChange::NormFloorHalflife(halflife),
-            )));
-    }
-
-    fn set_norm_floor_mode(&mut self, mode: TrackingMode) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::NormFloorMode(mode),
             )));
     }
 

@@ -94,7 +94,6 @@ pub struct ProcessorSettingsInner {
 
     /// Floor tracking half-life in seconds (slow — adapts to ambient level).
     pub norm_floor_halflife: AtomicF32,
-    pub norm_floor_mode: AtomicTrackingMode,
 
     /// Which band feeds `envelope`: 0 = sub-bass residual, 1-7 = octave bands.
     pub active_band: AtomicU32,
@@ -113,8 +112,6 @@ impl ProcessorSettingsInner {
         self.gain.set(1.0);
         self.active_band.store(0, Ordering::Relaxed);
         self.norm_floor_halflife.set(10.0);
-        self.norm_floor_mode
-            .store(TrackingMode::Average, Ordering::Relaxed);
     }
 }
 
@@ -127,7 +124,6 @@ impl Default for ProcessorSettingsInner {
             gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             norm_floor_halflife: AtomicF32::new(10.0),
-            norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
             active_band: AtomicU32::new(0),
         }
     }
@@ -145,38 +141,27 @@ fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
     (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
 }
 
-/// How the normalizer floor tracks the envelope.
-/// - Average: asymmetric EMA tracking the general level
-/// - Limit: drops instantly to the minimum and rises slowly from it
-#[derive(PartialEq, Eq)]
-#[atomic_enum::atomic_enum]
-pub enum TrackingMode {
-    Average = 0,
-    Limit = 1,
-}
-
 /// The normalizer coefficients every band shares, derived from the settings
 /// and the buffer update rate. The expensive `exp()`s are recomputed only
 /// when a half-life or the update rate changes.
 struct NormalizerParams {
-    floor_mode: TrackingMode,
-    /// EMA coefficients for average-mode floor tracking.
+    /// Floor follower coefficients: the floor rises at the floor half-life
+    /// and falls at a fifth of it.
     floor_rise_coeff: f32,
     floor_fall_coeff: f32,
-    /// EMA coefficient for limit-mode floor (slow rise from minimum).
-    floor_limit_rise_coeff: f32,
     /// The inputs the coefficients were derived from.
     floor_halflife: f32,
     update_rate: f32,
 }
 
 impl NormalizerParams {
+    /// The floor falls this much faster than it rises.
+    const FLOOR_FALL_RATIO: f32 = 0.2;
+
     fn new() -> Self {
         Self {
-            floor_mode: TrackingMode::Average,
             floor_rise_coeff: 0.0,
             floor_fall_coeff: 0.0,
-            floor_limit_rise_coeff: 0.0,
             floor_halflife: 0.0,
             update_rate: 0.0,
         }
@@ -185,7 +170,6 @@ impl NormalizerParams {
     /// Refresh from the settings for the given update rate. Safe to call
     /// every buffer.
     fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: f32) {
-        self.floor_mode = settings.norm_floor_mode.load(Ordering::Relaxed);
         let floor_halflife = settings.norm_floor_halflife.get();
         if update_rate <= 0.0
             || (floor_halflife == self.floor_halflife && update_rate == self.update_rate)
@@ -194,11 +178,9 @@ impl NormalizerParams {
         }
         self.floor_halflife = floor_halflife;
         self.update_rate = update_rate;
-        // Average mode: slow rise, faster fall.
         self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
-        self.floor_fall_coeff = halflife_to_coeff(floor_halflife * 0.2, update_rate);
-        // Limit mode: instant drop to min, slow rise back.
-        self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_fall_coeff =
+            halflife_to_coeff(floor_halflife * Self::FLOOR_FALL_RATIO, update_rate);
     }
 }
 
@@ -213,7 +195,9 @@ impl NormalizerParams {
 /// at any tempo, and a pause or a held tone — no motion — leaves the
 /// ceiling where it was.
 struct AdaptiveNormalizer {
-    floor: f32,
+    /// Follows the envelope slowly upward and faster downward: the bed the
+    /// output is measured from.
+    floor: AsymmetricOnePole,
     ceiling: f32,
     /// Log envelope on the previous update, clamped at the gate.
     prev_log_envelope: f32,
@@ -235,7 +219,7 @@ impl AdaptiveNormalizer {
 
     fn new() -> Self {
         Self {
-            floor: 0.0,
+            floor: AsymmetricOnePole::default(),
             ceiling: 0.0,
             prev_log_envelope: Self::NOISE_GATE.ln(),
             gate: Self::NOISE_GATE,
@@ -251,31 +235,15 @@ impl AdaptiveNormalizer {
         self.ceiling = envelope.max(self.ceiling * (-Self::CEILING_FORGET * motion).exp());
 
         // Update floor. It never exceeds the ceiling.
-        let bounded = envelope.min(self.ceiling);
-        match p.floor_mode {
-            TrackingMode::Average => {
-                let coeff = if bounded > self.floor {
-                    p.floor_rise_coeff
-                } else {
-                    p.floor_fall_coeff
-                };
-                self.floor = coeff * self.floor + (1.0 - coeff) * bounded;
-            }
-            TrackingMode::Limit => {
-                if bounded < self.floor {
-                    self.floor = bounded; // instant drop to minimum
-                } else {
-                    self.floor = p.floor_limit_rise_coeff * self.floor
-                        + (1.0 - p.floor_limit_rise_coeff) * bounded;
-                }
-            }
-        }
+        self.floor.rise = p.floor_rise_coeff;
+        self.floor.fall = p.floor_fall_coeff;
+        let floor = self.floor.step(envelope.min(self.ceiling));
 
         if envelope < self.gate {
             return 0.0;
         }
-        let range = (self.ceiling - self.floor).max(Self::REL_MIN_RANGE * self.ceiling);
-        ((envelope - self.floor) / range).clamp(0.0, 1.0)
+        let range = (self.ceiling - floor).max(Self::REL_MIN_RANGE * self.ceiling);
+        ((envelope - floor) / range).clamp(0.0, 1.0)
     }
 }
 
@@ -410,7 +378,7 @@ impl BandChain {
     fn stages(&self) -> BandStages {
         BandStages {
             smoothed: self.smoother.state,
-            floor: self.normalizer.floor,
+            floor: self.normalizer.floor.state,
             ceiling: self.normalizer.ceiling,
         }
     }

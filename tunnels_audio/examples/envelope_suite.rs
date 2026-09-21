@@ -32,9 +32,8 @@ mod signals;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::Ordering;
 
-use tunnels_audio::processor::{BandStages, NUM_OUTPUT_BANDS, ProcessorSettings, TrackingMode};
+use tunnels_audio::processor::{BandStages, NUM_OUTPUT_BANDS, ProcessorSettings};
 
 use signals::{KickSignal, Lcg, Signal, kick_real, kick_simple, kicks, onsets, silence, sine};
 
@@ -59,23 +58,15 @@ impl Row {
 struct RunConfig {
     sample_rate: u32,
     frames: usize,
-    /// Run the normalizer floor in limit mode instead of average mode.
-    floor_limit: bool,
 }
 
 const PROD: RunConfig = RunConfig {
     sample_rate: 48000,
     frames: 64,
-    floor_limit: false,
 };
 
 fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
     let settings = ProcessorSettings::default();
-    if cfg.floor_limit {
-        settings
-            .norm_floor_mode
-            .store(TrackingMode::Limit, Ordering::Relaxed);
-    }
     let mut rows = Vec::with_capacity(signal.len() / cfg.frames + 1);
     offline::run_stereo(
         cfg.sample_rate,
@@ -1006,11 +997,8 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
 
 /// The W6b click at several positions within the beat: does a click's
 /// effect on the following kick depend on where it lands?
-fn click_offset_sweep(out_dir: &Path, floor_limit: bool) {
-    let cfg = RunConfig {
-        floor_limit,
-        ..PROD
-    };
+fn click_offset_sweep(out_dir: &Path) {
+    let cfg = PROD;
     let sr = PROD.sample_rate;
     let ons = onsets(120.0, 0.5, 8.0);
     let mut report = String::from(
@@ -1049,8 +1037,6 @@ fn main() {
         .expect("usage: envelope_suite <out_dir> [--music <clip> --loops N]");
     let out_dir = Path::new(out_dir);
     fs::create_dir_all(out_dir).expect("create out dir");
-    let floor_limit = args.iter().any(|a| a == "--floor-limit");
-
     if let Some(i) = args.iter().position(|a| a == "--music") {
         let path = args.get(i + 1).expect("--music <clip>");
         let loops = args
@@ -1058,27 +1044,15 @@ fn main() {
             .position(|a| a == "--loops")
             .and_then(|j| args.get(j + 1))
             .map_or(6, |n| n.parse().expect("--loops N"));
-        run_music(
-            out_dir,
-            path,
-            loops,
-            RunConfig {
-                floor_limit,
-                ..PROD
-            },
-        );
+        run_music(out_dir, path, loops, PROD);
         return;
     }
 
     let mut report = String::new();
-    click_offset_sweep(out_dir, floor_limit);
+    click_offset_sweep(out_dir);
 
     for case in suite() {
-        let cfg = RunConfig {
-            floor_limit,
-            ..case.cfg
-        };
-        let rows = run(cfg, &case.signal);
+        let rows = run(case.cfg, &case.signal);
         write_csv(&out_dir.join(format!("{}.csv", case.name)), &rows);
         let _ = writeln!(
             report,

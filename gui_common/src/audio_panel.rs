@@ -2,7 +2,7 @@ use eframe::egui;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
-use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
+use tunnels_audio::processor::OUTPUT_BAND_LABELS;
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
@@ -13,7 +13,6 @@ pub trait AudioCommands {
     fn set_gain(&mut self, gain_linear: f64);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
-    fn set_norm_floor_mode(&mut self, mode: TrackingMode);
     fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
@@ -210,22 +209,6 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
                     self.commands
                         .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
                 }
-                let mut mode = self.snapshot.norm_floor_mode;
-                if ui
-                    .selectable_label(mode == TrackingMode::Average, "Avg")
-                    .clicked()
-                {
-                    mode = TrackingMode::Average;
-                }
-                if ui
-                    .selectable_label(mode == TrackingMode::Limit, "Min")
-                    .clicked()
-                {
-                    mode = TrackingMode::Limit;
-                }
-                if mode != self.snapshot.norm_floor_mode {
-                    self.commands.set_norm_floor_mode(mode);
-                }
             });
             ui.end_row();
         });
@@ -261,7 +244,6 @@ mod tests {
         fn set_gain(&mut self, _gain_linear: f64) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
-        fn set_norm_floor_mode(&mut self, _mode: TrackingMode) {}
         fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {

@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 tunnels_lib = { path = "../tunnels_lib" }
 cpal = "0.16"
-atomic_enum = "0.3"
 rtrb = "0.3"
 anyhow.workspace = true
 log.workspace = true
