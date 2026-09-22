@@ -69,6 +69,14 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
+    fn set_ceiling_forget(&mut self, forget: f32) {
+        let _ = self
+            .ctx
+            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
+                StateChange::CeilingForget(forget),
+            )));
+    }
+
     fn reset_parameters(&mut self) {
         let _ = self
             .ctx

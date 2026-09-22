@@ -48,6 +48,7 @@ pub struct AudioSnapshot {
     pub gain_linear: f64,
     pub active_band: u32,
     pub norm_floor_halflife: Duration,
+    pub ceiling_forget: f32,
 }
 
 impl AudioSnapshot {
@@ -61,6 +62,7 @@ impl AudioSnapshot {
             gain_linear: ps.gain.get() as f64,
             active_band: ps.active_band.load(Ordering::Relaxed),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
+            ceiling_forget: ps.ceiling_forget.get(),
         }
     }
 }
@@ -179,6 +181,8 @@ impl AudioInput {
         emitter.emit_audio_state_change(NormFloorHalflife(Duration::from_secs_f32(
             self.processor_settings.norm_floor_halflife.get(),
         )));
+        emitter
+            .emit_audio_state_change(CeilingForget(self.processor_settings.ceiling_forget.get()));
     }
 
     /// Handle a control event.
@@ -233,6 +237,13 @@ impl AudioInput {
                     .norm_floor_halflife
                     .set(v.as_secs_f32());
             }
+            CeilingForget(v) => {
+                if v.is_nan() || v < 0.0 {
+                    warn!("Invalid ceiling forget rate {v} (must be >= 0).");
+                    return;
+                }
+                self.processor_settings.ceiling_forget.set(v);
+            }
         };
         emitter.emit_audio_state_change(sc);
     }
@@ -263,6 +274,8 @@ pub enum StateChange {
     InputGain(f64),
     ActiveBand(u32),
     NormFloorHalflife(Duration),
+    /// Nepers the ceiling forgets per neper of envelope motion.
+    CeilingForget(f32),
 }
 
 #[derive(Debug, Clone)]

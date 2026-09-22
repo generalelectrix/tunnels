@@ -97,6 +97,10 @@ pub struct ProcessorSettingsInner {
 
     /// Floor tracking half-life in seconds (slow — adapts to ambient level).
     pub norm_floor_halflife: AtomicF32,
+    /// Nepers the normalizer ceiling forgets per neper the log envelope
+    /// moves: small values hold the scale across many hits and keep every
+    /// hit's own level; large values re-normalize within a few hits.
+    pub ceiling_forget: AtomicF32,
 
     /// Which band feeds `envelope`: 0 = sub-bass residual, 1-7 = octave bands.
     pub active_band: AtomicU32,
@@ -107,6 +111,7 @@ impl ProcessorSettingsInner {
     const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
     const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
+    pub const DEFAULT_CEILING_FORGET: f32 = 0.1;
 
     pub fn reset_defaults(&self) {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
@@ -115,6 +120,7 @@ impl ProcessorSettingsInner {
         self.gain.set(1.0);
         self.active_band.store(0, Ordering::Relaxed);
         self.norm_floor_halflife.set(10.0);
+        self.ceiling_forget.set(Self::DEFAULT_CEILING_FORGET);
     }
 }
 
@@ -127,6 +133,7 @@ impl Default for ProcessorSettingsInner {
             gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             norm_floor_halflife: AtomicF32::new(10.0),
+            ceiling_forget: AtomicF32::new(Self::DEFAULT_CEILING_FORGET),
             active_band: AtomicU32::new(0),
         }
     }
@@ -144,12 +151,10 @@ fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
     (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
 }
 
-/// The normalizer's fixed constants: what it treats as silence, how little
-/// range it will stretch to full scale, and how fast the ceiling forgets.
+/// The normalizer's fixed constants: what it treats as silence and how
+/// little range it will stretch to full scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NormalizerTuning {
-    /// Nepers the ceiling decays per neper of log-envelope motion.
-    pub ceiling_forget: f32,
     /// Minimum normalization range as a fraction of the ceiling. Once the
     /// floor has climbed to within this fraction of the ceiling the output
     /// fades instead of being stretched back to full scale, and a band's
@@ -162,7 +167,6 @@ pub struct NormalizerTuning {
 
 impl NormalizerTuning {
     pub const DEFAULT: Self = Self {
-        ceiling_forget: 0.1,
         rel_min_range: 0.25,
         noise_gate: 0.01,
     };
@@ -179,6 +183,8 @@ impl Default for NormalizerTuning {
 /// when a half-life or the update rate changes.
 struct NormalizerParams {
     tuning: NormalizerTuning,
+    /// Nepers the ceiling decays per neper of log-envelope motion.
+    ceiling_forget: f32,
     /// Floor follower coefficients: the floor rises at the floor half-life
     /// and falls at a fifth of it.
     floor_rise_coeff: f32,
@@ -195,6 +201,7 @@ impl NormalizerParams {
     fn new(tuning: NormalizerTuning) -> Self {
         Self {
             tuning,
+            ceiling_forget: ProcessorSettingsInner::DEFAULT_CEILING_FORGET,
             floor_rise_coeff: 0.0,
             floor_fall_coeff: 0.0,
             floor_halflife: 0.0,
@@ -205,6 +212,7 @@ impl NormalizerParams {
     /// Refresh from the settings for the given update rate. Safe to call
     /// every buffer.
     fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: f32) {
+        self.ceiling_forget = settings.ceiling_forget.get();
         let floor_halflife = settings.norm_floor_halflife.get();
         if update_rate <= 0.0
             || (floor_halflife == self.floor_halflife && update_rate == self.update_rate)
@@ -254,7 +262,7 @@ impl AdaptiveNormalizer {
         let log_envelope = envelope.max(t.noise_gate).ln();
         let motion = (log_envelope - self.prev_log_envelope).abs();
         self.prev_log_envelope = log_envelope;
-        self.ceiling = envelope.max(self.ceiling * (-t.ceiling_forget * motion).exp());
+        self.ceiling = envelope.max(self.ceiling * (-p.ceiling_forget * motion).exp());
 
         // Update floor. It never exceeds the ceiling.
         self.floor.rise = p.floor_rise_coeff;

@@ -36,7 +36,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use tunnels_audio::processor::{BandStages, NUM_OUTPUT_BANDS, NormalizerTuning, ProcessorSettings};
+use tunnels_audio::processor::{
+    BandStages, NUM_OUTPUT_BANDS, NormalizerTuning, ProcessorSettings, ProcessorSettingsInner,
+};
 
 use signals::{KickSignal, Lcg, Signal, kick_real, kick_simple, kicks, onsets, silence, sine};
 
@@ -62,12 +64,15 @@ struct RunConfig {
     sample_rate: u32,
     frames: usize,
     tuning: NormalizerTuning,
+    /// Nepers the ceiling forgets per neper of envelope motion.
+    ceiling_forget: f32,
 }
 
 const PROD: RunConfig = RunConfig {
     sample_rate: 48000,
     frames: 64,
     tuning: NormalizerTuning::DEFAULT,
+    ceiling_forget: ProcessorSettingsInner::DEFAULT_CEILING_FORGET,
 };
 
 /// Output at or above this counts as full scale.
@@ -75,6 +80,7 @@ const FULL_SCALE: f32 = 0.995;
 
 fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
     let settings = ProcessorSettings::default();
+    settings.ceiling_forget.set(cfg.ceiling_forget);
     let mut rows = Vec::with_capacity(signal.len() / cfg.frames + 1);
     offline::run_stereo_tuned(
         cfg.sample_rate,
@@ -1521,7 +1527,7 @@ fn main() {
     };
     let mut cfg = PROD;
     if let Some(f) = flag("--ceiling-forget") {
-        cfg.tuning.ceiling_forget = f.parse().expect("--ceiling-forget F");
+        cfg.ceiling_forget = f.parse().expect("--ceiling-forget F");
     }
     if let Some(path) = flag("--music") {
         let loops = flag("--loops").map_or(6, |n| n.parse().expect("--loops N"));
@@ -1534,7 +1540,7 @@ fn main() {
 
     for case in suite() {
         let case_cfg = RunConfig {
-            tuning: cfg.tuning,
+            ceiling_forget: cfg.ceiling_forget,
             ..case.cfg
         };
         let rows = run(case_cfg, &case.signal);
@@ -1553,7 +1559,7 @@ fn main() {
     let _ = writeln!(
         report,
         "=== summary (ceiling forget {}; hits from 3 s) ===",
-        cfg.tuning.ceiling_forget
+        cfg.ceiling_forget
     );
     let summary: Vec<&str> = report
         .lines()
