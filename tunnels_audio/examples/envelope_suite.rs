@@ -1171,6 +1171,32 @@ fn suite() -> Vec<Case> {
         ));
     }
 
+    // W26: the W5 level step at 2x and 4x instead of 8x: sections of a
+    // set differ by a few dB far more often than by 18.
+    for (name, quiet) in [("w26a_level_step_2x", 0.4), ("w26b_level_step_4x", 0.2)] {
+        cases.push(kick_case(
+            name,
+            PROD,
+            kicks(
+                sr,
+                30.0,
+                onsets(120.0, 0.5, 30.0),
+                move |_, on| {
+                    if (10.0..20.0).contains(&on) {
+                        0.8
+                    } else {
+                        quiet
+                    }
+                },
+                kick_simple,
+            ),
+            |out, ks, _| {
+                report_suppression(out, ks, 10.0);
+                report_suppression(out, ks, 20.0);
+            },
+        ));
+    }
+
     cases
 }
 
