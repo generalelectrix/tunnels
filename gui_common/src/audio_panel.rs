@@ -2,7 +2,7 @@ use eframe::egui;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
-use tunnels_audio::processor::output_band_labels;
+use tunnels_audio::processor::{NUM_OUTPUT_BANDS, output_band_labels};
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
@@ -21,6 +21,10 @@ pub trait AudioCommands {
 pub struct AudioPanelState {
     selected_audio: Option<usize>,
     audio_devices: Vec<String>,
+    /// Band labels, and the sample rate they describe. Band edges are
+    /// octaves of the rate, so they only change when a device does.
+    band_labels: [String; NUM_OUTPUT_BANDS],
+    labelled_rate: u32,
 }
 
 impl AudioPanelState {
@@ -28,6 +32,17 @@ impl AudioPanelState {
         Self {
             selected_audio: None,
             audio_devices: devices,
+            band_labels: output_band_labels(0),
+            labelled_rate: 0,
+        }
+    }
+
+    /// Report the sample rate of the device that just opened. Band edges are
+    /// octaves of it, so the labels are rebuilt when it changes.
+    pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        if sample_rate != self.labelled_rate {
+            self.band_labels = output_band_labels(sample_rate);
+            self.labelled_rate = sample_rate;
         }
     }
 
@@ -126,8 +141,8 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             // Band selector.
             ui.label("Active band:");
             let mut band = self.snapshot.active_band;
-            let labels = output_band_labels(self.snapshot.sample_rate);
-            let selected_text = labels.get(band as usize).unwrap_or(&labels[0]).to_string();
+            let labels = &self.state.band_labels;
+            let selected_text = labels.get(band as usize).unwrap_or(&labels[0]);
             egui::ComboBox::from_id_salt("active_band")
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
@@ -193,20 +208,18 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
 
             // The normalizer's two memories, both half-lives in seconds.
             ui.label("Floor Memory:");
-            ui.horizontal(|ui| {
-                let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
-                if ui
-                    .add(
-                        egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
-                            .suffix(" s")
-                            .logarithmic(true),
-                    )
-                    .changed()
-                {
-                    self.commands
-                        .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
-                }
-            });
+            let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
+            if ui
+                .add(
+                    egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                self.commands
+                    .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
+            }
             ui.end_row();
 
             ui.label("Peak Memory:");

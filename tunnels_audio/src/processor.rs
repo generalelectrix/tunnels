@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::hilbert::HilbertTransform;
 use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
-use crate::wavelet::{NUM_LEVELS, WaveletDecomposition};
+use crate::wavelet::WaveletDecomposition;
 
 /// Fast envelope follower half-lives in seconds: catches every peak within
 /// a cycle.
@@ -37,17 +37,19 @@ impl AtomicF32 {
     }
 }
 
-/// Number of output bands: the sub-bass residual and every octave below the
-/// one under Nyquist, which carries little on most material and is dropped.
-pub const NUM_OUTPUT_BANDS: usize = NUM_LEVELS;
+/// Number of output bands, in ascending frequency order from the sub-bass
+/// residual.
+pub const NUM_OUTPUT_BANDS: usize = crate::wavelet::NUM_BANDS;
 
 /// Ring buffer capacity: ~16 seconds of history at ~1kHz buffer rate.
 pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
 /// The frequency each output band starts at: band 0 is the residual below
-/// band 1, and each band after that is an octave.
+/// band 1, each band after that is an octave, and band `NUM_OUTPUT_BANDS`
+/// names the top edge of the highest one.
 fn output_band_start(band: usize, sample_rate: u32) -> f32 {
-    sample_rate as f32 / (1_u32 << (NUM_LEVELS - band + 2)) as f32
+    debug_assert!((1..=NUM_OUTPUT_BANDS).contains(&band));
+    sample_rate as f32 / (1_u32 << (NUM_OUTPUT_BANDS - band + 2)) as f32
 }
 
 /// A frequency as an operator reads it: "94", "1.5k", "12k".
@@ -137,8 +139,6 @@ pub struct ProcessorSettingsInner {
 
     /// Which band feeds `envelope`: 0 = sub-bass residual, the rest octaves.
     pub active_band: AtomicU32,
-    /// The input's sample rate, which sets where the band edges fall.
-    pub sample_rate: AtomicU32,
 }
 
 impl ProcessorSettingsInner {
@@ -146,6 +146,9 @@ impl ProcessorSettingsInner {
     const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
     const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
+    /// Floor half-life: slow enough that a bass line is above its own bed,
+    /// fast enough that a held tone stops being news within a phrase or two.
+    pub const DEFAULT_FLOOR_HALFLIFE: f32 = 10.0;
     /// Ceiling half-life of about one four-bar phrase. A beat moves the log
     /// envelope about 8 nepers whatever the tempo, so 8 s at
     /// `REFERENCE_MOTION_RATE` is ~52 nepers, and each band is measured
@@ -158,7 +161,7 @@ impl ProcessorSettingsInner {
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
         self.gain.set(1.0);
         self.active_band.store(0, Ordering::Relaxed);
-        self.norm_floor_halflife.set(10.0);
+        self.norm_floor_halflife.set(Self::DEFAULT_FLOOR_HALFLIFE);
         self.norm_ceiling_halflife
             .set(Self::DEFAULT_CEILING_HALFLIFE);
     }
@@ -172,10 +175,9 @@ impl Default for ProcessorSettingsInner {
             envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
             gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
-            norm_floor_halflife: AtomicF32::new(10.0),
+            norm_floor_halflife: AtomicF32::new(Self::DEFAULT_FLOOR_HALFLIFE),
             norm_ceiling_halflife: AtomicF32::new(Self::DEFAULT_CEILING_HALFLIFE),
             active_band: AtomicU32::new(0),
-            sample_rate: AtomicU32::new(48_000),
         }
     }
 }
@@ -516,13 +518,6 @@ pub struct Processor {
     norm_params: NormalizerParams,
 }
 
-/// The output band that wavelet level `level` feeds, if the show uses it:
-/// levels count down from the octave under Nyquist, output bands count up
-/// from the residual, and that topmost level is not an output band.
-fn output_band_of_level(level: usize) -> Option<usize> {
-    (level > 0).then(|| NUM_LEVELS - level)
-}
-
 impl Processor {
     pub fn new(
         handle: ProcessorSettings,
@@ -530,7 +525,6 @@ impl Processor {
         channel_count: usize,
         envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
     ) -> Self {
-        handle.sample_rate.store(sample_rate, Ordering::Relaxed);
         let sample_rate = sample_rate as f32;
         let envelope_attack = handle.envelope_attack.get();
         let envelope_release = handle.envelope_release.get();
@@ -607,10 +601,8 @@ impl Processor {
             let mono = frame.iter().sum::<f32>() / ch_count_f * gain;
 
             let bands = &mut self.bands;
-            self.wavelet.push(mono, |level, sample| {
-                if let Some(band) = output_band_of_level(level) {
-                    bands[band].process_sample(sample);
-                }
+            self.wavelet.push(mono, |band, sample| {
+                bands[band].process_sample(sample);
             });
         }
 

@@ -1518,9 +1518,10 @@ fn click_offset_sweep(out_dir: &Path) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let out_dir = args
-        .get(1)
-        .expect("usage: envelope_suite <out_dir> [--music <clip> --loops N] [--ceiling-forget F]");
+    let out_dir = args.get(1).expect(
+        "usage: envelope_suite <out_dir> [--music <clip> --loops N] \
+             [--ceiling-halflife SECS] [--floor-halflife SECS]",
+    );
     let out_dir = Path::new(out_dir);
     fs::create_dir_all(out_dir).expect("create out dir");
     let flag = |name: &str| {

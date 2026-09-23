@@ -103,19 +103,26 @@ impl Level {
         }
     }
 
+    /// Store one input sample and return the index of the newest sample in
+    /// the delay line, where a convolution starts.
+    #[inline]
+    fn write(&mut self, sample: f32) -> usize {
+        let mask = self.delay.len() - 1;
+        self.delay[self.delay_pos] = sample;
+        self.delay_pos = (self.delay_pos + 1) & mask;
+        self.delay_pos.wrapping_sub(1) & mask
+    }
+
     /// Push one input sample and return the (low, high) subband outputs.
     #[inline]
     fn push(&mut self, sample: f32) -> (f32, f32) {
         let mask = self.delay.len() - 1;
-
-        self.delay[self.delay_pos] = sample;
-        self.delay_pos = (self.delay_pos + 1) & mask;
+        let mut idx = self.write(sample);
 
         // Convolve with both filters, taps `stride` samples apart, newest
         // sample first.
         let mut lo = 0.0_f32;
         let mut hi = 0.0_f32;
-        let mut idx = self.delay_pos.wrapping_sub(1) & mask;
         for (l, h) in self.lo.iter().zip(&self.hi) {
             let s = self.delay[idx];
             lo += s * l;
@@ -125,6 +132,22 @@ impl Level {
 
         (lo, hi)
     }
+
+    /// Push one input sample and return only the low subband, for a level
+    /// whose detail band is not produced.
+    #[inline]
+    fn push_lo(&mut self, sample: f32) -> f32 {
+        let mask = self.delay.len() - 1;
+        let mut idx = self.write(sample);
+
+        let mut lo = 0.0_f32;
+        for l in &self.lo {
+            lo += self.delay[idx] * l;
+            idx = idx.wrapping_sub(self.stride) & mask;
+        }
+
+        lo
+    }
 }
 
 /// Number of octave decomposition levels. The deepest split is the one that
@@ -132,8 +155,13 @@ impl Level {
 /// eight levels put it at 94 Hz.
 pub const NUM_LEVELS: usize = 8;
 
-/// Total number of output bands: NUM_LEVELS high bands + 1 residual low band.
-pub const NUM_BANDS: usize = NUM_LEVELS + 1;
+/// Detail levels whose band is not produced. The octave under Nyquist holds
+/// nothing musical, so only its lowpass runs, to feed the level below it.
+const DROPPED_TOP_LEVELS: usize = 1;
+
+/// Bands the decomposition produces: the residual, plus one per detail level
+/// that is not dropped.
+pub const NUM_BANDS: usize = NUM_LEVELS - DROPPED_TOP_LEVELS + 1;
 
 /// Streaming wavelet decomposition.
 ///
@@ -150,21 +178,28 @@ impl WaveletDecomposition {
         Self { levels }
     }
 
-    /// Process one input sample through the decomposition tree.
-    /// Calls `on_band(level, sample)` for every level: level 0 is the
-    /// highest octave, level `NUM_LEVELS` the residual below the lowest.
+    /// Process one input sample through the decomposition tree, calling
+    /// `on_band(band, sample)` once per band in ascending frequency order:
+    /// band 0 is the residual, band `NUM_BANDS - 1` the highest octave
+    /// produced.
     #[inline]
     pub fn push(&mut self, sample: f32, mut on_band: impl FnMut(usize, f32)) {
+        let mut levels = self.levels.iter_mut();
         let mut current = sample;
 
-        for (level_idx, level) in self.levels.iter_mut().enumerate() {
+        // The dropped levels contribute only their lowpass.
+        for level in levels.by_ref().take(DROPPED_TOP_LEVELS) {
+            current = level.push_lo(current);
+        }
+
+        for (idx, level) in levels.enumerate() {
             let (lo, hi) = level.push(current);
-            on_band(level_idx, hi);
+            on_band(NUM_BANDS - 1 - idx, hi);
             current = lo;
         }
 
         // The residual low subband from the deepest level.
-        on_band(NUM_LEVELS, current);
+        on_band(0, current);
     }
 }
 
