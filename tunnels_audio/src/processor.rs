@@ -500,6 +500,7 @@ pub struct Processor {
     settings: ProcessorSettings,
     envelope_attack: f32,
     envelope_release: f32,
+    /// Interleaved channels per frame, never zero.
     channel_count: usize,
     sample_rate: f32,
 
@@ -537,7 +538,7 @@ impl Processor {
             envelope_attack,
             envelope_release,
             settings: handle,
-            channel_count,
+            channel_count: channel_count.max(1),
             sample_rate,
             envelope_producers,
             wavelet: WaveletDecomposition::new(),
@@ -585,7 +586,7 @@ impl Processor {
             return;
         }
 
-        let frames = interleaved_buffer.len() / self.channel_count.max(1);
+        let frames = interleaved_buffer.len() / self.channel_count;
         if frames == 0 {
             return;
         }
