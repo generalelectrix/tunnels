@@ -69,10 +69,10 @@ pub fn output_band_labels(sample_rate: u32) -> [String; NUM_OUTPUT_BANDS] {
     std::array::from_fn(|band| {
         let start = output_band_start(band.max(1), sample_rate);
         if band == 0 {
-            format!("<{}", format_hz(start))
+            format!("<{} Hz", format_hz(start))
         } else {
             format!(
-                "{}-{}",
+                "{}-{} Hz",
                 format_hz(start),
                 format_hz(output_band_start(band + 1, sample_rate))
             )
