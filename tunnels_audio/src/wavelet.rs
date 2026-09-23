@@ -9,15 +9,9 @@
 //! exactly the decimated transform's subband computed at every phase at
 //! once, with nothing folded in from above the band.
 //!
-//! At 48kHz with 7 levels:
-//!   Level 1: 12-24 kHz (high)
-//!   Level 2: 6-12 kHz (high)
-//!   Level 3: 3-6 kHz (high)
-//!   Level 4: 1.5-3 kHz (high)
-//!   Level 5: 750-1500 Hz (high)
-//!   Level 6: 375-750 Hz (high)
-//!   Level 7: 187-375 Hz (high)
-//!   Residual: 0-187 Hz (low)
+//! Level `k` covers `[rate / 2^(k+2), rate / 2^(k+1))` and the residual
+//! everything below `rate / 2^(levels+1)`, so at 48 kHz with 8 levels the
+//! levels run 12-24 kHz down to 94-188 Hz and the residual holds 0-94 Hz.
 
 /// Daubechies-4 (db4) lowpass decomposition filter — 8 taps, ~18 dB/octave
 /// transition steepness — in its conventional orientation, with the large
@@ -133,9 +127,10 @@ impl Level {
     }
 }
 
-/// Number of octave decomposition levels.
-/// At 48kHz this gives bands down to ~187 Hz.
-pub const NUM_LEVELS: usize = 7;
+/// Number of octave decomposition levels. The deepest split is the one that
+/// separates a kick's fundamental from the body of a bass line: at 48 kHz
+/// eight levels put it at 94 Hz.
+pub const NUM_LEVELS: usize = 8;
 
 /// Total number of output bands: NUM_LEVELS high bands + 1 residual low band.
 pub const NUM_BANDS: usize = NUM_LEVELS + 1;

@@ -2,10 +2,11 @@
 //!
 //! Processing chains:
 //! On the mono mix of the input channels: undecimated D4 decomposition into
-//! seven octave bands and the sub-bass residual → per-band Hilbert |z(t)| →
+//! octave bands and the sub-bass residual → per-band Hilbert |z(t)| →
 //! fast envelope → slow envelope → smoother → adaptive normalizer.
 //!
-//! Output: 8 normalized bands (residual + 7 octaves), selectable via `active_band`.
+//! Output: `NUM_OUTPUT_BANDS` normalized bands, the residual and the octaves
+//! below the one under Nyquist, selectable via `active_band`.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -36,17 +37,48 @@ impl AtomicF32 {
     }
 }
 
-/// Number of output bands: the sub-bass residual + 7 octave bands.
-pub const NUM_OUTPUT_BANDS: usize = 8;
+/// Number of output bands: the sub-bass residual and every octave below the
+/// one under Nyquist, which carries little on most material and is dropped.
+pub const NUM_OUTPUT_BANDS: usize = NUM_LEVELS;
 
 /// Ring buffer capacity: ~16 seconds of history at ~1kHz buffer rate.
 pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
-/// Band labels in output order (index 0 = the sub-bass residual, 7 = the
-/// highest octave), for a 48 kHz sample rate.
-pub const OUTPUT_BAND_LABELS: [&str; NUM_OUTPUT_BANDS] = [
-    "<187", "187-375", "375-750", "750-1.5k", "1.5-3k", "3-6k", "6-12k", "12-24k",
-];
+/// The frequency each output band starts at: band 0 is the residual below
+/// band 1, and each band after that is an octave.
+fn output_band_start(band: usize, sample_rate: u32) -> f32 {
+    sample_rate as f32 / (1_u32 << (NUM_LEVELS - band + 2)) as f32
+}
+
+/// A frequency as an operator reads it: "94", "1.5k", "12k".
+fn format_hz(hz: f32) -> String {
+    if hz < 1000.0 {
+        return format!("{hz:.0}");
+    }
+    let k = hz / 1000.0;
+    if (k - k.round()).abs() < 0.05 {
+        format!("{k:.0}k")
+    } else {
+        format!("{k:.1}k")
+    }
+}
+
+/// What each output band covers at `sample_rate`, in output order. The bands
+/// are octaves of the sample rate, so they move with it.
+pub fn output_band_labels(sample_rate: u32) -> [String; NUM_OUTPUT_BANDS] {
+    std::array::from_fn(|band| {
+        let start = output_band_start(band.max(1), sample_rate);
+        if band == 0 {
+            format!("<{}", format_hz(start))
+        } else {
+            format!(
+                "{}-{}",
+                format_hz(start),
+                format_hz(output_band_start(band + 1, sample_rate))
+            )
+        }
+    })
+}
 
 /// The envelope ring buffers for every output band: the producers feed a
 /// `Processor`, the streams are read by whoever displays or records them.
@@ -103,8 +135,10 @@ pub struct ProcessorSettingsInner {
     /// and a silent band holds the ceiling indefinitely.
     pub norm_ceiling_halflife: AtomicF32,
 
-    /// Which band feeds `envelope`: 0 = sub-bass residual, 1-7 = octave bands.
+    /// Which band feeds `envelope`: 0 = sub-bass residual, the rest octaves.
     pub active_band: AtomicU32,
+    /// The input's sample rate, which sets where the band edges fall.
+    pub sample_rate: AtomicU32,
 }
 
 impl ProcessorSettingsInner {
@@ -141,6 +175,7 @@ impl Default for ProcessorSettingsInner {
             norm_floor_halflife: AtomicF32::new(10.0),
             norm_ceiling_halflife: AtomicF32::new(Self::DEFAULT_CEILING_HALFLIFE),
             active_band: AtomicU32::new(0),
+            sample_rate: AtomicU32::new(48_000),
         }
     }
 }
@@ -481,10 +516,11 @@ pub struct Processor {
     norm_params: NormalizerParams,
 }
 
-/// The output band that wavelet level `level` feeds: levels count down from
-/// the highest octave, output bands count up from the residual.
-fn output_band_of_level(level: usize) -> usize {
-    NUM_LEVELS - level
+/// The output band that wavelet level `level` feeds, if the show uses it:
+/// levels count down from the octave under Nyquist, output bands count up
+/// from the residual, and that topmost level is not an output band.
+fn output_band_of_level(level: usize) -> Option<usize> {
+    (level > 0).then(|| NUM_LEVELS - level)
 }
 
 impl Processor {
@@ -494,6 +530,7 @@ impl Processor {
         channel_count: usize,
         envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
     ) -> Self {
+        handle.sample_rate.store(sample_rate, Ordering::Relaxed);
         let sample_rate = sample_rate as f32;
         let envelope_attack = handle.envelope_attack.get();
         let envelope_release = handle.envelope_release.get();
@@ -571,7 +608,9 @@ impl Processor {
 
             let bands = &mut self.bands;
             self.wavelet.push(mono, |level, sample| {
-                bands[output_band_of_level(level)].process_sample(sample);
+                if let Some(band) = output_band_of_level(level) {
+                    bands[band].process_sample(sample);
+                }
             });
         }
 

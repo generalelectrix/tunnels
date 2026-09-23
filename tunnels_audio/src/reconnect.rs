@@ -101,7 +101,12 @@ fn reconnect(
                     });
 
                     match open_result {
-                        Ok((stream, update_rate, streams)) => {
+                        Ok(AudioStream {
+                            stream,
+                            update_rate,
+                            sample_rate,
+                            streams,
+                        }) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
                                 let _ = result_tx.send(Ok(()));
@@ -112,6 +117,7 @@ fn reconnect(
                             let _ = envelope_tx.send(crate::EnvelopeStreams {
                                 streams,
                                 update_rate,
+                                sample_rate,
                             });
                             _input_stream = Some(stream);
                         }
@@ -175,11 +181,19 @@ fn open_audio_device(name: &str) -> Result<Device> {
     bail!(err_msg);
 }
 
+/// An open input stream with what the rest of the show needs to read it.
+struct AudioStream {
+    stream: Stream,
+    update_rate: UpdateRate,
+    sample_rate: u32,
+    streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+}
+
 fn build_input_stream(
     device: &Device,
     processor_settings: ProcessorSettings,
     disconnect_sender: Sender<Cmd>,
-) -> Result<(Stream, UpdateRate, [EnvelopeStream; NUM_OUTPUT_BANDS])> {
+) -> Result<AudioStream> {
     let supported = device.default_input_config()?;
 
     // Aim for about 1 ms of audio buffering latency.
@@ -246,5 +260,10 @@ fn build_input_stream(
     let input_stream = device.build_input_stream(&config, handle_buffer, handle_error, None)?;
 
     input_stream.play()?;
-    Ok((input_stream, update_rate, envelope_streams))
+    Ok(AudioStream {
+        stream: input_stream,
+        update_rate,
+        sample_rate: config.sample_rate.0,
+        streams: envelope_streams,
+    })
 }

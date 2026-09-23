@@ -36,6 +36,8 @@ pub const OFFLINE_DEVICE_NAME: &str = "Offline";
 pub struct EnvelopeStreams {
     pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
     pub update_rate: UpdateRate,
+    /// The device's sample rate, which sets where the band edges fall.
+    pub sample_rate: u32,
 }
 
 /// A flat, read-only view of the audio input's current parameter state.
@@ -47,6 +49,7 @@ pub struct AudioSnapshot {
     pub output_smoothing: Duration,
     pub gain_linear: f64,
     pub active_band: u32,
+    pub sample_rate: u32,
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
 }
@@ -61,6 +64,7 @@ impl AudioSnapshot {
             output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
             gain_linear: ps.gain.get() as f64,
             active_band: ps.active_band.load(Ordering::Relaxed),
+            sample_rate: ps.sample_rate.load(Ordering::Relaxed),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
         }

@@ -2,7 +2,7 @@ use eframe::egui;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
-use tunnels_audio::processor::OUTPUT_BAND_LABELS;
+use tunnels_audio::processor::output_band_labels;
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
@@ -126,15 +126,13 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             // Band selector.
             ui.label("Active band:");
             let mut band = self.snapshot.active_band;
-            let selected_text = OUTPUT_BAND_LABELS
-                .get(band as usize)
-                .copied()
-                .unwrap_or(OUTPUT_BAND_LABELS[0]);
+            let labels = output_band_labels(self.snapshot.sample_rate);
+            let selected_text = labels.get(band as usize).unwrap_or(&labels[0]).to_string();
             egui::ComboBox::from_id_salt("active_band")
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
-                    for (i, label) in OUTPUT_BAND_LABELS.iter().enumerate() {
-                        ui.selectable_value(&mut band, i as u32, *label);
+                    for (i, label) in labels.iter().enumerate() {
+                        ui.selectable_value(&mut band, i as u32, label);
                     }
                 });
             if band != self.snapshot.active_band {

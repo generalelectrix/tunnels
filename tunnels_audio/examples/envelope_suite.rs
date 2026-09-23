@@ -983,7 +983,7 @@ fn suite() -> Vec<Case> {
     // cross-talk matrix: each band's pre-normalizer level under each tone,
     // in dB relative to that band's level under its own tone.
     let centres: [f32; NUM_OUTPUT_BANDS] =
-        [60.0, 265.0, 530.0, 1061.0, 2121.0, 4243.0, 8485.0, 16971.0];
+        [60.0, 133.0, 265.0, 530.0, 1061.0, 2121.0, 4243.0, 8485.0];
     let mut sig = silence(sr, 2.0 * centres.len() as f32);
     for (i, &f) in centres.iter().enumerate() {
         sine(&mut sig, sr, 2.0 * i as f32, 2.0, f, 0.5);
