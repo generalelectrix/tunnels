@@ -16,8 +16,8 @@
 //! peaks do not depend on where the input falls relative to any buffer or
 //! filter grid.
 //!
-//! `--ceiling-forget F` runs either mode with the normalizer's ceiling
-//! forgetting F nepers per neper of envelope motion instead of the default,
+//! `--ceiling-forget F` and `--floor-halflife SECS` set the normalizer's
+//! two adaptive rates instead of taking the defaults,
 //! so runs at several values can be laid side by side. Every kick case ends
 //! with a `SUMMARY` line and the suite ends with all of them as one table.
 
@@ -66,6 +66,8 @@ struct RunConfig {
     tuning: NormalizerTuning,
     /// Nepers the ceiling forgets per neper of envelope motion.
     ceiling_forget: f32,
+    /// Floor tracking half-life in seconds.
+    floor_halflife: f32,
 }
 
 const PROD: RunConfig = RunConfig {
@@ -73,6 +75,7 @@ const PROD: RunConfig = RunConfig {
     frames: 64,
     tuning: NormalizerTuning::DEFAULT,
     ceiling_forget: ProcessorSettingsInner::DEFAULT_CEILING_FORGET,
+    floor_halflife: 10.0,
 };
 
 /// Output at or above this counts as full scale.
@@ -81,6 +84,7 @@ const FULL_SCALE: f32 = 0.995;
 fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
     let settings = ProcessorSettings::default();
     settings.ceiling_forget.set(cfg.ceiling_forget);
+    settings.norm_floor_halflife.set(cfg.floor_halflife);
     let mut rows = Vec::with_capacity(signal.len() / cfg.frames + 1);
     offline::run_stereo_tuned(
         cfg.sample_rate,
@@ -1529,6 +1533,9 @@ fn main() {
     if let Some(f) = flag("--ceiling-forget") {
         cfg.ceiling_forget = f.parse().expect("--ceiling-forget F");
     }
+    if let Some(h) = flag("--floor-halflife") {
+        cfg.floor_halflife = h.parse().expect("--floor-halflife SECS");
+    }
     if let Some(path) = flag("--music") {
         let loops = flag("--loops").map_or(6, |n| n.parse().expect("--loops N"));
         run_music(out_dir, path, loops, cfg);
@@ -1541,6 +1548,7 @@ fn main() {
     for case in suite() {
         let case_cfg = RunConfig {
             ceiling_forget: cfg.ceiling_forget,
+            floor_halflife: cfg.floor_halflife,
             ..case.cfg
         };
         let rows = run(case_cfg, &case.signal);
@@ -1558,8 +1566,8 @@ fn main() {
     }
     let _ = writeln!(
         report,
-        "=== summary (ceiling forget {}; hits from 3 s) ===",
-        cfg.ceiling_forget
+        "=== summary (ceiling forget {}, floor half-life {} s; hits from 3 s) ===",
+        cfg.ceiling_forget, cfg.floor_halflife
     );
     let summary: Vec<&str> = report
         .lines()
