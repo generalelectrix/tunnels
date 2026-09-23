@@ -13,7 +13,7 @@ pub trait AudioCommands {
     fn set_gain(&mut self, gain_linear: f64);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
-    fn set_ceiling_forget(&mut self, forget: f32);
+    fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
 }
@@ -193,8 +193,8 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             }
             ui.end_row();
 
-            // Auto floor level: slider + mode on one line.
-            ui.label("Auto Floor Level:");
+            // The normalizer's two memories, both half-lives in seconds.
+            ui.label("Floor Memory:");
             ui.horizontal(|ui| {
                 let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
                 if ui
@@ -211,18 +211,18 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             });
             ui.end_row();
 
-            // Ceiling forgetting rate: nepers per neper of envelope motion.
-            ui.label("Ceiling Forget:");
-            let mut forget = self.snapshot.ceiling_forget;
+            ui.label("Peak Memory:");
+            let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
             if ui
                 .add(
-                    egui::Slider::new(&mut forget, 0.002..=0.3)
-                        .suffix(" Np/Np")
+                    egui::Slider::new(&mut ceil_hl_s, 0.5..=60.0)
+                        .suffix(" s")
                         .logarithmic(true),
                 )
                 .changed()
             {
-                self.commands.set_ceiling_forget(forget);
+                self.commands
+                    .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
             }
             ui.end_row();
         });
@@ -258,7 +258,7 @@ mod tests {
         fn set_gain(&mut self, _gain_linear: f64) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
-        fn set_ceiling_forget(&mut self, _forget: f32) {}
+        fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {
             self.devices.clone()

@@ -97,10 +97,11 @@ pub struct ProcessorSettingsInner {
 
     /// Floor tracking half-life in seconds (slow — adapts to ambient level).
     pub norm_floor_halflife: AtomicF32,
-    /// Nepers the normalizer ceiling forgets per neper the log envelope
-    /// moves: small values hold the scale across many hits and keep every
-    /// hit's own level; large values re-normalize within a few hits.
-    pub ceiling_forget: AtomicF32,
+    /// Ceiling tracking half-life, in seconds of music at
+    /// `REFERENCE_MOTION_RATE`. The ceiling's memory is really a quantity of
+    /// envelope motion, so quiet or still material stretches these seconds
+    /// and a silent band holds the ceiling indefinitely.
+    pub norm_ceiling_halflife: AtomicF32,
 
     /// Which band feeds `envelope`: 0 = sub-bass residual, 1-7 = octave bands.
     pub active_band: AtomicU32,
@@ -111,7 +112,9 @@ impl ProcessorSettingsInner {
     const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
     const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
-    pub const DEFAULT_CEILING_FORGET: f32 = 0.1;
+    /// Ceiling half-life that forgets a tenth of a neper per neper of motion.
+    pub const DEFAULT_CEILING_HALFLIFE: f32 =
+        std::f32::consts::LN_2 / (REFERENCE_MOTION_RATE * 0.1);
 
     pub fn reset_defaults(&self) {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
@@ -120,7 +123,8 @@ impl ProcessorSettingsInner {
         self.gain.set(1.0);
         self.active_band.store(0, Ordering::Relaxed);
         self.norm_floor_halflife.set(10.0);
-        self.ceiling_forget.set(Self::DEFAULT_CEILING_FORGET);
+        self.norm_ceiling_halflife
+            .set(Self::DEFAULT_CEILING_HALFLIFE);
     }
 }
 
@@ -133,13 +137,19 @@ impl Default for ProcessorSettingsInner {
             gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             norm_floor_halflife: AtomicF32::new(10.0),
-            ceiling_forget: AtomicF32::new(Self::DEFAULT_CEILING_FORGET),
+            norm_ceiling_halflife: AtomicF32::new(Self::DEFAULT_CEILING_HALFLIFE),
             active_band: AtomicU32::new(0),
         }
     }
 }
 
 pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
+
+/// Nepers per second the log envelope of a band moves on music: the median
+/// over five tracks and seven bands, where the spread is 4.0 to 10.1. The
+/// ceiling's memory is a quantity of envelope motion; this rate is what
+/// converts it to a half-life in seconds for the operator's benefit.
+pub const REFERENCE_MOTION_RATE: f32 = 6.5;
 
 /// One-pole EMA coefficient that halves the distance to the target every
 /// `halflife_secs` at `update_rate` updates per second. A non-positive
@@ -185,6 +195,8 @@ struct NormalizerParams {
     tuning: NormalizerTuning,
     /// Nepers the ceiling decays per neper of log-envelope motion.
     ceiling_forget: f32,
+    /// The half-life the forgetting rate was derived from.
+    ceiling_halflife: f32,
     /// Floor follower coefficients: the floor rises at the floor half-life
     /// and falls at a fifth of it.
     floor_rise_coeff: f32,
@@ -201,7 +213,8 @@ impl NormalizerParams {
     fn new(tuning: NormalizerTuning) -> Self {
         Self {
             tuning,
-            ceiling_forget: ProcessorSettingsInner::DEFAULT_CEILING_FORGET,
+            ceiling_forget: 0.0,
+            ceiling_halflife: 0.0,
             floor_rise_coeff: 0.0,
             floor_fall_coeff: 0.0,
             floor_halflife: 0.0,
@@ -212,7 +225,16 @@ impl NormalizerParams {
     /// Refresh from the settings for the given update rate. Safe to call
     /// every buffer.
     fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: f32) {
-        self.ceiling_forget = settings.ceiling_forget.get();
+        let ceiling_halflife = settings.norm_ceiling_halflife.get();
+        if ceiling_halflife != self.ceiling_halflife {
+            self.ceiling_halflife = ceiling_halflife;
+            // A non-positive half-life means the ceiling never forgets.
+            self.ceiling_forget = if ceiling_halflife > 0.0 {
+                std::f32::consts::LN_2 / (REFERENCE_MOTION_RATE * ceiling_halflife)
+            } else {
+                0.0
+            };
+        }
         let floor_halflife = settings.norm_floor_halflife.get();
         if update_rate <= 0.0
             || (floor_halflife == self.floor_halflife && update_rate == self.update_rate)

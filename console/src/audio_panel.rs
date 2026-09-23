@@ -69,11 +69,11 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_ceiling_forget(&mut self, forget: f32) {
+    fn set_norm_ceiling_halflife(&mut self, halflife: Duration) {
         let _ = self
             .ctx
             .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::CeilingForget(forget),
+                StateChange::NormCeilingHalflife(halflife),
             )));
     }
 
