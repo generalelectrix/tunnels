@@ -4,6 +4,9 @@ pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
 use tunnels_audio::processor::{NUM_OUTPUT_BANDS, output_band_labels};
 
+/// The sample rate the band labels describe until a device opens.
+const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
     fn set_device(&mut self, device: Option<String>);
@@ -32,8 +35,8 @@ impl AudioPanelState {
         Self {
             selected_audio: None,
             audio_devices: devices,
-            band_labels: output_band_labels(0),
-            labelled_rate: 0,
+            band_labels: output_band_labels(DEFAULT_SAMPLE_RATE),
+            labelled_rate: DEFAULT_SAMPLE_RATE,
         }
     }
 
