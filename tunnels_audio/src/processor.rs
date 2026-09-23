@@ -297,7 +297,12 @@ impl AdaptiveNormalizer {
         // The gate is the lowest level the floor can sit at, so the output
         // reaches zero by arriving there rather than by being cut off.
         let floor = floor.max(t.noise_gate);
-        let range = (self.ceiling - floor).max(t.rel_min_range * self.ceiling);
+        // The range is never narrower than the gate either, so a band only
+        // reaches full scale once its ceiling stands clear of the noise it
+        // would otherwise be stretching.
+        let range = (self.ceiling - floor)
+            .max(t.rel_min_range * self.ceiling)
+            .max(t.noise_gate);
         ((envelope - floor) / range).clamp(0.0, 1.0)
     }
 }
