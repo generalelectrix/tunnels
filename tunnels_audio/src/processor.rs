@@ -185,9 +185,16 @@ impl Default for ProcessorSettingsInner {
 pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
 
 /// Nepers per second the log envelope of a band moves on music: the median
-/// over five tracks and seven bands, where the spread is 4.0 to 10.1. The
-/// ceiling's memory is a quantity of envelope motion; this rate is what
-/// converts it to a half-life in seconds for the operator's benefit.
+/// over five tracks and seven bands, where the spread is 4.0 to 10.1,
+/// measured at 64 frames per buffer. The ceiling's memory is a quantity of
+/// envelope motion; this rate is what converts it to a half-life in seconds
+/// for the operator's benefit.
+///
+/// Motion accrues once per buffer, so a longer buffer misses ripple finer
+/// than its period and forgets a little more slowly than the half-life says.
+/// Total variation telescopes over a monotone run, so only the ripple is
+/// lost: at the default half-life the same kicks measure a per-hit ceiling
+/// loss of 0.097 at 64 frames and 0.095 at 512.
 pub const REFERENCE_MOTION_RATE: f32 = 6.5;
 
 /// One-pole EMA coefficient that halves the distance to the target every
