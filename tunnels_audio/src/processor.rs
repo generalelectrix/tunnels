@@ -172,8 +172,9 @@ pub struct NormalizerTuning {
     /// fades instead of being stretched back to full scale, and a band's
     /// reach to full scale never depends on its absolute level.
     pub rel_min_range: f32,
-    /// Input level below which the band outputs zero, so idle noise is
-    /// never normalized up to full scale.
+    /// The lowest level the floor may sit at, so a band whose content is
+    /// at or below it outputs zero rather than normalizing idle noise up to
+    /// full scale.
     pub noise_gate: f32,
 }
 
@@ -293,9 +294,9 @@ impl AdaptiveNormalizer {
         self.floor.fall = p.floor_fall_coeff;
         let floor = self.floor.step(envelope.min(self.ceiling));
 
-        if envelope < t.noise_gate {
-            return 0.0;
-        }
+        // The gate is the lowest level the floor can sit at, so the output
+        // reaches zero by arriving there rather than by being cut off.
+        let floor = floor.max(t.noise_gate);
         let range = (self.ceiling - floor).max(t.rel_min_range * self.ceiling);
         ((envelope - floor) / range).clamp(0.0, 1.0)
     }
