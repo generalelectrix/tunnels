@@ -112,9 +112,11 @@ impl ProcessorSettingsInner {
     const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
     const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
-    /// Ceiling half-life that forgets a tenth of a neper per neper of motion.
-    pub const DEFAULT_CEILING_HALFLIFE: f32 =
-        std::f32::consts::LN_2 / (REFERENCE_MOTION_RATE * 0.1);
+    /// Ceiling half-life of about one four-bar phrase. A beat moves the log
+    /// envelope about 8 nepers whatever the tempo, so 8 s at
+    /// `REFERENCE_MOTION_RATE` is ~52 nepers, and each band is measured
+    /// against the loudest thing in the phrase it is part of.
+    pub const DEFAULT_CEILING_HALFLIFE: f32 = 8.0;
 
     pub fn reset_defaults(&self) {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
