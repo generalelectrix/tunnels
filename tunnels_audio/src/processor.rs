@@ -124,8 +124,6 @@ pub struct ProcessorSettingsInner {
     pub envelope: AtomicF32,
     pub envelope_attack: AtomicF32,  // sec (slow stage)
     pub envelope_release: AtomicF32, // sec (slow stage)
-    /// Input signal gain multiplier (linear scale).
-    pub gain: AtomicF32,
     /// Symmetric output smoothing time constant (seconds). 0 = disabled.
     pub output_smoothing: AtomicF32,
 
@@ -165,7 +163,6 @@ impl ProcessorSettingsInner {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
-        self.gain.set(1.0);
         self.active_band.store(0, Ordering::Relaxed);
         self.norm_floor_halflife.set(Self::DEFAULT_FLOOR_HALFLIFE);
         self.norm_ceiling_halflife
@@ -179,7 +176,6 @@ impl Default for ProcessorSettingsInner {
             envelope: AtomicF32::new(0.0),
             envelope_attack: AtomicF32::new(Self::DEFAULT_ENVELOPE_ATTACK),
             envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
-            gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             norm_floor_halflife: AtomicF32::new(Self::DEFAULT_FLOOR_HALFLIFE),
             norm_ceiling_halflife: AtomicF32::new(Self::DEFAULT_CEILING_HALFLIFE),
@@ -784,9 +780,7 @@ impl Processor {
         self.auto_trim.set_params(update_rate);
         self.auto_trim.update(input_peak);
         self.settings.trim_gain.set(self.auto_trim.gain);
-
-        // The manual gain is an offset on the trim, not a replacement.
-        let gain = self.settings.gain.get() * self.auto_trim.gain;
+        let gain = self.auto_trim.gain;
         let ch_count_f = self.channel_count as f32;
 
         for frame in interleaved_buffer.chunks(self.channel_count) {

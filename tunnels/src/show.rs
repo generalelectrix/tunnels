@@ -948,7 +948,6 @@ mod test {
                 "audio/output_smoothing",
                 AU::OutputSmoothing(Duration::from_millis(8)),
             );
-            au("audio/input_gain", AU::InputGain(2.0));
         }
 
         changes

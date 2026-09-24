@@ -13,7 +13,6 @@ pub trait AudioCommands {
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
-    fn set_gain(&mut self, gain_linear: f64);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
     fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
@@ -131,16 +130,6 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.add_space(4.0);
 
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
-            ui.label("Gain:");
-            let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
-            if ui
-                .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
-                .changed()
-            {
-                self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
-            }
-            ui.end_row();
-
             // Band selector.
             ui.label("Active band:");
             let mut band = self.snapshot.active_band;
@@ -269,7 +258,6 @@ mod tests {
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
-        fn set_gain(&mut self, _gain_linear: f64) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}

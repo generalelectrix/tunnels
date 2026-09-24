@@ -34,7 +34,6 @@ pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutpu
         EnvelopeAttack(_)
         | EnvelopeRelease(_)
         | OutputSmoothing(_)
-        | InputGain(_)
         | ActiveBand(_)
         | NormFloorHalflife(_)
         | NormCeilingHalflife(_) => {}

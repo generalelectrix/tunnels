@@ -32,10 +32,6 @@ pub use self::ring_buffer::EnvelopeStream;
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
 
-/// Largest input gain that can be set, +40 dB. The panel's slider stops at
-/// +30; this bounds what a control surface or an OSC client can ask for.
-pub const MAX_INPUT_GAIN: f64 = 100.0;
-
 /// Envelope data streams from the audio thread, bundled with the callback rate.
 pub struct EnvelopeStreams {
     pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
@@ -51,7 +47,6 @@ pub struct AudioSnapshot {
     pub envelope_attack: Duration,
     pub envelope_release: Duration,
     pub output_smoothing: Duration,
-    pub gain_linear: f64,
     pub active_band: u32,
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
@@ -65,7 +60,6 @@ impl AudioSnapshot {
             envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
             envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
             output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
-            gain_linear: ps.gain.get() as f64,
             active_band: ps.active_band.load(Ordering::Relaxed),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
@@ -214,7 +208,6 @@ impl AudioInput {
         emitter.emit_audio_state_change(OutputSmoothing(Duration::from_secs_f32(
             self.processor_settings.output_smoothing.get(),
         )));
-        emitter.emit_audio_state_change(InputGain(self.processor_settings.gain.get() as f64));
         emitter.emit_audio_state_change(ActiveBand(
             self.processor_settings.active_band.load(Ordering::Relaxed),
         ));
@@ -260,13 +253,6 @@ impl AudioInput {
                 .processor_settings
                 .output_smoothing
                 .set(v.as_secs_f32()),
-            InputGain(v) => {
-                if !(0.0..=MAX_INPUT_GAIN).contains(&v) {
-                    warn!("Invalid input gain {v} (outside 0 to {MAX_INPUT_GAIN}).");
-                    return;
-                }
-                self.processor_settings.gain.set(v as f32);
-            }
             ActiveBand(v) => {
                 let clamped = v.min((NUM_OUTPUT_BANDS - 1) as u32);
                 self.processor_settings
@@ -310,7 +296,6 @@ pub enum StateChange {
     EnvelopeAttack(Duration),
     EnvelopeRelease(Duration),
     OutputSmoothing(Duration),
-    InputGain(f64),
     ActiveBand(u32),
     NormFloorHalflife(Duration),
     /// Ceiling half-life, in seconds of music at the reference motion rate.

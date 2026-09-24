@@ -45,14 +45,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_gain(&mut self, gain_linear: f64) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::InputGain(gain_linear),
-            )));
-    }
-
     fn set_active_band(&mut self, band: u32) {
         let _ = self
             .ctx
