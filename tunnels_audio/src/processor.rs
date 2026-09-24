@@ -326,7 +326,7 @@ impl AdaptiveNormalizer {
     fn new(tuning: &NormalizerTuning) -> Self {
         Self {
             floor: AsymmetricOnePole::default(),
-            ceiling: 0.0,
+            ceiling: Self::INITIAL_CEILING,
             prev_log_envelope: tuning.noise_gate.ln(),
         }
     }
@@ -713,6 +713,32 @@ mod tests {
         assert!(
             envelope < 0.05,
             "a 0.5 DC offset should read as silence, got {envelope:.3}"
+        );
+    }
+
+    /// A processor that has heard nothing has no idea how loud the music
+    /// is, so it starts quiet and works its way up rather than reporting
+    /// full scale from the first sample it sees.
+    #[test]
+    fn a_new_processor_does_not_start_at_full_scale() {
+        let settings = ProcessorSettings::default();
+        let sample_rate = 48000_u32;
+        let mut processor = Processor::new(settings.clone(), sample_rate, 1, test_producers());
+        // A third of full scale, so full scale is unambiguously wrong.
+        let mut peak = 0.0_f32;
+        for buffer in 0..80 {
+            let samples: Vec<f32> = (0..64)
+                .map(|i| {
+                    let t = (buffer * 64 + i) as f32 / sample_rate as f32;
+                    0.3 * (2.0 * std::f32::consts::PI * 60.0 * t).sin()
+                })
+                .collect();
+            processor.process(&samples);
+            peak = peak.max(settings.envelope.get());
+        }
+        assert!(
+            peak < 0.6,
+            "the first 107 ms of a quiet tone should not drive a band to {peak:.3}"
         );
     }
 
