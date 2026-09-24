@@ -170,6 +170,8 @@ impl eframe::App for ConfigApp {
                         // thread. If multiple have accumulated, the most recent
                         // wins — `set_envelope_streams` fully resets the viewer.
                         while let Ok(envelope_streams) = self.envelope_streams_rx.try_recv() {
+                            self.audio_panel
+                                .set_sample_rate(envelope_streams.sample_rate);
                             self.envelope_viewer.set_envelope_streams(envelope_streams);
                         }
 

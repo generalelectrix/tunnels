@@ -4,8 +4,6 @@
 //! the adapter that bridges the audio crate's `EmitStateChange` trait to
 //! the show-level `EmitStateChange` trait.
 
-// Re-export everything from tunnels_audio so existing `crate::audio::*`
-// imports continue to work.
 pub use tunnels_audio::*;
 
 use crate::master_ui::EmitStateChange as EmitShowStateChange;

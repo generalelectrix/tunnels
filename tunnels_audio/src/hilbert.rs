@@ -7,6 +7,10 @@
 //!
 //! The magnitude of the analytic signal `sqrt(path0^2 + path1^2)` gives
 //! the instantaneous amplitude envelope without rectification harmonics.
+//!
+//! The two chains are in phase with each other; the quadrature comes from
+//! delaying one of them by a sample, which is what turns the phase
+//! difference between them into the 90 degrees the magnitude needs.
 
 /// Coefficients for the two allpass chains.
 /// From Olli Niemitalo's design, optimized for +/-0.7 degree accuracy
@@ -21,29 +25,30 @@ const COEFFS_PATH1: [f64; 4] = [
 ];
 
 /// A single second-order allpass section.
-/// Transfer function: H(z) = (a^2 + z^-2) / (1 + a^2 * z^-2)
+/// Transfer function: H(z) = (a^2 - z^-2) / (1 - a^2 * z^-2)
 /// Difference equation: out[n] = a^2 * (in[n] + out[n-2]) - in[n-2]
 #[derive(Clone)]
 struct AllpassSection {
     a_squared: f64,
-    x_prev2: f64, // in[n-2]
-    y_prev2: f64, // out[n-2]
+    /// Inputs and outputs from the two previous samples, newest first.
+    x_prev: [f64; 2],
+    y_prev: [f64; 2],
 }
 
 impl AllpassSection {
     fn new(a: f64) -> Self {
         Self {
             a_squared: a * a,
-            x_prev2: 0.0,
-            y_prev2: 0.0,
+            x_prev: [0.0; 2],
+            y_prev: [0.0; 2],
         }
     }
 
     #[inline]
     fn process(&mut self, input: f64) -> f64 {
-        let output = self.a_squared * (input + self.y_prev2) - self.x_prev2;
-        self.x_prev2 = input;
-        self.y_prev2 = output;
+        let output = self.a_squared * (input + self.y_prev[1]) - self.x_prev[1];
+        self.x_prev = [input, self.x_prev[0]];
+        self.y_prev = [output, self.y_prev[0]];
         output
     }
 }
@@ -53,6 +58,9 @@ impl AllpassSection {
 pub struct HilbertTransform {
     path0: [AllpassSection; 4],
     path1: [AllpassSection; 4],
+    /// Path 0's previous output: the one-sample delay that puts the two
+    /// paths in quadrature.
+    path0_delay: f64,
 }
 
 impl Default for HilbertTransform {
@@ -76,6 +84,7 @@ impl HilbertTransform {
                 AllpassSection::new(COEFFS_PATH1[2]),
                 AllpassSection::new(COEFFS_PATH1[3]),
             ],
+            path0_delay: 0.0,
         }
     }
 
@@ -90,7 +99,8 @@ impl HilbertTransform {
         for section in &mut self.path1 {
             out1 = section.process(out1);
         }
-        (out0 * out0 + out1 * out1).sqrt()
+        let delayed0 = std::mem::replace(&mut self.path0_delay, out0);
+        (delayed0 * delayed0 + out1 * out1).sqrt()
     }
 }
 
@@ -99,41 +109,42 @@ mod tests {
     use super::*;
     use std::f64::consts::PI;
 
+    /// The envelope of a constant sine is its amplitude, at any frequency a
+    /// band carries. A quadrature pair holds across the whole bandwidth, so
+    /// one frequency proves very little on its own.
     #[test]
     fn sine_envelope_is_approximately_constant() {
-        let mut hilbert = HilbertTransform::new();
         let sample_rate = 48000.0;
-        let freq = 440.0;
         let amplitude = 0.8;
 
-        // Run for a bit to let the filters settle.
-        for i in 0..4800 {
-            let t = i as f64 / sample_rate;
-            let sample = amplitude * (2.0 * PI * freq * t).sin();
-            hilbert.envelope(sample);
-        }
+        for freq in [50.0, 440.0, 1000.0, 3000.0, 6000.0, 10000.0] {
+            let mut hilbert = HilbertTransform::new();
+            // Run for a bit to let the filters settle.
+            for i in 0..4800 {
+                let t = i as f64 / sample_rate;
+                hilbert.envelope(amplitude * (2.0 * PI * freq * t).sin());
+            }
 
-        // Now check that the envelope is close to the amplitude.
-        let mut min_env = f64::MAX;
-        let mut max_env = f64::MIN;
-        for i in 4800..9600 {
-            let t = i as f64 / sample_rate;
-            let sample = amplitude * (2.0 * PI * freq * t).sin();
-            let env = hilbert.envelope(sample);
-            min_env = min_env.min(env);
-            max_env = max_env.max(env);
-        }
+            let mut min_env = f64::MAX;
+            let mut max_env = f64::MIN;
+            for i in 4800..9600 {
+                let t = i as f64 / sample_rate;
+                let env = hilbert.envelope(amplitude * (2.0 * PI * freq * t).sin());
+                min_env = min_env.min(env);
+                max_env = max_env.max(env);
+            }
 
-        let ripple = max_env - min_env;
-        assert!(
-            ripple < 0.05,
-            "Hilbert envelope ripple {ripple:.4} too large for 440Hz sine"
-        );
-        let mean = (min_env + max_env) / 2.0;
-        assert!(
-            (mean - amplitude).abs() < 0.05,
-            "Hilbert envelope mean {mean:.4} should be close to amplitude {amplitude}"
-        );
+            let ripple = max_env - min_env;
+            assert!(
+                ripple < 0.05,
+                "envelope ripple {ripple:.4} too large for a {freq} Hz sine"
+            );
+            let mean = (min_env + max_env) / 2.0;
+            assert!(
+                (mean - amplitude).abs() < 0.05,
+                "envelope mean {mean:.4} should be close to amplitude {amplitude} at {freq} Hz"
+            );
+        }
     }
 
     #[test]

@@ -4,7 +4,6 @@ use gui_common::audio_panel::{
     AudioCommands, AudioPanel as SharedAudioPanel, AudioPanelState as SharedAudioPanelState,
     AudioSnapshot,
 };
-use tunnels::audio::processor::TrackingMode;
 use tunnels::audio::{AudioInput, ControlMessage, StateChange};
 use tunnels::control::MetaCommand;
 
@@ -20,14 +19,6 @@ struct ConsoleAudioCommands<'a> {
 impl AudioCommands for ConsoleAudioCommands<'_> {
     fn set_device(&mut self, device: Option<String>) {
         let _ = self.ctx.send_command(MetaCommand::SetAudioDevice(device));
-    }
-
-    fn set_filter_cutoff(&mut self, hz: f32) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::FilterCutoff(hz),
-            )));
     }
 
     fn set_envelope_attack(&mut self, duration: Duration) {
@@ -51,22 +42,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             .ctx
             .send_command(MetaCommand::AudioControl(ControlMessage::Set(
                 StateChange::OutputSmoothing(duration),
-            )));
-    }
-
-    fn set_gain(&mut self, gain_linear: f64) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::InputGain(gain_linear),
-            )));
-    }
-
-    fn set_auto_trim_enabled(&mut self, enabled: bool) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::AutoTrimEnabled(enabled),
             )));
     }
 
@@ -94,28 +69,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_norm_floor_mode(&mut self, mode: TrackingMode) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::NormFloorMode(mode),
-            )));
-    }
-
-    fn set_norm_ceiling_mode(&mut self, mode: TrackingMode) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::NormCeilingMode(mode),
-            )));
-    }
-
-    fn toggle_monitor(&mut self) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::ToggleMonitor));
-    }
-
     fn reset_parameters(&mut self) {
         let _ = self
             .ctx
@@ -131,10 +84,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
                 vec![]
             }
         }
-    }
-
-    fn report_error(&mut self, error: impl std::fmt::Display) {
-        self.ctx.report_error(error);
     }
 }
 

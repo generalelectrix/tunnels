@@ -2,31 +2,31 @@ use eframe::egui;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
-use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
+use tunnels_audio::processor::{NUM_OUTPUT_BANDS, output_band_labels};
+
+/// The sample rate the band labels describe until a device opens.
+const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
     fn set_device(&mut self, device: Option<String>);
-    fn set_filter_cutoff(&mut self, hz: f32);
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
-    fn set_gain(&mut self, gain_linear: f64);
-    fn set_auto_trim_enabled(&mut self, enabled: bool);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
     fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
-    fn set_norm_floor_mode(&mut self, mode: TrackingMode);
-    fn set_norm_ceiling_mode(&mut self, mode: TrackingMode);
-    fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
-    fn report_error(&mut self, error: impl std::fmt::Display);
 }
 
 pub struct AudioPanelState {
     selected_audio: Option<usize>,
     audio_devices: Vec<String>,
+    /// Band labels, and the sample rate they describe. Band edges are
+    /// octaves of the rate, so they only change when a device does.
+    band_labels: [String; NUM_OUTPUT_BANDS],
+    labelled_rate: u32,
 }
 
 impl AudioPanelState {
@@ -34,6 +34,17 @@ impl AudioPanelState {
         Self {
             selected_audio: None,
             audio_devices: devices,
+            band_labels: output_band_labels(DEFAULT_SAMPLE_RATE),
+            labelled_rate: DEFAULT_SAMPLE_RATE,
+        }
+    }
+
+    /// Report the sample rate of the device that just opened. Band edges are
+    /// octaves of it, so the labels are rebuilt when it changes.
+    pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        if sample_rate != self.labelled_rate {
+            self.band_labels = output_band_labels(sample_rate);
+            self.labelled_rate = sample_rate;
         }
     }
 
@@ -119,54 +130,16 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.add_space(4.0);
 
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
-            // Auto input level toggle.
-            ui.label("Auto Input Level:");
-            let mut enabled = self.snapshot.auto_trim_enabled;
-            if ui.checkbox(&mut enabled, "").changed() {
-                self.commands.set_auto_trim_enabled(enabled);
-            }
-            ui.end_row();
-
-            // Manual gain — only shown when auto input level is off.
-            if !self.snapshot.auto_trim_enabled {
-                ui.label("Gain:");
-                let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
-                if ui
-                    .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
-                    .changed()
-                {
-                    self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
-                }
-                ui.end_row();
-            }
-
-            // Lowpass cutoff.
-            ui.label("Lowpass:");
-            let mut cutoff = self.snapshot.filter_cutoff_hz;
-            if ui
-                .add(
-                    egui::Slider::new(&mut cutoff, 40.0..=240.0)
-                        .suffix(" Hz")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands.set_filter_cutoff(cutoff);
-            }
-            ui.end_row();
-
             // Band selector.
             ui.label("Active band:");
             let mut band = self.snapshot.active_band;
-            let selected_text = OUTPUT_BAND_LABELS
-                .get(band as usize)
-                .copied()
-                .unwrap_or("Lowpass");
+            let labels = &self.state.band_labels;
+            let selected_text = labels.get(band as usize).unwrap_or(&labels[0]);
             egui::ComboBox::from_id_salt("active_band")
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
-                    for (i, label) in OUTPUT_BAND_LABELS.iter().enumerate() {
-                        ui.selectable_value(&mut band, i as u32, *label);
+                    for (i, label) in labels.iter().enumerate() {
+                        ui.selectable_value(&mut band, i as u32, label);
                     }
                 });
             if band != self.snapshot.active_band {
@@ -225,72 +198,35 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             }
             ui.end_row();
 
-            // Auto peak level: slider + mode on one line.
-            ui.label("Auto Peak Level:");
-            ui.horizontal(|ui| {
-                let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
-                if ui
-                    .add(
-                        egui::Slider::new(&mut ceil_hl_s, 0.5..=15.0)
-                            .suffix(" s")
-                            .logarithmic(true),
-                    )
-                    .changed()
-                {
-                    self.commands
-                        .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
-                }
-                let mut mode = self.snapshot.norm_ceiling_mode;
-                if ui
-                    .selectable_label(mode == TrackingMode::Average, "Avg")
-                    .clicked()
-                {
-                    mode = TrackingMode::Average;
-                }
-                if ui
-                    .selectable_label(mode == TrackingMode::Limit, "Max")
-                    .clicked()
-                {
-                    mode = TrackingMode::Limit;
-                }
-                if mode != self.snapshot.norm_ceiling_mode {
-                    self.commands.set_norm_ceiling_mode(mode);
-                }
-            });
+            // The normalizer's two memories, both half-lives in seconds.
+            ui.label("Floor Memory:");
+            let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
+            if ui
+                .add(
+                    egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                self.commands
+                    .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
+            }
             ui.end_row();
 
-            // Auto floor level: slider + mode on one line.
-            ui.label("Auto Floor Level:");
-            ui.horizontal(|ui| {
-                let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
-                if ui
-                    .add(
-                        egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
-                            .suffix(" s")
-                            .logarithmic(true),
-                    )
-                    .changed()
-                {
-                    self.commands
-                        .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
-                }
-                let mut mode = self.snapshot.norm_floor_mode;
-                if ui
-                    .selectable_label(mode == TrackingMode::Average, "Avg")
-                    .clicked()
-                {
-                    mode = TrackingMode::Average;
-                }
-                if ui
-                    .selectable_label(mode == TrackingMode::Limit, "Min")
-                    .clicked()
-                {
-                    mode = TrackingMode::Limit;
-                }
-                if mode != self.snapshot.norm_floor_mode {
-                    self.commands.set_norm_floor_mode(mode);
-                }
-            });
+            ui.label("Peak Memory:");
+            let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
+            if ui
+                .add(
+                    egui::Slider::new(&mut ceil_hl_s, 0.5..=60.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                self.commands
+                    .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
+            }
             ui.end_row();
         });
     }
@@ -319,23 +255,16 @@ mod tests {
 
     impl AudioCommands for MockAudioCommands {
         fn set_device(&mut self, _device: Option<String>) {}
-        fn set_filter_cutoff(&mut self, _hz: f32) {}
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
-        fn set_gain(&mut self, _gain_linear: f64) {}
-        fn set_auto_trim_enabled(&mut self, _enabled: bool) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
-        fn set_norm_floor_mode(&mut self, _mode: TrackingMode) {}
-        fn set_norm_ceiling_mode(&mut self, _mode: TrackingMode) {}
-        fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {
             self.devices.clone()
         }
-        fn report_error(&mut self, _error: impl std::fmt::Display) {}
     }
 
     fn default_snapshot() -> AudioSnapshot {
@@ -384,27 +313,5 @@ mod tests {
         });
         harness.run();
         harness.snapshot("audio_panel_with_devices");
-    }
-
-    #[test]
-    fn render_auto_trim_disabled() {
-        use egui_kittest::Harness;
-        let mut commands = MockAudioCommands::new(vec![]);
-        let mut state = AudioPanelState::new(vec![]);
-        let snapshot = AudioSnapshot {
-            device_name: "Scarlett 2i2 USB".to_string(),
-            auto_trim_enabled: false,
-            ..default_snapshot()
-        };
-        let mut harness = Harness::new_ui(|ui| {
-            AudioPanel {
-                commands: &mut commands,
-                state: &mut state,
-                snapshot: &snapshot,
-            }
-            .ui(ui);
-        });
-        harness.run();
-        harness.snapshot("audio_panel_auto_trim_disabled");
     }
 }

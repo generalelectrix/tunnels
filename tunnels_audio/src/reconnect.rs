@@ -11,9 +11,10 @@ use std::thread;
 use std::time::Duration;
 
 use crate::processor::{
-    ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
+    EnvelopeRingBuffers, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
+    envelope_ring_buffers,
 };
-use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
+use crate::ring_buffer::EnvelopeStream;
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -100,7 +101,12 @@ fn reconnect(
                     });
 
                     match open_result {
-                        Ok((stream, update_rate, streams)) => {
+                        Ok(AudioStream {
+                            stream,
+                            update_rate,
+                            sample_rate,
+                            streams,
+                        }) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
                                 let _ = result_tx.send(Ok(()));
@@ -111,6 +117,7 @@ fn reconnect(
                             let _ = envelope_tx.send(crate::EnvelopeStreams {
                                 streams,
                                 update_rate,
+                                sample_rate,
                             });
                             _input_stream = Some(stream);
                         }
@@ -174,11 +181,19 @@ fn open_audio_device(name: &str) -> Result<Device> {
     bail!(err_msg);
 }
 
+/// An open input stream with what the rest of the show needs to read it.
+struct AudioStream {
+    stream: Stream,
+    update_rate: UpdateRate,
+    sample_rate: u32,
+    streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+}
+
 fn build_input_stream(
     device: &Device,
     processor_settings: ProcessorSettings,
     disconnect_sender: Sender<Cmd>,
-) -> Result<(Stream, UpdateRate, [EnvelopeStream; NUM_OUTPUT_BANDS])> {
+) -> Result<AudioStream> {
     let supported = device.default_input_config()?;
 
     // Aim for about 1 ms of audio buffering latency.
@@ -187,8 +202,7 @@ fn build_input_stream(
     // 1000 updates/sec
     let target_latency = 1. / 1000.;
 
-    // Compute target samples; use a power of 2, and multiply by the number of
-    // channels (always gonna be 2)
+    // Frames per buffer for the target latency, rounded up to a power of 2.
     let frame_count = ((target_latency / sample_duration).round() as u32).next_power_of_two();
 
     // Check if this is valid for the device.
@@ -216,22 +230,11 @@ fn build_input_stream(
 
     let update_rate = UpdateRate::new(config.sample_rate.0, frame_count);
 
-    // Create envelope ring buffers — producers go to the processor, envelope_streams to the GUI.
-    let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    let mut envelope_streams = Vec::with_capacity(NUM_OUTPUT_BANDS);
-    for _ in 0..NUM_OUTPUT_BANDS {
-        let (p, c) = envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY);
-        producers.push(p);
-        envelope_streams.push(c);
-    }
-    let producers: [EnvelopeProducer; NUM_OUTPUT_BANDS] = producers
-        .try_into()
-        .ok()
-        .expect("correct number of producers");
-    let envelope_streams: [EnvelopeStream; NUM_OUTPUT_BANDS] = envelope_streams
-        .try_into()
-        .ok()
-        .expect("correct number of envelope_streams");
+    // Producers go to the processor, streams to the GUI.
+    let EnvelopeRingBuffers {
+        producers,
+        streams: envelope_streams,
+    } = envelope_ring_buffers();
 
     let mut processor = Processor::new(
         processor_settings,
@@ -257,5 +260,10 @@ fn build_input_stream(
     let input_stream = device.build_input_stream(&config, handle_buffer, handle_error, None)?;
 
     input_stream.play()?;
-    Ok((input_stream, update_rate, envelope_streams))
+    Ok(AudioStream {
+        stream: input_stream,
+        update_rate,
+        sample_rate: config.sample_rate.0,
+        streams: envelope_streams,
+    })
 }
