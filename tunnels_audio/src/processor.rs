@@ -316,6 +316,13 @@ struct AdaptiveNormalizer {
 }
 
 impl AdaptiveNormalizer {
+    /// The ceiling a band starts from, before it has heard anything: the
+    /// loudest an envelope can be for a full-scale input. A band that
+    /// starts here under-reports its first few seconds and converges down
+    /// as it learns the real level, rather than calling the first sound it
+    /// hears full scale.
+    const INITIAL_CEILING: f32 = 1.0;
+
     fn new(tuning: &NormalizerTuning) -> Self {
         Self {
             floor: AsymmetricOnePole::default(),
@@ -348,6 +355,40 @@ impl AdaptiveNormalizer {
             .max(t.rel_min_range * self.ceiling)
             .max(t.noise_gate);
         ((envelope - floor) / range).clamp(0.0, 1.0)
+    }
+}
+
+/// One-pole DC blocker: `y[n] = x[n] - x[n-1] + coeff * y[n-1]`, the
+/// difference equation of a series capacitor. An offset is not something a
+/// band can hear, but it reaches the residual at full gain — every lowpass
+/// stage has unit gain at DC — where it would sit under the envelope as a
+/// pedestal.
+struct DcBlocker {
+    coeff: f32,
+    x_prev: f32,
+    y_prev: f32,
+}
+
+impl DcBlocker {
+    /// Corner frequency, low enough to leave the lowest band alone: the
+    /// residual reaches down to a few tens of Hz, where this is within
+    /// 0.2 dB of flat.
+    const CORNER_HZ: f32 = 5.0;
+
+    fn new(sample_rate: f32) -> Self {
+        Self {
+            coeff: 1.0 - std::f32::consts::TAU * Self::CORNER_HZ / sample_rate,
+            x_prev: 0.0,
+            y_prev: 0.0,
+        }
+    }
+
+    #[inline]
+    fn process(&mut self, input: f32) -> f32 {
+        let output = input - self.x_prev + self.coeff * self.y_prev;
+        self.x_prev = input;
+        self.y_prev = output;
+        output
     }
 }
 
@@ -514,6 +555,8 @@ pub struct Processor {
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
 
+    /// Removes any offset from the mix before it reaches the bands.
+    dc_blocker: DcBlocker,
     /// Wavelet decomposition feeding every band.
     wavelet: WaveletDecomposition,
     /// One envelope chain per output band, in output order: 0 is the
@@ -548,6 +591,7 @@ impl Processor {
             channel_count: channel_count.max(1),
             sample_rate,
             envelope_producers,
+            dc_blocker: DcBlocker::new(sample_rate),
             wavelet: WaveletDecomposition::new(),
             bands,
             smooth_coeff: SmootherCoeff::default(),
@@ -611,6 +655,7 @@ impl Processor {
             // so a NaN in it never washes out.
             let mono = frame.iter().sum::<f32>() / ch_count_f * gain;
             let mono = if mono.is_finite() { mono } else { 0.0 };
+            let mono = self.dc_blocker.process(mono);
 
             let bands = &mut self.bands;
             self.wavelet.push(mono, |band, sample| {
@@ -657,6 +702,43 @@ mod tests {
             "Envelope should be non-trivial after 1s of 100Hz sine, got {:.3}",
             envelope
         );
+    }
+
+    /// A band whose input is a constant offset is not hearing anything, so
+    /// its envelope stays at zero.
+    #[test]
+    fn dc_offset_produces_no_envelope() {
+        let settings = ProcessorSettings::default();
+        let envelope = run_processor(&settings, 48000, 1.0, |_| 0.5);
+        assert!(
+            envelope < 0.05,
+            "a 0.5 DC offset should read as silence, got {envelope:.3}"
+        );
+    }
+
+    /// Helper: feed a processor one mono signal in 48-sample buffers for the
+    /// given duration. Returns the final envelope value.
+    fn run_processor(
+        settings: &ProcessorSettings,
+        sample_rate: u32,
+        duration_secs: f32,
+        sample: impl Fn(f32) -> f32,
+    ) -> f32 {
+        let buffer_size = 48;
+        let total_samples = (duration_secs * sample_rate as f32) as usize;
+        let mut processor = Processor::new(settings.clone(), sample_rate, 1, test_producers());
+
+        let mut idx = 0;
+        while idx < total_samples {
+            let end = (idx + buffer_size).min(total_samples);
+            let buffer: Vec<f32> = (idx..end)
+                .map(|i| sample(i as f32 / sample_rate as f32))
+                .collect();
+            processor.process(&buffer);
+            idx = end;
+        }
+
+        settings.envelope.get()
     }
 
     /// Helper: generate a mono sine buffer and feed it through a processor
