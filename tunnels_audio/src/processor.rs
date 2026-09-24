@@ -139,6 +139,8 @@ pub struct ProcessorSettingsInner {
 
     /// Which band feeds `envelope`: 0 = sub-bass residual, the rest octaves.
     pub active_band: AtomicU32,
+    /// The gain the trim is currently applying, for display.
+    pub trim_gain: AtomicF32,
     /// Runs of input samples pinned at full scale, counted since the
     /// processor was built. Only its changes mean anything: the control
     /// side watches it to tell whether the input is clipping now.
@@ -182,12 +184,96 @@ impl Default for ProcessorSettingsInner {
             norm_floor_halflife: AtomicF32::new(Self::DEFAULT_FLOOR_HALFLIFE),
             norm_ceiling_halflife: AtomicF32::new(Self::DEFAULT_CEILING_HALFLIFE),
             active_band: AtomicU32::new(0),
+            trim_gain: AtomicF32::new(1.0),
             input_clips: AtomicU32::new(0),
         }
     }
 }
 
 pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
+
+/// Brings the input to a consistent level before the bands see it, so that
+/// how hot the interface is set stops deciding which bands are above the
+/// noise gate. Everything downstream is relative to its own band, so the
+/// trim is free to move slowly and be approximately right.
+struct AutoTrim {
+    /// Tracked input peak: instant attack, slow decay.
+    peak: f32,
+    gain_db: f32,
+    /// `gain_db` as a multiplier.
+    gain: f32,
+    update_rate: f32,
+    peak_fall_coeff: f32,
+    gain_coeff: f32,
+}
+
+impl AutoTrim {
+    /// Peak level the trim aims for. Unity: downstream is floating point
+    /// and a momentary overshoot costs nothing.
+    const TARGET: f32 = 1.0;
+    /// How far the trim may go. The boost reaches a feed run well below a
+    /// mastered level; past that it would be lifting the interface's own
+    /// noise toward the gate.
+    const MIN_GAIN_DB: f32 = -10.0;
+    const MAX_GAIN_DB: f32 = 20.0;
+    /// Peak tracker fall half-life.
+    const PEAK_FALL_HALFLIFE: f32 = 10.0;
+    /// Gain slew half-life, the same in both directions. A band's ceiling
+    /// follows a slow change of level transparently, so there is nothing to
+    /// race toward and a stray peak costs only a gentle, brief dip.
+    const GAIN_HALFLIFE: f32 = 5.0;
+    /// Input peak below which the trim holds still, so silence and idle
+    /// noise are never boosted toward the target.
+    const SILENCE: f32 = 0.01;
+
+    fn new() -> Self {
+        Self {
+            peak: 0.0,
+            gain_db: 0.0,
+            gain: 1.0,
+            update_rate: 0.0,
+            peak_fall_coeff: 0.0,
+            gain_coeff: 0.0,
+        }
+    }
+
+    fn db_to_linear(db: f32) -> f32 {
+        10.0_f32.powf(db / 20.0)
+    }
+
+    fn linear_to_db(linear: f32) -> f32 {
+        20.0 * linear.log10()
+    }
+
+    /// Refresh the cached coefficients for the update rate. Safe to call
+    /// every buffer.
+    fn set_params(&mut self, update_rate: f32) {
+        if update_rate == self.update_rate {
+            return;
+        }
+        self.update_rate = update_rate;
+        self.peak_fall_coeff = halflife_to_coeff(Self::PEAK_FALL_HALFLIFE, update_rate);
+        self.gain_coeff = halflife_to_coeff(Self::GAIN_HALFLIFE, update_rate);
+    }
+
+    /// Update the trim from the peak level of one buffer of input.
+    fn update(&mut self, buffer_peak: f32) {
+        if buffer_peak < Self::SILENCE {
+            return;
+        }
+
+        self.peak = if buffer_peak > self.peak {
+            buffer_peak
+        } else {
+            self.peak_fall_coeff * self.peak + (1.0 - self.peak_fall_coeff) * buffer_peak
+        };
+
+        let desired_db = Self::linear_to_db(Self::TARGET / self.peak)
+            .clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
+        self.gain_db = self.gain_coeff * self.gain_db + (1.0 - self.gain_coeff) * desired_db;
+        self.gain = Self::db_to_linear(self.gain_db);
+    }
+}
 
 /// Level at or beyond which an input sample is at the converter's ceiling.
 const CLIP_LEVEL: f32 = 0.999;
@@ -568,6 +654,8 @@ pub struct Processor {
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
 
+    /// Brings the input to a consistent level ahead of everything else.
+    auto_trim: AutoTrim,
     /// Input samples at full scale so far, for detecting a clipping run
     /// that straddles two buffers.
     clip_run: u32,
@@ -607,6 +695,7 @@ impl Processor {
             channel_count: channel_count.max(1),
             sample_rate,
             envelope_producers,
+            auto_trim: AutoTrim::new(),
             clip_run: 0,
             dc_blocker: DcBlocker::new(sample_rate),
             wavelet: WaveletDecomposition::new(),
@@ -629,10 +718,13 @@ impl Processor {
     /// was already clipped before it reached us — by the interface's input
     /// gain or by whatever fed it. No amount of normalizing downstream
     /// recovers what the converter threw away.
-    fn count_input_clipping(&mut self, interleaved_buffer: &[f32]) {
+    fn count_input_clipping(&mut self, interleaved_buffer: &[f32]) -> f32 {
         let mut clips = 0;
+        let mut peak = 0.0_f32;
         for sample in interleaved_buffer {
-            if sample.abs() >= CLIP_LEVEL {
+            let level = sample.abs();
+            peak = peak.max(level);
+            if level >= CLIP_LEVEL {
                 self.clip_run += 1;
                 if self.clip_run == CLIP_RUN {
                     clips += 1;
@@ -646,6 +738,7 @@ impl Processor {
                 .input_clips
                 .fetch_add(clips, Ordering::Relaxed);
         }
+        peak
     }
 
     /// Read an output band's intermediate stage values. Index 0 is the
@@ -685,9 +778,15 @@ impl Processor {
 
         self.maybe_update_parameters(update_rate);
 
-        self.count_input_clipping(interleaved_buffer);
+        // The trim reads the input before its own gain reaches it, so it
+        // cannot chase itself.
+        let input_peak = self.count_input_clipping(interleaved_buffer);
+        self.auto_trim.set_params(update_rate);
+        self.auto_trim.update(input_peak);
+        self.settings.trim_gain.set(self.auto_trim.gain);
 
-        let gain = self.settings.gain.get();
+        // The manual gain is an offset on the trim, not a replacement.
+        let gain = self.settings.gain.get() * self.auto_trim.gain;
         let ch_count_f = self.channel_count as f32;
 
         for frame in interleaved_buffer.chunks(self.channel_count) {
@@ -781,6 +880,58 @@ mod tests {
         assert!(
             peak < 0.9,
             "the first 107 ms of a quiet tone should not read as full scale, got {peak:.3}"
+        );
+    }
+
+    /// The trim follows the input's level, stops at its limits, and treats
+    /// silence as nothing to act on.
+    #[test]
+    fn auto_trim_follows_level_and_holds_on_silence() {
+        fn trim_at_1khz() -> AutoTrim {
+            let mut trim = AutoTrim::new();
+            trim.set_params(1000.0);
+            trim
+        }
+        fn feed(trim: &mut AutoTrim, peak: f32, updates: usize) {
+            for _ in 0..updates {
+                trim.update(peak);
+            }
+        }
+
+        // Right at target: stays put, and silence afterwards leaves it there.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, AutoTrim::TARGET, 5000);
+        assert!(
+            (trim.gain - 1.0).abs() < 0.05,
+            "at target the trim should hold near 1.0, got {:.3}",
+            trim.gain
+        );
+        feed(&mut trim, 0.0, 5000);
+        feed(&mut trim, 0.005, 5000);
+        assert!(
+            (trim.gain - 1.0).abs() < 0.01,
+            "silence should leave the trim where it was, got {:.3}",
+            trim.gain
+        );
+
+        // A quiet feed is boosted, up to the limit.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 0.02, 60000);
+        let max = AutoTrim::db_to_linear(AutoTrim::MAX_GAIN_DB);
+        assert!(
+            trim.gain > 0.9 * max && trim.gain <= max + 0.01,
+            "a feed 34 dB down should reach the boost limit {max:.1}, got {:.3}",
+            trim.gain
+        );
+
+        // A hot feed is reduced, down to the limit.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 1.5, 15000);
+        let min = AutoTrim::db_to_linear(AutoTrim::MIN_GAIN_DB);
+        assert!(
+            trim.gain < 0.75 && trim.gain >= min - 0.01,
+            "a hot feed should be reduced but not below {min:.2}, got {:.3}",
+            trim.gain
         );
     }
 
