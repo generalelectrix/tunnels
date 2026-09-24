@@ -139,6 +139,10 @@ pub struct ProcessorSettingsInner {
 
     /// Which band feeds `envelope`: 0 = sub-bass residual, the rest octaves.
     pub active_band: AtomicU32,
+    /// Runs of input samples pinned at full scale, counted since the
+    /// processor was built. Only its changes mean anything: the control
+    /// side watches it to tell whether the input is clipping now.
+    pub input_clips: AtomicU32,
 }
 
 impl ProcessorSettingsInner {
@@ -178,11 +182,19 @@ impl Default for ProcessorSettingsInner {
             norm_floor_halflife: AtomicF32::new(Self::DEFAULT_FLOOR_HALFLIFE),
             norm_ceiling_halflife: AtomicF32::new(Self::DEFAULT_CEILING_HALFLIFE),
             active_band: AtomicU32::new(0),
+            input_clips: AtomicU32::new(0),
         }
     }
 }
 
 pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
+
+/// Level at or beyond which an input sample is at the converter's ceiling.
+const CLIP_LEVEL: f32 = 0.999;
+
+/// Consecutive samples at that level before it counts as clipping rather
+/// than a signal that happens to touch full scale.
+const CLIP_RUN: u32 = 3;
 
 /// Nepers per second the log envelope of a band moves on music: the median
 /// over five tracks and seven bands, where the spread is 4.0 to 10.1,
@@ -556,6 +568,9 @@ pub struct Processor {
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
 
+    /// Input samples at full scale so far, for detecting a clipping run
+    /// that straddles two buffers.
+    clip_run: u32,
     /// Removes any offset from the mix before it reaches the bands.
     dc_blocker: DcBlocker,
     /// Wavelet decomposition feeding every band.
@@ -592,6 +607,7 @@ impl Processor {
             channel_count: channel_count.max(1),
             sample_rate,
             envelope_producers,
+            clip_run: 0,
             dc_blocker: DcBlocker::new(sample_rate),
             wavelet: WaveletDecomposition::new(),
             bands,
@@ -606,6 +622,29 @@ impl Processor {
         self.norm_params = NormalizerParams::new(tuning);
         for band in &mut self.bands {
             band.normalizer = AdaptiveNormalizer::new(&tuning);
+        }
+    }
+
+    /// Count runs of samples pinned at full scale, which mean the signal
+    /// was already clipped before it reached us — by the interface's input
+    /// gain or by whatever fed it. No amount of normalizing downstream
+    /// recovers what the converter threw away.
+    fn count_input_clipping(&mut self, interleaved_buffer: &[f32]) {
+        let mut clips = 0;
+        for sample in interleaved_buffer {
+            if sample.abs() >= CLIP_LEVEL {
+                self.clip_run += 1;
+                if self.clip_run == CLIP_RUN {
+                    clips += 1;
+                }
+            } else {
+                self.clip_run = 0;
+            }
+        }
+        if clips > 0 {
+            self.settings
+                .input_clips
+                .fetch_add(clips, Ordering::Relaxed);
         }
     }
 
@@ -645,6 +684,8 @@ impl Processor {
         let update_rate = self.sample_rate / frames as f32;
 
         self.maybe_update_parameters(update_rate);
+
+        self.count_input_clipping(interleaved_buffer);
 
         let gain = self.settings.gain.get();
         let ch_count_f = self.channel_count as f32;
@@ -740,6 +781,32 @@ mod tests {
         assert!(
             peak < 0.9,
             "the first 107 ms of a quiet tone should not read as full scale, got {peak:.3}"
+        );
+    }
+
+    /// A signal that touches full scale is not clipping; one that sits
+    /// there has been through a converter that ran out of range.
+    #[test]
+    fn only_a_run_at_full_scale_counts_as_clipping() {
+        let settings = ProcessorSettings::default();
+        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
+
+        let mut buffer = vec![0.5_f32; 64];
+        buffer[10] = 1.0;
+        buffer[30] = -1.0;
+        processor.process(&buffer);
+        assert_eq!(
+            settings.input_clips.load(Ordering::Relaxed),
+            0,
+            "isolated samples at full scale are not clipping"
+        );
+
+        buffer[20..28].fill(1.0);
+        processor.process(&buffer);
+        assert_eq!(
+            settings.input_clips.load(Ordering::Relaxed),
+            1,
+            "eight samples pinned at full scale are one clipped run"
         );
     }
 
