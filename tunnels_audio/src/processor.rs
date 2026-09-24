@@ -316,12 +316,13 @@ struct AdaptiveNormalizer {
 }
 
 impl AdaptiveNormalizer {
-    /// The ceiling a band starts from, before it has heard anything: the
-    /// loudest an envelope can be for a full-scale input. A band that
-    /// starts here under-reports its first few seconds and converges down
-    /// as it learns the real level, rather than calling the first sound it
-    /// hears full scale.
-    const INITIAL_CEILING: f32 = 1.0;
+    /// The ceiling a band starts from, before it has heard anything: half
+    /// the loudest an envelope can be. A band that starts here under-reports
+    /// until it learns the real level, rather than calling the first sound
+    /// it hears full scale, and the error is on the safe side. Starting a
+    /// halving below the maximum costs one hit's worth of clipping if the
+    /// material turns out louder, and halves the time to settle.
+    const INITIAL_CEILING: f32 = 0.5;
 
     fn new(tuning: &NormalizerTuning) -> Self {
         Self {
@@ -737,8 +738,8 @@ mod tests {
             peak = peak.max(settings.envelope.get());
         }
         assert!(
-            peak < 0.6,
-            "the first 107 ms of a quiet tone should not drive a band to {peak:.3}"
+            peak < 0.9,
+            "the first 107 ms of a quiet tone should not read as full scale, got {peak:.3}"
         );
     }
 
