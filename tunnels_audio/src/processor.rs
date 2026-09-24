@@ -605,8 +605,12 @@ impl Processor {
         let ch_count_f = self.channel_count as f32;
 
         for frame in interleaved_buffer.chunks(self.channel_count) {
-            // Both paths run on the mono mix.
+            // Both paths run on the mono mix. A device that hands us a
+            // non-finite sample would otherwise poison the Hilbert and the
+            // followers for the rest of the show: their state is recursive,
+            // so a NaN in it never washes out.
             let mono = frame.iter().sum::<f32>() / ch_count_f * gain;
+            let mono = if mono.is_finite() { mono } else { 0.0 };
 
             let bands = &mut self.bands;
             self.wavelet.push(mono, |band, sample| {

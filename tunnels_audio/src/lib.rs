@@ -32,6 +32,10 @@ pub use self::ring_buffer::EnvelopeStream;
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
 
+/// Largest input gain that can be set, +40 dB. The panel's slider stops at
+/// +30; this bounds what a control surface or an OSC client can ask for.
+pub const MAX_INPUT_GAIN: f64 = 100.0;
+
 /// Envelope data streams from the audio thread, bundled with the callback rate.
 pub struct EnvelopeStreams {
     pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
@@ -223,8 +227,8 @@ impl AudioInput {
                 .output_smoothing
                 .set(v.as_secs_f32()),
             InputGain(v) => {
-                if v < 0. {
-                    warn!("Invalid input gain {v} (< 0).");
+                if !(0.0..=MAX_INPUT_GAIN).contains(&v) {
+                    warn!("Invalid input gain {v} (outside 0 to {MAX_INPUT_GAIN}).");
                     return;
                 }
                 self.processor_settings.gain.set(v as f32);
