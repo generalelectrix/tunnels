@@ -101,10 +101,10 @@ pub struct Tunnel {
     thickness: Smoothed<UnipolarFloat>,
     size: Smoothed<UnipolarFloat>,
     aspect_ratio: Smoothed<UnipolarFloat>,
-    col_center: UnipolarFloat,
-    col_width: UnipolarFloat,
+    col_center: Smoothed<UnipolarFloat>,
+    col_width: Smoothed<UnipolarFloat>,
     col_spread: UnipolarFloat,
-    col_sat: UnipolarFloat,
+    col_sat: Smoothed<UnipolarFloat>,
     /// If None: ignore global color palette.
     /// If Some: use this index from the palette to pick the hue.
     /// At present, the saturation and value of the color are ignored.
@@ -161,10 +161,10 @@ impl Default for Tunnel {
             thickness: UnipolarFloat::new(0.1).into(),
             size: UnipolarFloat::new(0.5).into(),
             aspect_ratio: UnipolarFloat::new(0.5).into(),
-            col_center: UnipolarFloat::ZERO,
-            col_width: UnipolarFloat::ZERO,
+            col_center: UnipolarFloat::ZERO.into(),
+            col_width: UnipolarFloat::ZERO.into(),
             col_spread: UnipolarFloat::ZERO,
-            col_sat: UnipolarFloat::ZERO,
+            col_sat: UnipolarFloat::ZERO.into(),
             palette_selection: None,
             position_selection: None,
             segs: 126,
@@ -353,6 +353,9 @@ impl Tunnel {
         self.thickness.update_state(delta_t);
         self.aspect_ratio.update_state(delta_t);
         self.size.update_state(delta_t);
+        self.col_center.update_state(delta_t);
+        self.col_width.update_state(delta_t);
+        self.col_sat.update_state(delta_t);
 
         // Update the state of the animations.
         for anim in &mut self.anims {
@@ -373,6 +376,21 @@ impl Tunnel {
         // calculate the spin angle
         self.curr_spin_angle +=
             (scale_speed(self.spin_speed).val() * timestep_secs * 30.) * SPIN_SPEED_SCALE;
+    }
+
+    /// Bring every smoothed control to rest on its target at once.
+    pub fn settle_controls(&mut self) {
+        self.thickness.settle();
+        self.size.settle();
+        self.aspect_ratio.settle();
+        self.col_center.settle();
+        self.col_width.settle();
+        self.col_sat.settle();
+        self.x_offset.settle();
+        self.y_offset.settle();
+        for anim in &mut self.anims {
+            anim.animation.settle_controls();
+        }
     }
 
     /// Render the current state of the tunnel.
@@ -442,7 +460,7 @@ impl Tunnel {
                 .unwrap_or(Phase::ZERO)
                 .val()
         } else {
-            self.col_center.val()
+            self.col_center.smoothed().val()
         };
         (offset, base_hue)
     }
@@ -550,8 +568,8 @@ impl Tunnel {
                 phase: self.phase_axis,
                 cycles: (COLOR_SPREAD_SCALE * self.col_spread.val()).floor(),
                 center: base_hue,
-                width: self.col_width.val(),
-                sat: self.col_sat.val(),
+                width: self.col_width.smoothed().val(),
+                sat: self.col_sat.smoothed().val(),
                 val: 1.0,
                 level: level_scale.val(),
             }
@@ -706,10 +724,10 @@ impl Tunnel {
         emitter.emit_tunnel_state_change(Thickness(self.thickness.target()));
         emitter.emit_tunnel_state_change(Size(self.size.target()));
         emitter.emit_tunnel_state_change(AspectRatio(self.aspect_ratio.target()));
-        emitter.emit_tunnel_state_change(ColorCenter(self.col_center));
-        emitter.emit_tunnel_state_change(ColorWidth(self.col_width));
+        emitter.emit_tunnel_state_change(ColorCenter(self.col_center.target()));
+        emitter.emit_tunnel_state_change(ColorWidth(self.col_width.target()));
         emitter.emit_tunnel_state_change(ColorSpread(self.col_spread));
-        emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat));
+        emitter.emit_tunnel_state_change(ColorSaturation(self.col_sat.target()));
         emitter.emit_tunnel_state_change(PaletteSelection(self.palette_selection));
         emitter.emit_tunnel_state_change(Segments(self.segments_control()));
         emitter.emit_tunnel_state_change(Blacking(self.blacking_control()));
@@ -776,10 +794,10 @@ impl Tunnel {
             Thickness(v) => self.thickness.set_target(v),
             Size(v) => self.size.set_target(v),
             AspectRatio(v) => self.aspect_ratio.set_target(v),
-            ColorCenter(v) => self.col_center = v,
-            ColorWidth(v) => self.col_width = v,
+            ColorCenter(v) => self.col_center.set_target(v),
+            ColorWidth(v) => self.col_width.set_target(v),
             ColorSpread(v) => self.col_spread = v,
-            ColorSaturation(v) => self.col_sat = v,
+            ColorSaturation(v) => self.col_sat.set_target(v),
             PaletteSelection(v) => self.palette_selection = v,
             // One knob, two fields: a segment mode counts segments with it and a
             // figure mode opens a family of the library with it.
@@ -1152,6 +1170,80 @@ mod test {
     /// A surface blanks the controls a figure has no use for, so a mode that
     /// does use them has to hear their values again. Restating the whole
     /// tunnel is what leaves nothing dark that the new mode reads.
+    /// A continuous control glides to the value it is turned to, while what
+    /// the tunnel reports back is that value from the moment it is set.
+    #[test]
+    fn continuous_controls_glide_to_the_value_they_report() {
+        let controls: [(fn() -> StateChange, f64, fn(&Tunnel) -> f64); 8] = [
+            (
+                || StateChange::Thickness(UnipolarFloat::new(0.6)),
+                0.6,
+                |t| t.thickness.smoothed().val(),
+            ),
+            (
+                || StateChange::Size(UnipolarFloat::new(0.9)),
+                0.9,
+                |t| t.size.smoothed().val(),
+            ),
+            (
+                || StateChange::AspectRatio(UnipolarFloat::new(0.1)),
+                0.1,
+                |t| t.aspect_ratio.smoothed().val(),
+            ),
+            (
+                || StateChange::ColorCenter(UnipolarFloat::new(0.7)),
+                0.7,
+                |t| t.col_center.smoothed().val(),
+            ),
+            (
+                || StateChange::ColorWidth(UnipolarFloat::new(0.4)),
+                0.4,
+                |t| t.col_width.smoothed().val(),
+            ),
+            (
+                || StateChange::ColorSaturation(UnipolarFloat::new(0.8)),
+                0.8,
+                |t| t.col_sat.smoothed().val(),
+            ),
+            (
+                || StateChange::PositionX(0.5),
+                0.5,
+                |t| t.x_offset.smoothed(),
+            ),
+            (
+                || StateChange::PositionY(-0.5),
+                -0.5,
+                |t| t.y_offset.smoothed(),
+            ),
+        ];
+        for (control, target, rendered) in controls {
+            let mut tunnel = Tunnel::default();
+            let before = rendered(&tunnel);
+            tunnel.handle_state_change(control(), &mut Silent);
+            assert_eq!(before, rendered(&tunnel), "{:?} jumped", control());
+
+            let mut talkback = Recorder::default();
+            tunnel.emit_state(&mut talkback);
+            assert!(
+                talkback.0.contains(&format!("{:?}", control())),
+                "{:?} was not reported back: {:?}",
+                control(),
+                talkback.0
+            );
+
+            tunnel.update_state(Duration::from_millis(16), UnipolarFloat::ZERO);
+            let gliding = rendered(&tunnel);
+            assert!(
+                gliding != before && gliding != target,
+                "{:?} was at {gliding} after one tick",
+                control()
+            );
+
+            tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+            assert_eq!(target, rendered(&tunnel), "{:?} did not land", control());
+        }
+    }
+
     #[test]
     fn changing_the_mode_restates_the_controls_a_mode_can_blank() {
         let mut recorder = Recorder::default();
@@ -1799,7 +1891,7 @@ mod test {
             )
         };
         let colorful = Tunnel {
-            col_width: UnipolarFloat::ONE,
+            col_width: UnipolarFloat::ONE.into(),
             col_spread: UnipolarFloat::ONE,
             ..Default::default()
         };
@@ -2041,7 +2133,7 @@ pub mod fixture {
         vec![layer]
     }
 
-    /// Configure a tunnel for stress testing.
+    /// Configure a tunnel for stress testing, at rest in that configuration.
     ///
     /// `marquee_speed` is parameterized because the stress test varies it
     /// across channels: `-1.0 + (2.0 * i / channel_count)`.
@@ -2085,6 +2177,7 @@ pub mod fixture {
                 &mut NoopEmitter,
             );
         }
+        tunnel.settle_controls();
     }
 
     /// Render a default tunnel to a snapshot for use in test fixtures.
@@ -2760,8 +2853,8 @@ pub mod fixture {
         Tunnel {
             shape_mode: ShapeMode::Sprite,
             sprite,
-            col_sat: UnipolarFloat::ONE,
-            col_center: UnipolarFloat::new(0.55),
+            col_sat: UnipolarFloat::ONE.into(),
+            col_center: UnipolarFloat::new(0.55).into(),
             ..Default::default()
         }
     }
@@ -2777,7 +2870,7 @@ pub mod fixture {
     /// angular phase jumps are both in the picture.
     pub fn sprite_color_snapshot(phase: PhaseAxis) -> LayerCollection {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
-        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_width = UnipolarFloat::ONE.into();
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
         tunnel.phase_axis = phase;
         snapshot(render_default(&tunnel))
@@ -2793,7 +2886,7 @@ pub mod fixture {
     /// in the suite would see it.
     pub fn sprite_color_animation_snapshot() -> LayerCollection {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
-        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_width = UnipolarFloat::ONE.into();
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
         tunnel.anims[0].target = AnimationTarget::ColorSaturation;
         tunnel.anims[0].animation.control(
@@ -2819,7 +2912,7 @@ pub mod fixture {
     /// points the library holds.
     pub fn sprite_shared_vertex_snapshot() -> LayerCollection {
         let mut tunnel = sprite_tunnel(PINWHEEL);
-        tunnel.col_sat = UnipolarFloat::ZERO;
+        tunnel.col_sat = UnipolarFloat::ZERO.into();
         snapshot(render_default(&tunnel))
     }
 
@@ -2985,7 +3078,7 @@ pub mod fixture {
     /// apertures the way stacking gobos does.
     pub fn sprite_masked_stack_snapshot() -> LayerCollection {
         let mut lit = sprite_tunnel(SNOWFLAKE);
-        lit.col_width = UnipolarFloat::ONE;
+        lit.col_width = UnipolarFloat::ONE.into();
         lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
 
         let mut mask = sprite_tunnel(BULLSEYE);
@@ -3031,7 +3124,7 @@ pub mod fixture {
     /// union.
     pub fn look_gobo_intersection_snapshot() -> LayerCollection {
         let mut lit = sprite_tunnel(SNOWFLAKE);
-        lit.col_width = UnipolarFloat::ONE;
+        lit.col_width = UnipolarFloat::ONE.into();
         lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
         lit.size = UnipolarFloat::new(0.6).into();
 
@@ -3072,7 +3165,7 @@ pub mod fixture {
     /// A colour-swept figure and a smaller one to open a window in it.
     fn gobo_stack() -> (Tunnel, Tunnel) {
         let mut lit = sprite_tunnel(SNOWFLAKE);
-        lit.col_width = UnipolarFloat::ONE;
+        lit.col_width = UnipolarFloat::ONE.into();
         lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
 
         let mut gobo = sprite_tunnel(BULLSEYE);
@@ -3117,7 +3210,7 @@ pub mod fixture {
     pub fn sprite_outline_color_snapshot() -> LayerCollection {
         let mut tunnel = sprite_tunnel(UMBRELLA);
         tunnel.draw_mode = DrawMode::Outline;
-        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_width = UnipolarFloat::ONE.into();
         // The most cycles the knob can ask for, which is where a stroke
         // sampled too coarsely along its length would band first.
         tunnel.col_spread = UnipolarFloat::ONE;
@@ -3206,8 +3299,8 @@ pub mod fixture {
         Tunnel {
             shape_mode: ShapeMode::Generated,
             generated,
-            col_sat: UnipolarFloat::ONE,
-            col_center: UnipolarFloat::new(0.55),
+            col_sat: UnipolarFloat::ONE.into(),
+            col_center: UnipolarFloat::new(0.55).into(),
             ..Default::default()
         }
     }
@@ -3233,7 +3326,7 @@ pub mod fixture {
     /// meshed and ramped path a baked figure takes.
     pub fn generated_color_snapshot() -> LayerCollection {
         let mut tunnel = generated_tunnel(generated_star());
-        tunnel.col_width = UnipolarFloat::ONE;
+        tunnel.col_width = UnipolarFloat::ONE.into();
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
         snapshot(render_default(&tunnel))
     }

@@ -221,6 +221,11 @@ impl<T: Smoothable, R: Response> Smoothed<T, R> {
             *self = Self::new(self.target);
         }
     }
+
+    /// Bring the smoothed value to rest on its target at once.
+    pub fn settle(&mut self) {
+        *self = Self::new(self.target);
+    }
 }
 
 impl<T: Smoothable + Default, R: Response> Default for Smoothed<T, R> {
@@ -366,6 +371,17 @@ mod test {
         settle(&mut size);
         assert_eq!(UnipolarFloat::new(0.8), size.smoothed());
         assert_eq!(UnipolarFloat::new(0.8), size.target());
+    }
+
+    #[test]
+    fn a_settled_value_rests_on_its_target() {
+        let mut position: Smoothed<f64, Slow> = Smoothed::new(-0.5);
+        position.set_target(0.25);
+        position.update_state(TICK);
+        position.settle();
+        assert_eq!(0.25, position.smoothed());
+        position.update_state(TICK);
+        assert_eq!(0.25, position.smoothed());
     }
 
     #[test]

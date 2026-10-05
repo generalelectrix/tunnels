@@ -3,6 +3,7 @@ use crate::{
     animation_target::AnimationTarget,
     animation_visualizer::AnimationSnapshot,
     audio::{self, AudioInput, ShowEmitter},
+    beam::Beam,
     clock_bank::{self, ClockBank},
     clock_server::{self, ClockPublisher, SharedClockData},
     control::{ControlEvent, Dispatcher, MetaCommand, ReceivedEvent},
@@ -146,13 +147,21 @@ impl Show {
     }
 
     /// Set up the show in a test mode, defined by the provided setup function.
+    ///
+    /// A test pattern appears at the state it sets up rather than gliding
+    /// there.
     pub fn test_mode(&mut self, setup: TestModeSetup) {
         let channel_count = self.state.mixer.channels().count();
         self.state
             .mixer
             .channels()
             .enumerate()
-            .for_each(|(i, chan)| setup(channel_count, i, chan));
+            .for_each(|(i, chan)| {
+                setup(channel_count, i, chan);
+                if let Beam::Tunnel(tunnel) = &mut chan.beam {
+                    tunnel.settle_controls();
+                }
+            });
     }
 
     /// Run the show in the current thread.

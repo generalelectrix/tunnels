@@ -192,6 +192,11 @@ impl Animation {
         }
     }
 
+    /// Bring every smoothed control to rest on its target at once.
+    pub fn settle_controls(&mut self) {
+        self.smoothing.settle();
+    }
+
     /// Resolve everything that is fixed for a frame, once.
     ///
     /// A render asks an animation for a value once per segment, or on a filled
