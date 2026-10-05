@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
+use tunnels_lib::smooth::Smoothed;
 use tunnels_lib::transient_indicator::TransientIndicator;
 
 /// The number of times a clock has ticked.
@@ -146,7 +147,7 @@ pub struct ControllableClock {
     sync: TapSync,
     tick_indicator: TransientIndicator,
     /// submaster level for this clock
-    submaster_level: UnipolarFloat,
+    submaster_level: Smoothed<UnipolarFloat>,
     /// If true, modulate the submaster level using audio envelope.
     use_audio_size: bool,
 }
@@ -157,7 +158,7 @@ impl Default for ControllableClock {
             clock: Default::default(),
             sync: Default::default(),
             tick_indicator: Default::default(),
-            submaster_level: UnipolarFloat::ONE,
+            submaster_level: UnipolarFloat::ONE.into(),
             use_audio_size: false,
         }
     }
@@ -181,9 +182,9 @@ impl ControllableClock {
         self.clock.ticks()
     }
 
-    /// Return the current submaster level.
+    /// Return the submaster level as it stands, following its fader.
     pub fn submaster_level(&self) -> UnipolarFloat {
-        self.submaster_level
+        self.submaster_level.smoothed()
     }
 
     /// Return true if we should use audio envelope to scale submaster level.
@@ -213,6 +214,7 @@ impl ControllableClock {
         emitter: &mut E,
     ) {
         self.clock.update_state(delta_t, audio_envelope);
+        self.submaster_level.update_state(delta_t);
         if let Some(tick_state) = self.tick_indicator.update_state(delta_t, self.clock.ticked) {
             emitter.emit_clock_state_change(StateChange::Ticked(tick_state));
         }
@@ -222,7 +224,7 @@ impl ControllableClock {
     pub fn emit_state<E: EmitStateChange>(&self, emitter: &mut E) {
         use StateChange::*;
         emitter.emit_clock_state_change(OneShot(self.clock.one_shot));
-        emitter.emit_clock_state_change(SubmasterLevel(self.submaster_level));
+        emitter.emit_clock_state_change(SubmasterLevel(self.submaster_level.target()));
         emitter.emit_clock_state_change(Ticked(self.tick_indicator.state()));
         emitter.emit_clock_state_change(UseAudioSpeed(self.clock.use_audio));
         emitter.emit_clock_state_change(UseAudioSize(self.use_audio_size));
@@ -268,7 +270,7 @@ impl ControllableClock {
             Rate(v) => self.clock.rate_coarse = v.val() * ControllableClock::RATE_SCALE,
             RateFine(v) => self.clock.rate_fine = v.val() * ControllableClock::RATE_SCALE_FINE,
             OneShot(v) => self.clock.set_one_shot(v),
-            SubmasterLevel(v) => self.submaster_level = v,
+            SubmasterLevel(v) => self.submaster_level.set_target(v),
             UseAudioSpeed(v) => self.clock.use_audio = v,
             UseAudioSize(v) => self.use_audio_size = v,
             Ticked(_) => (),
@@ -399,5 +401,49 @@ mod test_tap_sync {
         assert!(loaded.taps.is_empty(), "the taps do not");
 
         loaded.tap();
+    }
+}
+
+#[cfg(test)]
+mod test_submaster {
+    use super::*;
+
+    #[derive(Default)]
+    struct Recorder(Vec<String>);
+    impl EmitStateChange for Recorder {
+        fn emit_clock_state_change(&mut self, sc: StateChange) {
+            self.0.push(format!("{sc:?}"));
+        }
+    }
+
+    /// A submaster fader glides to the level it is pulled to, while what the
+    /// clock reports back is that level from the moment it is set.
+    #[test]
+    fn the_submaster_glides_to_the_level_it_reports() {
+        let mut clock = ControllableClock::default();
+        let set = UnipolarFloat::new(0.2);
+        clock.control(
+            ControlMessage::Set(StateChange::SubmasterLevel(set)),
+            &mut Recorder::default(),
+        );
+        assert_eq!(
+            UnipolarFloat::ONE,
+            clock.submaster_level(),
+            "the level jumped"
+        );
+
+        let mut talkback = Recorder::default();
+        clock.emit_state(&mut talkback);
+        let reported = format!("{:?}", StateChange::SubmasterLevel(set));
+        assert!(talkback.0.contains(&reported), "{:?}", talkback.0);
+
+        let mut silent = Recorder::default();
+        clock.update_state(Duration::from_millis(16), UnipolarFloat::ZERO, &mut silent);
+        let gliding = clock.submaster_level();
+        assert!(gliding < UnipolarFloat::ONE && gliding > set, "{gliding}");
+        assert_eq!(gliding, clock.as_static().submaster_level);
+
+        clock.update_state(Duration::from_secs(1), UnipolarFloat::ZERO, &mut silent);
+        assert_eq!(set, clock.submaster_level());
     }
 }
