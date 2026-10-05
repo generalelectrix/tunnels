@@ -1,7 +1,8 @@
-use crate::number::UnipolarFloat;
+use crate::number::{BipolarFloat, Phase, UnipolarFloat};
 use serde::{Deserialize, Serialize};
 use std::{
     f64::consts::PI,
+    marker::PhantomData,
     ops::{Add, Mul},
     time::Duration,
 };
@@ -81,6 +82,161 @@ impl Spring {
         {
             *self = Self::at_rest(target);
         }
+    }
+}
+
+/// A value type that can be smoothed.
+///
+/// A smoothable value maps onto a continuous axis and back. A type that wraps
+/// around, such as [`Phase`], places a value at the point on the axis nearest
+/// a given position, so motion along the axis takes the short way round.
+pub trait Smoothable: Copy {
+    fn to_axis(self) -> f64;
+
+    fn from_axis(position: f64) -> Self;
+
+    /// Return the point on the axis representing this value that lies
+    /// nearest to `position`.
+    fn axis_near(self, position: f64) -> f64 {
+        let _ = position;
+        self.to_axis()
+    }
+}
+
+impl Smoothable for f64 {
+    fn to_axis(self) -> f64 {
+        self
+    }
+
+    fn from_axis(position: f64) -> Self {
+        position
+    }
+}
+
+impl Smoothable for UnipolarFloat {
+    fn to_axis(self) -> f64 {
+        self.val()
+    }
+
+    fn from_axis(position: f64) -> Self {
+        Self::new(position)
+    }
+}
+
+impl Smoothable for BipolarFloat {
+    fn to_axis(self) -> f64 {
+        self.val()
+    }
+
+    fn from_axis(position: f64) -> Self {
+        Self::new(position)
+    }
+}
+
+impl Smoothable for Phase {
+    fn to_axis(self) -> f64 {
+        self.val()
+    }
+
+    fn from_axis(position: f64) -> Self {
+        Self::new(position)
+    }
+
+    fn axis_near(self, position: f64) -> f64 {
+        let mut ahead = (self.val() - position).rem_euclid(1.0);
+        if ahead > 0.5 {
+            ahead -= 1.0;
+        }
+        position + ahead
+    }
+}
+
+/// How quickly a smoothed value follows its target.
+pub trait Response {
+    const LAG: Lag;
+}
+
+/// The response for controls that should feel immediate under the hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Fast;
+
+impl Response for Fast {
+    const LAG: Lag = Lag::from_millis(40);
+}
+
+/// The response for controls whose every change is a large visual move,
+/// which should travel rather than jump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Slow;
+
+impl Response for Slow {
+    const LAG: Lag = Lag::from_millis(100);
+}
+
+/// A control value that follows the value asked of it through a [`Spring`].
+///
+/// The [target](Smoothed::target) is the value most recently asked for: the
+/// state to report back to controllers. The [smoothed](Smoothed::smoothed)
+/// value is where the spring has got to: the state to render. A smoothed
+/// value never leaves the range its targets have covered, takes the same time
+/// to land a jump whatever its size, and comes to rest exactly on its target.
+/// Its response sets how quickly it follows.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Smoothed<T, R = Fast> {
+    target: T,
+    /// The target's place on the spring's axis.
+    target_position: f64,
+    spring: Spring,
+    #[serde(skip)]
+    response: PhantomData<R>,
+}
+
+impl<T: Smoothable, R: Response> Smoothed<T, R> {
+    /// Return a smoothed value resting at `value`.
+    pub fn new(value: T) -> Self {
+        Self {
+            target: value,
+            target_position: value.to_axis(),
+            spring: Spring::at_rest(value.to_axis()),
+            response: PhantomData,
+        }
+    }
+
+    /// Return the value most recently asked for.
+    pub fn target(&self) -> T {
+        self.target
+    }
+
+    /// Return the value as it stands on its way to the target.
+    pub fn smoothed(&self) -> T {
+        T::from_axis(self.spring.position())
+    }
+
+    pub fn set_target(&mut self, target: T) {
+        self.target = target;
+        self.target_position = target.axis_near(self.spring.position());
+    }
+
+    /// Advance the smoothed value toward its target by `delta_t`.
+    pub fn update_state(&mut self, delta_t: Duration) {
+        self.spring.update(self.target_position, R::LAG, delta_t);
+        if self.spring == Spring::at_rest(self.target_position) {
+            // A wrapping value comes to rest wherever its travels took it on
+            // the axis; return it to the target's own place.
+            *self = Self::new(self.target);
+        }
+    }
+}
+
+impl<T: Smoothable + Default, R: Response> Default for Smoothed<T, R> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+impl<T: Smoothable, R: Response> From<T> for Smoothed<T, R> {
+    fn from(value: T) -> Self {
+        Self::new(value)
     }
 }
 
@@ -263,6 +419,72 @@ mod test {
         let mut spring = Spring::at_rest(0.0);
         spring.update(0.7, Lag::from_millis(0), TICK);
         assert_eq!(Spring::at_rest(0.7), spring);
+    }
+
+    /// Run a smoothed value for two seconds of show ticks.
+    fn settle<T: Smoothable, R: Response>(value: &mut Smoothed<T, R>) {
+        for _ in 0..480 {
+            value.update_state(TICK);
+        }
+    }
+
+    #[test]
+    fn smoothed_value_follows_the_target_it_reports() {
+        let mut size: Smoothed<UnipolarFloat> = UnipolarFloat::new(0.2).into();
+        size.set_target(UnipolarFloat::new(0.8));
+        assert_eq!(UnipolarFloat::new(0.8), size.target());
+        assert_eq!(UnipolarFloat::new(0.2), size.smoothed());
+
+        size.update_state(TICK);
+        let first = size.smoothed().val();
+        assert!(first > 0.2 && first < 0.8, "{first}");
+
+        settle(&mut size);
+        assert_eq!(UnipolarFloat::new(0.8), size.smoothed());
+        assert_eq!(UnipolarFloat::new(0.8), size.target());
+    }
+
+    #[test]
+    fn each_response_lands_half_a_jump_at_its_own_pace() {
+        fn half_a_jump<R: Response>() -> Duration {
+            let mut value: Smoothed<f64, R> = Smoothed::new(0.0);
+            value.set_target(1.0);
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..10_000 {
+                if value.smoothed() >= 0.5 {
+                    break;
+                }
+                value.update_state(FINE);
+                elapsed += FINE;
+            }
+            elapsed
+        }
+        for (lag, half) in [
+            (Fast::LAG, half_a_jump::<Fast>()),
+            (Slow::LAG, half_a_jump::<Slow>()),
+        ] {
+            let lags = half.as_secs_f64() / lag.duration().as_secs_f64();
+            assert!((lags - 0.84).abs() < 0.01, "half a jump after {lags} lags");
+        }
+        assert!(half_a_jump::<Fast>() < half_a_jump::<Slow>());
+    }
+
+    #[test]
+    fn smoothed_phase_takes_the_short_way_round() {
+        let mut hue: Smoothed<Phase> = Phase::new(0.95).into();
+        hue.set_target(Phase::new(0.05));
+        for _ in 0..480 {
+            hue.update_state(TICK);
+            let h = hue.smoothed().val();
+            assert!(h >= 0.95 || h <= 0.05, "went the long way through {h}");
+        }
+        assert_eq!(0.05, hue.smoothed().val());
+
+        // A knob at the top of its range reports back exactly where it was set.
+        hue.set_target(UnipolarFloat::ONE.as_phase());
+        settle(&mut hue);
+        assert_eq!(1.0, hue.target().val());
+        assert_eq!(0.0, hue.smoothed().val());
     }
 
     #[test]
