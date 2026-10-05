@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
-use tunnels_lib::smooth::Smoother;
+use tunnels_lib::smooth::Smoothed;
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug, VariantArray)]
 pub enum Waveform {
@@ -101,7 +101,7 @@ pub struct Animation {
     /// since small changes imply significant movements in the noise distribution.
     /// TODO: consider if we want to turn smoothing of this parameter off when
     /// we're in anything besides noise.
-    smoothing: Smoother<UnipolarFloat>,
+    smoothing: Smoothed<UnipolarFloat>,
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
     use_audio_size: bool,
@@ -120,11 +120,7 @@ impl Default for Animation {
         Self {
             static_params: StaticParams::default(),
             size: UnipolarFloat::ZERO,
-            smoothing: Smoother::new(
-                UnipolarFloat::new(0.25),
-                Self::SMOOTH_SMOOTH_TIME,
-                tunnels_lib::smooth::SmoothMode::Linear,
-            ),
+            smoothing: UnipolarFloat::new(0.25).into(),
             internal_clock: Default::default(),
             clock_source: None,
             use_audio_size: false,
@@ -134,8 +130,6 @@ impl Default for Animation {
 }
 
 impl Animation {
-    const SMOOTH_SMOOTH_TIME: Duration = Duration::from_millis(100);
-
     /// Return the current value of the internal animation size.
     pub fn size(&self) -> UnipolarFloat {
         self.size
@@ -214,7 +208,7 @@ impl Animation {
         PreparedAnimation {
             static_params: self.static_params,
             phase_temporal: self.phase(external_clocks),
-            smoothing: self.smoothing.val(),
+            smoothing: self.smoothing.smoothed(),
             ticks: self.ticks(external_clocks),
             scale: self.scale_value(external_clocks, audio_envelope, 1.0),
             simplex_gen: self.simplex_gen,
