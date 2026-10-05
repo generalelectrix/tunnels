@@ -1345,6 +1345,7 @@ mod test {
                 .animation
                 .control(AnimControlMessage::Set(sc), &mut Silent);
         }
+        tunnel.settle_controls();
         let Layer::Fill(fill) = render_fixture(&tunnel) else {
             panic!("a sprite mode renders a figure");
         };
@@ -2034,6 +2035,7 @@ mod test {
                 .control(AnimControlMessage::Set(sc), &mut Silent);
         }
 
+        tunnel.settle_controls();
         let Layer::Fill(fill) = render_fixture(&tunnel) else {
             panic!("a sprite mode renders a figure");
         };
@@ -2113,20 +2115,9 @@ pub mod fixture {
         fn emit_animation_state_change(&mut self, _: crate::animation::StateChange) {}
     }
 
+    /// Render a tunnel at rest in the state it was configured to.
     fn render_default(tunnel: &Tunnel) -> Layer {
-        tunnel.render(
-            UnipolarFloat::ONE,
-            PaintMode::Normal,
-            RenderContext {
-                clocks: &ClockBank::default().as_static(),
-
-                palette: &ColorPalette::default(),
-
-                positions: &PositionBank::default(),
-
-                audio_envelope: UnipolarFloat::ZERO,
-            },
-        )
+        render_in(tunnel, PaintMode::Normal)
     }
 
     fn snapshot(layer: Layer) -> LayerCollection {
@@ -3344,8 +3335,11 @@ pub mod fixture {
         render_in_at(tunnel, mode, UnipolarFloat::ONE)
     }
 
-    /// A tunnel drawn in an imposed mode, at a level short of the top.
+    /// A tunnel drawn in an imposed mode, at a level short of the top, at rest
+    /// in the state it was configured to.
     fn render_in_at(tunnel: &Tunnel, mode: PaintMode, level: UnipolarFloat) -> Layer {
+        let mut tunnel = tunnel.clone();
+        tunnel.settle_controls();
         tunnel.render(
             level,
             mode,

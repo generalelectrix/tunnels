@@ -40,8 +40,8 @@ impl Waveform {
 /// The animation parameters that are fixed for the duration of a frame.
 ///
 /// These are used as given. The rest of what an animation's value depends on —
-/// clock phase, elapsed ticks, the smoother's position, the amplitude — has to
-/// be resolved against the clocks before it can be read, and so is held apart
+/// clock phase, elapsed ticks, where its smoothed controls have got to, the
+/// amplitude — has to be resolved before it can be read, and so is held apart
 /// from these.
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct StaticParams {
@@ -50,7 +50,6 @@ pub struct StaticParams {
     pub standing: bool,
     pub invert: bool,
     pub n_periods: u16,
-    pub duty_cycle: UnipolarFloat,
 }
 
 impl Default for StaticParams {
@@ -61,7 +60,6 @@ impl Default for StaticParams {
             standing: false,
             invert: false,
             n_periods: 1,
-            duty_cycle: UnipolarFloat::ONE,
         }
     }
 }
@@ -95,12 +93,8 @@ impl TargetedAnimation {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Animation {
     static_params: StaticParams,
-    size: UnipolarFloat,
-    /// Use a smoother for the smoothing parameter.
-    /// This is only necessary when used as the noise cross-correlation parameter,
-    /// since small changes imply significant movements in the noise distribution.
-    /// TODO: consider if we want to turn smoothing of this parameter off when
-    /// we're in anything besides noise.
+    size: Smoothed<UnipolarFloat>,
+    duty_cycle: Smoothed<UnipolarFloat>,
     smoothing: Smoothed<UnipolarFloat>,
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
@@ -119,7 +113,8 @@ impl Default for Animation {
     fn default() -> Self {
         Self {
             static_params: StaticParams::default(),
-            size: UnipolarFloat::ZERO,
+            size: UnipolarFloat::ZERO.into(),
+            duty_cycle: UnipolarFloat::ONE.into(),
             smoothing: UnipolarFloat::new(0.25).into(),
             internal_clock: Default::default(),
             clock_source: None,
@@ -130,17 +125,17 @@ impl Default for Animation {
 }
 
 impl Animation {
-    /// Return the current value of the internal animation size.
+    /// Return the value the size control is set to.
     pub fn size(&self) -> UnipolarFloat {
-        self.size
+        self.size.target()
     }
 
-    /// Return the current value of the duty cycle.
+    /// Return the value the duty cycle control is set to.
     pub fn duty_cycle(&self) -> UnipolarFloat {
-        self.static_params.duty_cycle
+        self.duty_cycle.target()
     }
 
-    /// Return the current value of the smoothing parameter.
+    /// Return the value the smoothing control is set to.
     pub fn smoothing(&self) -> UnipolarFloat {
         self.smoothing.target()
     }
@@ -152,7 +147,7 @@ impl Animation {
 
     /// Return true if this animation has nonzero size.
     fn active(&self) -> bool {
-        self.size > 0.0
+        self.size.smoothed() > 0.0
     }
 
     fn phase(&self, external_clocks: &impl ClockStore) -> Phase {
@@ -181,11 +176,13 @@ impl Animation {
     }
 
     pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
-        // Reached whatever the amplitude, because it shapes the waveform rather
-        // than driving it: an animation held at no size is one being set up,
-        // and the controls turned while it is have to arrive. Its clock is a
-        // different matter — an animation that is not showing has no time to
-        // keep, and starts from the top when it is given a size.
+        // The controls are reached whatever the amplitude: an animation held at
+        // no size is one being set up, and the controls turned while it is have
+        // to arrive. Its clock is a different matter — an animation that is not
+        // showing has no time to keep, and starts from the top when it is given
+        // a size.
+        self.size.update_state(delta_t);
+        self.duty_cycle.update_state(delta_t);
         self.smoothing.update_state(delta_t);
         if self.active() {
             self.internal_clock.update_state(delta_t, audio_envelope);
@@ -194,6 +191,8 @@ impl Animation {
 
     /// Bring every smoothed control to rest on its target at once.
     pub fn settle_controls(&mut self) {
+        self.size.settle();
+        self.duty_cycle.settle();
         self.smoothing.settle();
     }
 
@@ -213,6 +212,7 @@ impl Animation {
         PreparedAnimation {
             static_params: self.static_params,
             phase_temporal: self.phase(external_clocks),
+            duty_cycle: self.duty_cycle.smoothed(),
             smoothing: self.smoothing.smoothed(),
             ticks: self.ticks(external_clocks),
             scale: self.scale_value(external_clocks, audio_envelope, 1.0),
@@ -229,7 +229,7 @@ impl Animation {
         audio_envelope: UnipolarFloat,
         mut v: f64,
     ) -> f64 {
-        v *= self.size.val();
+        v *= self.size.smoothed().val();
 
         // scale this animation by submaster level if using external clock
         let mut use_audio_size = self.use_audio_size;
@@ -260,8 +260,8 @@ impl Animation {
         emitter.emit_animation_state_change(Invert(self.static_params.invert));
         emitter.emit_animation_state_change(NPeriods(self.static_params.n_periods));
         emitter.emit_animation_state_change(Speed(self.clock_speed()));
-        emitter.emit_animation_state_change(Size(self.size));
-        emitter.emit_animation_state_change(DutyCycle(self.static_params.duty_cycle));
+        emitter.emit_animation_state_change(Size(self.size.target()));
+        emitter.emit_animation_state_change(DutyCycle(self.duty_cycle.target()));
         emitter.emit_animation_state_change(Smoothing(self.smoothing.target()));
         emitter.emit_animation_state_change(ClockSource(self.clock_source));
         emitter.emit_animation_state_change(UseAudioSize(self.use_audio_size));
@@ -313,8 +313,8 @@ impl Animation {
             Invert(v) => self.static_params.invert = v,
             NPeriods(v) => self.static_params.n_periods = v,
             Speed(v) => self.set_clock_speed(v),
-            Size(v) => self.size = v,
-            DutyCycle(v) => self.static_params.duty_cycle = v,
+            Size(v) => self.size.set_target(v),
+            DutyCycle(v) => self.duty_cycle.set_target(v),
             Smoothing(v) => self.smoothing.set_target(v),
             ClockSource(v) => self.clock_source = v,
             UseAudioSize(v) => self.use_audio_size = v,
@@ -365,7 +365,9 @@ pub struct PreparedAnimation {
     static_params: StaticParams,
     /// Where the driving clock has got to.
     phase_temporal: Phase,
-    /// The smoother's current value, not its target.
+    /// The duty cycle control's current value, not its target.
+    duty_cycle: UnipolarFloat,
+    /// The smoothing control's current value, not its target.
     smoothing: UnipolarFloat,
     /// Whole periods elapsed, which noise uses to drift its field.
     ticks: Ticks,
@@ -429,8 +431,8 @@ impl PreparedAnimation {
                     spatial_phase_offset.val() * self.static_params.n_periods as f64;
                 let temporal_phase = self.phase_temporal.val();
 
-                if Phase::new(spatial_phase + temporal_phase) > self.static_params.duty_cycle
-                    || self.static_params.duty_cycle == 0.0
+                if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
+                    || self.duty_cycle == 0.0
                 {
                     return 0.0;
                 }
@@ -478,7 +480,7 @@ impl PreparedAnimation {
             phase_spatial: spatial_phase_offset * (self.static_params.n_periods as f64),
             phase_temporal: self.phase_temporal,
             smoothing: self.smoothing,
-            duty_cycle: self.static_params.duty_cycle,
+            duty_cycle: self.duty_cycle,
             pulse: self.static_params.pulse,
             standing: self.static_params.standing,
         }
@@ -630,6 +632,65 @@ mod test {
         }
     }
 
+    /// A control that shapes an animation glides to the value it is turned to,
+    /// while what the animation reports back is that value from the moment it
+    /// is set.
+    #[test]
+    fn shaping_controls_glide_to_the_value_they_report() {
+        #[derive(Default)]
+        struct Recorder(Vec<String>);
+        impl EmitStateChange for Recorder {
+            fn emit_animation_state_change(&mut self, sc: StateChange) {
+                self.0.push(format!("{sc:?}"));
+            }
+        }
+        let clocks = crate::clock_bank::ClockBank::default();
+        let controls: [(fn() -> StateChange, f64, fn(&PreparedAnimation) -> f64); 3] = [
+            (
+                || StateChange::Size(UnipolarFloat::new(0.6)),
+                0.6,
+                |p| p.scale,
+            ),
+            (
+                || StateChange::DutyCycle(UnipolarFloat::new(0.3)),
+                0.3,
+                |p| p.duty_cycle.val(),
+            ),
+            (
+                || StateChange::Smoothing(UnipolarFloat::new(0.9)),
+                0.9,
+                |p| p.smoothing.val(),
+            ),
+        ];
+        for (control, target, rendered) in controls {
+            let mut animation = Animation::default();
+            let prepared = |a: &Animation| rendered(&a.prepare(&clocks, UnipolarFloat::ZERO));
+            let before = prepared(&animation);
+            animation.control(ControlMessage::Set(control()), &mut Recorder::default());
+            assert_eq!(before, prepared(&animation), "{:?} jumped", control());
+
+            let mut talkback = Recorder::default();
+            animation.emit_state(&mut talkback);
+            assert!(
+                talkback.0.contains(&format!("{:?}", control())),
+                "{:?} was not reported back: {:?}",
+                control(),
+                talkback.0
+            );
+
+            animation.update_state(Duration::from_millis(16), UnipolarFloat::ZERO);
+            let gliding = prepared(&animation);
+            assert!(
+                gliding != before && gliding != target,
+                "{:?} was at {gliding} after one tick",
+                control()
+            );
+
+            animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+            assert_eq!(target, prepared(&animation), "{:?} did not land", control());
+        }
+    }
+
     /// Whether an animation varies in space is what decides how finely a
     /// caller has to resolve it, so the two ways of answering "not at all" —
     /// no periodicity and no amplitude — both have to read that way.
@@ -653,6 +714,7 @@ mod test {
                 ControlMessage::Set(StateChange::Size(UnipolarFloat::new(size))),
                 &mut Noop,
             );
+            animation.settle_controls();
             animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
         };
 
