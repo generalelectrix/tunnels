@@ -220,6 +220,9 @@ impl Show {
     fn update_state(&mut self, delta_t: Duration) {
         self.audio_input
             .update_state(delta_t, &mut ShowEmitter(&mut self.dispatcher));
+        if self.audio_input.trim_moved() {
+            self.snapshot_audio_state();
+        }
         let audio_envelope = self.audio_input.envelope();
         self.state
             .clocks

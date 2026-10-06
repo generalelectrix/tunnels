@@ -4,8 +4,8 @@ pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
 use tunnels_audio::processor::{NUM_OUTPUT_BANDS, output_band_labels};
 
-/// The sample rate the band labels describe until a device opens.
-const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+/// The sample rate band labels describe until a device opens.
+pub(crate) const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
@@ -145,6 +145,12 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             if band != self.snapshot.active_band {
                 self.commands.set_active_band(band);
             }
+            ui.end_row();
+
+            ui.label("Input trim:").on_hover_text(
+                "Gain the input is automatically trimmed by, so its peaks sit near full scale.",
+            );
+            ui.label(format!("{:+.1} dB", self.snapshot.trim_db));
             ui.end_row();
         });
     }

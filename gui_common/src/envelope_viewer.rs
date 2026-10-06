@@ -2,10 +2,8 @@ use eframe::egui::{self, Color32};
 use tunnels_audio::processor::{NUM_OUTPUT_BANDS, UpdateRate, output_band_labels};
 use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
 
+use crate::audio_panel::DEFAULT_SAMPLE_RATE;
 use crate::scrolling_plot::ScrollingPlot;
-
-/// The sample rate the viewer labels its traces for until a device opens.
-const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
 /// One colour per output band, lowest first.
 const BAND_COLORS: [Color32; NUM_OUTPUT_BANDS] = [

@@ -1,7 +1,7 @@
 //! Long-term behaviour on real music: loop a packed clip through one
-//! processor and require the adaptive parameters (normalizer floor and
-//! ceiling) to converge without oscillating, and the sub-bass band's
-//! output to become loop-periodic.
+//! processor and require the adaptive parameters (input trim, normalizer
+//! floor and ceiling) to converge without oscillating, and the sub-bass
+//! band's output to become loop-periodic.
 
 mod common;
 
@@ -15,6 +15,7 @@ const FRAMES_PER_BUFFER: usize = 64;
 /// band's output over that pass.
 struct LoopSummary {
     stages: BandStages,
+    trim_gain: f32,
     band0: Vec<f32>,
 }
 
@@ -30,16 +31,19 @@ fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
 
     let mut summaries = Vec::with_capacity(loops);
     let mut band0 = Vec::with_capacity(buffers_per_loop);
+    let settings = ProcessorSettings::default();
+    let trim = settings.clone();
     offline::run_stereo(
         clip.sample_rate,
         FRAMES_PER_BUFFER,
-        ProcessorSettings::default(),
+        settings,
         &signal,
         |_, processor, outputs| {
             band0.push(outputs[0]);
             if band0.len() == buffers_per_loop {
                 summaries.push(LoopSummary {
                     stages: processor.band_stages(0).expect("band 0"),
+                    trim_gain: trim.trim_gain.get(),
                     band0: std::mem::take(&mut band0),
                 });
             }
@@ -81,6 +85,8 @@ fn music_clip_converges_without_oscillating() {
 
     let loops = run_loops(&clip, 6);
 
+    let trim: Vec<f32> = loops.iter().map(|l| l.trim_gain).collect();
+    assert_converged("trim gain", 1.0, &trim, 0.01);
     let floor: Vec<f32> = loops.iter().map(|l| l.stages.floor).collect();
     let ceiling: Vec<f32> = loops.iter().map(|l| l.stages.ceiling).collect();
     assert_converged("floor", 0.0, &floor, 0.01);

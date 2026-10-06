@@ -74,7 +74,7 @@ const PROD: RunConfig = RunConfig {
     frames: 64,
     tuning: NormalizerTuning::DEFAULT,
     ceiling_halflife: ProcessorSettingsInner::DEFAULT_CEILING_HALFLIFE,
-    floor_halflife: 10.0,
+    floor_halflife: ProcessorSettingsInner::DEFAULT_FLOOR_HALFLIFE,
 };
 
 /// Output at or above this counts as full scale.

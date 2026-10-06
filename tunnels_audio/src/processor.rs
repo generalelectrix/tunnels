@@ -395,8 +395,8 @@ impl NormalizerParams {
 ///
 /// The ceiling is a peak follower whose decay is clocked by the envelope's
 /// own motion rather than by time: it rises to any envelope above it at once
-/// and forgets `CEILING_FORGET` nepers for every neper the log envelope
-/// moves, up or down. A hit therefore costs the ceiling the same whether
+/// and forgets a fixed number of nepers for every neper the log envelope
+/// moves, up or down, set by the ceiling half-life. A hit therefore costs the ceiling the same whether
 /// the music is fast or slow, a level drop is forgotten within a few hits
 /// at any tempo, and a pause or a held tone — no motion — leaves the
 /// ceiling where it was.

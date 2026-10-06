@@ -50,6 +50,18 @@ pub struct AudioSnapshot {
     pub active_band: u32,
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
+    /// The gain the automatic input trim is applying, in dB, to the nearest
+    /// [`TRIM_DISPLAY_STEP_DB`].
+    pub trim_db: f32,
+}
+
+/// The resolution input trim is reported at. The trim moves slowly and
+/// continuously, so a coarse step keeps it from republishing every frame.
+pub const TRIM_DISPLAY_STEP_DB: f32 = 0.5;
+
+/// A trim gain in dB, to the nearest [`TRIM_DISPLAY_STEP_DB`].
+fn displayed_trim_db(gain: f32) -> f32 {
+    (20.0 * gain.log10() / TRIM_DISPLAY_STEP_DB).round() * TRIM_DISPLAY_STEP_DB
 }
 
 impl AudioSnapshot {
@@ -63,6 +75,7 @@ impl AudioSnapshot {
             active_band: ps.active_band.load(Ordering::Relaxed),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
+            trim_db: displayed_trim_db(ps.trim_gain.get()),
         }
     }
 }
@@ -84,6 +97,8 @@ pub struct AudioInput {
     monitor_update_age: Duration,
     /// Decides when clipping is worth a warning.
     clip_reporter: ClipReporter,
+    /// The trim last reported by [`AudioInput::trim_moved`], in dB.
+    reported_trim_db: f32,
     /// Name of the audio device, or "Offline" if no device is connected.
     device_name: String,
 }
@@ -147,6 +162,7 @@ impl AudioInput {
             monitor: false,
             monitor_update_age: Duration::ZERO,
             clip_reporter: ClipReporter::default(),
+            reported_trim_db: 0.0,
             device_name: OFFLINE_DEVICE_NAME.to_string(),
         }
     }
@@ -173,6 +189,7 @@ impl AudioInput {
             monitor: false,
             monitor_update_age: Duration::ZERO,
             clip_reporter: ClipReporter::default(),
+            reported_trim_db: 0.0,
             device_name,
         })
     }
@@ -188,6 +205,15 @@ impl AudioInput {
     /// torn-free snapshot across all fields.
     pub fn snapshot(&self) -> AudioSnapshot {
         AudioSnapshot::read(&self.device_name, &self.processor_settings)
+    }
+
+    /// Whether the input trim has moved by a displayed step since this last
+    /// returned true.
+    pub fn trim_moved(&mut self) -> bool {
+        let trim_db = displayed_trim_db(self.processor_settings.trim_gain.get());
+        let moved = trim_db != self.reported_trim_db;
+        self.reported_trim_db = trim_db;
+        moved
     }
 
     /// Update the state of audio control.
@@ -385,5 +411,30 @@ mod test {
             Some(3),
             "a new bout is reported with its run count"
         );
+    }
+
+    /// The trim is reported to the nearest half dB, and only when it crosses
+    /// to a new step.
+    #[test]
+    fn trim_is_reported_when_it_moves_a_step() {
+        let mut input = AudioInput::offline();
+        let set_db = |input: &AudioInput, db: f32| {
+            input
+                .processor_settings
+                .trim_gain
+                .set(10f32.powf(db / 20.0));
+        };
+        assert!(!input.trim_moved(), "unity trim is where it starts");
+        set_db(&input, 3.1);
+        assert!(input.trim_moved());
+        assert_eq!(input.snapshot().trim_db, 3.0);
+        set_db(&input, 3.2);
+        assert!(!input.trim_moved(), "still nearest 3.0 dB");
+        set_db(&input, 3.4);
+        assert!(input.trim_moved());
+        assert_eq!(input.snapshot().trim_db, 3.5);
+        set_db(&input, -9.8);
+        assert!(input.trim_moved());
+        assert_eq!(input.snapshot().trim_db, -10.0);
     }
 }
