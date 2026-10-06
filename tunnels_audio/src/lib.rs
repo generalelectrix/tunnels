@@ -82,22 +82,55 @@ pub struct AudioInput {
     monitor: bool,
     /// How long has it been since we last updated the monitor?
     monitor_update_age: Duration,
-    /// Clip count last read from the processor, and how long ago it grew.
-    /// The age starts a full interval old so the first clipping is reported
-    /// as it happens.
-    input_clips: u32,
-    since_clip: Duration,
+    /// Decides when clipping is worth a warning.
+    clip_reporter: ClipReporter,
     /// Name of the audio device, or "Offline" if no device is connected.
     device_name: String,
+}
+
+/// When clipping on the input is worth saying.
+///
+/// Said once when it starts and then only occasionally, since it is a
+/// condition rather than an event.
+struct ClipReporter {
+    /// The processor's clip count when last read.
+    clips: u32,
+    /// How long ago clipping was last reported. Starts a full interval old so
+    /// the first clipping is reported as it happens.
+    since_report: Duration,
+}
+
+impl Default for ClipReporter {
+    fn default() -> Self {
+        Self {
+            clips: 0,
+            since_report: Self::INTERVAL,
+        }
+    }
+}
+
+impl ClipReporter {
+    /// How often to say that the input is still clipping, for as long as it
+    /// keeps clipping.
+    const INTERVAL: Duration = Duration::from_secs(10);
+
+    /// Read the processor's running clip count after `delta_t`, returning the
+    /// number of new clip runs when they should be reported.
+    fn update(&mut self, clips: u32, delta_t: Duration) -> Option<u32> {
+        self.since_report = self.since_report.saturating_add(delta_t);
+        let new_clips = clips.wrapping_sub(self.clips);
+        self.clips = clips;
+        if new_clips == 0 || self.since_report < Self::INTERVAL {
+            return None;
+        }
+        self.since_report = Duration::ZERO;
+        Some(new_clips)
+    }
 }
 
 impl AudioInput {
     /// Update the monitor at about 60 fps.
     const MONITOR_UPDATE_INTERVAL: Duration = Duration::from_micros(16_667);
-    /// How often to say that the input is still clipping, for as long as it
-    /// keeps clipping.
-    const CLIP_REPORT_INTERVAL: Duration = Duration::from_secs(10);
-
     /// Get the names of all available input audio devices.
     pub fn devices() -> Result<Vec<String>> {
         let host = cpal::default_host();
@@ -113,8 +146,7 @@ impl AudioInput {
             envelope_value: UnipolarFloat::ZERO,
             monitor: false,
             monitor_update_age: Duration::ZERO,
-            input_clips: 0,
-            since_clip: Self::CLIP_REPORT_INTERVAL,
+            clip_reporter: ClipReporter::default(),
             device_name: OFFLINE_DEVICE_NAME.to_string(),
         }
     }
@@ -140,8 +172,7 @@ impl AudioInput {
             envelope_value: UnipolarFloat::ZERO,
             monitor: false,
             monitor_update_age: Duration::ZERO,
-            input_clips: 0,
-            since_clip: Self::CLIP_REPORT_INTERVAL,
+            clip_reporter: ClipReporter::default(),
             device_name,
         })
     }
@@ -175,23 +206,15 @@ impl AudioInput {
 
     /// Warn when the input is arriving already clipped: the converter has
     /// thrown that signal away, so the only fix is turning something down
-    /// ahead of us. Said once when it starts and then only occasionally,
-    /// since it is a condition rather than an event.
+    /// ahead of us.
     fn report_input_clipping(&mut self, delta_t: Duration) {
         let clips = self.processor_settings.input_clips.load(Ordering::Relaxed);
-        if clips == self.input_clips {
-            self.since_clip = self.since_clip.saturating_add(delta_t);
-            return;
-        }
-        let new_clips = clips.wrapping_sub(self.input_clips);
-        self.input_clips = clips;
-        if self.since_clip >= Self::CLIP_REPORT_INTERVAL {
+        if let Some(new_clips) = self.clip_reporter.update(clips, delta_t) {
             warn!(
                 "Audio input is clipping ({new_clips} runs at full scale). \
                  Turn down the interface's input gain or the feed driving it."
             );
         }
-        self.since_clip = Duration::ZERO;
     }
 
     /// Emit the current value of all controllable state.
@@ -327,4 +350,40 @@ pub fn prompt_audio() -> Result<Option<String>> {
         println!("{i}: {port}");
     }
     prompt_indexed_value("Input audio device:", &input_devices).map(Some)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Clipping is reported as soon as it starts, again every interval for as
+    /// long as it continues, and not at all once it stops.
+    #[test]
+    fn clipping_is_reported_when_it_starts_and_while_it_lasts() {
+        let mut reporter = ClipReporter::default();
+        let step = Duration::from_millis(100);
+        let mut clips = 0;
+        let mut reported_at = Vec::new();
+        // 25 s of continuous clipping: one new run every step.
+        for i in 0..250 {
+            clips += 1;
+            if reporter.update(clips, step).is_some() {
+                reported_at.push(i);
+            }
+        }
+        assert_eq!(reported_at, [0, 100, 200], "reports while clipping");
+        // 30 s of clean input.
+        for _ in 0..300 {
+            assert_eq!(
+                reporter.update(clips, step),
+                None,
+                "quiet input is not reported"
+            );
+        }
+        assert_eq!(
+            reporter.update(clips + 3, step),
+            Some(3),
+            "a new bout is reported with its run count"
+        );
+    }
 }
