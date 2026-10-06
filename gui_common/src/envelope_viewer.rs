@@ -1,34 +1,23 @@
 use eframe::egui::{self, Color32};
-use tunnels_audio::processor::{NUM_OUTPUT_BANDS, UpdateRate, output_band_labels};
+use tunnels_audio::processor::UpdateRate;
+use tunnels_audio::roles::{NUM_ROLES, Role};
 use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
 
-use crate::audio_panel::DEFAULT_SAMPLE_RATE;
 use crate::scrolling_plot::ScrollingPlot;
 
-/// One colour per output band, lowest first.
-const BAND_COLORS: [Color32; NUM_OUTPUT_BANDS] = [
-    Color32::from_rgb(160, 160, 160), // sub-bass — grey
-    Color32::from_rgb(180, 80, 255),  // violet
-    Color32::from_rgb(80, 120, 255),  // blue
-    Color32::from_rgb(60, 220, 255),  // cyan
-    Color32::from_rgb(60, 255, 120),  // green
-    Color32::from_rgb(255, 240, 60),  // yellow
-    Color32::from_rgb(255, 160, 40),  // orange
-    Color32::from_rgb(255, 60, 60),   // red
+/// One colour per role, in [`Role::ALL`] order: warm for the low end, cool
+/// for the high.
+const ROLE_COLORS: [Color32; NUM_ROLES] = [
+    Color32::from_rgb(255, 155, 61),  // Kick — orange
+    Color32::from_rgb(167, 149, 255), // Bass — violet
+    Color32::from_rgb(217, 227, 106), // Hats — yellow-green
+    Color32::from_rgb(240, 163, 230), // Shimmer — pink
 ];
-
-/// Give the plot one empty trace per output band, labelled for `sample_rate`.
-fn label_traces(plot: &mut ScrollingPlot, sample_rate: u32) {
-    plot.traces.clear();
-    for (label, color) in output_band_labels(sample_rate).iter().zip(BAND_COLORS) {
-        plot.add_trace(label, color);
-    }
-}
 
 pub struct EnvelopeViewerState {
     open: bool,
     plot: ScrollingPlot,
-    envelope_streams: Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>,
+    envelope_streams: Option<[EnvelopeStream; NUM_ROLES]>,
     update_rate: Option<UpdateRate>,
     start_time: std::time::Instant,
 }
@@ -42,7 +31,9 @@ impl Default for EnvelopeViewerState {
 impl EnvelopeViewerState {
     pub fn new() -> Self {
         let mut plot = ScrollingPlot::new(3.0, 0.0, 1.1);
-        label_traces(&mut plot, DEFAULT_SAMPLE_RATE);
+        for (role, color) in Role::ALL.into_iter().zip(ROLE_COLORS) {
+            plot.add_trace(role.label(), color);
+        }
         Self {
             open: false,
             plot,
@@ -64,9 +55,6 @@ impl EnvelopeViewerState {
 
     /// Provide new envelope streams (e.g. after a device change).
     pub fn set_envelope_streams(&mut self, new_streams: EnvelopeStreams) {
-        // The band edges are octaves of the sample rate, so a device with a
-        // different rate is a different set of bands.
-        label_traces(&mut self.plot, new_streams.sample_rate);
         self.envelope_streams = Some(new_streams.streams);
         self.update_rate = Some(new_streams.update_rate);
     }
@@ -122,7 +110,7 @@ impl EnvelopeViewerState {
 
         // Render the plot — fill remaining vertical space, minimum 150px.
         let height = ui.available_height().max(150.0);
-        let all_enabled = [true; NUM_OUTPUT_BANDS];
+        let all_enabled = [true; NUM_ROLES];
         self.plot.ui_with_options(
             ui,
             "envelope_viewer",

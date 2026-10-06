@@ -28,9 +28,9 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 - Control parameters are passed via atomic fields in `ProcessorSettings` (an `Arc`-shared struct). The audio thread polls for changes at the start of each buffer.
 - The GUI reads parameter state from an `AudioSnapshot` built by `AudioInput::snapshot()` and published through `GuiState::audio_state` (a `Notified<AudioSnapshot>`). Writes to the snapshot atomically wake the GUI.
 - Envelope data streams from the audio thread to the GUI via lock-free SPSC ring buffers (`EnvelopeProducer`/`EnvelopeStream` in `ring_buffer.rs`, backed by `rtrb`). On every successful device open — initial and each reconnect — the audio thread sends a fresh `EnvelopeStreams` bundle over an `mpsc` channel owned by the console's `ConfigApp`, which reattaches the envelope viewer without user intervention.
-- `Processor` runs an undecimated (à trous) D4 wavelet decomposition on the mono mix: the residual feeds output band 0 and the detail levels below the octave under Nyquist feed bands 1–7, which at 48 kHz puts band 0 below 94 Hz and drops 12–24 kHz. Band edges are octaves of the sample rate, so `output_band_labels` derives them from it. Every output band owns one `BandChain` (Hilbert, fast/slow followers, smoother, `AdaptiveNormalizer`), stored in output order; the shared smoother coefficient and `NormalizerParams` live on `Processor`; parameter propagation to the chains runs in `maybe_update_parameters`.
+- `Processor` runs the mono mix through a 26-band constant-Q resonator bank (`bank.rs`: two octave bands below 250 Hz, then quarter octaves to 16 kHz; complex resonators, so each band's magnitude is its envelope) and derives four roles from the bands' per-buffer peaks (`roles.rs`): Kick and Hats are level-independent hits in the low and high end, Bass and Shimmer are the low and high end's levels through the operator's envelope follower, smoother and an `AdaptiveNormalizer`. `active_role` picks the one that feeds the show; the shared smoother coefficient and `NormalizerParams` live on `Processor`, and parameter propagation runs in `maybe_update_parameters`.
 - The `tunnels/src/audio/` module is a thin re-export layer plus the `ShowEmitter` adapter.
-- The render loop runs at 240fps. The audio buffer is ~1ms. The fast envelope follower's 4ms release matches the render frame budget.
+- The render loop runs at 240fps. The audio buffer is ~1ms. The bank reports each band's peak once per buffer, and the hit roles' 4ms envelope release matches the render frame budget.
 - The envelope chain is pinned by `tunnels_audio/tests/envelope_golden.rs` and `music_convergence.rs`. Measure before changing it: `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>` (see the crate docs in `tunnels_audio/src/lib.rs`).
 
 ## GUI architecture
@@ -60,7 +60,7 @@ nothing more.
 |-------|---------|
 | `tunnels` | Main library: show loop, audio, clocks, MIDI, OSC, control dispatch |
 | `tunnels_model` | The show model and its render: mixer, beams, tunnels, animations, clocks, palette |
-| `tunnels_audio` | Audio input, envelope extraction, wavelet decomposition, ring buffers |
+| `tunnels_audio` | Audio input, resonator bank, role envelopes, ring buffers |
 | `tunnels_lib` | Cross-crate primitives: number types, color, smoothing, GUI repaint (`RepaintSignal`, `Notified`), transient indicator, bootstrap push protocol |
 | `tunnels_net` | The network services a show is made of: the show frame stream |
 | `console` | GUI binary (eframe/egui): show configuration, MIDI, audio, animation viz |

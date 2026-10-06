@@ -2,10 +2,7 @@ use eframe::egui;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::OFFLINE_DEVICE_NAME;
-use tunnels_audio::processor::{NUM_OUTPUT_BANDS, output_band_labels};
-
-/// The sample rate band labels describe until a device opens.
-pub(crate) const DEFAULT_SAMPLE_RATE: u32 = 48_000;
+use tunnels_audio::roles::Role;
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
@@ -13,7 +10,7 @@ pub trait AudioCommands {
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
-    fn set_active_band(&mut self, band: u32);
+    fn set_active_role(&mut self, role: Role);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
     fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
     fn reset_parameters(&mut self);
@@ -23,10 +20,6 @@ pub trait AudioCommands {
 pub struct AudioPanelState {
     selected_audio: Option<usize>,
     audio_devices: Vec<String>,
-    /// Band labels, and the sample rate they describe. Band edges are
-    /// octaves of the rate, so they only change when a device does.
-    band_labels: [String; NUM_OUTPUT_BANDS],
-    labelled_rate: u32,
 }
 
 impl AudioPanelState {
@@ -34,17 +27,6 @@ impl AudioPanelState {
         Self {
             selected_audio: None,
             audio_devices: devices,
-            band_labels: output_band_labels(DEFAULT_SAMPLE_RATE),
-            labelled_rate: DEFAULT_SAMPLE_RATE,
-        }
-    }
-
-    /// Report the sample rate of the device that just opened. Band edges are
-    /// octaves of it, so the labels are rebuilt when it changes.
-    pub fn set_sample_rate(&mut self, sample_rate: u32) {
-        if sample_rate != self.labelled_rate {
-            self.band_labels = output_band_labels(sample_rate);
-            self.labelled_rate = sample_rate;
         }
     }
 
@@ -130,20 +112,18 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.add_space(4.0);
 
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
-            // Band selector.
-            ui.label("Active band:");
-            let mut band = self.snapshot.active_band;
-            let labels = &self.state.band_labels;
-            let selected_text = labels.get(band as usize).unwrap_or(&labels[0]);
-            egui::ComboBox::from_id_salt("active_band")
-                .selected_text(selected_text)
+            // The envelope the show follows.
+            ui.label("Follow:");
+            let mut role = self.snapshot.active_role;
+            egui::ComboBox::from_id_salt("active_role")
+                .selected_text(role.label())
                 .show_ui(ui, |ui| {
-                    for (i, label) in labels.iter().enumerate() {
-                        ui.selectable_value(&mut band, i as u32, label);
+                    for r in Role::ALL {
+                        ui.selectable_value(&mut role, r, r.label());
                     }
                 });
-            if band != self.snapshot.active_band {
-                self.commands.set_active_band(band);
+            if role != self.snapshot.active_role {
+                self.commands.set_active_role(role);
             }
             ui.end_row();
 
@@ -156,7 +136,9 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
     }
 
     fn envelope_controls(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Envelope");
+        ui.heading("Envelope").on_hover_text(
+            "Shapes the level roles, Bass and Shimmer. Kick and Hats are hits, with timing of their own.",
+        );
         ui.add_space(4.0);
 
         egui::Grid::new("envelope_controls_grid").show(ui, |ui| {
@@ -264,7 +246,7 @@ mod tests {
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
-        fn set_active_band(&mut self, _band: u32) {}
+        fn set_active_role(&mut self, _role: Role) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
         fn reset_parameters(&mut self) {}

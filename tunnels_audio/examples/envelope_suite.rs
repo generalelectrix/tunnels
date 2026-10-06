@@ -2,8 +2,9 @@
 //!
 //! Drives `Processor` with synthetic waveforms under production conditions
 //! (stereo, 64-frame buffers) and records every stage per
-//! buffer: raw peak, all eight normalized bands, and every band's smoothed
-//! envelope, floor and ceiling. Each waveform writes a CSV to
+//! buffer: raw peak, every role's output, and the level roles' smoothed
+//! envelope, floor and ceiling. The metrics characterise Bass, the role whose
+//! normalizer the kick cases exercise. Each waveform writes a CSV to
 //! the output directory and prints a metrics block to stdout.
 //!
 //! Usage: `cargo run -p tunnels_audio --release --example envelope_suite -- <out_dir>`
@@ -11,10 +12,9 @@
 //! With `--music <file.clip> --loops N` it instead loops a packed real-music
 //! clip N times through one processor and prints a per-loop convergence table
 //! for the adaptive parameters, plus a shift experiment: the same clip with a
-//! few samples of silence prepended, comparing per-band kick peaks. The chain
-//! is shift-invariant, so the experiment is a standing check that per-band
-//! peaks do not depend on where the input falls relative to any buffer or
-//! filter grid.
+//! few samples of silence prepended, comparing per-role kick peaks. The chain
+//! is shift-invariant up to the buffer grid, so the experiment is a standing
+//! check that peaks do not depend on where the input falls relative to it.
 //!
 //! `--ceiling-halflife SECS` and `--floor-halflife SECS` set the
 //! normalizer's two memories instead of taking the defaults,
@@ -37,8 +37,9 @@ use std::fs;
 use std::path::Path;
 
 use tunnels_audio::processor::{
-    BandStages, NUM_OUTPUT_BANDS, NormalizerTuning, ProcessorSettings, ProcessorSettingsInner,
+    BandStages, NormalizerTuning, ProcessorSettings, ProcessorSettingsInner,
 };
+use tunnels_audio::roles::{NUM_ROLES, Role};
 
 use signals::{KickSignal, Lcg, Signal, kick_real, kick_simple, kicks, onsets, silence, sine};
 
@@ -46,16 +47,31 @@ use signals::{KickSignal, Lcg, Signal, kick_real, kick_simple, kicks, onsets, si
 struct Row {
     t: f32,
     raw_peak: f32,
-    /// Normalized output per band.
-    bands: [f32; NUM_OUTPUT_BANDS],
-    /// Intermediate stages per band.
-    stages: [BandStages; NUM_OUTPUT_BANDS],
+    /// Every role's output, in `Role::ALL` order.
+    roles: [f32; NUM_ROLES],
+    /// The level roles' intermediate stages.
+    bass_stages: BandStages,
+    shimmer_stages: BandStages,
 }
 
 impl Row {
-    /// The sub-bass band's stages.
-    fn sub(&self) -> &BandStages {
-        &self.stages[0]
+    /// Bass's output.
+    fn bass(&self) -> f32 {
+        self.roles[Role::Bass.index()]
+    }
+
+    /// Bass's intermediate stages.
+    fn bass_stages(&self) -> &BandStages {
+        &self.bass_stages
+    }
+
+    /// A level role's intermediate stages; hit roles have none.
+    fn stages(&self, role: Role) -> Option<&BandStages> {
+        match role {
+            Role::Bass => Some(&self.bass_stages),
+            Role::Shimmer => Some(&self.shimmer_stages),
+            Role::Kick | Role::Hats => None,
+        }
     }
 }
 
@@ -101,8 +117,11 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
             rows.push(Row {
                 t: (buf_idx * cfg.frames) as f32 / cfg.sample_rate as f32,
                 raw_peak,
-                bands: *outputs,
-                stages: std::array::from_fn(|b| processor.band_stages(b).expect("band in range")),
+                roles: *outputs,
+                bass_stages: processor.stages(Role::Bass).expect("Bass is a level role"),
+                shimmer_stages: processor
+                    .stages(Role::Shimmer)
+                    .expect("Shimmer is a level role"),
             });
         },
     );
@@ -111,19 +130,19 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
 
 fn write_csv(path: &Path, rows: &[Row]) {
     let mut s = String::from("t,raw_peak");
-    for b in 0..NUM_OUTPUT_BANDS {
-        let _ = write!(s, ",band{b}");
+    for role in Role::ALL {
+        let _ = write!(s, ",{}", role.label().to_lowercase());
     }
-    for b in 0..NUM_OUTPUT_BANDS {
-        let _ = write!(s, ",sm{b},fl{b},ceil{b}");
+    for name in ["bass", "shimmer"] {
+        let _ = write!(s, ",{name}_sm,{name}_fl,{name}_ceil");
     }
     s.push('\n');
     for r in rows {
         let _ = write!(s, "{:.5},{:.5}", r.t, r.raw_peak);
-        for b in r.bands {
-            let _ = write!(s, ",{b:.5}");
+        for v in r.roles {
+            let _ = write!(s, ",{v:.5}");
         }
-        for st in &r.stages {
+        for st in [&r.bass_stages, &r.shimmer_stages] {
             let _ = write!(s, ",{:.5},{:.5},{:.5}", st.smoothed, st.floor, st.ceiling);
         }
         s.push('\n');
@@ -170,7 +189,7 @@ struct KickStat {
     trough: f32,
     ceiling: f32,
     floor: f32,
-    bands_peak: [f32; NUM_OUTPUT_BANDS],
+    roles_peak: [f32; NUM_ROLES],
     latency_ms: f32,
     /// Onset to the first full-scale row, if the output got there.
     latency_full_ms: Option<f32>,
@@ -231,10 +250,10 @@ fn kick_stats_amp(
         .map(|(i, &on)| {
             let next = onsets.get(i + 1).copied().unwrap_or(on + 0.5);
             let trough = window(rows, on - 0.05, on)
-                .map(|r| r.bands[0])
+                .map(|r| r.bass())
                 .fold(f32::MAX, f32::min);
             let pre_smoothed = window(rows, on - 0.05, on)
-                .map(|r| r.sub().smoothed)
+                .map(|r| r.bass_stages().smoothed)
                 .fold(f32::MAX, f32::min)
                 .max(0.01);
             let mut peak = 0.0_f32;
@@ -242,41 +261,43 @@ fn kick_stats_amp(
             let mut peak_smoothed = 0.0_f32;
             let mut peak_smoothed_t = on;
             let mut ceil_peak = 0.0_f32;
-            let mut bands_peak = [0.0_f32; NUM_OUTPUT_BANDS];
+            let mut roles_peak = [0.0_f32; NUM_ROLES];
             let mut full_rows = 0_usize;
             let mut latency_full_ms = None;
             let mut out_shape = Vec::new();
             let mut in_shape = Vec::new();
             for r in window(rows, on, on + 0.15) {
-                if r.bands[0] > peak {
-                    peak = r.bands[0];
+                if r.bass() > peak {
+                    peak = r.bass();
                     peak_t = r.t;
                 }
-                ceil_peak = ceil_peak.max(r.sub().ceiling);
-                if r.sub().smoothed > peak_smoothed {
-                    peak_smoothed = r.sub().smoothed;
+                ceil_peak = ceil_peak.max(r.bass_stages().ceiling);
+                if r.bass_stages().smoothed > peak_smoothed {
+                    peak_smoothed = r.bass_stages().smoothed;
                     peak_smoothed_t = r.t;
                 }
-                if r.bands[0] >= FULL_SCALE {
+                if r.bass() >= FULL_SCALE {
                     full_rows += 1;
                     latency_full_ms.get_or_insert((r.t - on) * 1000.0);
                 }
-                for (b, v) in bands_peak.iter_mut().zip(r.bands) {
+                for (b, v) in roles_peak.iter_mut().zip(r.roles) {
                     *b = b.max(v);
                 }
-                out_shape.push(r.bands[0]);
-                in_shape.push(r.sub().smoothed);
+                out_shape.push(r.bass());
+                in_shape.push(r.bass_stages().smoothed);
             }
             let ceil_min = window(rows, on, next)
-                .map(|r| r.sub().ceiling)
+                .map(|r| r.bass_stages().ceiling)
                 .fold(f32::MAX, f32::min);
             let fall_time = |from: f32, level: f32, value: fn(&Row) -> f32| {
                 window(rows, from, next)
                     .find(|r| value(r) <= level)
                     .map(|r| r.t - from)
             };
-            let out_tail = fall_time(peak_t, 0.1 * peak, |r| r.bands[0]);
-            let in_tail = fall_time(peak_smoothed_t, 0.1 * peak_smoothed, |r| r.sub().smoothed);
+            let out_tail = fall_time(peak_t, 0.1 * peak, |r| r.bass());
+            let in_tail = fall_time(peak_smoothed_t, 0.1 * peak_smoothed, |r| {
+                r.bass_stages().smoothed
+            });
             let at_onset = rows.iter().find(|r| r.t >= on).expect("onset within run");
             KickStat {
                 onset: on,
@@ -284,9 +305,9 @@ fn kick_stats_amp(
                 peak,
                 peak_smoothed,
                 trough: if trough == f32::MAX { 0.0 } else { trough },
-                ceiling: at_onset.sub().ceiling,
-                floor: at_onset.sub().floor,
-                bands_peak,
+                ceiling: at_onset.bass_stages().ceiling,
+                floor: at_onset.bass_stages().floor,
+                roles_peak,
                 latency_ms: (peak_t - on) * 1000.0,
                 latency_full_ms,
                 full_ms: full_rows as f32 * dt * 1000.0,
@@ -332,20 +353,24 @@ fn full_fraction(rows: &[Row], from: f32, to: f32) -> f32 {
     let (mut n, mut full) = (0.0_f32, 0.0_f32);
     for r in window(rows, from, to) {
         n += 1.0;
-        if r.bands[0] >= FULL_SCALE {
+        if r.bass() >= FULL_SCALE {
             full += 1.0;
         }
     }
     full / n.max(1.0)
 }
 
-/// Nepers per second the log of a band's smoothed envelope moves: the rate
-/// the normalizer's motion clock advances at.
-fn motion_rate(rows: &[Row], band: usize, from: f32, to: f32) -> f32 {
+/// Nepers per second the log of a level role's smoothed envelope moves: the
+/// rate its normalizer's motion clock advances at. Hit roles have no
+/// normalizer, and read as NaN.
+fn motion_rate(rows: &[Row], role: Role, from: f32, to: f32) -> f32 {
     let mut prev: Option<f32> = None;
     let mut total = 0.0_f32;
     for r in window(rows, from, to) {
-        let lg = r.stages[band].smoothed.max(0.01).ln();
+        let Some(stages) = r.stages(role) else {
+            return f32::NAN;
+        };
+        let lg = stages.smoothed.max(0.01).ln();
         if let Some(p) = prev {
             total += (lg - p).abs();
         }
@@ -395,7 +420,7 @@ fn report_kicks(out: &mut String, label: &str, ks: &[KickStat], rows: &[Row]) {
     let registered = ks.iter().filter(|k| k.peak - k.trough >= 0.2).count();
     let _ = writeln!(
         out,
-        "  {label}: {} kicks, {registered} registered (rise>=0.2)\n    band0 peak mean {:.3} min {:.3} max {:.3} CV {:.3}\n    trough mean {:.3} min {:.3} max {:.3}\n    onset->peak latency ms mean {:.1} min {:.1} max {:.1}",
+        "  {label}: {} kicks, {registered} registered (rise>=0.2)\n    Bass peak mean {:.3} min {:.3} max {:.3} CV {:.3}\n    trough mean {:.3} min {:.3} max {:.3}\n    onset->peak latency ms mean {:.1} min {:.1} max {:.1}",
         ks.len(),
         p.mean,
         p.min,
@@ -424,7 +449,7 @@ fn report_kicks(out: &mut String, label: &str, ks: &[KickStat], rows: &[Row]) {
     );
     let _ = writeln!(
         out,
-        "    per-kick: onset  band0  smoothed  floor  ceil   full ms  depth | band1  band2  band3"
+        "    per-kick: onset  bass   smoothed  floor  ceil   full ms  depth | kick   hats   shimmer"
     );
     for k in ks {
         let _ = writeln!(
@@ -437,9 +462,9 @@ fn report_kicks(out: &mut String, label: &str, ks: &[KickStat], rows: &[Row]) {
             k.ceiling,
             k.full_ms,
             k.sawtooth_depth().unwrap_or(f32::NAN),
-            k.bands_peak[1],
-            k.bands_peak[2],
-            k.bands_peak[3]
+            k.roles_peak[Role::Kick.index()],
+            k.roles_peak[Role::Hats.index()],
+            k.roles_peak[Role::Shimmer.index()]
         );
     }
     let _ = writeln!(out, "{}", summary_line(label, ks, rows));
@@ -473,33 +498,31 @@ fn report_suppression(out: &mut String, ks: &[KickStat], event: f32) {
 }
 
 fn report_steady(out: &mut String, label: &str, rows: &[Row], from: f32, to: f32) {
-    let b = stats(window(rows, from, to).map(|r| r.bands[0]));
-    let sm = stats(window(rows, from, to).map(|r| r.sub().smoothed));
+    let b = stats(window(rows, from, to).map(|r| r.bass()));
+    let sm = stats(window(rows, from, to).map(|r| r.bass_stages().smoothed));
     let last = window(rows, from, to).last().expect("rows in window");
     let _ = writeln!(
         out,
-        "  {label} [{from:.1}-{to:.1}s]: band0 mean {:.3} ripple {:.4} | smoothed mean {:.4} ripple {:.4} | floor {:.4} ceil {:.4}",
+        "  {label} [{from:.1}-{to:.1}s]: Bass mean {:.3} ripple {:.4} | smoothed mean {:.4} ripple {:.4} | floor {:.4} ceil {:.4}",
         b.mean,
         b.max - b.min,
         sm.mean,
         sm.max - sm.min,
-        last.sub().floor,
-        last.sub().ceiling,
+        last.bass_stages().floor,
+        last.bass_stages().ceiling,
     );
 }
 
 fn report_burst(out: &mut String, rows: &[Row], on: f32, off: f32) {
-    let peak = window(rows, on, off)
-        .map(|r| r.bands[0])
-        .fold(0.0, f32::max);
+    let peak = window(rows, on, off).map(|r| r.bass()).fold(0.0, f32::max);
     let cross = |thr: f32, from: f32, rising: bool| -> Option<f32> {
         rows.iter()
             .find(|r| {
                 r.t >= from
                     && if rising {
-                        r.bands[0] >= thr
+                        r.bass() >= thr
                     } else {
-                        r.bands[0] <= thr
+                        r.bass() <= thr
                     }
             })
             .map(|r| r.t)
@@ -522,17 +545,18 @@ fn report_burst(out: &mut String, rows: &[Row], on: f32, off: f32) {
     );
 }
 
-fn report_band_peaks(out: &mut String, label: &str, rows: &[Row], from: f32, to: f32) {
-    let mut peaks = [0.0_f32; NUM_OUTPUT_BANDS];
+fn report_role_peaks(out: &mut String, label: &str, rows: &[Row], from: f32, to: f32) {
+    let mut peaks = [0.0_f32; NUM_ROLES];
     for r in window(rows, from, to) {
-        for (p, v) in peaks.iter_mut().zip(r.bands) {
+        for (p, v) in peaks.iter_mut().zip(r.roles) {
             *p = p.max(v);
         }
     }
-    let _ = writeln!(
-        out,
-        "  {label} band peaks [{from:.1}-{to:.1}s]: {peaks:.3?}"
-    );
+    let _ = write!(out, "  {label} role peaks [{from:.1}-{to:.1}s]:");
+    for (role, p) in Role::ALL.iter().zip(peaks) {
+        let _ = write!(out, " {} {p:.3}", role.label());
+    }
+    let _ = writeln!(out);
 }
 
 // -------------------------------------------------------------------- suite
@@ -623,13 +647,13 @@ fn suite() -> Vec<Case> {
         cfg: PROD,
         signal: sig,
         report: Box::new(|out, rows| {
-            let max = stats(window(rows, 0.3, 0.5).map(|r| r.bands[0])).max;
-            let smax = stats(window(rows, 0.3, 0.5).map(|r| r.sub().smoothed)).max;
+            let max = stats(window(rows, 0.3, 0.5).map(|r| r.bass())).max;
+            let smax = stats(window(rows, 0.3, 0.5).map(|r| r.bass_stages().smoothed)).max;
             let _ = writeln!(
                 out,
-                "  impulse: band0 peak {max:.3}, smoothed peak {smax:.4}"
+                "  impulse: Bass peak {max:.3}, smoothed peak {smax:.4}"
             );
-            report_band_peaks(out, "impulse", rows, 0.3, 0.5);
+            report_role_peaks(out, "impulse", rows, 0.3, 0.5);
         }),
     });
 
@@ -648,7 +672,10 @@ fn suite() -> Vec<Case> {
             // Startup: how long until the ceiling is within 10 % of the
             // kicks it is normalizing.
             let target = 0.9 * ks[ks.len() - 1].peak_smoothed;
-            let caught = rows.iter().find(|r| r.sub().ceiling >= target).map(|r| r.t);
+            let caught = rows
+                .iter()
+                .find(|r| r.bass_stages().ceiling >= target)
+                .map(|r| r.t);
             let _ = writeln!(
                 out,
                 "    ceiling reaches 90% of kick level at {}",
@@ -690,7 +717,7 @@ fn suite() -> Vec<Case> {
         PROD,
         kicks(PROD.sample_rate, 10.0, ons, move |i, _| amps[i], kick_real),
         move |out, ks, _| {
-            let _ = writeln!(out, "    input amp vs band0 peak (ratio):");
+            let _ = writeln!(out, "    input amp vs Bass peak (ratio):");
             for (k, a) in ks.iter().zip(&amps2) {
                 let _ = writeln!(out, "      {:.3} -> {:.3}  ({:.3})", a, k.peak, k.peak / a);
             }
@@ -704,7 +731,7 @@ fn suite() -> Vec<Case> {
             let vy: f32 = ys.iter().map(|y| (y - my).powi(2)).sum();
             let _ = writeln!(
                 out,
-                "    corr(input amp, band0 peak) = {:.3}, output CV {:.3} vs input CV {:.3}",
+                "    corr(input amp, Bass peak) = {:.3}, output CV {:.3} vs input CV {:.3}",
                 cov / (vx * vy).sqrt(),
                 cv(&ys),
                 cv(&xs)
@@ -715,12 +742,13 @@ fn suite() -> Vec<Case> {
     // W4e: simple kicks with ±20 ms random onset jitter, so kick onsets are
     // not phase-locked to the buffer grid.
     cases.push(golden_kick_case("w04e_onset_jitter_120", |out, ks, _| {
-        for b in 0..4 {
-            let peaks: Vec<f32> = ks.iter().map(|k| k.bands_peak[b]).collect();
+        for role in Role::ALL {
+            let peaks: Vec<f32> = ks.iter().map(|k| k.roles_peak[role.index()]).collect();
             let p = stats(peaks.iter().copied());
             let _ = writeln!(
                 out,
-                "    band{b} kick peaks: mean {:.3} min {:.3} max {:.3} CV {:.3}",
+                "    {} kick peaks: mean {:.3} min {:.3} max {:.3} CV {:.3}",
+                role.label(),
                 p.mean,
                 p.min,
                 p.max,
@@ -770,7 +798,7 @@ fn suite() -> Vec<Case> {
         signal: sig,
         report: Box::new(|out, rows| {
             report_steady(out, "1kHz", rows, 3.0, 5.0);
-            report_band_peaks(out, "1kHz", rows, 3.0, 5.0);
+            report_role_peaks(out, "1kHz", rows, 3.0, 5.0);
         }),
     });
 
@@ -790,7 +818,7 @@ fn suite() -> Vec<Case> {
         signal: sig,
         report: Box::new(|out, rows| {
             report_steady(out, "noise", rows, 3.0, 5.0);
-            report_band_peaks(out, "noise", rows, 3.0, 5.0);
+            report_role_peaks(out, "noise", rows, 3.0, 5.0);
         }),
     });
 
@@ -828,7 +856,7 @@ fn suite() -> Vec<Case> {
         report: Box::new(move |out, rows| {
             let ks = kick_stats(rows, &ons);
             report_kicks(out, "antiphase", &ks, rows);
-            report_band_peaks(out, "antiphase", rows, 5.0, 10.0);
+            report_role_peaks(out, "antiphase", rows, 5.0, 10.0);
         }),
     });
 
@@ -882,7 +910,7 @@ fn suite() -> Vec<Case> {
     // W15: quiet kick under louder 1 kHz content — the sub-bass envelope is
     // small relative to the full-band level.
     cases.push(golden_kick_case("w15_kick_under_1khz", |out, _, rows| {
-        report_band_peaks(out, "kick under 1kHz", rows, 15.0, 20.0)
+        report_role_peaks(out, "kick under 1kHz", rows, 15.0, 20.0)
     }));
     // W15b: same kick alone, for comparison.
     cases.push(kick_case(
@@ -895,7 +923,7 @@ fn suite() -> Vec<Case> {
             |_, _| 0.3,
             kick_simple,
         ),
-        |out, _, rows| report_band_peaks(out, "quiet kick alone", rows, 15.0, 20.0),
+        |out, _, rows| report_role_peaks(out, "quiet kick alone", rows, 15.0, 20.0),
     ));
 
     // W16: -50 dB hiss throughout; kicks for 10 s, then hiss alone for 20 s.
@@ -903,7 +931,7 @@ fn suite() -> Vec<Case> {
         for (a, b) in [(10.5, 12.0), (15.0, 20.0), (25.0, 30.0)] {
             report_steady(out, "hiss only", rows, a, b);
         }
-        report_band_peaks(out, "hiss only", rows, 25.0, 30.0);
+        report_role_peaks(out, "hiss only", rows, 25.0, 30.0);
     }));
 
     // W17: kicks, then a 50 Hz sub held for 3 s (a drop), 2 s of silence,
@@ -946,7 +974,10 @@ fn suite() -> Vec<Case> {
             ),
             |out, ks, rows| {
                 let target = 0.9 * ks[ks.len() - 1].peak_smoothed;
-                let caught = rows.iter().find(|r| r.sub().ceiling >= target).map(|r| r.t);
+                let caught = rows
+                    .iter()
+                    .find(|r| r.bass_stages().ceiling >= target)
+                    .map(|r| r.t);
                 let _ = writeln!(
                     out,
                     "    ceiling reaches 90% of kick level at {}",
@@ -978,51 +1009,6 @@ fn suite() -> Vec<Case> {
         ),
         |out, ks, _| report_suppression(out, ks, 5.4),
     ));
-
-    // W20: a tone at the centre of each band in turn. The report is the
-    // cross-talk matrix: each band's pre-normalizer level under each tone,
-    // in dB relative to that band's level under its own tone.
-    let centres: [f32; NUM_OUTPUT_BANDS] =
-        [60.0, 133.0, 265.0, 530.0, 1061.0, 2121.0, 4243.0, 8485.0];
-    let mut sig = silence(sr, 2.0 * centres.len() as f32);
-    for (i, &f) in centres.iter().enumerate() {
-        sine(&mut sig, sr, 2.0 * i as f32, 2.0, f, 0.5);
-    }
-    cases.push(Case {
-        name: "w20_band_centres",
-        cfg: PROD,
-        signal: sig,
-        report: Box::new(move |out, rows| {
-            let level = |tone: usize, band: usize| {
-                let a = 2.0 * tone as f32 + 1.0;
-                stats(window(rows, a, a + 1.0).map(|r| r.stages[band].smoothed)).mean
-            };
-            let _ = writeln!(
-                out,
-                "  cross-talk, dB re own band (rows: tone at band centre; cols: band read)"
-            );
-            let _ = write!(out, "  tone Hz  ");
-            for b in 0..NUM_OUTPUT_BANDS {
-                let _ = write!(out, "   b{b}  ");
-            }
-            let _ = writeln!(out);
-            for (tone, &f) in centres.iter().enumerate() {
-                let _ = write!(out, "  {f:>7.0}  ");
-                for b in 0..NUM_OUTPUT_BANDS {
-                    let db = 20.0 * (level(tone, b) / level(b, b).max(1e-9)).max(1e-9).log10();
-                    let _ = write!(out, "{db:>6.1} ");
-                }
-                let _ = writeln!(out);
-            }
-            let _ = writeln!(
-                out,
-                "  own-band levels (0.5 amplitude tone): {:?}",
-                (0..NUM_OUTPUT_BANDS)
-                    .map(|b| (level(b, b) * 1000.0).round() / 1000.0)
-                    .collect::<Vec<_>>()
-            );
-        }),
-    });
 
     // W21: accent contrast. Every fourth (a) or second (b) kick is at 0.8,
     // the rest at 0.4: does the output keep the 0.5 ratio between them?
@@ -1121,7 +1107,7 @@ fn suite() -> Vec<Case> {
 
     // W24: shaker. A white-noise bed at 0.3 for the whole run, kicks from
     // 10 s. A noise-like envelope keeps the motion clock running: what do
-    // the upper bands do on the bed alone, and under kicks?
+    // the roles do on the bed alone, and under kicks?
     let mut sig = silence(sr, 20.0);
     let mut rng = Lcg(7);
     for frame in sig.iter_mut() {
@@ -1140,18 +1126,21 @@ fn suite() -> Vec<Case> {
         report: Box::new(move |out, rows| {
             for (label, from, to) in [("bed alone", 2.0, 10.0), ("bed + kicks", 10.0, 20.0)] {
                 let _ = writeln!(out, "  {label} [{from:.0}-{to:.0}s]:");
-                for band in [0, 3, 5, 6, 7] {
-                    let vals: Vec<f32> = window(rows, from, to).map(|r| r.bands[band]).collect();
+                for role in Role::ALL {
+                    let vals: Vec<f32> = window(rows, from, to)
+                        .map(|r| r.roles[role.index()])
+                        .collect();
                     let st = stats(vals.iter().copied());
                     let full = vals.iter().filter(|&&v| v >= FULL_SCALE).count() as f32
                         / vals.len().max(1) as f32;
                     let _ = writeln!(
                         out,
-                        "    band{band}: mean {:.3} CV {:.2} full {:4.1}%  motion {:.1} np/s",
+                        "    {}: mean {:.3} CV {:.2} full {:4.1}%  motion {:.1} np/s",
+                        role.label(),
                         st.mean,
                         cv(&vals),
                         100.0 * full,
-                        motion_rate(rows, band, from, to)
+                        motion_rate(rows, role, from, to)
                     );
                 }
             }
@@ -1304,12 +1293,12 @@ fn load_clip(path: &str) -> Signal {
     clip.stereo_frames()
 }
 
-/// Per-band peak within 150 ms after each band-0 onset. An onset is a buffer
-/// where band 0 rises at least 0.2 above the minimum of the preceding 50 ms.
-/// A kick detected in a recording: its onset and each band's peak after it.
+/// A kick detected in a recording: its onset, a buffer where Bass rises at
+/// least 0.2 above its minimum over the preceding 50 ms, and each role's peak
+/// within 150 ms after it.
 struct MusicKick {
     onset: f32,
-    peaks: [f32; NUM_OUTPUT_BANDS],
+    peaks: [f32; NUM_ROLES],
 }
 
 fn music_kicks(rows: &[Row]) -> Vec<MusicKick> {
@@ -1320,14 +1309,14 @@ fn music_kicks(rows: &[Row]) -> Vec<MusicKick> {
             continue;
         }
         let trough = window(rows, r.t - 0.05, r.t)
-            .map(|x| x.bands[0])
+            .map(|x| x.bass())
             .fold(f32::MAX, f32::min);
-        if trough == f32::MAX || r.bands[0] - trough < 0.2 {
+        if trough == f32::MAX || r.bass() - trough < 0.2 {
             continue;
         }
-        let mut peaks = [0.0_f32; NUM_OUTPUT_BANDS];
+        let mut peaks = [0.0_f32; NUM_ROLES];
         for x in rows[i..].iter().take_while(|x| x.t < r.t + 0.15) {
-            for (p, v) in peaks.iter_mut().zip(x.bands) {
+            for (p, v) in peaks.iter_mut().zip(x.roles) {
                 *p = p.max(v);
             }
         }
@@ -1342,7 +1331,7 @@ fn rms_distance(a: &[Row], b: &[Row]) -> f32 {
     (a.iter()
         .zip(b)
         .take(n)
-        .map(|(x, y)| (x.bands[0] - y.bands[0]).powi(2))
+        .map(|(x, y)| (x.bass() - y.bass()).powi(2))
         .sum::<f32>()
         / n as f32)
         .sqrt()
@@ -1374,12 +1363,12 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
     for l in 0..loops {
         let chunk = &rows[l * buffers_per_loop..((l + 1) * buffers_per_loop).min(rows.len())];
         let end = chunk.last().expect("rows in loop");
-        let b0 = stats(chunk.iter().map(|r| r.bands[0]));
+        let b0 = stats(chunk.iter().map(|r| r.bass()));
         let kicks = music_kicks(chunk).len();
         let deltas = prev_end.map(|p| {
             (
-                end.sub().floor - p.sub().floor,
-                end.sub().ceiling - p.sub().ceiling,
+                end.bass_stages().floor - p.bass_stages().floor,
+                end.bass_stages().ceiling - p.bass_stages().ceiling,
             )
         });
         let dist = prev.map(|p| rms_distance(p, chunk));
@@ -1391,13 +1380,13 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
                 .copied()
                 .unwrap_or(f32::NAN)
         };
-        let full = chunk.iter().filter(|r| r.bands[0] >= FULL_SCALE).count() as f32
+        let full = chunk.iter().filter(|r| r.bass() >= FULL_SCALE).count() as f32
             / chunk.len().max(1) as f32;
         let _ = writeln!(
             report,
             "  {l:>4}   {:.4}  {:.4} | {:>8} {:>8} | {:>7} | {:.3}   {:.3}   {kicks:>3}    | {:.2} / {:.2} / {:.2}   {:4.1}",
-            end.sub().floor,
-            end.sub().ceiling,
+            end.bass_stages().floor,
+            end.bass_stages().ceiling,
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.0)),
             deltas.map_or("-".into(), |d| format!("{:+.4}", d.1)),
             dist.map_or("-".into(), |d| format!("{d:.4}")),
@@ -1416,9 +1405,14 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
         let last =
             &rows[(loops - 1) * buffers_per_loop..(loops * buffers_per_loop).min(rows.len())];
         let (from, to) = (last[0].t, last[last.len() - 1].t);
-        let _ = write!(report, "  motion rate on the last loop, np/s per band:");
-        for band in 0..NUM_OUTPUT_BANDS {
-            let _ = write!(report, " {:.1}", motion_rate(&rows, band, from, to));
+        let _ = write!(report, "  motion rate on the last loop, np/s:");
+        for role in [Role::Bass, Role::Shimmer] {
+            let _ = write!(
+                report,
+                " {} {:.1}",
+                role.label(),
+                motion_rate(&rows, role, from, to)
+            );
         }
         let _ = writeln!(report);
     }
@@ -1440,9 +1434,9 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
         shift_kicks.len()
     );
     let mut matched = 0;
-    let mut abs_diff = [0.0_f32; NUM_OUTPUT_BANDS];
-    let mut max_ratio = [1.0_f32; NUM_OUTPUT_BANDS];
-    let mut mean_peak = [0.0_f32; NUM_OUTPUT_BANDS];
+    let mut abs_diff = [0.0_f32; NUM_ROLES];
+    let mut max_ratio = [1.0_f32; NUM_ROLES];
+    let mut mean_peak = [0.0_f32; NUM_ROLES];
     for base in &base_kicks {
         let Some(shifted) = shift_kicks
             .iter()
@@ -1452,7 +1446,7 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
         };
         let (a, b) = (&base.peaks, &shifted.peaks);
         matched += 1;
-        for band in 0..NUM_OUTPUT_BANDS {
+        for band in 0..NUM_ROLES {
             abs_diff[band] += (a[band] - b[band]).abs();
             mean_peak[band] += a[band];
             let (lo, hi) = if a[band] < b[band] {
@@ -1467,12 +1461,13 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
     }
     let _ = writeln!(
         report,
-        "  {matched} kicks matched; per band: mean|diff|/mean peak, max ratio"
+        "  {matched} kicks matched; per role: mean|diff|/mean peak, max ratio"
     );
-    for band in 0..NUM_OUTPUT_BANDS {
+    for (band, role) in Role::ALL.iter().enumerate() {
         let _ = writeln!(
             report,
-            "    band{band}: {:.3}  {:.2}x",
+            "    {}: {:.3}  {:.2}x",
+            role.label(),
             abs_diff[band] / mean_peak[band].max(1e-6),
             max_ratio[band]
         );
@@ -1488,7 +1483,7 @@ fn click_offset_sweep(out_dir: &Path) {
     let sr = PROD.sample_rate;
     let ons = onsets(120.0, 0.5, 8.0);
     let mut report = String::from(
-        "=== click offset sweep: 1.6 one-buffer click at 5.0 s + offset; next kick's peak per band ===\n  offset  band0  band1  band2  band3\n",
+        "=== click offset sweep: 1.6 one-buffer click at 5.0 s + offset; next kick's peak per role ===\n  offset  bass   kick   hats   shimmer\n",
     );
     for step in 0..10 {
         let offset = 0.05 * step as f32;
@@ -1509,7 +1504,10 @@ fn click_offset_sweep(out_dir: &Path) {
         let _ = writeln!(
             report,
             "  {offset:.2}    {:.3}  {:.3}  {:.3}  {:.3}",
-            next.peak, next.bands_peak[1], next.bands_peak[2], next.bands_peak[3]
+            next.peak,
+            next.roles_peak[Role::Kick.index()],
+            next.roles_peak[Role::Hats.index()],
+            next.roles_peak[Role::Shimmer.index()]
         );
     }
     print!("{report}");

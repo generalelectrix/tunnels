@@ -1,22 +1,23 @@
 //! Long-term behaviour on real music: loop a packed clip through one
 //! processor and require the adaptive parameters (input trim, normalizer
-//! floor and ceiling) to converge without oscillating, and the sub-bass
-//! band's output to become loop-periodic.
+//! floor and ceiling) to converge without oscillating, and the Bass role's
+//! output to become loop-periodic.
 
 mod common;
 
 use common::{clip, offline};
 use std::path::Path;
 use tunnels_audio::processor::{BandStages, ProcessorSettings};
+use tunnels_audio::roles::Role;
 
 const FRAMES_PER_BUFFER: usize = 64;
 
-/// Adaptive state at the end of one pass through the clip, plus the sub-bass
-/// band's output over that pass.
+/// Adaptive state at the end of one pass through the clip, plus the Bass
+/// role's output over that pass.
 struct LoopSummary {
     stages: BandStages,
     trim_gain: f32,
-    band0: Vec<f32>,
+    bass: Vec<f32>,
 }
 
 fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
@@ -30,7 +31,7 @@ fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
     let buffers_per_loop = clip.frames() / FRAMES_PER_BUFFER;
 
     let mut summaries = Vec::with_capacity(loops);
-    let mut band0 = Vec::with_capacity(buffers_per_loop);
+    let mut bass = Vec::with_capacity(buffers_per_loop);
     let settings = ProcessorSettings::default();
     let trim = settings.clone();
     offline::run_stereo(
@@ -39,12 +40,12 @@ fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
         settings,
         &signal,
         |_, processor, outputs| {
-            band0.push(outputs[0]);
-            if band0.len() == buffers_per_loop {
+            bass.push(outputs[Role::Bass.index()]);
+            if bass.len() == buffers_per_loop {
                 summaries.push(LoopSummary {
-                    stages: processor.band_stages(0).expect("band 0"),
+                    stages: processor.stages(Role::Bass).expect("Bass is a level role"),
                     trim_gain: trim.trim_gain.get(),
-                    band0: std::mem::take(&mut band0),
+                    bass: std::mem::take(&mut bass),
                 });
             }
         },
@@ -83,7 +84,12 @@ fn music_clip_converges_without_oscillating() {
     assert_eq!(clip.sample_rate, 48000);
     assert_eq!(clip.channels, 2);
 
-    let loops = run_loops(&clip, 6);
+    // About two minutes of music: a dozen floor half-lives, enough for the
+    // slowest adaptive stage to settle whatever the clip's length.
+    let loops = run_loops(
+        &clip,
+        (120.0 * clip.sample_rate as f32 / clip.frames() as f32).ceil() as usize,
+    );
 
     let trim: Vec<f32> = loops.iter().map(|l| l.trim_gain).collect();
     assert_converged("trim gain", 1.0, &trim, 0.01);
@@ -94,21 +100,21 @@ fn music_clip_converges_without_oscillating() {
 
     let distances: Vec<f32> = loops
         .windows(2)
-        .map(|w| rms_distance(&w[0].band0, &w[1].band0))
+        .map(|w| rms_distance(&w[0].bass, &w[1].bass))
         .collect();
     let last = distances[distances.len() - 1];
     assert!(
         last < 0.02,
-        "band 0 output not loop-periodic: distances {distances:?}"
+        "Bass output not loop-periodic: distances {distances:?}"
     );
     assert!(
         distances[0] > last,
-        "band 0 output did not settle: distances {distances:?}"
+        "Bass output did not settle: distances {distances:?}"
     );
 
-    let final_band0 = &loops[loops.len() - 1].band0;
-    let max = final_band0.iter().copied().fold(0.0, f32::max);
-    let min = final_band0.iter().copied().fold(1.0, f32::min);
-    assert!(max >= 0.95, "band 0 never reached full scale: max {max}");
-    assert!(min <= 0.05, "band 0 never returned to zero: min {min}");
+    let final_bass = &loops[loops.len() - 1].bass;
+    let max = final_bass.iter().copied().fold(0.0, f32::max);
+    let min = final_bass.iter().copied().fold(1.0, f32::min);
+    assert!(max >= 0.95, "Bass never reached full scale: max {max}");
+    assert!(min <= 0.05, "Bass never returned to zero: min {min}");
 }

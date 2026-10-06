@@ -1,6 +1,6 @@
 //! Pinned envelope responses. Each case runs a signal the chain was tuned
-//! on through the processor and compares the eight normalized bands against
-//! a checked-in golden. A behaviour change shows up as a per-band report of
+//! on through the processor and compares every role's output against
+//! a checked-in golden. A behaviour change shows up as a per-role report of
 //! how far, where, and how often the output moved, and the actual output is
 //! written beside the golden for plotting.
 //!
@@ -13,7 +13,8 @@ use common::{clip, offline, signals};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use tunnels_audio::processor::{NUM_OUTPUT_BANDS, ProcessorSettings};
+use tunnels_audio::processor::ProcessorSettings;
+use tunnels_audio::roles::{NUM_ROLES, Role};
 
 const FRAMES_PER_BUFFER: usize = 64;
 /// Every `STRIDE`th buffer is kept: 187 Hz against an 8 ms output smoother.
@@ -25,14 +26,14 @@ const TOLERANCE: u8 = 2;
 /// Loops of the music clip; startup and the converged state both count.
 const MUSIC_LOOPS: usize = 3;
 
-/// One case's eight normalized bands, quantized to 8 bits, one row per
+/// One case's role outputs, quantized to 8 bits, one row per
 /// `STRIDE` buffers.
 #[derive(Serialize, Deserialize)]
 struct Golden {
     update_rate: f32,
     stride: usize,
-    /// `bands[band][row]`.
-    bands: Vec<Vec<u8>>,
+    /// `roles[role][row]`, in `Role::ALL` order.
+    roles: Vec<Vec<u8>>,
 }
 
 fn quantize(v: f32) -> u8 {
@@ -40,7 +41,7 @@ fn quantize(v: f32) -> u8 {
 }
 
 fn run(signal: &[[f32; 2]]) -> Golden {
-    let mut bands = vec![Vec::new(); NUM_OUTPUT_BANDS];
+    let mut roles = vec![Vec::new(); NUM_ROLES];
     offline::run_stereo(
         signals::SAMPLE_RATE,
         FRAMES_PER_BUFFER,
@@ -48,8 +49,8 @@ fn run(signal: &[[f32; 2]]) -> Golden {
         signal,
         |i, _, outputs| {
             if i % STRIDE == 0 {
-                for (band, &v) in bands.iter_mut().zip(outputs) {
-                    band.push(quantize(v));
+                for (role, &v) in roles.iter_mut().zip(outputs) {
+                    role.push(quantize(v));
                 }
             }
         },
@@ -57,7 +58,7 @@ fn run(signal: &[[f32; 2]]) -> Golden {
     Golden {
         update_rate: signals::SAMPLE_RATE as f32 / FRAMES_PER_BUFFER as f32,
         stride: STRIDE,
-        bands,
+        roles,
     }
 }
 
@@ -87,13 +88,20 @@ fn check(name: &str, actual: &Golden) -> Option<String> {
         "{name}: update rate changed"
     );
 
+    assert_eq!(
+        golden.roles.len(),
+        actual.roles.len(),
+        "{name}: the number of roles changed"
+    );
+
     let secs_per_row = actual.stride as f32 / actual.update_rate;
     let mut report = String::new();
-    for (band, (g, a)) in golden.bands.iter().zip(&actual.bands).enumerate() {
+    for ((g, a), role) in golden.roles.iter().zip(&actual.roles).zip(Role::ALL) {
+        let role = role.label();
         if g.len() != a.len() {
             let _ = writeln!(
                 report,
-                "  band {band}: {} rows in golden, {} actual",
+                "  {role}: {} rows in golden, {} actual",
                 g.len(),
                 a.len()
             );
@@ -115,7 +123,7 @@ fn check(name: &str, actual: &Golden) -> Option<String> {
         if over > 0 {
             let _ = writeln!(
                 report,
-                "  band {band}: {over} of {} rows differ by more than {TOLERANCE}/255; worst {worst}/255 at {:.2}s (golden {}, actual {})",
+                "  {role}: {over} of {} rows differ by more than {TOLERANCE}/255; worst {worst}/255 at {:.2}s (golden {}, actual {})",
                 g.len(),
                 worst_at as f32 * secs_per_row,
                 g[worst_at],

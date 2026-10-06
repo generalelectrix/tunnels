@@ -1,23 +1,15 @@
-//! A multi-channel audio processor that derives per-band envelopes from its input.
+//! A multi-channel audio processor that derives the role envelopes from its
+//! input.
 //!
-//! Processing chains:
-//! On the mono mix of the input channels: undecimated D4 decomposition into
-//! octave bands and the sub-bass residual → per-band Hilbert |z(t)| →
-//! fast envelope → slow envelope → smoother → adaptive normalizer.
-//!
-//! Output: `NUM_OUTPUT_BANDS` normalized bands, the residual and the octaves
-//! below the one under Nyquist, selectable via `active_band`.
+//! On the mono mix of the input channels: automatic trim → DC blocker →
+//! constant-Q resonator bank (one peak per band per buffer) → the four roles
+//! (see [`crate::roles`]). The role selected by `active_role` feeds the show.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::hilbert::HilbertTransform;
+use crate::bank::ResonatorBank;
 use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
-use crate::wavelet::WaveletDecomposition;
-
-/// Fast envelope follower half-lives in seconds: catches every peak within
-/// a cycle.
-const FAST_ATTACK: f32 = 0.001;
-const FAST_RELEASE: f32 = 0.004;
+use crate::roles::{NUM_ROLES, Role, Roles};
 
 /// An `f32` shared between threads, stored as its bit pattern.
 #[derive(Debug)]
@@ -37,67 +29,25 @@ impl AtomicF32 {
     }
 }
 
-/// Number of output bands, in ascending frequency order from the sub-bass
-/// residual.
-pub const NUM_OUTPUT_BANDS: usize = crate::wavelet::NUM_BANDS;
-
 /// Ring buffer capacity: ~16 seconds of history at ~1kHz buffer rate.
 pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
-/// The frequency each output band starts at: band 0 is the residual below
-/// band 1, each band after that is an octave, and band `NUM_OUTPUT_BANDS`
-/// names the top edge of the highest one.
-fn output_band_start(band: usize, sample_rate: u32) -> f32 {
-    debug_assert!((1..=NUM_OUTPUT_BANDS).contains(&band));
-    sample_rate as f32 / (1_u32 << (NUM_OUTPUT_BANDS - band + 2)) as f32
-}
-
-/// A frequency as an operator reads it: "94", "1.5k", "12k".
-fn format_hz(hz: f32) -> String {
-    if hz < 1000.0 {
-        return format!("{hz:.0}");
-    }
-    let k = hz / 1000.0;
-    if (k - k.round()).abs() < 0.05 {
-        format!("{k:.0}k")
-    } else {
-        format!("{k:.1}k")
-    }
-}
-
-/// What each output band covers at `sample_rate`, in output order. The bands
-/// are octaves of the sample rate, so they move with it.
-pub fn output_band_labels(sample_rate: u32) -> [String; NUM_OUTPUT_BANDS] {
-    std::array::from_fn(|band| {
-        let start = output_band_start(band.max(1), sample_rate);
-        if band == 0 {
-            format!("<{} Hz", format_hz(start))
-        } else {
-            format!(
-                "{}-{} Hz",
-                format_hz(start),
-                format_hz(output_band_start(band + 1, sample_rate))
-            )
-        }
-    })
-}
-
-/// The envelope ring buffers for every output band: the producers feed a
+/// The envelope ring buffers for every role: the producers feed a
 /// `Processor`, the streams are read by whoever displays or records them.
 pub struct EnvelopeRingBuffers {
-    pub producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
-    pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+    pub producers: [EnvelopeProducer; NUM_ROLES],
+    pub streams: [EnvelopeStream; NUM_ROLES],
 }
 
-/// Create one envelope ring buffer per output band, each holding
-/// `ENVELOPE_HISTORY_CAPACITY` values.
+/// Create one envelope ring buffer per role, in [`Role::ALL`] order, each
+/// holding `ENVELOPE_HISTORY_CAPACITY` values.
 pub fn envelope_ring_buffers() -> EnvelopeRingBuffers {
-    let (producers, streams): (Vec<_>, Vec<_>) = (0..NUM_OUTPUT_BANDS)
+    let (producers, streams): (Vec<_>, Vec<_>) = (0..NUM_ROLES)
         .map(|_| envelope_ring_buffer(ENVELOPE_HISTORY_CAPACITY))
         .unzip();
     EnvelopeRingBuffers {
-        producers: producers.try_into().ok().expect("one producer per band"),
-        streams: streams.try_into().ok().expect("one stream per band"),
+        producers: producers.try_into().ok().expect("one producer per role"),
+        streams: streams.try_into().ok().expect("one stream per role"),
     }
 }
 
@@ -120,10 +70,11 @@ impl UpdateRate {
 }
 
 pub struct ProcessorSettingsInner {
-    /// Current envelope value for the show loop (from active_band).
+    /// Current envelope value for the show loop (from `active_role`).
     pub envelope: AtomicF32,
-    pub envelope_attack: AtomicF32,  // sec (slow stage)
-    pub envelope_release: AtomicF32, // sec (slow stage)
+    /// The level roles' envelope attack and release half-lives, in seconds.
+    pub envelope_attack: AtomicF32,
+    pub envelope_release: AtomicF32,
     /// Symmetric output smoothing time constant (seconds). 0 = disabled.
     pub output_smoothing: AtomicF32,
 
@@ -135,8 +86,8 @@ pub struct ProcessorSettingsInner {
     /// and a silent band holds the ceiling indefinitely.
     pub norm_ceiling_halflife: AtomicF32,
 
-    /// Which band feeds `envelope`: 0 = sub-bass residual, the rest octaves.
-    pub active_band: AtomicU32,
+    /// Which role feeds `envelope`, as its index in [`Role::ALL`].
+    pub active_role: AtomicU32,
     /// The gain the trim is currently applying, for display.
     pub trim_gain: AtomicF32,
     /// Runs of input samples pinned at full scale, counted since the
@@ -158,12 +109,16 @@ impl ProcessorSettingsInner {
     /// `REFERENCE_MOTION_RATE` is ~52 nepers, and each band is measured
     /// against the loudest thing in the phrase it is part of.
     pub const DEFAULT_CEILING_HALFLIFE: f32 = 8.0;
+    /// The role the show follows until told otherwise: the low end's level,
+    /// the nearest thing to a whole-song envelope.
+    pub const DEFAULT_ROLE: Role = Role::Bass;
 
     pub fn reset_defaults(&self) {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
-        self.active_band.store(0, Ordering::Relaxed);
+        self.active_role
+            .store(Self::DEFAULT_ROLE.index() as u32, Ordering::Relaxed);
         self.norm_floor_halflife.set(Self::DEFAULT_FLOOR_HALFLIFE);
         self.norm_ceiling_halflife
             .set(Self::DEFAULT_CEILING_HALFLIFE);
@@ -179,7 +134,7 @@ impl Default for ProcessorSettingsInner {
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             norm_floor_halflife: AtomicF32::new(Self::DEFAULT_FLOOR_HALFLIFE),
             norm_ceiling_halflife: AtomicF32::new(Self::DEFAULT_CEILING_HALFLIFE),
-            active_band: AtomicU32::new(0),
+            active_role: AtomicU32::new(Self::DEFAULT_ROLE.index() as u32),
             trim_gain: AtomicF32::new(1.0),
             input_clips: AtomicU32::new(0),
         }
@@ -294,7 +249,7 @@ pub const REFERENCE_MOTION_RATE: f32 = 6.5;
 /// One-pole EMA coefficient that halves the distance to the target every
 /// `halflife_secs` at `update_rate` updates per second. A non-positive
 /// half-life means no smoothing.
-fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
+pub(crate) fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
     if halflife_secs <= 0.0 || update_rate <= 0.0 {
         return 0.0;
     }
@@ -332,7 +287,7 @@ impl Default for NormalizerTuning {
 /// The normalizer coefficients every band shares, derived from the settings
 /// and the buffer update rate. The expensive `exp()`s are recomputed only
 /// when a half-life or the update rate changes.
-struct NormalizerParams {
+pub(crate) struct NormalizerParams {
     tuning: NormalizerTuning,
     /// Nepers the ceiling decays per neper of log-envelope motion.
     ceiling_forget: f32,
@@ -400,7 +355,7 @@ impl NormalizerParams {
 /// the music is fast or slow, a level drop is forgotten within a few hits
 /// at any tempo, and a pause or a held tone — no motion — leaves the
 /// ceiling where it was.
-struct AdaptiveNormalizer {
+pub(crate) struct AdaptiveNormalizer {
     /// Follows the envelope slowly upward and faster downward: the bed the
     /// output is measured from.
     floor: AsymmetricOnePole,
@@ -418,7 +373,7 @@ impl AdaptiveNormalizer {
     /// material turns out louder, and halves the time to settle.
     const INITIAL_CEILING: f32 = 0.5;
 
-    fn new(tuning: &NormalizerTuning) -> Self {
+    pub(crate) fn new(tuning: &NormalizerTuning) -> Self {
         Self {
             floor: AsymmetricOnePole::default(),
             ceiling: Self::INITIAL_CEILING,
@@ -426,8 +381,17 @@ impl AdaptiveNormalizer {
         }
     }
 
+    /// Where the normalizer stands, given the envelope it was last fed.
+    pub(crate) fn stages(&self, smoothed: f32) -> BandStages {
+        BandStages {
+            smoothed,
+            floor: self.floor.state,
+            ceiling: self.ceiling,
+        }
+    }
+
     #[inline]
-    fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
+    pub(crate) fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
         let t = &p.tuning;
         // Update ceiling: instant attack, decay per unit of envelope motion.
         let log_envelope = envelope.max(t.noise_gate).ln();
@@ -455,9 +419,8 @@ impl AdaptiveNormalizer {
 
 /// One-pole DC blocker: `y[n] = x[n] - x[n-1] + coeff * y[n-1]`, the
 /// difference equation of a series capacitor. An offset is not something a
-/// band can hear, but it reaches the residual at full gain — every lowpass
-/// stage has unit gain at DC — where it would sit under the envelope as a
-/// pedestal.
+/// band can hear, but the lowest band's skirt still reaches down to it, where
+/// it would sit under the envelope as a pedestal.
 struct DcBlocker {
     coeff: f32,
     x_prev: f32,
@@ -465,9 +428,8 @@ struct DcBlocker {
 }
 
 impl DcBlocker {
-    /// Corner frequency, low enough to leave the lowest band alone: the
-    /// residual reaches down to a few tens of Hz, where this is within
-    /// 0.2 dB of flat.
+    /// Corner frequency, low enough to leave the lowest band alone: it reaches
+    /// down to a few tens of Hz, where this is within 0.2 dB of flat.
     const CORNER_HZ: f32 = 5.0;
 
     fn new(sample_rate: f32) -> Self {
@@ -491,13 +453,17 @@ impl DcBlocker {
 /// Coefficient is supplied per update since it is typically shared across
 /// many smoother instances.
 #[derive(Default)]
-struct OnePoleSmoother {
+pub(crate) struct OnePoleSmoother {
     state: f32,
 }
 
 impl OnePoleSmoother {
-    fn update(&mut self, coeff: f32, input: f32) -> f32 {
+    pub(crate) fn update(&mut self, coeff: f32, input: f32) -> f32 {
         self.state = coeff * self.state + (1.0 - coeff) * input;
+        self.state
+    }
+
+    pub(crate) fn state(&self) -> f32 {
         self.state
     }
 }
@@ -507,14 +473,14 @@ impl OnePoleSmoother {
 /// while `x[n] > y[n-1]` and the fall coefficient otherwise. A coefficient of
 /// zero follows the input at once in that direction.
 #[derive(Debug, Default, Clone, Copy)]
-struct AsymmetricOnePole {
-    rise: f32,
-    fall: f32,
+pub(crate) struct AsymmetricOnePole {
+    pub(crate) rise: f32,
+    pub(crate) fall: f32,
     state: f32,
 }
 
 impl AsymmetricOnePole {
-    fn new(rise: f32, fall: f32) -> Self {
+    pub(crate) fn new(rise: f32, fall: f32) -> Self {
         Self {
             rise,
             fall,
@@ -523,7 +489,7 @@ impl AsymmetricOnePole {
     }
 
     #[inline]
-    fn step(&mut self, input: f32) -> f32 {
+    pub(crate) fn step(&mut self, input: f32) -> f32 {
         let c = if input > self.state {
             self.rise
         } else {
@@ -565,71 +531,7 @@ impl SmootherCoeff {
     }
 }
 
-/// Envelope chain for one output band:
-/// Hilbert |z(t)| → fast envelope → slow envelope → smoother → normalizer.
-struct BandChain {
-    hilbert: HilbertTransform,
-    fast_envelope: AsymmetricOnePole,
-    slow_envelope: AsymmetricOnePole,
-    smoother: OnePoleSmoother,
-    normalizer: AdaptiveNormalizer,
-}
-
-impl BandChain {
-    /// `sample_rate` in Hz; the slow follower's attack and release are
-    /// half-lives in seconds.
-    fn new(
-        sample_rate: f32,
-        slow_attack: f32,
-        slow_release: f32,
-        tuning: &NormalizerTuning,
-    ) -> Self {
-        Self {
-            hilbert: HilbertTransform::new(),
-            fast_envelope: AsymmetricOnePole::new(
-                halflife_to_coeff(FAST_ATTACK, sample_rate),
-                halflife_to_coeff(FAST_RELEASE, sample_rate),
-            ),
-            slow_envelope: AsymmetricOnePole::new(
-                halflife_to_coeff(slow_attack, sample_rate),
-                halflife_to_coeff(slow_release, sample_rate),
-            ),
-            smoother: OnePoleSmoother::default(),
-            normalizer: AdaptiveNormalizer::new(tuning),
-        }
-    }
-
-    /// Run one band-limited sample through the envelope followers.
-    #[inline]
-    fn process_sample(&mut self, sample: f32) {
-        let amplitude = self.hilbert.envelope(f64::from(sample)) as f32;
-        let fast = self.fast_envelope.step(amplitude);
-        self.slow_envelope.step(fast);
-    }
-
-    /// Finish a buffer: smooth the slow envelope and normalize it, returning
-    /// the band's output.
-    fn finish(&mut self, smooth_coeff: f32, norm: &NormalizerParams) -> f32 {
-        let smoothed = self.smoother.update(smooth_coeff, self.slow_envelope.state);
-        self.normalizer.process(smoothed, norm)
-    }
-
-    /// Set the slow follower's attack and release half-lives in seconds.
-    fn set_slow_envelope(&mut self, attack: f32, release: f32, sample_rate: f32) {
-        self.slow_envelope.rise = halflife_to_coeff(attack, sample_rate);
-        self.slow_envelope.fall = halflife_to_coeff(release, sample_rate);
-    }
-
-    fn stages(&self) -> BandStages {
-        BandStages {
-            smoothed: self.smoother.state,
-            floor: self.normalizer.floor.state,
-            ceiling: self.normalizer.ceiling,
-        }
-    }
-}
-
-/// One output band's intermediate values as of the most recently processed
+/// A level role's intermediate values as of the most recently processed
 /// buffer: the smoothed envelope entering the normalizer, and the floor and
 /// ceiling the normalizer is currently tracking.
 #[derive(Debug, Clone, Copy)]
@@ -643,29 +545,28 @@ pub struct Processor {
     settings: ProcessorSettings,
     envelope_attack: f32,
     envelope_release: f32,
+    /// The buffer rate the roles' timing was last set for.
+    update_rate: f32,
     /// Interleaved channels per frame, never zero.
     channel_count: usize,
     sample_rate: f32,
 
-    /// Envelope ring buffer producers — one per output band.
-    envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
+    /// Envelope ring buffer producers, one per role.
+    envelope_producers: [EnvelopeProducer; NUM_ROLES],
 
     /// Brings the input to a consistent level ahead of everything else.
     auto_trim: AutoTrim,
     /// Input samples at full scale so far, for detecting a clipping run
     /// that straddles two buffers.
     clip_run: u32,
-    /// Removes any offset from the mix before it reaches the bands.
+    /// Removes any offset from the mix before it reaches the bank.
     dc_blocker: DcBlocker,
-    /// Wavelet decomposition feeding every band.
-    wavelet: WaveletDecomposition,
-    /// One envelope chain per output band, in output order: 0 is the
-    /// residual sub-bass band, 1..NUM_OUTPUT_BANDS the octave bands in
-    /// ascending frequency order.
-    bands: [BandChain; NUM_OUTPUT_BANDS],
-    /// Cached smoother coefficient shared across every band's smoother.
+    /// Splits the mix into the bands every role is built from.
+    bank: ResonatorBank,
+    roles: Roles,
+    /// Cached smoother coefficient shared by the level roles.
     smooth_coeff: SmootherCoeff,
-    /// Normalizer coefficients shared across every band's normalizer.
+    /// Normalizer coefficients shared by the level roles.
     norm_params: NormalizerParams,
 }
 
@@ -674,19 +575,16 @@ impl Processor {
         handle: ProcessorSettings,
         sample_rate: u32,
         channel_count: usize,
-        envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
+        envelope_producers: [EnvelopeProducer; NUM_ROLES],
     ) -> Self {
         let sample_rate = sample_rate as f32;
-        let envelope_attack = handle.envelope_attack.get();
-        let envelope_release = handle.envelope_release.get();
         let tuning = NormalizerTuning::DEFAULT;
-        let bands = std::array::from_fn(|_| {
-            BandChain::new(sample_rate, envelope_attack, envelope_release, &tuning)
-        });
-
+        let bank = ResonatorBank::new(sample_rate);
+        let roles = Roles::new(std::array::from_fn(|b| bank.is_live(b)), &tuning);
         Self {
-            envelope_attack,
-            envelope_release,
+            envelope_attack: f32::NAN,
+            envelope_release: f32::NAN,
+            update_rate: 0.0,
             settings: handle,
             channel_count: channel_count.max(1),
             sample_rate,
@@ -694,20 +592,18 @@ impl Processor {
             auto_trim: AutoTrim::new(),
             clip_run: 0,
             dc_blocker: DcBlocker::new(sample_rate),
-            wavelet: WaveletDecomposition::new(),
-            bands,
+            bank,
+            roles,
             smooth_coeff: SmootherCoeff::default(),
             norm_params: NormalizerParams::new(tuning),
         }
     }
 
-    /// Replace the normalizer tuning and restart every band's normalizer
-    /// from its initial state.
+    /// Replace the normalizer tuning and restart the level roles' normalizers
+    /// from their initial state.
     pub fn set_normalizer_tuning(&mut self, tuning: NormalizerTuning) {
         self.norm_params = NormalizerParams::new(tuning);
-        for band in &mut self.bands {
-            band.normalizer = AdaptiveNormalizer::new(&tuning);
-        }
+        self.roles.set_normalizer_tuning(&tuning);
     }
 
     /// Count runs of samples pinned at full scale, which mean the signal
@@ -737,22 +633,22 @@ impl Processor {
         peak
     }
 
-    /// Read an output band's intermediate stage values. Index 0 is the
-    /// sub-bass residual; 1..NUM_OUTPUT_BANDS are the octave bands in
-    /// ascending frequency order.
-    pub fn band_stages(&self, output_band: usize) -> Option<BandStages> {
-        self.bands.get(output_band).map(BandChain::stages)
+    /// A level role's intermediate stage values; hit roles have none.
+    pub fn stages(&self, role: Role) -> Option<BandStages> {
+        self.roles.stages(role)
     }
 
     fn maybe_update_parameters(&mut self, update_rate: f32) {
-        let new_attack = self.settings.envelope_attack.get();
-        let new_release = self.settings.envelope_release.get();
-        if new_attack != self.envelope_attack || new_release != self.envelope_release {
-            self.envelope_attack = new_attack;
-            self.envelope_release = new_release;
-            for band in &mut self.bands {
-                band.set_slow_envelope(new_attack, new_release, self.sample_rate);
-            }
+        let attack = self.settings.envelope_attack.get();
+        let release = self.settings.envelope_release.get();
+        if attack != self.envelope_attack
+            || release != self.envelope_release
+            || update_rate != self.update_rate
+        {
+            self.envelope_attack = attack;
+            self.envelope_release = release;
+            self.update_rate = update_rate;
+            self.roles.set_timing(attack, release, update_rate);
         }
 
         self.smooth_coeff
@@ -784,39 +680,28 @@ impl Processor {
         let ch_count_f = self.channel_count as f32;
 
         for frame in interleaved_buffer.chunks(self.channel_count) {
-            // Both paths run on the mono mix. A device that hands us a
-            // non-finite sample would otherwise poison the Hilbert and the
-            // followers for the rest of the show: their state is recursive,
-            // so a NaN in it never washes out.
+            // A device that hands us a non-finite sample would otherwise
+            // poison the resonators and followers for the rest of the show:
+            // their state is recursive, so a NaN in it never washes out.
             let mono = frame.iter().sum::<f32>() / ch_count_f * gain;
             let mono = if mono.is_finite() { mono } else { 0.0 };
-            let mono = self.dc_blocker.process(mono);
-
-            let bands = &mut self.bands;
-            self.wavelet.push(mono, |band, sample| {
-                bands[band].process_sample(sample);
-            });
+            self.bank.push(self.dc_blocker.process(mono));
         }
 
-        let coeff = self.smooth_coeff.get();
-        let mut output_bands = [0.0_f32; NUM_OUTPUT_BANDS];
-        for (out, band) in output_bands.iter_mut().zip(&mut self.bands) {
-            *out = band.finish(coeff, &self.norm_params);
-        }
+        let peaks = self.bank.take_peaks();
+        let outputs = self
+            .roles
+            .process(&peaks, self.smooth_coeff.get(), &self.norm_params);
 
-        // Push normalized envelopes to ring buffers for the GUI viewer.
-        for (producer, &val) in self.envelope_producers.iter_mut().zip(&output_bands) {
+        // Push the roles to ring buffers for the GUI viewer.
+        for (producer, &val) in self.envelope_producers.iter_mut().zip(&outputs) {
             producer.push(val);
         }
 
-        // Write the active band's value to the shared envelope atomic.
-        let active = self.settings.active_band.load(Ordering::Relaxed) as usize;
-        let active = if active >= NUM_OUTPUT_BANDS {
-            0
-        } else {
-            active
-        };
-        self.settings.envelope.set(output_bands[active]);
+        // Write the active role's value to the shared envelope atomic.
+        let active = self.settings.active_role.load(Ordering::Relaxed) as usize;
+        let active = Role::from_index(active).unwrap_or(ProcessorSettingsInner::DEFAULT_ROLE);
+        self.settings.envelope.set(outputs[active.index()]);
     }
 }
 
@@ -824,7 +709,7 @@ impl Processor {
 mod tests {
     use super::*;
 
-    fn test_producers() -> [EnvelopeProducer; NUM_OUTPUT_BANDS] {
+    fn test_producers() -> [EnvelopeProducer; NUM_ROLES] {
         envelope_ring_buffers().producers
     }
 

@@ -1,19 +1,20 @@
-//! Audio input and envelope extraction: one normalized envelope per band,
-//! derived on the audio thread and read by the show.
+//! Audio input and envelope extraction: the four role envelopes (see
+//! [`roles`]), derived on the audio thread from a resonator bank and read by
+//! the show.
 //!
 //! The chain is pinned by `tests/envelope_golden.rs` (response shapes) and
 //! `tests/music_convergence.rs` (long-term stability). When either fails, or
 //! before changing the processor, run the characterisation harness:
 //! `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>`
-//! records every stage of every band per buffer for a suite of synthetic
+//! records every role and the level roles' stages per buffer for a suite of synthetic
 //! waveforms and prints their metrics; `--music tests/data/<clip> --loops N`
 //! does the same for a looped real-music clip.
 
-pub mod hilbert;
+pub mod bank;
 pub mod processor;
 pub mod reconnect;
 pub mod ring_buffer;
-pub mod wavelet;
+pub mod roles;
 
 use anyhow::{Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait};
@@ -25,19 +26,19 @@ use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 pub use self::processor::UpdateRate;
-use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, ProcessorSettingsInner};
+use self::processor::{ProcessorSettings, ProcessorSettingsInner};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
+use self::roles::{NUM_ROLES, Role};
 
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
 
-/// Envelope data streams from the audio thread, bundled with the callback rate.
+/// Envelope data streams from the audio thread, one per role in
+/// [`Role::ALL`] order, bundled with the callback rate.
 pub struct EnvelopeStreams {
-    pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+    pub streams: [EnvelopeStream; NUM_ROLES],
     pub update_rate: UpdateRate,
-    /// The device's sample rate, which sets where the band edges fall.
-    pub sample_rate: u32,
 }
 
 /// A flat, read-only view of the audio input's current parameter state.
@@ -47,7 +48,7 @@ pub struct AudioSnapshot {
     pub envelope_attack: Duration,
     pub envelope_release: Duration,
     pub output_smoothing: Duration,
-    pub active_band: u32,
+    pub active_role: Role,
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
     /// The gain the automatic input trim is applying, in dB, to the nearest
@@ -72,7 +73,8 @@ impl AudioSnapshot {
             envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
             envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
             output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
-            active_band: ps.active_band.load(Ordering::Relaxed),
+            active_role: Role::from_index(ps.active_role.load(Ordering::Relaxed) as usize)
+                .unwrap_or(ProcessorSettingsInner::DEFAULT_ROLE),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
             trim_db: displayed_trim_db(ps.trim_gain.get()),
@@ -257,9 +259,7 @@ impl AudioInput {
         emitter.emit_audio_state_change(OutputSmoothing(Duration::from_secs_f32(
             self.processor_settings.output_smoothing.get(),
         )));
-        emitter.emit_audio_state_change(ActiveBand(
-            self.processor_settings.active_band.load(Ordering::Relaxed),
-        ));
+        emitter.emit_audio_state_change(ActiveRole(self.snapshot().active_role));
         emitter.emit_audio_state_change(NormFloorHalflife(Duration::from_secs_f32(
             self.processor_settings.norm_floor_halflife.get(),
         )));
@@ -302,11 +302,10 @@ impl AudioInput {
                 .processor_settings
                 .output_smoothing
                 .set(v.as_secs_f32()),
-            ActiveBand(v) => {
-                let clamped = v.min((NUM_OUTPUT_BANDS - 1) as u32);
+            ActiveRole(role) => {
                 self.processor_settings
-                    .active_band
-                    .store(clamped, Ordering::Relaxed);
+                    .active_role
+                    .store(role.index() as u32, Ordering::Relaxed);
             }
             NormFloorHalflife(v) => {
                 self.processor_settings
@@ -345,7 +344,7 @@ pub enum StateChange {
     EnvelopeAttack(Duration),
     EnvelopeRelease(Duration),
     OutputSmoothing(Duration),
-    ActiveBand(u32),
+    ActiveRole(Role),
     NormFloorHalflife(Duration),
     /// Ceiling half-life, in seconds of music at the reference motion rate.
     NormCeilingHalflife(Duration),

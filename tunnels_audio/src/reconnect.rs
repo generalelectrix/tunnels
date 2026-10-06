@@ -11,10 +11,10 @@ use std::thread;
 use std::time::Duration;
 
 use crate::processor::{
-    EnvelopeRingBuffers, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
-    envelope_ring_buffers,
+    EnvelopeRingBuffers, Processor, ProcessorSettings, UpdateRate, envelope_ring_buffers,
 };
 use crate::ring_buffer::EnvelopeStream;
+use crate::roles::NUM_ROLES;
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -104,7 +104,6 @@ fn reconnect(
                         Ok(AudioStream {
                             stream,
                             update_rate,
-                            sample_rate,
                             streams,
                         }) => {
                             if first_open {
@@ -117,7 +116,6 @@ fn reconnect(
                             let _ = envelope_tx.send(crate::EnvelopeStreams {
                                 streams,
                                 update_rate,
-                                sample_rate,
                             });
                             _input_stream = Some(stream);
                         }
@@ -185,8 +183,7 @@ fn open_audio_device(name: &str) -> Result<Device> {
 struct AudioStream {
     stream: Stream,
     update_rate: UpdateRate,
-    sample_rate: u32,
-    streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+    streams: [EnvelopeStream; NUM_ROLES],
 }
 
 fn build_input_stream(
@@ -263,7 +260,6 @@ fn build_input_stream(
     Ok(AudioStream {
         stream: input_stream,
         update_rate,
-        sample_rate: config.sample_rate.0,
         streams: envelope_streams,
     })
 }
