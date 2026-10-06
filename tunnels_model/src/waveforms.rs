@@ -126,12 +126,14 @@ fn square_spatial(args: &WaveformArgsSpatial) -> f64 {
 
     let phase = args.duty_cycle_scaled_phase();
     if args.pulse {
-        // Rescale the bipolar wave into the unipolar range, reading it three
-        // quarters of a cycle ahead so the pulse starts at the bottom of that
-        // range and peaks halfway through it, where a sine or triangle pulse
-        // peaks.
+        // Rescale the bipolar wave into the unipolar range, reading it where it
+        // stands so the pulse is full for the first half of its window and
+        // empty for the second. Read a quarter cycle ahead the pulse would sit
+        // centred in the window instead, and narrowing the window would carry
+        // both of its edges inward — a duty cycle moving the pulse as well as
+        // shortening it.
         return (square_spatial(&WaveformArgsSpatial {
-            phase: phase + 0.75,
+            phase,
             smoothing: args.smoothing,
             duty_cycle: UnipolarFloat::ONE,
             pulse: false,
@@ -242,12 +244,15 @@ mod test {
     /// about the middle of its period stays symmetric once rescaled, where a
     /// clipped one does not: clipping widens the trough by whatever the peak
     /// loses.
+    ///
+    /// A square is not among them. Its pulse is deliberately a leading edge —
+    /// full for the first half of its window and empty for the second — which
+    /// is what keeps a duty cycle from moving the pulse as it shortens it.
     #[test]
     fn a_pulse_keeps_the_symmetry_of_the_waveform_it_rescales() {
         for (name, waveform) in [
             ("sine", sine as fn(&WaveformArgs) -> f64),
             ("triangle", triangle),
-            ("square", square),
         ] {
             for smoothing in SMOOTHINGS {
                 for duty_cycle in DUTY_CYCLES {
@@ -294,16 +299,50 @@ mod test {
         }
     }
 
-    /// A pulse occupies the unipolar range and begins at the bottom of it, so
-    /// that the waveform it is a rescaling of can be read as an amount of
-    /// something rather than as a displacement either side of nothing.
+    /// A square pulse rises at the start of its duty cycle window and falls
+    /// halfway through it, so narrowing the window moves only the falling edge.
+    ///
+    /// A pulse centred in its window would move both of its edges as the window
+    /// narrowed, which is a duty cycle changing where the pulse sits as well as
+    /// how long it lasts. Holding the rise at the top of the window leaves the
+    /// knob doing one thing: shortening the pulse.
+    #[test]
+    fn a_pulsed_square_rises_at_the_start_of_its_window() {
+        for duty_cycle in DUTY_CYCLES {
+            let samples = pulse_period(square, 0.0, duty_cycle);
+            let (high, low) = samples.split_at(SAMPLES / 2);
+            let not_high = high.iter().find(|v| **v != 1.0);
+            assert!(
+                not_high.is_none(),
+                "a square pulse at duty cycle {duty_cycle} reads {} in the first \
+                 half of its window, where it should hold 1",
+                not_high.copied().unwrap_or_default()
+            );
+            let not_low = low.iter().find(|v| **v != 0.0);
+            assert!(
+                not_low.is_none(),
+                "a square pulse at duty cycle {duty_cycle} reads {} in the second \
+                 half of its window, where it should hold 0",
+                not_low.copied().unwrap_or_default()
+            );
+        }
+    }
+
+    /// A pulse occupies the unipolar range, and begins at the bottom of it
+    /// wherever the waveform it rescales rises from rest, so that the pulse can
+    /// be read as an amount of something rather than as a displacement either
+    /// side of nothing.
+    ///
+    /// A square begins at the top instead, its pulse being a leading edge; it
+    /// still occupies the range and still reaches the bottom of it, so only the
+    /// claim about where it starts is withheld.
     #[test]
     fn a_pulse_spans_the_unipolar_range_from_zero() {
-        for (name, waveform) in [
-            ("sine", sine as fn(&WaveformArgs) -> f64),
-            ("triangle", triangle),
-            ("square", square),
-            ("sawtooth", sawtooth),
+        for (name, waveform, starts_at_rest) in [
+            ("sine", sine as fn(&WaveformArgs) -> f64, true),
+            ("triangle", triangle, true),
+            ("square", square, false),
+            ("sawtooth", sawtooth, true),
         ] {
             for smoothing in SMOOTHINGS {
                 for duty_cycle in DUTY_CYCLES {
@@ -317,7 +356,7 @@ mod test {
                     );
                     let floor = samples.iter().copied().fold(f64::INFINITY, f64::min);
                     assert!(
-                        samples[0] <= floor + 1e-9,
+                        !starts_at_rest || samples[0] <= floor + 1e-9,
                         "a {name} pulse at smoothing {smoothing} and duty cycle \
                          {duty_cycle} starts at {}, above the {floor} it reaches \
                          later in the cycle",
