@@ -126,19 +126,30 @@ fn square_spatial(args: &WaveformArgsSpatial) -> f64 {
 
     let phase = args.duty_cycle_scaled_phase();
     if args.pulse {
-        // Rescale the bipolar wave into the unipolar range, reading it where it
-        // stands so the pulse is full for the first half of its window and
-        // empty for the second. Read a quarter cycle ahead the pulse would sit
-        // centred in the window instead, and narrowing the window would carry
-        // both of its edges inward — a duty cycle moving the pulse as well as
-        // shortening it.
-        return (square_spatial(&WaveformArgsSpatial {
-            phase,
-            smoothing: args.smoothing,
-            duty_cycle: UnipolarFloat::ONE,
-            pulse: false,
-        }) + 1.0)
-            / 2.0;
+        // Full for the first half of the window and at rest for the second,
+        // built rather than rescaled from the bipolar wave. Rescaling would
+        // carry the wave's own trough into the second half and lift the rest
+        // between pulses off zero, which is a triangle *wave* at full
+        // smoothing where a pulse wants a triangle and then nothing.
+        //
+        // Smoothing opens each edge of the pulse into a ramp, taking from the
+        // dwell it bounds and never from the rest. At full smoothing the two
+        // ramps meet in the middle and the pulse is a triangle in the first
+        // half of its window — a triangle pulse at half the duty cycle.
+        if phase >= 0.5 {
+            return 0.0;
+        }
+        let ramp = 0.25 * args.smoothing.val();
+        if ramp == 0.0 {
+            return 1.0;
+        }
+        if phase.val() < ramp {
+            return phase.val() / ramp;
+        }
+        if phase.val() > 0.5 - ramp {
+            return (0.5 - phase.val()) / ramp;
+        }
+        return 1.0;
     }
     // internal smoothing scale is 0 to 0.25.
     let smoothing = args.smoothing * UnipolarFloat::new(0.25);
@@ -271,29 +282,30 @@ mod test {
         }
     }
 
-    /// A square holds its two levels for equal parts of a cycle, and pulse
-    /// mode rescales those levels rather than reshaping them, so a pulsed
-    /// square holds the top of its range for exactly as much of its duty cycle
-    /// window as it holds the bottom.
+    /// A square pulse rests for the second half of its duty cycle window
+    /// whatever the smoothing, and holds the top of its range for the first
+    /// half less what the smoothing spends on the two edges bounding it.
     ///
-    /// Smoothing eats into both dwells from either side, never into one. It
-    /// reaches a quarter of a cycle at the top of its range and spends that on
-    /// each of the four edges either dwell has, so what is left of a dwell is
-    /// half a cycle less twice the smoothing, down to nothing.
+    /// Smoothing takes from the dwell it opens and never from the rest. It
+    /// reaches a quarter of a window at the top of its range and spends that on
+    /// each of the pulse's two edges, so a fully smoothed pulse has no flat top
+    /// left and the rest between pulses is untouched at half the window.
     #[test]
-    fn a_pulsed_square_dwells_as_long_high_as_low() {
+    fn a_pulsed_square_rests_for_half_its_window() {
         for smoothing in SMOOTHINGS {
             for duty_cycle in DUTY_CYCLES {
                 let samples = pulse_period(square, smoothing, duty_cycle);
                 let dwell = |level: f64| samples.iter().filter(|v| **v == level).count();
                 let (high, low) = (dwell(1.0), dwell(0.0));
-                let expected = ((0.5 - 0.5 * smoothing) * SAMPLES as f64).round() as usize;
+                let expected_high = ((0.5 - 0.5 * smoothing) * SAMPLES as f64).round() as usize;
+                let expected_low = SAMPLES / 2;
                 assert_eq!(
                     (high, low),
-                    (expected, expected),
+                    (expected_high, expected_low),
                     "a square pulse at smoothing {smoothing} and duty cycle \
                      {duty_cycle} holds 1 for {high} of {SAMPLES} samples and 0 \
-                     for {low}, where smoothing leaves room for {expected} of each"
+                     for {low}, where the edges leave room for {expected_high} at \
+                     the top and the rest is {expected_low}"
                 );
             }
         }
@@ -325,6 +337,45 @@ mod test {
                  half of its window, where it should hold 0",
                 not_low.copied().unwrap_or_default()
             );
+        }
+    }
+
+    /// Smoothing a square pulse opens its edges into ramps without lifting the
+    /// rest between pulses, so at full smoothing the pulse is a triangle
+    /// occupying the first half of its window — which is a triangle pulse at
+    /// half the duty cycle, sample for sample.
+    ///
+    /// The equivalence is what pins down what smoothing a pulse means. A
+    /// rescaled wave would arrive at a triangle spanning the whole window and
+    /// resting nowhere, which is a triangle *wave*, not a pulse.
+    #[test]
+    fn a_fully_smoothed_square_pulse_is_a_triangle_pulse_at_half_the_duty_cycle() {
+        // Sampled across the whole period rather than each waveform's own
+        // window, because the windows are what differ: the claim is that the
+        // two read alike at the same phase, not that they fill their own
+        // windows alike.
+        let at = |waveform: fn(&WaveformArgs) -> f64, smoothing: f64, duty_cycle: f64, phase| {
+            waveform(&WaveformArgs {
+                phase_spatial: Phase::new(phase),
+                phase_temporal: Phase::ZERO,
+                smoothing: UnipolarFloat::new(smoothing),
+                duty_cycle: UnipolarFloat::new(duty_cycle),
+                pulse: true,
+                standing: false,
+            })
+        };
+        for duty_cycle in DUTY_CYCLES {
+            for i in 0..SAMPLES {
+                let phase = (i as f64 + 0.5) / SAMPLES as f64;
+                let sq = at(square, 1.0, duty_cycle, phase);
+                let tri = at(triangle, 0.0, duty_cycle / 2.0, phase);
+                assert!(
+                    (sq - tri).abs() < 1e-9,
+                    "at duty cycle {duty_cycle} and phase {phase}, a fully \
+                     smoothed square pulse reads {sq} where a triangle pulse at \
+                     half the duty cycle reads {tri}"
+                );
+            }
         }
     }
 
