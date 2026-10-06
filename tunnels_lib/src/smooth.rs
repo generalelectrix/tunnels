@@ -151,6 +151,15 @@ pub trait Response {
     const LAG: Lag;
 }
 
+/// The response for controls played as an instrument, whose hard, rhythmic
+/// moves have to land with the music.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Snappy;
+
+impl Response for Snappy {
+    const LAG: Lag = Lag::from_millis(10);
+}
+
 /// The response for controls that should feel immediate under the hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Fast;
@@ -400,12 +409,14 @@ mod test {
             elapsed
         }
         for (lag, half) in [
+            (Snappy::LAG, half_a_jump::<Snappy>()),
             (Fast::LAG, half_a_jump::<Fast>()),
             (Slow::LAG, half_a_jump::<Slow>()),
         ] {
             let lags = half.as_secs_f64() / lag.duration().as_secs_f64();
             assert!((lags - 0.84).abs() < 0.01, "half a jump after {lags} lags");
         }
+        assert!(half_a_jump::<Snappy>() < half_a_jump::<Fast>());
         assert!(half_a_jump::<Fast>() < half_a_jump::<Slow>());
     }
 

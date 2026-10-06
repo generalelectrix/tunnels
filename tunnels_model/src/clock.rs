@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
-use tunnels_lib::smooth::Smoothed;
+use tunnels_lib::smooth::{Smoothed, Snappy};
 use tunnels_lib::transient_indicator::TransientIndicator;
 
 /// The number of times a clock has ticked.
@@ -147,7 +147,7 @@ pub struct ControllableClock {
     sync: TapSync,
     tick_indicator: TransientIndicator,
     /// submaster level for this clock
-    submaster_level: Smoothed<UnipolarFloat>,
+    submaster_level: Smoothed<UnipolarFloat, Snappy>,
     /// If true, modulate the submaster level using audio envelope.
     use_audio_size: bool,
 }
