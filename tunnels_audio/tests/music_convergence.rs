@@ -73,8 +73,8 @@ fn assert_converged(name: &str, initial: f32, values: &[f32], tol: f32) {
 }
 
 #[test]
-fn nightlife_8_bars_converges_without_oscillating() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/nightlife_8bars.clip");
+fn music_clip_converges_without_oscillating() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/its_not_a_toy_8bars.clip");
     let clip = clip::decode(&std::fs::read(path).expect("read clip")).expect("decode clip");
     assert_eq!(clip.sample_rate, 48000);
     assert_eq!(clip.channels, 2);

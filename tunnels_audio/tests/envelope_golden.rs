@@ -149,7 +149,8 @@ fn envelope_goldens() {
         }
     }
 
-    let clip_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/nightlife_8bars.clip");
+    let clip_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/its_not_a_toy_8bars.clip");
     let clip = clip::decode(&std::fs::read(clip_path).expect("read clip")).expect("decode clip");
     assert_eq!(clip.sample_rate, signals::SAMPLE_RATE);
     let one_loop = clip.stereo_frames();
@@ -157,7 +158,7 @@ fn envelope_goldens() {
     for _ in 0..MUSIC_LOOPS {
         signal.extend_from_slice(&one_loop);
     }
-    if let Some(report) = check("nightlife_8bars_x3", &run(&signal)) {
+    if let Some(report) = check("its_not_a_toy_8bars_x3", &run(&signal)) {
         failures.push(report);
     }
 
