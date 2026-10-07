@@ -2527,11 +2527,19 @@ pub mod fixture {
             ..Default::default()
         };
         // Few enough dots that each one is big enough to read the value it
-        // stands for, and a radius at rest small enough that the pulse has
-        // most of the range to climb through.
+        // stands for: the blacking interval keeps every other segment, so
+        // these 48 draw 24 dots, around seven of them across the flat top.
         set_segments(&mut tunnel, 48);
+        // Small enough at rest that the pulse has most of the range to climb
+        // through, and a ring tight enough that the dots at the top of that
+        // climb clear the frame. A peak that ran off the edge would have a
+        // regression that raised it partly absorbed by the crop.
         tunnel.handle_state_change(
             StateChange::Thickness(UnipolarFloat::new(0.05)),
+            &mut NoopEmitter,
+        );
+        tunnel.handle_state_change(
+            StateChange::Size(UnipolarFloat::new(0.44)),
             &mut NoopEmitter,
         );
         tunnel.anims[0].target = AnimationTarget::Thickness;
