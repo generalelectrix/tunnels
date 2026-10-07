@@ -19,7 +19,7 @@ use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 pub use self::input_meter::InputMeter;
 pub use self::processor::UpdateRate;
-use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, ProcessorSettingsInner, TrackingMode};
+use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, ProcessorSettingsInner};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
 
@@ -47,8 +47,6 @@ pub struct AudioSnapshot {
     pub active_band: u32,
     pub norm_floor_halflife: Duration,
     pub norm_ceiling_halflife: Duration,
-    pub norm_floor_mode: TrackingMode,
-    pub norm_ceiling_mode: TrackingMode,
 }
 
 impl AudioSnapshot {
@@ -63,8 +61,6 @@ impl AudioSnapshot {
             active_band: ps.active_band.load(Ordering::Relaxed),
             norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
             norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
-            norm_floor_mode: ps.norm_floor_mode.load(Ordering::Relaxed),
-            norm_ceiling_mode: ps.norm_ceiling_mode.load(Ordering::Relaxed),
         }
     }
 }
@@ -185,16 +181,6 @@ impl AudioInput {
         emitter.emit_audio_state_change(NormCeilingHalflife(Duration::from_secs_f32(
             self.processor_settings.norm_ceiling_halflife.get(),
         )));
-        emitter.emit_audio_state_change(NormFloorMode(
-            self.processor_settings
-                .norm_floor_mode
-                .load(Ordering::Relaxed),
-        ));
-        emitter.emit_audio_state_change(NormCeilingMode(
-            self.processor_settings
-                .norm_ceiling_mode
-                .load(Ordering::Relaxed),
-        ));
     }
 
     /// Handle a control event.
@@ -254,16 +240,6 @@ impl AudioInput {
                     .norm_ceiling_halflife
                     .set(v.as_secs_f32());
             }
-            NormFloorMode(v) => {
-                self.processor_settings
-                    .norm_floor_mode
-                    .store(v, Ordering::Relaxed);
-            }
-            NormCeilingMode(v) => {
-                self.processor_settings
-                    .norm_ceiling_mode
-                    .store(v, Ordering::Relaxed);
-            }
         };
         emitter.emit_audio_state_change(sc);
     }
@@ -294,9 +270,8 @@ pub enum StateChange {
     OutputSmoothing(Duration),
     ActiveBand(u32),
     NormFloorHalflife(Duration),
+    /// Ceiling half-life, in seconds of music at the reference motion rate.
     NormCeilingHalflife(Duration),
-    NormFloorMode(processor::TrackingMode),
-    NormCeilingMode(processor::TrackingMode),
 }
 
 #[derive(Debug, Clone)]
