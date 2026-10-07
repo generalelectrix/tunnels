@@ -1174,49 +1174,61 @@ mod test {
     /// the tunnel reports back is that value from the moment it is set.
     #[test]
     fn continuous_controls_glide_to_the_value_they_report() {
-        let controls: [(fn() -> StateChange, f64, fn(&Tunnel) -> f64); 8] = [
-            (
-                || StateChange::Thickness(UnipolarFloat::new(0.6)),
-                0.6,
-                |t| t.thickness.smoothed().val(),
-            ),
-            (
-                || StateChange::Size(UnipolarFloat::new(0.9)),
-                0.9,
-                |t| t.size.smoothed().val(),
-            ),
-            (
-                || StateChange::AspectRatio(UnipolarFloat::new(0.1)),
-                0.1,
-                |t| t.aspect_ratio.smoothed().val(),
-            ),
-            (
-                || StateChange::ColorCenter(UnipolarFloat::new(0.7)),
-                0.7,
-                |t| t.col_center.smoothed().val(),
-            ),
-            (
-                || StateChange::ColorWidth(UnipolarFloat::new(0.4)),
-                0.4,
-                |t| t.col_width.smoothed().val(),
-            ),
-            (
-                || StateChange::ColorSaturation(UnipolarFloat::new(0.8)),
-                0.8,
-                |t| t.col_sat.smoothed().val(),
-            ),
-            (
-                || StateChange::PositionX(0.5),
-                0.5,
-                |t| t.x_offset.smoothed(),
-            ),
-            (
-                || StateChange::PositionY(-0.5),
-                -0.5,
-                |t| t.y_offset.smoothed(),
-            ),
+        /// A control, the value it sets, and how that value reads off the
+        /// tunnel.
+        struct Glide {
+            control: fn() -> StateChange,
+            target: f64,
+            rendered: fn(&Tunnel) -> f64,
+        }
+        let controls: [Glide; 8] = [
+            Glide {
+                control: || StateChange::Thickness(UnipolarFloat::new(0.6)),
+                target: 0.6,
+                rendered: |t| t.thickness.smoothed().val(),
+            },
+            Glide {
+                control: || StateChange::Size(UnipolarFloat::new(0.9)),
+                target: 0.9,
+                rendered: |t| t.size.smoothed().val(),
+            },
+            Glide {
+                control: || StateChange::AspectRatio(UnipolarFloat::new(0.1)),
+                target: 0.1,
+                rendered: |t| t.aspect_ratio.smoothed().val(),
+            },
+            Glide {
+                control: || StateChange::ColorCenter(UnipolarFloat::new(0.7)),
+                target: 0.7,
+                rendered: |t| t.col_center.smoothed().val(),
+            },
+            Glide {
+                control: || StateChange::ColorWidth(UnipolarFloat::new(0.4)),
+                target: 0.4,
+                rendered: |t| t.col_width.smoothed().val(),
+            },
+            Glide {
+                control: || StateChange::ColorSaturation(UnipolarFloat::new(0.8)),
+                target: 0.8,
+                rendered: |t| t.col_sat.smoothed().val(),
+            },
+            Glide {
+                control: || StateChange::PositionX(0.5),
+                target: 0.5,
+                rendered: |t| t.x_offset.smoothed(),
+            },
+            Glide {
+                control: || StateChange::PositionY(-0.5),
+                target: -0.5,
+                rendered: |t| t.y_offset.smoothed(),
+            },
         ];
-        for (control, target, rendered) in controls {
+        for Glide {
+            control,
+            target,
+            rendered,
+        } in controls
+        {
             let mut tunnel = Tunnel::default();
             let before = rendered(&tunnel);
             tunnel.handle_state_change(control(), &mut Silent);
