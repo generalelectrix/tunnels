@@ -1167,6 +1167,17 @@ mod test {
         }
     }
 
+    /// An emitter that keeps the waveforms it was told about.
+    #[derive(Default)]
+    struct WaveformRecorder(Vec<AnimWaveform>);
+    impl crate::animation::EmitStateChange for WaveformRecorder {
+        fn emit_animation_state_change(&mut self, sc: AnimStateChange) {
+            if let AnimStateChange::Waveform(w) = sc {
+                self.0.push(w);
+            }
+        }
+    }
+
     /// A surface blanks the controls a figure has no use for, so a mode that
     /// does use them has to hear their values again. Restating the whole
     /// tunnel is what leaves nothing dark that the new mode reads.
@@ -2101,9 +2112,7 @@ mod test {
             let drawn = |pulse: bool| {
                 (0..slots).any(|slot| {
                     let shaping = SlotWaveform::for_slot(slot);
-                    shaping.pulse == pulse
-                        && std::mem::discriminant(&shaping.waveform)
-                            == std::mem::discriminant(waveform)
+                    shaping.pulse == pulse && shaping.waveform == *waveform
                 })
             };
             assert!(
@@ -2112,6 +2121,36 @@ mod test {
                  unpulsed {}",
                 drawn(true),
                 drawn(false)
+            );
+        }
+    }
+
+    /// The stress fixture reaches every waveform.
+    ///
+    /// The fixture exists to put the expensive paths under load, and the
+    /// waveforms are not alike in cost: noise samples a simplex field and is
+    /// bound by memory latency where the rest are a few arithmetic operations
+    /// on a phase. A fixture that skips one measures the half it kept.
+    ///
+    /// A waveform set that outgrows the animation slots fails here, where
+    /// whoever grew it has to decide what the fixture does about it, rather
+    /// than losing its last entries quietly.
+    #[test]
+    fn the_stress_fixture_reaches_every_waveform() {
+        let mut tunnel = Tunnel::default();
+        super::fixture::configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
+        let mut recorder = WaveformRecorder::default();
+        for anim in &tunnel.anims {
+            anim.animation.emit_state(&mut recorder);
+        }
+        for waveform in AnimWaveform::VARIANTS {
+            assert!(
+                recorder.0.contains(waveform),
+                "the stress fixture never reaches {waveform:?}: it spends {} \
+                 animation slots on {} waveforms and drew {:?}",
+                tunnel.anims.len(),
+                AnimWaveform::VARIANTS.len(),
+                recorder.0
             );
         }
     }
@@ -2192,11 +2231,14 @@ pub mod fixture {
 
         for (i, anim) in tunnel.anims.iter_mut().enumerate() {
             anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::Waveform(if i.is_multiple_of(2) {
-                    Waveform::SineSquare
-                } else {
-                    Waveform::TriSaw
-                })),
+                // A slot apiece, so that the load this fixture puts on a
+                // render includes the cost of every waveform rather than of
+                // whichever ones the slots happened to land on. Noise is the
+                // one that matters most: it samples a simplex field and waits
+                // on memory where the rest are arithmetic on a phase.
+                AnimControlMessage::Set(AnimStateChange::Waveform(
+                    Waveform::VARIANTS[i % Waveform::VARIANTS.len()],
+                )),
                 &mut NoopEmitter,
             );
             anim.animation.control(

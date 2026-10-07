@@ -14,7 +14,7 @@ use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::Smoothed;
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, VariantArray)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq, Eq, VariantArray)]
 pub enum Waveform {
     SineSquare,
     TriSaw,
