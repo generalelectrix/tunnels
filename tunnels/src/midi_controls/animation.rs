@@ -17,11 +17,13 @@ const SIZE: Mapping = cc_ch0(49);
 const DUTY_CYCLE: Mapping = cc_ch0(50);
 const SMOOTHING: Mapping = cc_ch0(51);
 
-// waveform type buttons
+// Waveform type buttons, run together from the bottom of the block so that
+// what is free is contiguous: notes 28 and 29 are unassigned and are where a
+// waveform added to the set goes.
 const SINE_SQUARE: Mapping = note_on_ch0(24);
 const TRI_SAW: Mapping = note_on_ch0(25);
-const NOISE: Mapping = note_on_ch0(28);
-const CONSTANT: Mapping = note_on_ch0(29);
+const NOISE: Mapping = note_on_ch0(26);
+const CONSTANT: Mapping = note_on_ch0(27);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
