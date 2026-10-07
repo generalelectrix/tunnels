@@ -138,21 +138,24 @@ fn sine_square_spatial(args: &WaveformArgsSpatial) -> f64 {
         return (TWO_PI * phase).sin();
     }
 
-    // Each edge is half a period of cosine, which spends its whole width
-    // crossing the range and leaves and arrives with no slope at either end.
-    let crossing = |distance: f64| (PI * distance / (2.0 * edge)).cos();
+    // Each edge is half a period of sine about the phase it sits on, so it
+    // spends its whole width crossing the range, leaves and arrives with no
+    // slope at either end, and reads exactly zero at its own centre.
+    //
+    // The cosine the same curve can be written as reaches that centre through
+    // a difference of two numbers close to each other, which cancels away the
+    // low bits of the answer and lands a rounding off the crossing. Measuring
+    // the edge from the phase it is centred on has nothing to cancel.
+    let edge_at = |centre: f64| (PI * (phase - centre) / (2.0 * edge)).sin();
     if phase < edge {
-        // The rising edge sits on phase zero, so this is the half of it that
-        // climbs away from the start of the period. Written as the sine it is
-        // a quarter turn along from, which reads exactly zero where the cycle
-        // starts where the cosine reads a rounding away from it.
-        (PI * phase / (2.0 * edge)).sin()
+        // The half of the rising edge that climbs away from phase zero.
+        edge_at(0.0)
     } else if (phase - 0.5).abs() <= edge {
-        crossing(phase - (0.5 - edge))
+        -edge_at(0.5)
     } else if phase > 1.0 - edge {
-        // The half of the rising edge that approaches the start of the period,
-        // reached at the end of the one before it.
-        -crossing(phase - (1.0 - edge))
+        // The half of the rising edge that approaches phase zero, reached at
+        // the end of the period before it.
+        edge_at(1.0)
     } else if phase < 0.5 {
         1.0
     } else {

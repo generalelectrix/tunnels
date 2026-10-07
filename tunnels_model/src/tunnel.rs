@@ -2236,9 +2236,11 @@ pub mod fixture {
                 // whichever ones the slots happened to land on. Noise is the
                 // one that matters most: it samples a simplex field and waits
                 // on memory where the rest are arithmetic on a phase.
-                AnimControlMessage::Set(AnimStateChange::Waveform(
-                    Waveform::VARIANTS[i % Waveform::VARIANTS.len()],
-                )),
+                //
+                // Taken from the written-out table rather than from the enum,
+                // for the reason `WAVEFORMS` gives: which slot draws which
+                // waveform is what the recorded renders are of.
+                AnimControlMessage::Set(AnimStateChange::Waveform(WAVEFORMS[i % WAVEFORMS.len()])),
                 &mut NoopEmitter,
             );
             anim.animation.control(
