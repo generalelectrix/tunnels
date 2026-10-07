@@ -645,24 +645,36 @@ mod test {
             }
         }
         let clocks = crate::clock_bank::ClockBank::default();
-        let controls: [(fn() -> StateChange, f64, fn(&PreparedAnimation) -> f64); 3] = [
-            (
-                || StateChange::Size(UnipolarFloat::new(0.6)),
-                0.6,
-                |p| p.scale,
-            ),
-            (
-                || StateChange::DutyCycle(UnipolarFloat::new(0.3)),
-                0.3,
-                |p| p.duty_cycle.val(),
-            ),
-            (
-                || StateChange::Smoothing(UnipolarFloat::new(0.9)),
-                0.9,
-                |p| p.smoothing.val(),
-            ),
+        /// A control, the value it sets, and how that value reads off a
+        /// prepared animation.
+        struct Glide {
+            control: fn() -> StateChange,
+            target: f64,
+            rendered: fn(&PreparedAnimation) -> f64,
+        }
+        let controls: [Glide; 3] = [
+            Glide {
+                control: || StateChange::Size(UnipolarFloat::new(0.6)),
+                target: 0.6,
+                rendered: |p| p.scale,
+            },
+            Glide {
+                control: || StateChange::DutyCycle(UnipolarFloat::new(0.3)),
+                target: 0.3,
+                rendered: |p| p.duty_cycle.val(),
+            },
+            Glide {
+                control: || StateChange::Smoothing(UnipolarFloat::new(0.9)),
+                target: 0.9,
+                rendered: |p| p.smoothing.val(),
+            },
         ];
-        for (control, target, rendered) in controls {
+        for Glide {
+            control,
+            target,
+            rendered,
+        } in controls
+        {
             let mut animation = Animation::default();
             let prepared = |a: &Animation| rendered(&a.prepare(&clocks, UnipolarFloat::ZERO));
             let before = prepared(&animation);
