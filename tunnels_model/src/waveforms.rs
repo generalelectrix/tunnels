@@ -156,20 +156,38 @@ fn square_spatial(args: &WaveformArgsSpatial) -> f64 {
         }
         return 1.0;
     }
-    // internal smoothing scale is 0 to 0.25.
-    let smoothing = args.smoothing * UnipolarFloat::new(0.25);
+    // How far an edge reaches either side of where it sits: a quarter of the
+    // period at the top of the smoothing range, where the two edges take the
+    // whole period between them and the dwells they bound vanish.
+    let edge = 0.25 * args.smoothing.val();
+    let phase = phase.val();
 
-    if smoothing == 0.0 {
+    if edge == 0.0 {
         return if phase < 0.5 { 1.0 } else { -1.0 };
     }
+    // The ends of the range are the waveforms they are equal to rather than
+    // the arithmetic that approaches them, so that the equality is a guarantee
+    // and not a coincidence of rounding.
+    if args.smoothing == 1.0 {
+        return (TWO_PI * phase).sin();
+    }
 
-    if phase < smoothing {
-        phase.val() / smoothing.val()
-    } else if phase > (0.5 - smoothing.val()) && phase < (0.5 + smoothing.val()) {
-        -(phase.val() - 0.5) / smoothing.val()
-    } else if phase > (1.0 - smoothing.val()) {
-        (phase.val() - 1.0) / smoothing.val()
-    } else if phase >= smoothing && phase <= 0.5 - smoothing.val() {
+    // Each edge is half a period of cosine, which spends its whole width
+    // crossing the range and leaves and arrives with no slope at either end.
+    let crossing = |distance: f64| (PI * distance / (2.0 * edge)).cos();
+    if phase < edge {
+        // The rising edge sits on phase zero, so this is the half of it that
+        // climbs away from the start of the period. Written as the sine it is
+        // a quarter turn along from, which reads exactly zero where the cycle
+        // starts where the cosine reads a rounding away from it.
+        (PI * phase / (2.0 * edge)).sin()
+    } else if (phase - 0.5).abs() <= edge {
+        crossing(phase - (0.5 - edge))
+    } else if phase > 1.0 - edge {
+        // The half of the rising edge that approaches the start of the period,
+        // reached at the end of the one before it.
+        -crossing(phase - (1.0 - edge))
+    } else if phase < 0.5 {
         1.0
     } else {
         -1.0
@@ -221,30 +239,57 @@ mod test {
     /// How many points one period is sampled at.
     const SAMPLES: usize = 1024;
 
-    /// One cycle of `waveform` in pulse mode at the given smoothing, sampled
-    /// across the duty cycle window the cycle is compressed into.
+    /// Where a sample sits in the window, as a fraction of it.
     ///
     /// Each sample sits at the centre of the slice of the window it stands
     /// for, so a waveform with a step in it is never read exactly on the step,
     /// where which side the reading belongs to comes down to which comparison
     /// happens to be the strict one.
+    fn window_phase(i: usize) -> f64 {
+        (i as f64 + 0.5) / SAMPLES as f64
+    }
+
+    /// How a waveform is read: the two knobs that shape it and whether it is
+    /// asked for a pulse or for a bipolar wave.
+    #[derive(Copy, Clone)]
+    struct Sampling {
+        smoothing: f64,
+        duty_cycle: f64,
+        pulse: bool,
+    }
+
+    /// One cycle of `waveform`, sampled across the duty cycle window the cycle
+    /// is compressed into.
+    fn period(waveform: fn(&WaveformArgs) -> f64, sampling: Sampling) -> Vec<f64> {
+        (0..SAMPLES)
+            .map(|i| {
+                waveform(&WaveformArgs {
+                    phase_spatial: Phase::new(sampling.duty_cycle * window_phase(i)),
+                    phase_temporal: Phase::ZERO,
+                    smoothing: UnipolarFloat::new(sampling.smoothing),
+                    duty_cycle: UnipolarFloat::new(sampling.duty_cycle),
+                    pulse: sampling.pulse,
+                    standing: false,
+                })
+            })
+            .collect()
+    }
+
+    /// One cycle of `waveform` in pulse mode at the given smoothing and duty
+    /// cycle.
     fn pulse_period(
         waveform: fn(&WaveformArgs) -> f64,
         smoothing: f64,
         duty_cycle: f64,
     ) -> Vec<f64> {
-        (0..SAMPLES)
-            .map(|i| {
-                waveform(&WaveformArgs {
-                    phase_spatial: Phase::new(duty_cycle * (i as f64 + 0.5) / SAMPLES as f64),
-                    phase_temporal: Phase::ZERO,
-                    smoothing: UnipolarFloat::new(smoothing),
-                    duty_cycle: UnipolarFloat::new(duty_cycle),
-                    pulse: true,
-                    standing: false,
-                })
-            })
-            .collect()
+        period(
+            waveform,
+            Sampling {
+                smoothing,
+                duty_cycle,
+                pulse: true,
+            },
+        )
     }
 
     /// The smoothings a waveform is sampled at: both ends of the range, and
@@ -305,12 +350,11 @@ mod test {
                 // width of the dwell, because a sample never lands on a ramp's
                 // boundary and rounding the width agrees with that only for
                 // some smoothings.
-                let scaled = |i: usize| (i as f64 + 0.5) / SAMPLES as f64;
                 let ramp = 0.25 * smoothing;
                 let expected_high = (0..SAMPLES)
-                    .filter(|i| (ramp..=0.5 - ramp).contains(&scaled(*i)))
+                    .filter(|i| (ramp..=0.5 - ramp).contains(&window_phase(*i)))
                     .count();
-                let expected_low = (0..SAMPLES).filter(|i| scaled(*i) >= 0.5).count();
+                let expected_low = (0..SAMPLES).filter(|i| window_phase(*i) >= 0.5).count();
                 assert_eq!(
                     (high, low),
                     (expected_high, expected_low),
@@ -511,6 +555,149 @@ mod test {
                     }
                 }
             }
+        }
+    }
+
+    /// `sin(2πp)`, the wave a square reaches at the top of its smoothing
+    /// range.
+    ///
+    /// Written out as a closed form, so that a square compared against it is
+    /// not being compared to another branch of itself.
+    fn sine_wave(phase: f64) -> f64 {
+        (TWO_PI * phase).sin()
+    }
+
+    /// A square's smoothing runs between two exact waveforms: a hard square at
+    /// the bottom of the range and a sine at the top.
+    ///
+    /// The sine is what makes the knob a control over the whole of its range.
+    /// A square whose edges are linear ramps arrives at a triangle instead,
+    /// which is a waveform the set already holds, so the top of the range
+    /// stops being a place worth putting the knob.
+    #[test]
+    fn a_square_smooths_from_a_hard_edge_into_a_sine() {
+        for duty_cycle in DUTY_CYCLES {
+            let sampling = |smoothing| Sampling {
+                smoothing,
+                duty_cycle,
+                pulse: false,
+            };
+            let hard = period(square, sampling(0.0));
+            let smooth = period(square, sampling(1.0));
+            for i in 0..SAMPLES {
+                let phase = window_phase(i);
+                let edged = if phase < 0.5 { 1.0 } else { -1.0 };
+                assert_eq!(
+                    hard[i], edged,
+                    "an unsmoothed square reads {} at phase {phase} of a duty \
+                     cycle of {duty_cycle}, where a hard square reads {edged}",
+                    hard[i]
+                );
+                let sine = sine_wave(phase);
+                assert_eq!(
+                    smooth[i], sine,
+                    "a fully smoothed square reads {} at phase {phase} of a duty \
+                     cycle of {duty_cycle}, where a sine reads {sine}",
+                    smooth[i]
+                );
+            }
+        }
+    }
+
+    /// A square reads exactly zero where its cycle starts, at every smoothing.
+    ///
+    /// The model reads an animation at the start of its cycle wherever a shape
+    /// has no coordinate to read it along, and folds the answer into the
+    /// parameter it drives. An answer a rounding away from zero displaces that
+    /// parameter where the animation was meant to leave it alone.
+    #[test]
+    fn a_square_crosses_zero_where_its_cycle_starts() {
+        for smoothing in SMOOTHINGS {
+            for duty_cycle in DUTY_CYCLES {
+                let value = square(&WaveformArgs {
+                    phase_spatial: Phase::ZERO,
+                    phase_temporal: Phase::ZERO,
+                    smoothing: UnipolarFloat::new(smoothing),
+                    duty_cycle: UnipolarFloat::new(duty_cycle),
+                    pulse: false,
+                    standing: false,
+                });
+                // A hard square has no edge to cross zero on and is at the top
+                // of its range from the first instant of the cycle.
+                let expected = if smoothing == 0.0 { 1.0 } else { 0.0 };
+                assert_eq!(
+                    value, expected,
+                    "a square at smoothing {smoothing} and duty cycle \
+                     {duty_cycle} reads {value} where its cycle starts, not \
+                     {expected}"
+                );
+            }
+        }
+    }
+
+    /// A square's edges are cosine, so each one reaches a quarter of the
+    /// period either side of where it sits at the top of the smoothing range,
+    /// and arrives at the dwell in front of it with no slope left.
+    ///
+    /// The corner is what the shape is for. An edge that arrives at its dwell
+    /// still climbing turns the brightest and darkest moments of the cycle into
+    /// instants rather than into arrivals, which is the difference between a
+    /// wave that breathes and one that snaps.
+    #[test]
+    fn a_smoothed_square_reaches_its_dwells_without_a_corner() {
+        // Both ends of the smoothing range are closed forms of their own, and
+        // at the top of it the dwells have no width left to measure.
+        for smoothing in SMOOTHINGS.into_iter().filter(|s| *s > 0.0 && *s < 0.95) {
+            let edge = 0.25 * smoothing;
+            let samples = period(
+                square,
+                Sampling {
+                    smoothing,
+                    duty_cycle: 1.0,
+                    pulse: false,
+                },
+            );
+
+            // What the wave holds the ends of its range for, counted from
+            // where the samples sit rather than from the width of a dwell,
+            // because a sample never lands on an edge's boundary.
+            let held = |level: f64| (0..SAMPLES).filter(|i| samples[*i] == level).count();
+            let spanning = |range: std::ops::RangeInclusive<f64>| {
+                (0..SAMPLES)
+                    .filter(|i| range.contains(&window_phase(*i)))
+                    .count()
+            };
+            assert_eq!(
+                (held(1.0), held(-1.0)),
+                (
+                    spanning(edge..=0.5 - edge),
+                    spanning(0.5 + edge..=1.0 - edge)
+                ),
+                "a square at smoothing {smoothing} holds the top of its range for \
+                 {} of {SAMPLES} samples and the bottom for {}, where edges {edge} \
+                 wide leave room for {} and {}",
+                held(1.0),
+                held(-1.0),
+                spanning(edge..=0.5 - edge),
+                spanning(0.5 + edge..=1.0 - edge)
+            );
+
+            // The falling edge, read as the steps between its samples. A
+            // cosine's steepest step is at its centre and its last step is a
+            // small fraction of that; a linear ramp's steps are all the same
+            // size right up to the corner.
+            let falling: Vec<f64> = (1..SAMPLES)
+                .filter(|i| ((0.5 - edge)..=(0.5 + edge)).contains(&window_phase(*i)))
+                .map(|i| samples[i - 1] - samples[i])
+                .collect();
+            let steepest = falling.iter().copied().fold(0.0, f64::max);
+            let arriving = *falling.last().expect("an edge spans at least one step");
+            assert!(
+                arriving < steepest / 10.0,
+                "a square at smoothing {smoothing} arrives at the bottom of its \
+                 range on a step of {arriving}, against the {steepest} of its \
+                 steepest, so the edge still has slope where it meets the dwell"
+            );
         }
     }
 }
