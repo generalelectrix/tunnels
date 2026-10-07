@@ -34,7 +34,7 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 - The `tunnels/src/audio/` module is a thin re-export layer plus the `ShowEmitter` adapter.
 - The audio callback sets flush-to-zero on its thread (`denormals.rs`), so filters decaying on digital silence don't fall into slow subnormal arithmetic.
 - The render loop runs at 240fps. The audio buffer is ~1ms. The hit roles hold each peak for 4ms, about a render frame, and fall over 80ms.
-- The envelope chain is pinned by `tunnels_audio/tests/envelope_golden.rs` and `music_convergence.rs`.
+- The envelope chain is pinned by `tunnels_audio/tests/envelope_golden.rs` and `music_convergence.rs`. Measure before changing it: `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>` (see the crate docs in `tunnels_audio/src/lib.rs`).
 
 ## GUI architecture
 
