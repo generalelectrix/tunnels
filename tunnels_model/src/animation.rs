@@ -113,7 +113,7 @@ impl Default for Animation {
             static_params: StaticParams::default(),
             size: UnipolarFloat::ZERO.into(),
             duty_cycle: UnipolarFloat::ONE.into(),
-            smoothing: UnipolarFloat::new(0.25).into(),
+            smoothing: UnipolarFloat::ONE.into(),
             internal_clock: Default::default(),
             clock_source: None,
             use_audio_size: false,
