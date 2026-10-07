@@ -7,6 +7,7 @@ edition.workspace = true
 tunnels_lib = { path = "../tunnels_lib" }
 cpal = "0.16"
 rtrb = "0.3"
+triple_buffer = "8"
 anyhow.workspace = true
 log.workspace = true
 

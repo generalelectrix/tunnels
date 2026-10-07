@@ -20,50 +20,7 @@ use crate::processor::{
     OnePoleSmoother, UpdateRate, halflife_to_coeff,
 };
 
-/// An envelope the show can follow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    /// Hits in the low end: kick drums, and any sharp low onset.
-    Kick,
-    /// The low end's level, kick included.
-    Bass,
-    /// The middle's level: voices, keys, guitars, the body of a snare.
-    Mid,
-    /// Hits in the high end: hats, shakers, snare wires, cymbal strikes.
-    Hats,
-    /// The high end's level: cymbals, hats, sibilance and air.
-    Shimmer,
-}
-
-/// Number of roles.
-pub const NUM_ROLES: usize = 5;
-
-impl Role {
-    /// Every role, in output order.
-    pub const ALL: [Self; NUM_ROLES] =
-        [Self::Kick, Self::Bass, Self::Mid, Self::Hats, Self::Shimmer];
-
-    /// The role at an output index, if there is one.
-    pub fn from_index(index: usize) -> Option<Self> {
-        Self::ALL.get(index).copied()
-    }
-
-    /// The role's position in the output order.
-    pub fn index(self) -> usize {
-        self as usize
-    }
-
-    /// The role's name as an operator reads it.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Kick => "Kick",
-            Self::Bass => "Bass",
-            Self::Mid => "Mid",
-            Self::Hats => "Hats",
-            Self::Shimmer => "Shimmer",
-        }
-    }
-}
+pub use tunnels_lib::audio::{NUM_ROLES, Role};
 
 /// Bands the low end is heard in: about 50 to 250 Hz.
 const LOW_BANDS: &[usize] = &[0, 1];
@@ -534,6 +491,7 @@ impl Roles {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame_buffer::frame_buffer;
     use crate::processor::{Processor, ProcessorSettings, envelope_ring_buffers};
     use std::num::NonZeroUsize;
 
@@ -542,26 +500,21 @@ mod tests {
 
     /// Every role's output per 64-frame buffer, for a mono signal.
     fn run(signal: &[f32]) -> Vec<[f32; NUM_ROLES]> {
-        let buffers = envelope_ring_buffers();
-        let mut streams = buffers.streams;
+        let (producer, mut frames) = frame_buffer();
         let mut processor = Processor::new(
             ProcessorSettings::default(),
             RATE as u32,
             NonZeroUsize::MIN,
-            buffers.producers,
+            envelope_ring_buffers().producers,
+            producer,
         );
-        let mut drained = Vec::new();
         signal
             .as_chunks::<FRAMES>()
             .0
             .iter()
             .map(|chunk| {
                 processor.process(chunk);
-                std::array::from_fn(|r| {
-                    drained.clear();
-                    streams[r].drain_into(&mut drained);
-                    drained.last().copied().unwrap_or(0.0)
-                })
+                frames.latest().roles().map(f32::from)
             })
             .collect()
     }

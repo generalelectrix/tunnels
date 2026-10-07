@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{Smoothed, Snappy};
 use tunnels_lib::transient_indicator::TransientIndicator;
@@ -57,7 +58,7 @@ impl Clock {
         self.rate_coarse + self.rate_fine
     }
 
-    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+    pub fn update_state(&mut self, delta_t: Duration, audio: &AudioState) {
         if self.reset_on_update {
             self.ticked = true;
             self.ticks = 0;
@@ -77,7 +78,7 @@ impl Clock {
         }
 
         let rate_modulation = if self.use_audio {
-            audio_envelope
+            audio.envelope()
         } else {
             UnipolarFloat::ONE
         };
@@ -210,10 +211,10 @@ impl ControllableClock {
     pub fn update_state<E: EmitStateChange>(
         &mut self,
         delta_t: Duration,
-        audio_envelope: UnipolarFloat,
+        audio: &AudioState,
         emitter: &mut E,
     ) {
-        self.clock.update_state(delta_t, audio_envelope);
+        self.clock.update_state(delta_t, audio);
         self.submaster_level.update_state(delta_t);
         if let Some(tick_state) = self.tick_indicator.update_state(delta_t, self.clock.ticked) {
             emitter.emit_clock_state_change(StateChange::Ticked(tick_state));
@@ -438,12 +439,16 @@ mod test_submaster {
         assert!(talkback.0.contains(&reported), "{:?}", talkback.0);
 
         let mut silent = Recorder::default();
-        clock.update_state(Duration::from_millis(16), UnipolarFloat::ZERO, &mut silent);
+        clock.update_state(
+            Duration::from_millis(16),
+            &AudioState::default(),
+            &mut silent,
+        );
         let gliding = clock.submaster_level();
         assert!(gliding < UnipolarFloat::ONE && gliding > set, "{gliding}");
         assert_eq!(gliding, clock.as_static().submaster_level);
 
-        clock.update_state(Duration::from_secs(1), UnipolarFloat::ZERO, &mut silent);
+        clock.update_state(Duration::from_secs(1), &AudioState::default(), &mut silent);
         assert_eq!(set, clock.submaster_level());
     }
 }

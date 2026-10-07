@@ -1,4 +1,5 @@
-//! Audio analysis values as data.
+//! Audio analysis as data: one frame of role envelopes and spectrum levels
+//! per audio buffer, and the role selected to follow.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -74,6 +75,100 @@ impl<'de> Deserialize<'de> for UnipolarF32 {
     }
 }
 
+/// An envelope the show can follow.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Role {
+    /// Hits in the low end: kick drums, and any sharp low onset.
+    Kick,
+    /// The low end's level, kick included.
+    #[default]
+    Bass,
+    /// The middle's level: voices, keys, guitars, the body of a snare.
+    Mid,
+    /// Hits in the high end: hats, shakers, snare wires, cymbal strikes.
+    Hats,
+    /// The high end's level: cymbals, hats, sibilance and air.
+    Shimmer,
+}
+
+/// Number of roles.
+pub const NUM_ROLES: usize = 5;
+
+impl Role {
+    /// Every role, in output order.
+    pub const ALL: [Self; NUM_ROLES] =
+        [Self::Kick, Self::Bass, Self::Mid, Self::Hats, Self::Shimmer];
+
+    /// The role at an output index, if there is one.
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    /// The role's position in the output order.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The role's name as an operator reads it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Kick => "Kick",
+            Self::Bass => "Bass",
+            Self::Mid => "Mid",
+            Self::Hats => "Hats",
+            Self::Shimmer => "Shimmer",
+        }
+    }
+}
+
+/// Number of spectrum bands, in ascending frequency order.
+pub const SPECTRUM_BANDS: usize = 26;
+
+/// One audio buffer's analysis: every role's envelope and every spectrum
+/// band's level.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct AudioFrame {
+    roles: [UnipolarF32; NUM_ROLES],
+    spectrum: [UnipolarF32; SPECTRUM_BANDS],
+}
+
+impl AudioFrame {
+    /// A frame of role envelopes, in [`Role::ALL`] order, and band levels, in
+    /// ascending frequency order.
+    pub fn new(roles: [UnipolarF32; NUM_ROLES], spectrum: [UnipolarF32; SPECTRUM_BANDS]) -> Self {
+        Self { roles, spectrum }
+    }
+
+    /// A role's envelope.
+    pub fn role(&self, role: Role) -> UnipolarFloat {
+        self.roles[role.index()].into()
+    }
+
+    /// Every role's envelope, in [`Role::ALL`] order.
+    pub fn roles(&self) -> &[UnipolarF32; NUM_ROLES] {
+        &self.roles
+    }
+
+    /// Every band's level, in ascending frequency order.
+    pub fn spectrum(&self) -> [UnipolarFloat; SPECTRUM_BANDS] {
+        self.spectrum.map(UnipolarFloat::from)
+    }
+}
+
+/// The latest audio analysis and the role the show follows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct AudioState {
+    pub frame: AudioFrame,
+    pub active_role: Role,
+}
+
+impl AudioState {
+    /// The followed role's envelope.
+    pub fn envelope(&self) -> UnipolarFloat {
+        self.frame.role(self.active_role)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +210,34 @@ mod tests {
                 postcard::from_bytes(&wire.to_le_bytes()).expect("deserialize");
             assert_eq!(decoded, read, "{wire} on the wire");
         }
+    }
+
+    /// A frame is 31 plain `f32`s on the wire; the envelope is the active
+    /// role's.
+    #[test]
+    fn audio_state_reads_the_active_role() {
+        let frame = AudioFrame::new(
+            std::array::from_fn(|r| UnipolarF32::new(r as f32 / 10.0)),
+            std::array::from_fn(|b| UnipolarF32::new(b as f32 / 100.0)),
+        );
+        assert_eq!(
+            postcard::to_allocvec(&frame).expect("serialize").len(),
+            4 * (NUM_ROLES + SPECTRUM_BANDS)
+        );
+        for role in Role::ALL {
+            let state = AudioState {
+                frame,
+                active_role: role,
+            };
+            assert_eq!(state.envelope(), frame.role(role));
+            assert_eq!(
+                state.envelope(),
+                UnipolarFloat::new((role.index() as f32 / 10.0) as f64)
+            );
+        }
+        assert_eq!(
+            frame.spectrum()[25],
+            UnipolarFloat::new((25.0_f32 / 100.0) as f64)
+        );
     }
 }

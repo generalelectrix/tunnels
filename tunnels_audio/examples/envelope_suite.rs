@@ -110,7 +110,7 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
         settings.clone(),
         cfg.tuning,
         signal,
-        |buf_idx, processor, outputs| {
+        |buf_idx, processor, frame| {
             let chunk =
                 &signal[buf_idx * cfg.frames..((buf_idx + 1) * cfg.frames).min(signal.len())];
             let raw_peak = chunk
@@ -120,7 +120,7 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
             rows.push(Row {
                 t: (buf_idx * cfg.frames) as f32 / cfg.sample_rate as f32,
                 raw_peak,
-                roles: *outputs,
+                roles: frame.roles().map(f32::from),
                 bass_stages: processor.stages(Role::Bass).expect("Bass is a level role"),
                 mid_stages: processor.stages(Role::Mid).expect("Mid is a level role"),
                 shimmer_stages: processor

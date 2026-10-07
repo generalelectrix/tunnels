@@ -500,6 +500,7 @@ fn project(m: Matrix2d, v: Point) -> [f32; 2] {
 #[cfg(test)]
 mod test {
     use super::*;
+    use tunnels_lib::audio::AudioState;
     use tunnels_lib::number::UnipolarFloat;
     use tunnels_model::animation::Animation;
     use tunnels_model::clock_bank::ClockBank;
@@ -508,7 +509,7 @@ mod test {
     /// what it is aimed at decides which coordinates a layer pays for.
     fn warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation> {
         TargetedAnimation {
-            animation: Animation::default().prepare(&ClockBank::default(), UnipolarFloat::ZERO),
+            animation: Animation::default().prepare(&ClockBank::default(), &AudioState::default()),
             target,
         }
     }
@@ -580,9 +581,9 @@ mod test {
         }
         // Smoothing is reached over time rather than set. The animation runs at
         // no speed, so nothing else moves while it gets there.
-        animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        animation.update_state(Duration::from_secs(1), &AudioState::default());
         TargetedAnimation {
-            animation: animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO),
+            animation: animation.prepare(&ClockBank::default(), &AudioState::default()),
             target,
         }
     }

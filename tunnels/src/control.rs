@@ -34,6 +34,8 @@ pub enum MetaCommand {
     },
     SetAudioDevice(Option<String>),
     AudioControl(crate::audio::ControlMessage),
+    /// Choose the role the show follows.
+    SetActiveRole(crate::audio::Role),
     StartClockService,
     StopClockService,
     StartTouchOscServer,

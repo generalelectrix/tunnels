@@ -1,4 +1,5 @@
 use eframe::egui::{self, Color32};
+use tunnels_audio::UnipolarF32;
 use tunnels_audio::processor::UpdateRate;
 use tunnels_audio::roles::{NUM_ROLES, Role};
 use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
@@ -103,11 +104,14 @@ impl EnvelopeViewerState {
             return true;
         };
         let interval = rate.interval_secs();
-        let mut samples = Vec::new();
+        let mut drained: Vec<UnipolarF32> = Vec::new();
+        let mut samples: Vec<f32> = Vec::new();
 
         for (i, stream) in envelope_streams.iter_mut().enumerate() {
+            drained.clear();
+            stream.drain_into(&mut drained);
             samples.clear();
-            stream.drain_into(&mut samples);
+            samples.extend(drained.iter().map(|&v| f32::from(v)));
             self.plot.traces[i].ingest(&samples, interval, now);
         }
         self.plot.trim(now);

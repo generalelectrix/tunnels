@@ -4,6 +4,7 @@ use crate::typed_index::typed_index;
 use crate::{beam::Beam, look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, time::Duration};
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::UnipolarFloat;
 
 /// The number of mixer channels on a single mixer page.
@@ -39,9 +40,9 @@ impl Mixer {
     }
 
     /// Update the state of all of the beams contained in this mixer.
-    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+    pub fn update_state(&mut self, delta_t: Duration, audio: &AudioState) {
         for channel in &mut self.channels {
-            channel.update_state(delta_t, audio_envelope);
+            channel.update_state(delta_t, audio);
         }
     }
 
@@ -197,8 +198,8 @@ impl Channel {
     }
 
     /// Update the state of the beam in this channel.
-    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
-        self.beam.update_state(delta_t, audio_envelope);
+    pub fn update_state(&mut self, delta_t: Duration, audio: &AudioState) {
+        self.beam.update_state(delta_t, audio);
     }
 
     /// Render the beam in this channel.
@@ -293,7 +294,7 @@ mod test {
             clocks: &clocks,
             palette: &palette,
             positions: &positions,
-            audio_envelope: UnipolarFloat::ZERO,
+            audio: &AudioState::default(),
         };
         let channel = |level| Channel {
             beam: Beam::Tunnel(Tunnel::default()),

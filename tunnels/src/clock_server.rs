@@ -4,7 +4,7 @@
 use anyhow::Result;
 
 use serde::{Deserialize, Serialize};
-use tunnels_lib::number::UnipolarFloat;
+use tunnels_lib::audio::AudioState;
 use zero_configure::pub_sub::{Config, PublisherService, SubscriberService};
 
 pub use crate::clock_bank::StaticClockBank;
@@ -38,11 +38,11 @@ pub fn clock_subscriber() -> ClockSubscriber {
     SubscriberService::new(SERVICE_NAME.to_string(), config())
 }
 
-/// A collection of static clock state data with audio envelope.
+/// A collection of static clock state data with the audio state.
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct SharedClockData {
     pub clock_bank: StaticClockBank,
-    pub audio_envelope: UnipolarFloat,
+    pub audio: AudioState,
 }
 
 pub type ClockPublisher = PublisherService<SharedClockData>;
@@ -50,7 +50,8 @@ pub type ClockSubscriber = SubscriberService<SharedClockData>;
 
 #[cfg(test)]
 mod tests {
-    use tunnels_lib::number::Phase;
+    use tunnels_lib::audio::{AudioFrame, NUM_ROLES, Role, UnipolarF32};
+    use tunnels_lib::number::{Phase, UnipolarFloat};
 
     use crate::clock::StaticClock;
     use crate::clock_bank::{ClockIdx, ClockStore, MAX_CLOCKS};
@@ -132,22 +133,25 @@ mod tests {
 
         // Draining the overflow keeps the rest of the message aligned: an
         // over-length clock_bank in a SharedClockData-shaped message still
-        // decodes the trailing audio_envelope correctly.
+        // decodes the trailing audio state correctly.
         #[derive(Serialize)]
         struct WireShaped {
             clock_bank: Vec<StaticClock>,
-            audio_envelope: UnipolarFloat,
+            audio: AudioState,
         }
-        let envelope = UnipolarFloat::new(0.75);
+        let audio = AudioState {
+            frame: AudioFrame::new([UnipolarF32::new(0.75); NUM_ROLES], Default::default()),
+            active_role: Role::Hats,
+        };
         let bytes = postcard::to_allocvec(&WireShaped {
             clock_bank: over,
-            audio_envelope: envelope,
+            audio,
         })
         .unwrap();
         let decoded: SharedClockData = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.clock_bank.0.len(), MAX_CLOCKS);
         assert_eq!(
-            decoded.audio_envelope, envelope,
+            decoded.audio, audio,
             "trailing field stayed aligned after draining overflow"
         );
     }

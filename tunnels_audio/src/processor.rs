@@ -4,19 +4,24 @@
 //! On the mono mix of the input channels: automatic trim → DC blocker →
 //! constant-Q resonator bank → the roles, which follow the bank sample by
 //! sample and report once per buffer
-//! (see [`crate::roles`]). The role selected by `active_role` feeds the show.
+//! (see [`crate::roles`]). The same bank feeds the spectrum (see
+//! [`crate::spectrum`]). Each buffer, every role and band is published as one
+//! [`AudioFrame`].
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use tunnels_lib::audio::UnipolarF32;
 use tunnels_lib::transient_indicator::TransientIndicator;
 
-use crate::bank::ResonatorBank;
+use tunnels_lib::audio::{AudioFrame, UnipolarF32};
+
+use crate::bank::{NUM_BANDS, ResonatorBank};
+use crate::frame_buffer::FrameProducer;
 use crate::input_meter::InputMeter;
 use crate::ring_buffer::{EnvelopeProducer, EnvelopeStream, envelope_ring_buffer};
 use crate::roles::{NUM_ROLES, Role, Roles};
+use crate::spectrum::Spectrum;
 use crate::time::{AtomicDuration, AtomicHalfLife, HalfLife};
 
 /// An `f32` shared between threads, stored as its bit pattern.
@@ -78,8 +83,6 @@ impl UpdateRate {
 }
 
 pub struct ProcessorSettingsInner {
-    /// Current envelope value for the show loop (from `active_role`).
-    pub envelope: AtomicF32,
     /// The level roles' envelope attack and release half-lives.
     pub envelope_attack: AtomicDuration,
     pub envelope_release: AtomicDuration,
@@ -93,9 +96,6 @@ pub struct ProcessorSettingsInner {
     /// envelope motion, so quiet or still material stretches this span and a
     /// silent band holds the ceiling indefinitely.
     pub norm_ceiling_halflife: AtomicHalfLife,
-
-    /// Which role feeds `envelope`, as its index in [`Role::ALL`].
-    pub active_role: AtomicU32,
 }
 
 impl ProcessorSettingsInner {
@@ -111,16 +111,11 @@ impl ProcessorSettingsInner {
     /// against the loudest thing in the phrase it is part of.
     pub const DEFAULT_CEILING_HALFLIFE: HalfLife =
         HalfLife::from_millis(NonZeroU64::new(8_000).expect("non-zero"));
-    /// The role the show follows until told otherwise: the low end's level,
-    /// the nearest thing to a whole-song envelope.
-    pub const DEFAULT_ROLE: Role = Role::Bass;
 
     pub fn reset_defaults(&self) {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
-        self.active_role
-            .store(Self::DEFAULT_ROLE.index() as u32, Ordering::Relaxed);
         self.norm_floor_halflife.set(Self::DEFAULT_FLOOR_HALFLIFE);
         self.norm_ceiling_halflife
             .set(Self::DEFAULT_CEILING_HALFLIFE);
@@ -130,13 +125,11 @@ impl ProcessorSettingsInner {
 impl Default for ProcessorSettingsInner {
     fn default() -> Self {
         Self {
-            envelope: AtomicF32::new(0.0),
             envelope_attack: AtomicDuration::new(Self::DEFAULT_ENVELOPE_ATTACK),
             envelope_release: AtomicDuration::new(Self::DEFAULT_ENVELOPE_RELEASE),
             output_smoothing: AtomicDuration::new(Self::DEFAULT_OUTPUT_SMOOTHING),
             norm_floor_halflife: AtomicHalfLife::new(Self::DEFAULT_FLOOR_HALFLIFE),
             norm_ceiling_halflife: AtomicHalfLife::new(Self::DEFAULT_CEILING_HALFLIFE),
-            active_role: AtomicU32::new(Self::DEFAULT_ROLE.index() as u32),
         }
     }
 }
@@ -351,6 +344,11 @@ impl NormalizerParams {
         }
     }
 
+    /// Nepers the ceiling decays per neper of log-envelope motion.
+    pub(crate) fn ceiling_forget(&self) -> f32 {
+        self.ceiling_forget
+    }
+
     /// Refresh from the settings for the given update rate. Safe to call
     /// every buffer.
     fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: UpdateRate) {
@@ -374,25 +372,60 @@ impl NormalizerParams {
     }
 }
 
+/// A peak follower whose decay is clocked by the envelope's own motion
+/// rather than by time: it rises to any envelope above it at once and forgets
+/// a fixed number of nepers for every neper the log envelope moves, up or
+/// down. A hit therefore costs the ceiling the same whether the music is fast
+/// or slow, a level drop is forgotten within a few hits at any tempo, and a
+/// pause or a held tone — no motion — leaves the ceiling where it was.
+///
+/// Motion below the gate is not counted, so noise under it never wears the
+/// ceiling down.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MotionCeiling {
+    ceiling: f32,
+    gate: f32,
+    /// Log envelope on the previous update, clamped at the gate.
+    prev_log_envelope: f32,
+}
+
+impl MotionCeiling {
+    /// A ceiling starting at `initial`, which counts no motion below `gate`.
+    pub(crate) fn new(initial: f32, gate: f32) -> Self {
+        Self {
+            ceiling: initial,
+            gate,
+            prev_log_envelope: gate.ln(),
+        }
+    }
+
+    /// The ceiling's current level.
+    pub(crate) fn level(&self) -> f32 {
+        self.ceiling
+    }
+
+    /// Follow one more envelope value, forgetting `forget` nepers per neper
+    /// of motion, and return the new ceiling.
+    #[inline]
+    pub(crate) fn step(&mut self, envelope: f32, forget: f32) -> f32 {
+        let log_envelope = envelope.max(self.gate).ln();
+        let motion = (log_envelope - self.prev_log_envelope).abs();
+        self.prev_log_envelope = log_envelope;
+        self.ceiling = envelope.max(self.ceiling * (-forget * motion).exp());
+        self.ceiling
+    }
+}
+
 /// Adaptive envelope normalizer: tracks a floor and ceiling,
 /// outputs `(envelope - floor) / (ceiling - floor)` clamped to [0, 1].
 ///
-/// The ceiling is a peak follower whose decay is clocked by the envelope's
-/// own motion rather than by time: it rises to any envelope above it at once
-/// and forgets a fixed number of nepers for every neper the log envelope
-/// moves, up or down, set by the ceiling half-life. A hit therefore costs the ceiling the same whether
-/// the music is fast or slow, a level drop is forgotten within a few hits
-/// at any tempo, and a pause or a held tone — no motion — leaves the
-/// ceiling where it was.
+/// The ceiling is a [`MotionCeiling`] forgetting at the rate the ceiling
+/// half-life sets, gated at the noise gate.
 pub(crate) struct AdaptiveNormalizer {
     /// Follows the envelope slowly upward and faster downward: the bed the
     /// output is measured from.
     floor: AsymmetricOnePole,
-    /// The tracked peak, on the envelope's scale: non-negative, and never
-    /// below the latest envelope.
-    ceiling: f32,
-    /// Log envelope on the previous update, clamped at the noise gate.
-    prev_log_envelope: f32,
+    ceiling: MotionCeiling,
 }
 
 impl AdaptiveNormalizer {
@@ -405,8 +438,7 @@ impl AdaptiveNormalizer {
     pub(crate) fn new(tuning: &NormalizerTuning) -> Self {
         Self {
             floor: AsymmetricOnePole::default(),
-            ceiling: Self::INITIAL_CEILING.val(),
-            prev_log_envelope: tuning.noise_gate.val().ln(),
+            ceiling: MotionCeiling::new(Self::INITIAL_CEILING.val(), tuning.noise_gate.val()),
         }
     }
 
@@ -415,7 +447,7 @@ impl AdaptiveNormalizer {
         BandStages {
             smoothed,
             floor: self.floor.state,
-            ceiling: self.ceiling,
+            ceiling: self.ceiling.level(),
         }
     }
 
@@ -423,16 +455,12 @@ impl AdaptiveNormalizer {
     pub(crate) fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
         let noise_gate = p.tuning.noise_gate.val();
         let rel_min_range = p.tuning.rel_min_range.val();
-        // Update ceiling: instant attack, decay per unit of envelope motion.
-        let log_envelope = envelope.max(noise_gate).ln();
-        let motion = (log_envelope - self.prev_log_envelope).abs();
-        self.prev_log_envelope = log_envelope;
-        self.ceiling = envelope.max(self.ceiling * (-p.ceiling_forget * motion).exp());
+        let ceiling = self.ceiling.step(envelope, p.ceiling_forget);
 
         // Update floor. It never exceeds the ceiling.
         self.floor.rise = p.floor_rise_coeff;
         self.floor.fall = p.floor_fall_coeff;
-        let floor = self.floor.step(envelope.min(self.ceiling));
+        let floor = self.floor.step(envelope.min(ceiling));
 
         // The gate is the lowest level the floor can sit at, so the output
         // reaches zero by arriving there rather than by being cut off.
@@ -440,8 +468,8 @@ impl AdaptiveNormalizer {
         // The range is never narrower than the gate either, so a band only
         // reaches full scale once its ceiling stands clear of the noise it
         // would otherwise be stretching.
-        let range = (self.ceiling - floor)
-            .max(rel_min_range * self.ceiling)
+        let range = (ceiling - floor)
+            .max(rel_min_range * ceiling)
             .max(noise_gate);
         ((envelope - floor) / range).clamp(0.0, 1.0)
     }
@@ -591,6 +619,8 @@ pub struct Processor {
 
     /// Envelope ring buffer producers, one per role.
     envelope_producers: [EnvelopeProducer; NUM_ROLES],
+    /// Where each buffer's frame is published.
+    frames: FrameProducer,
 
     /// Brings the input to a consistent level ahead of everything else.
     auto_trim: AutoTrim,
@@ -603,6 +633,7 @@ pub struct Processor {
     /// Splits the mix into the bands every role is built from.
     bank: ResonatorBank,
     roles: Roles,
+    spectrum: Spectrum,
     /// Cached smoother coefficient shared by the level roles.
     smooth_coeff: SmootherCoeff,
     /// Normalizer coefficients shared by the level roles.
@@ -615,16 +646,15 @@ impl Processor {
         sample_rate: u32,
         channel_count: NonZeroUsize,
         envelope_producers: [EnvelopeProducer; NUM_ROLES],
+        frames: FrameProducer,
     ) -> Self {
         let per_sample = UpdateRate::new(sample_rate, 1);
         let sample_rate = sample_rate as f32;
         let tuning = NormalizerTuning::DEFAULT;
         let bank = ResonatorBank::new(sample_rate);
-        let roles = Roles::new(
-            std::array::from_fn(|b| bank.is_live(b)),
-            &tuning,
-            per_sample,
-        );
+        let live = std::array::from_fn(|b| bank.is_live(b));
+        let roles = Roles::new(live, &tuning, per_sample);
+        let spectrum = Spectrum::new(live, sample_rate);
         Self {
             envelope_attack: None,
             envelope_release: None,
@@ -633,12 +663,14 @@ impl Processor {
             channel_count,
             sample_rate,
             envelope_producers,
+            frames,
             auto_trim: AutoTrim::new(),
             clip_indicator: TransientIndicator::new(CLIP_HOLD),
             input_meter: Arc::new(InputMeter::default()),
             dc_blocker: DcBlocker::new(sample_rate),
             bank,
             roles,
+            spectrum,
             smooth_coeff: SmootherCoeff::default(),
             norm_params: NormalizerParams::new(tuning),
         }
@@ -662,6 +694,12 @@ impl Processor {
     /// A level role's intermediate stage values; hit roles have none.
     pub fn stages(&self, role: Role) -> Option<BandStages> {
         self.roles.stages(role)
+    }
+
+    /// Each spectrum band's level in dB per octave at the end of the latest
+    /// buffer, ahead of any whitening.
+    pub fn spectrum_levels_db(&self) -> [f32; NUM_BANDS] {
+        self.spectrum.levels_db()
     }
 
     fn maybe_update_parameters(&mut self, buffer_rate: UpdateRate) {
@@ -726,34 +764,49 @@ impl Processor {
             let mono = if mono.is_finite() { mono } else { 0.0 };
             self.bank.push(self.dc_blocker.process(mono));
             self.roles.push_sample(&self.bank);
+            self.spectrum.push_sample(&self.bank);
         }
 
-        let outputs = self
+        let roles = self
             .roles
-            .finish(self.smooth_coeff.get(), &self.norm_params);
+            .finish(self.smooth_coeff.get(), &self.norm_params)
+            .map(UnipolarF32::new);
+        let spectrum = self
+            .spectrum
+            .finish(buffer_rate.as_hz(), self.norm_params.ceiling_forget());
 
-        // Push the roles to ring buffers for the GUI viewer.
-        for (producer, &val) in self.envelope_producers.iter_mut().zip(&outputs) {
-            producer.push(val);
+        for (producer, &value) in self.envelope_producers.iter_mut().zip(&roles) {
+            producer.push(value);
         }
-
-        // Write the active role's value to the shared envelope atomic.
-        let active = self.settings.active_role.load(Ordering::Relaxed) as usize;
-        let active = Role::from_index(active).unwrap_or(ProcessorSettingsInner::DEFAULT_ROLE);
-        self.settings.envelope.set(outputs[active.index()]);
+        self.frames.publish(AudioFrame::new(roles, spectrum));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame_buffer::{FrameReader, frame_buffer};
 
     fn channels(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("a test processor has at least one channel")
     }
 
-    fn test_producers() -> [EnvelopeProducer; NUM_ROLES] {
-        envelope_ring_buffers().producers
+    /// A processor of `channel_count` channels at `sample_rate`, and the
+    /// reading end of its frames.
+    fn new_processor(
+        settings: &ProcessorSettings,
+        sample_rate: u32,
+        channel_count: usize,
+    ) -> (Processor, FrameReader) {
+        let (producer, reader) = frame_buffer();
+        let processor = Processor::new(
+            settings.clone(),
+            sample_rate,
+            channels(channel_count),
+            envelope_ring_buffers().producers,
+            producer,
+        );
+        (processor, reader)
     }
 
     #[test]
@@ -788,8 +841,7 @@ mod tests {
     fn a_new_processor_does_not_start_at_full_scale() {
         let settings = ProcessorSettings::default();
         let sample_rate = 48000_u32;
-        let mut processor =
-            Processor::new(settings.clone(), sample_rate, channels(1), test_producers());
+        let (mut processor, mut frames) = new_processor(&settings, sample_rate, 1);
         // A third of full scale, so full scale is unambiguously wrong.
         let mut peak = 0.0_f32;
         for buffer in 0..80 {
@@ -800,7 +852,7 @@ mod tests {
                 })
                 .collect();
             processor.process(&samples);
-            peak = peak.max(settings.envelope.get());
+            peak = peak.max(frames.latest().role(Role::Bass).val() as f32);
         }
         assert!(
             peak < 0.9,
@@ -908,12 +960,7 @@ mod tests {
     #[test]
     fn clip_indicator_holds_after_a_clipped_buffer() {
         // 48 frames at 48 kHz: each buffer is 1 ms.
-        let mut processor = Processor::new(
-            ProcessorSettings::default(),
-            48000,
-            channels(1),
-            test_producers(),
-        );
+        let (mut processor, _frames) = new_processor(&ProcessorSettings::default(), 48000, 1);
         let clean = vec![0.5_f32; 48];
         let mut clipped = clean.clone();
         clipped[20..28].fill(1.0);
@@ -947,12 +994,7 @@ mod tests {
     /// The meter handle stops upgrading once its processor is dropped.
     #[test]
     fn input_meter_lives_as_long_as_its_processor() {
-        let processor = Processor::new(
-            ProcessorSettings::default(),
-            48000,
-            channels(1),
-            test_producers(),
-        );
+        let (processor, _frames) = new_processor(&ProcessorSettings::default(), 48000, 1);
         let meter = processor.input_meter();
         assert!(
             meter.upgrade().is_some(),
@@ -966,7 +1008,7 @@ mod tests {
     }
 
     /// Helper: feed a processor one mono signal in 48-sample buffers for the
-    /// given duration. Returns the final envelope value.
+    /// given duration. Returns Bass's final value.
     fn run_processor(
         settings: &ProcessorSettings,
         sample_rate: u32,
@@ -975,8 +1017,7 @@ mod tests {
     ) -> f32 {
         let buffer_size = 48;
         let total_samples = (duration_secs * sample_rate as f32) as usize;
-        let mut processor =
-            Processor::new(settings.clone(), sample_rate, channels(1), test_producers());
+        let (mut processor, mut frames) = new_processor(settings, sample_rate, 1);
 
         let mut idx = 0;
         while idx < total_samples {
@@ -988,6 +1029,6 @@ mod tests {
             idx = end;
         }
 
-        settings.envelope.get()
+        frames.latest().role(Role::Bass).val() as f32
     }
 }

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::time::Duration;
 use strum::VariantArray;
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::{Slow, Smoothed};
 use tunnels_shapes::{Arity, Secondary, ShapeFamily};
@@ -346,7 +347,7 @@ impl Tunnel {
     }
 
     /// Update the state of this tunnel in preparation for drawing a frame.
-    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+    pub fn update_state(&mut self, delta_t: Duration, audio: &AudioState) {
         // Update smoothers.
         self.x_offset.update_state(delta_t);
         self.y_offset.update_state(delta_t);
@@ -359,7 +360,7 @@ impl Tunnel {
 
         // Update the state of the animations.
         for anim in &mut self.anims {
-            anim.animation.update_state(delta_t, audio_envelope);
+            anim.animation.update_state(delta_t, audio);
         }
         let timestep_secs = delta_t.as_secs_f64();
 
@@ -400,7 +401,7 @@ impl Tunnel {
         // where its smoother has got to and what the amplitude works out to —
         // none of which depends on where in the figure the question is asked.
         let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] =
-            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio_envelope));
+            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio));
 
         match self.shape_mode {
             ShapeMode::Ellipse => Layer::Segments(self.render_segments(
@@ -1254,7 +1255,7 @@ mod test {
                 talkback.0
             );
 
-            tunnel.update_state(Duration::from_millis(16), UnipolarFloat::ZERO);
+            tunnel.update_state(Duration::from_millis(16), &AudioState::default());
             let gliding = rendered(&tunnel);
             assert!(
                 gliding != before && gliding != target,
@@ -1262,7 +1263,7 @@ mod test {
                 control()
             );
 
-            tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+            tunnel.update_state(Duration::from_secs(1), &AudioState::default());
             assert_eq!(target, rendered(&tunnel), "{:?} did not land", control());
         }
     }
@@ -1346,7 +1347,7 @@ mod test {
         assert_eq!(fill.figure_angle, 0.0, "a fresh figure is not turned");
 
         tunnel.handle_state_change(StateChange::MarqueeSpeed(BipolarFloat::ONE), &mut Silent);
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         let Layer::Fill(fill) = render_fixture(&tunnel) else {
             panic!("a sprite mode renders a figure");
         };
@@ -1816,7 +1817,7 @@ mod test {
                     clocks: &ClockBank::default().as_static(),
                     palette: &ColorPalette::default(),
                     positions: &PositionBank::default(),
-                    audio_envelope: UnipolarFloat::ZERO,
+                    audio: &AudioState::default(),
                 },
             );
             let Layer::Segments(run) = &layer else {
@@ -1910,7 +1911,7 @@ mod test {
                     clocks: &ClockBank::default().as_static(),
                     palette: &ColorPalette::default(),
                     positions: &PositionBank::default(),
-                    audio_envelope: UnipolarFloat::ZERO,
+                    audio: &AudioState::default(),
                 },
             )
         };
@@ -1997,7 +1998,7 @@ mod test {
             // Smoothing is reached over time rather than set. Standing still
             // otherwise: the animation runs at no speed, so its own clock does
             // not move off the start of the cycle.
-            tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+            tunnel.update_state(Duration::from_secs(1), &AudioState::default());
             let Layer::Fill(fill) = render_fixture(&tunnel) else {
                 panic!("a sprite mode renders a figure, not segments");
             };
@@ -2163,7 +2164,7 @@ mod test {
                 clocks: &ClockBank::default().as_static(),
                 palette: &ColorPalette::default(),
                 positions: &PositionBank::default(),
-                audio_envelope: UnipolarFloat::ZERO,
+                audio: &AudioState::default(),
             },
         )
     }
@@ -2272,7 +2273,7 @@ pub mod fixture {
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2312,7 +2313,7 @@ pub mod fixture {
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2337,7 +2338,7 @@ pub mod fixture {
             StateChange::Thickness(UnipolarFloat::new(thickness)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         tunnel
     }
 
@@ -2358,7 +2359,7 @@ pub mod fixture {
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2369,7 +2370,7 @@ pub mod fixture {
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2402,7 +2403,7 @@ pub mod fixture {
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2413,7 +2414,7 @@ pub mod fixture {
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2430,7 +2431,7 @@ pub mod fixture {
             AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         tunnel
     }
 
@@ -2451,7 +2452,7 @@ pub mod fixture {
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2462,7 +2463,7 @@ pub mod fixture {
             ..Default::default()
         };
         set_segments(&mut tunnel, 24);
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2474,7 +2475,7 @@ pub mod fixture {
             ..Default::default()
         };
         set_segments(&mut tunnel, 24);
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2490,7 +2491,7 @@ pub mod fixture {
             StateChange::Thickness(UnipolarFloat::new(0.1)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2510,7 +2511,7 @@ pub mod fixture {
             AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2531,7 +2532,7 @@ pub mod fixture {
             AnimControlMessage::Set(AnimStateChange::Size(UnipolarFloat::ONE)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -2553,7 +2554,7 @@ pub mod fixture {
             AnimControlMessage::Set(AnimStateChange::NPeriods(1)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         tunnel
     }
 
@@ -2595,7 +2596,7 @@ pub mod fixture {
             StateChange::MarqueeSpeed(BipolarFloat::new(0.5)),
             &mut NoopEmitter,
         );
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
 
         let frame_interval = Duration::from_millis(25);
         let frames_per_snapshot = 16;
@@ -2612,12 +2613,12 @@ pub mod fixture {
 
                     positions: &PositionBank::default(),
 
-                    audio_envelope: UnipolarFloat::ZERO,
+                    audio: &AudioState::default(),
                 },
             );
             snapshots.push(vec![arcs]);
             for _ in 0..frames_per_snapshot {
-                tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
+                tunnel.update_state(frame_interval, &AudioState::default());
             }
         }
         snapshots
@@ -2631,7 +2632,7 @@ pub mod fixture {
         let mut tunnel = Tunnel::default();
         configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
         for _ in 0..n_frames {
-            tunnel.update_state(frame_interval, UnipolarFloat::ZERO);
+            tunnel.update_state(frame_interval, &AudioState::default());
         }
         let arcs = tunnel.render(
             UnipolarFloat::ONE,
@@ -2643,7 +2644,7 @@ pub mod fixture {
 
                 positions: &PositionBank::default(),
 
-                audio_envelope: UnipolarFloat::ZERO,
+                audio: &AudioState::default(),
             },
         );
         vec![arcs]
@@ -3172,7 +3173,7 @@ pub mod fixture {
                 .animation
                 .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
         }
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        tunnel.update_state(Duration::from_secs(1), &AudioState::default());
         snapshot(render_default(&tunnel))
     }
 
@@ -3257,7 +3258,7 @@ pub mod fixture {
                 clocks: &ClockBank::default().as_static(),
                 palette: &ColorPalette::default(),
                 positions: &PositionBank::default(),
-                audio_envelope: UnipolarFloat::ZERO,
+                audio: &AudioState::default(),
             },
             &mut layers,
         );
@@ -3458,7 +3459,7 @@ pub mod fixture {
                 clocks: &ClockBank::default().as_static(),
                 palette: &ColorPalette::default(),
                 positions: &PositionBank::default(),
-                audio_envelope: UnipolarFloat::ZERO,
+                audio: &AudioState::default(),
             },
         )
     }

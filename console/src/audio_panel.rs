@@ -5,9 +5,8 @@ use gui_common::audio_panel::{
     AudioCommands, AudioPanel as SharedAudioPanel, AudioPanelState as SharedAudioPanelState,
     AudioSnapshot,
 };
-use tunnels::audio::roles::Role;
 use tunnels::audio::time::HalfLife;
-use tunnels::audio::{AudioInput, ControlMessage, StateChange};
+use tunnels::audio::{AudioInput, ControlMessage, Role, StateChange};
 use tunnels::control::MetaCommand;
 
 use crate::ui_util::GuiContext;
@@ -49,11 +48,7 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
     }
 
     fn set_active_role(&mut self, role: Role) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::ActiveRole(role),
-            )));
+        let _ = self.ctx.send_command(MetaCommand::SetActiveRole(role));
     }
 
     fn set_norm_floor_halflife(&mut self, halflife: HalfLife) {
@@ -96,12 +91,14 @@ pub(crate) fn render_audio_panel(
     ctx: GuiContext<'_>,
     state: &mut AudioPanelState,
     snapshot: &AudioSnapshot,
+    active_role: Role,
 ) {
     let mut commands = ConsoleAudioCommands { ctx };
     SharedAudioPanel {
         commands: &mut commands,
         state,
         snapshot,
+        active_role,
     }
     .ui(ui);
 }

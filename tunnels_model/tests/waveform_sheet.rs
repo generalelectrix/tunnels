@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use golden_image::{Goldens, Tolerance};
 use image::{Rgba, RgbaImage};
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::{Phase, UnipolarFloat};
 use tunnels_model::animation::{
     Animation, ControlMessage, EmitStateChange, PreparedAnimation, StateChange, Waveform,
@@ -202,12 +203,12 @@ fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnim
         animation.control(ControlMessage::Set(change), &mut Discard);
     }
 
-    animation.update_state(SETTLE, UnipolarFloat::ZERO);
+    animation.update_state(SETTLE, &AudioState::default());
     animation.control(
         ControlMessage::Set(StateChange::Size(UnipolarFloat::ONE)),
         &mut Discard,
     );
-    animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
+    animation.prepare(&ClockBank::default(), &AudioState::default())
 }
 
 /// The rows each noise offset traces in one cell, offset 0 first.

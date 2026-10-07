@@ -1,8 +1,10 @@
 //! Lock-free single-producer single-consumer ring buffer for streaming
-//! f32 samples from the audio thread to the GUI thread.
+//! envelope values from the audio thread to the GUI thread.
 //!
 //! Thin wrappers over `rtrb` that expose only the operations we need
 //! and keep the dependency from leaking into the rest of the codebase.
+
+use tunnels_lib::audio::UnipolarF32;
 
 /// Create a producer/consumer pair backed by a ring buffer of the given capacity.
 pub fn envelope_ring_buffer(capacity: usize) -> (EnvelopeProducer, EnvelopeStream) {
@@ -11,21 +13,21 @@ pub fn envelope_ring_buffer(capacity: usize) -> (EnvelopeProducer, EnvelopeStrea
 }
 
 /// Producer side of an envelope ring buffer. Lives on the audio thread.
-pub struct EnvelopeProducer(rtrb::Producer<f32>);
+pub struct EnvelopeProducer(rtrb::Producer<UnipolarF32>);
 
 impl EnvelopeProducer {
     /// Push a sample. If the buffer is full, the sample is silently dropped.
-    pub fn push(&mut self, value: f32) {
+    pub fn push(&mut self, value: UnipolarF32) {
         let _ = self.0.push(value);
     }
 }
 
 /// Consumer side of an envelope ring buffer. Lives on the GUI thread.
-pub struct EnvelopeStream(rtrb::Consumer<f32>);
+pub struct EnvelopeStream(rtrb::Consumer<UnipolarF32>);
 
 impl EnvelopeStream {
     /// Read all available samples into `dest`.
-    pub fn drain_into(&mut self, dest: &mut Vec<f32>) {
+    pub fn drain_into(&mut self, dest: &mut Vec<UnipolarF32>) {
         while let Ok(value) = self.0.pop() {
             dest.push(value);
         }
@@ -46,17 +48,22 @@ impl EnvelopeStream {
 mod tests {
     use super::*;
 
+    /// A distinct envelope value per small integer.
+    fn u(i: usize) -> UnipolarF32 {
+        UnipolarF32::new(i as f32 / 10.0)
+    }
+
     #[test]
     fn push_and_drain_basic() {
         let (mut p, mut c) = envelope_ring_buffer(8);
         let mut out = Vec::new();
 
-        p.push(1.0);
-        p.push(2.0);
-        p.push(3.0);
+        p.push(u(1));
+        p.push(u(2));
+        p.push(u(3));
 
         c.drain_into(&mut out);
-        assert_eq!(out, vec![1.0, 2.0, 3.0]);
+        assert_eq!(out, vec![u(1), u(2), u(3)]);
     }
 
     #[test]
@@ -73,15 +80,15 @@ mod tests {
         let (mut p, mut c) = envelope_ring_buffer(8);
         let mut out = Vec::new();
 
-        p.push(1.0);
-        p.push(2.0);
+        p.push(u(1));
+        p.push(u(2));
         c.drain_into(&mut out);
-        assert_eq!(out, vec![1.0, 2.0]);
+        assert_eq!(out, vec![u(1), u(2)]);
 
         out.clear();
-        p.push(3.0);
+        p.push(u(3));
         c.drain_into(&mut out);
-        assert_eq!(out, vec![3.0]);
+        assert_eq!(out, vec![u(3)]);
     }
 
     #[test]
@@ -91,21 +98,21 @@ mod tests {
 
         // Write 6 samples into a 4-slot buffer — last 2 are dropped.
         for i in 0..6 {
-            p.push(i as f32);
+            p.push(u(i));
         }
 
         c.drain_into(&mut out);
         // rtrb is non-lossy: the first 4 are kept, the last 2 are dropped.
-        assert_eq!(out, vec![0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(out, vec![u(0), u(1), u(2), u(3)]);
     }
 
     #[test]
     fn clear_discards_data() {
         let (mut p, mut c) = envelope_ring_buffer(8);
 
-        p.push(1.0);
-        p.push(2.0);
-        p.push(3.0);
+        p.push(u(1));
+        p.push(u(2));
+        p.push(u(3));
 
         c.clear();
 
