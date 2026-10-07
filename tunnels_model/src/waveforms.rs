@@ -242,25 +242,24 @@ mod test {
             .collect()
     }
 
-    /// The smoothings a waveform is sampled at: both ends of the range and
-    /// two points inside it.
-    const SMOOTHINGS: [f64; 4] = [0.0, 0.25, 0.5, 1.0];
+    /// The smoothings a waveform is sampled at: both ends of the range, and
+    /// enough points inside it that a dwell's expected width has to be a model
+    /// of where the samples sit rather than a rounding that agrees at a few.
+    const SMOOTHINGS: [f64; 9] = [0.0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.9, 0.999, 1.0];
 
     /// The duty cycles a waveform is sampled at: the whole period and two
     /// windows the cycle has to compress into.
     const DUTY_CYCLES: [f64; 3] = [1.0, 0.5, 0.25];
 
-    /// Pulse mode rescales a waveform into the unipolar range rather than
-    /// clipping the half of it that falls below zero. A waveform symmetric
-    /// about the middle of its period stays symmetric once rescaled, where a
-    /// clipped one does not: clipping widens the trough by whatever the peak
-    /// loses.
+    /// A sine and a triangle reach the unipolar range by being rescaled into
+    /// it rather than clipped at zero, and both are symmetric about the middle
+    /// of their period, so both stay symmetric once pulsed. A clipped waveform
+    /// would not: clipping widens the trough by whatever the peak loses.
     ///
-    /// A square is not among them. Its pulse is deliberately a leading edge —
-    /// full for the first half of its window and empty for the second — which
-    /// is what keeps a duty cycle from moving the pulse as it shortens it.
+    /// A square pulse is built rather than rescaled and is asymmetric by
+    /// design, so it is covered by its own tests instead.
     #[test]
-    fn a_pulse_keeps_the_symmetry_of_the_waveform_it_rescales() {
+    fn a_pulse_keeps_the_symmetry_of_its_waveform() {
         for (name, waveform) in [
             ("sine", sine as fn(&WaveformArgs) -> f64),
             ("triangle", triangle),
@@ -297,8 +296,16 @@ mod test {
                 let samples = pulse_period(square, smoothing, duty_cycle);
                 let dwell = |level: f64| samples.iter().filter(|v| **v == level).count();
                 let (high, low) = (dwell(1.0), dwell(0.0));
-                let expected_high = ((0.5 - 0.5 * smoothing) * SAMPLES as f64).round() as usize;
-                let expected_low = SAMPLES / 2;
+                // Counted from where the samples sit rather than from the
+                // width of the dwell, because a sample never lands on a ramp's
+                // boundary and rounding the width agrees with that only for
+                // some smoothings.
+                let scaled = |i: usize| (i as f64 + 0.5) / SAMPLES as f64;
+                let ramp = 0.25 * smoothing;
+                let expected_high = (0..SAMPLES)
+                    .filter(|i| (ramp..=0.5 - ramp).contains(&scaled(*i)))
+                    .count();
+                let expected_low = (0..SAMPLES).filter(|i| scaled(*i) >= 0.5).count();
                 assert_eq!(
                     (high, low),
                     (expected_high, expected_low),
@@ -350,10 +357,8 @@ mod test {
     /// resting nowhere, which is a triangle *wave*, not a pulse.
     #[test]
     fn a_fully_smoothed_square_pulse_is_a_triangle_pulse_at_half_the_duty_cycle() {
-        // Sampled across the whole period rather than each waveform's own
-        // window, because the windows are what differ: the claim is that the
-        // two read alike at the same phase, not that they fill their own
-        // windows alike.
+        // Both are read at the same absolute phase, the windows they occupy
+        // being what differs between them.
         let at = |waveform: fn(&WaveformArgs) -> f64, smoothing: f64, duty_cycle: f64, phase| {
             waveform(&WaveformArgs {
                 phase_spatial: Phase::new(phase),
@@ -379,14 +384,13 @@ mod test {
         }
     }
 
-    /// A pulse occupies the unipolar range, and begins at the bottom of it
-    /// wherever the waveform it rescales rises from rest, so that the pulse can
-    /// be read as an amount of something rather than as a displacement either
-    /// side of nothing.
+    /// A pulse occupies the unipolar range, and every pulse that rises from
+    /// rest begins at the bottom of it, so that the pulse reads as an amount of
+    /// something rather than as a displacement either side of nothing.
     ///
-    /// A square begins at the top instead, its pulse being a leading edge; it
-    /// still occupies the range and still reaches the bottom of it, so only the
-    /// claim about where it starts is withheld.
+    /// A square pulse begins at the top of the range instead, being a leading
+    /// edge. The range itself is still asserted for it; where it rests is
+    /// pinned by the test for its dwells.
     #[test]
     fn a_pulse_spans_the_unipolar_range_from_zero() {
         for (name, waveform, starts_at_rest) in [
