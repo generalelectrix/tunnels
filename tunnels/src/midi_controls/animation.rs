@@ -19,8 +19,7 @@ const SMOOTHING: Mapping = cc_ch0(51);
 
 // waveform type buttons
 const SINE_SQUARE: Mapping = note_on_ch0(24);
-const TRIANGLE: Mapping = note_on_ch0(25);
-const SAWTOOTH: Mapping = note_on_ch0(27);
+const TRI_SAW: Mapping = note_on_ch0(25);
 const NOISE: Mapping = note_on_ch0(28);
 const CONSTANT: Mapping = note_on_ch0(29);
 
@@ -35,7 +34,7 @@ const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
 lazy_static! {
     static ref WAVEFORM_SELECT_BUTTONS: RadioButtons = RadioButtons {
-        mappings: vec!(SINE_SQUARE, TRIANGLE, SAWTOOTH, NOISE, CONSTANT), off: 0, on: 1,
+        mappings: vec!(SINE_SQUARE, TRI_SAW, NOISE, CONSTANT), off: 0, on: 1,
     };
     static ref N_PERIODS_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..15).map(note_on_ch0).collect(), off: 0, on: 1,
@@ -64,8 +63,7 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         DUTY_CYCLE => Animation(Set(DutyCycle(unipolar_from_midi(v)))),
         SMOOTHING => Animation(Set(Smoothing(unipolar_from_midi(v)))),
         SINE_SQUARE => Animation(Set(Waveform(SineSquare))),
-        TRIANGLE => Animation(Set(Waveform(Triangle))),
-        SAWTOOTH => Animation(Set(Waveform(Sawtooth))),
+        TRI_SAW => Animation(Set(Waveform(TriSaw))),
         NOISE => Animation(Set(Waveform(Noise))),
         CONSTANT => Animation(Set(Waveform(Constant))),
         PULSE => Animation(TogglePulse),
@@ -111,8 +109,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut impl MidiOutput) 
             WAVEFORM_SELECT_BUTTONS.select(
                 match v {
                     SineSquare => SINE_SQUARE,
-                    Triangle => TRIANGLE,
-                    Sawtooth => SAWTOOTH,
+                    TriSaw => TRI_SAW,
                     Noise => NOISE,
                     Constant => CONSTANT,
                 },

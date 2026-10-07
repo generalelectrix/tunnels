@@ -2158,10 +2158,10 @@ pub mod fixture {
 
         for (i, anim) in tunnel.anims.iter_mut().enumerate() {
             anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::Waveform(match i % 3 {
-                    0 => Waveform::SineSquare,
-                    1 => Waveform::Triangle,
-                    _ => Waveform::Sawtooth,
+                AnimControlMessage::Set(AnimStateChange::Waveform(if i.is_multiple_of(2) {
+                    Waveform::SineSquare
+                } else {
+                    Waveform::TriSaw
                 })),
                 &mut NoopEmitter,
             );
@@ -2620,8 +2620,7 @@ pub mod fixture {
     /// the enum for the same reason.
     const WAVEFORMS: [Waveform; Waveform::VARIANTS.len()] = [
         Waveform::SineSquare,
-        Waveform::Triangle,
-        Waveform::Sawtooth,
+        Waveform::TriSaw,
         Waveform::Noise,
         Waveform::Constant,
     ];

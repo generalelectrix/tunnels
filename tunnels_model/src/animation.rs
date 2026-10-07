@@ -17,8 +17,7 @@ use tunnels_lib::smooth::Smoothed;
 #[derive(Copy, Clone, Serialize, Deserialize, Debug, VariantArray)]
 pub enum Waveform {
     SineSquare,
-    Triangle,
-    Sawtooth,
+    TriSaw,
     Noise,
     Constant,
 }
@@ -30,7 +29,7 @@ impl Waveform {
     /// otherwise resolve it across a coordinate can resolve it once.
     pub fn varies_with_phase(self) -> bool {
         match self {
-            Self::SineSquare | Self::Triangle | Self::Sawtooth | Self::Noise => true,
+            Self::SineSquare | Self::TriSaw | Self::Noise => true,
             Self::Constant => false,
         }
     }
@@ -420,8 +419,7 @@ impl PreparedAnimation {
             Waveform::SineSquare => {
                 waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
             }
-            Waveform::Sawtooth => waveforms::sawtooth(&self.waveform_args(spatial_phase_offset)),
-            Waveform::Triangle => waveforms::triangle(&self.waveform_args(spatial_phase_offset)),
+            Waveform::TriSaw => waveforms::tri_saw(&self.waveform_args(spatial_phase_offset)),
             Waveform::Noise => {
                 // Handle duty cycle - this is a bit odd compared to waveforms,
                 // since noise isn't periodic. Rather than trying to compress

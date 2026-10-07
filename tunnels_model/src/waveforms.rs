@@ -75,33 +75,6 @@ impl WaveformArgsSpatial {
     }
 }
 
-pub fn triangle(args: &WaveformArgs) -> f64 {
-    let (amplitude, args) = args.spatial_params();
-    amplitude * triangle_spatial(&args)
-}
-
-fn triangle_spatial(args: &WaveformArgsSpatial) -> f64 {
-    if args.outside_duty_cycle() {
-        return 0.0;
-    }
-    let phase = args.duty_cycle_scaled_phase();
-    if args.pulse {
-        return if phase < 0.5 {
-            2.0 * phase.val()
-        } else {
-            2.0 * (1.0 - phase.val())
-        };
-    }
-
-    if phase < 0.25 {
-        4.0 * phase.val()
-    } else if phase > 0.75 {
-        4.0 * (phase.val() - 1.0)
-    } else {
-        2.0 - 4.0 * phase.val()
-    }
-}
-
 /// A square whose edges are cosine, from a hard edge at the bottom of the
 /// smoothing range to a sine at the top.
 pub fn sine_square(args: &WaveformArgs) -> f64 {
@@ -187,19 +160,21 @@ fn sine_square_spatial(args: &WaveformArgsSpatial) -> f64 {
     }
 }
 
-pub fn sawtooth(args: &WaveformArgs) -> f64 {
+/// A ramp whose turn opens with smoothing, from a sawtooth at the bottom of
+/// the range to a triangle at the top.
+pub fn tri_saw(args: &WaveformArgs) -> f64 {
     let (amplitude, args) = args.spatial_params();
-    amplitude * sawtooth_spatial(&args)
+    amplitude * tri_saw_spatial(&args)
 }
 
-fn sawtooth_spatial(args: &WaveformArgsSpatial) -> f64 {
+fn tri_saw_spatial(args: &WaveformArgsSpatial) -> f64 {
     if args.outside_duty_cycle() {
         return 0.0;
     }
     let phase = args.duty_cycle_scaled_phase();
 
     if args.pulse {
-        return sawtooth_spatial(&WaveformArgsSpatial {
+        return tri_saw_spatial(&WaveformArgsSpatial {
             phase: phase * UnipolarFloat::new(0.5),
             smoothing: args.smoothing,
             duty_cycle: UnipolarFloat::new(1.0),
@@ -294,21 +269,25 @@ mod test {
     /// windows the cycle has to compress into.
     const DUTY_CYCLES: [f64; 3] = [1.0, 0.5, 0.25];
 
-    /// A triangle and a sine square are each symmetric about the middle of
-    /// their period, and each reaches the unipolar range by being rescaled
-    /// into it or built inside it rather than clipped at zero, so each stays
-    /// symmetric once pulsed. A clipped waveform would not: clipping widens
-    /// the trough by whatever the peak loses.
+    /// A waveform symmetric about the middle of its period reaches the
+    /// unipolar range by being rescaled into it or built inside it rather than
+    /// clipped at zero, so it stays symmetric once pulsed. A clipped waveform
+    /// would not: clipping widens the trough by whatever the peak loses.
     ///
-    /// A sawtooth is asymmetric everywhere but the top of its smoothing range,
-    /// where it is a triangle, so it is not one of these.
+    /// A sine square is symmetric across the whole of its smoothing range. A
+    /// tri-saw is a ramp, and so asymmetric, everywhere but the top of its
+    /// range, where it is a triangle.
     #[test]
     fn a_pulse_keeps_the_symmetry_of_its_waveform() {
-        for (name, waveform) in [
-            ("triangle", triangle as fn(&WaveformArgs) -> f64),
-            ("sine square", sine_square),
+        for (name, waveform, smoothings) in [
+            (
+                "sine square",
+                sine_square as fn(&WaveformArgs) -> f64,
+                &SMOOTHINGS[..],
+            ),
+            ("tri saw", tri_saw, &[1.0][..]),
         ] {
-            for smoothing in SMOOTHINGS {
+            for smoothing in smoothings.iter().copied() {
                 for duty_cycle in DUTY_CYCLES {
                     let samples = pulse_period(waveform, smoothing, duty_cycle);
                     for i in 0..SAMPLES / 2 {
@@ -337,9 +316,8 @@ mod test {
     #[test]
     fn the_phase_at_the_duty_cycle_is_outside_the_window() {
         for (name, waveform) in [
-            ("triangle", triangle as fn(&WaveformArgs) -> f64),
-            ("sine square", sine_square),
-            ("sawtooth", sawtooth),
+            ("sine square", sine_square as fn(&WaveformArgs) -> f64),
+            ("tri saw", tri_saw),
         ] {
             for duty_cycle in DUTY_CYCLES.into_iter().filter(|d| *d < 1.0) {
                 for smoothing in SMOOTHINGS {
@@ -370,9 +348,8 @@ mod test {
     #[test]
     fn a_pulse_spans_the_unipolar_range_from_zero() {
         for (name, waveform) in [
-            ("triangle", triangle as fn(&WaveformArgs) -> f64),
-            ("sine square", sine_square),
-            ("sawtooth", sawtooth),
+            ("sine square", sine_square as fn(&WaveformArgs) -> f64),
+            ("tri saw", tri_saw),
         ] {
             for smoothing in SMOOTHINGS {
                 for duty_cycle in DUTY_CYCLES {
@@ -403,9 +380,8 @@ mod test {
     #[test]
     fn a_pulse_compressed_by_a_duty_cycle_leaves_the_rest_of_the_period_silent() {
         for (name, waveform) in [
-            ("triangle", triangle as fn(&WaveformArgs) -> f64),
-            ("sine square", sine_square),
-            ("sawtooth", sawtooth),
+            ("sine square", sine_square as fn(&WaveformArgs) -> f64),
+            ("tri saw", tri_saw),
         ] {
             for smoothing in SMOOTHINGS {
                 for duty_cycle in DUTY_CYCLES.into_iter().filter(|d| *d < 1.0) {

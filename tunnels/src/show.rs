@@ -745,8 +745,7 @@ mod test {
                 "anim/waveform_sine_square",
                 A::Waveform(Waveform::SineSquare),
             );
-            a("anim/waveform_triangle", A::Waveform(Waveform::Triangle));
-            a("anim/waveform_sawtooth", A::Waveform(Waveform::Sawtooth));
+            a("anim/waveform_tri_saw", A::Waveform(Waveform::TriSaw));
             a("anim/waveform_noise", A::Waveform(Waveform::Noise));
             a("anim/waveform_constant", A::Waveform(Waveform::Constant));
             a("anim/n_periods", A::NPeriods(3));
