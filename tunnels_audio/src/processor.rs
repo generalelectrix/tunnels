@@ -2,7 +2,8 @@
 //! input.
 //!
 //! On the mono mix of the input channels: automatic trim → DC blocker →
-//! constant-Q resonator bank (one peak per band per buffer) → the four roles
+//! constant-Q resonator bank → the four roles, which follow the bank sample by
+//! sample and report once per buffer
 //! (see [`crate::roles`]). The role selected by `active_role` feeds the show.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -580,7 +581,11 @@ impl Processor {
         let sample_rate = sample_rate as f32;
         let tuning = NormalizerTuning::DEFAULT;
         let bank = ResonatorBank::new(sample_rate);
-        let roles = Roles::new(std::array::from_fn(|b| bank.is_live(b)), &tuning);
+        let roles = Roles::new(
+            std::array::from_fn(|b| bank.is_live(b)),
+            &tuning,
+            sample_rate,
+        );
         Self {
             envelope_attack: f32::NAN,
             envelope_release: f32::NAN,
@@ -686,12 +691,12 @@ impl Processor {
             let mono = frame.iter().sum::<f32>() / ch_count_f * gain;
             let mono = if mono.is_finite() { mono } else { 0.0 };
             self.bank.push(self.dc_blocker.process(mono));
+            self.roles.push_sample(&self.bank);
         }
 
-        let peaks = self.bank.take_peaks();
         let outputs = self
             .roles
-            .process(&peaks, self.smooth_coeff.get(), &self.norm_params);
+            .finish(self.smooth_coeff.get(), &self.norm_params);
 
         // Push the roles to ring buffers for the GUI viewer.
         for (producer, &val) in self.envelope_producers.iter_mut().zip(&outputs) {

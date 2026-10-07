@@ -145,6 +145,16 @@ impl ResonatorBank {
         }
     }
 
+    /// A band's envelope at the latest sample.
+    #[inline]
+    pub fn magnitude(&self, band: usize) -> f32 {
+        let (re, im) = (
+            self.state_re[ORDER - 1][band],
+            self.state_im[ORDER - 1][band],
+        );
+        2.0 * (re * re + im * im).sqrt()
+    }
+
     /// Each band's peak envelope since the last call, and start the next.
     pub fn take_peaks(&mut self) -> [f32; NUM_BANDS] {
         let peaks = std::array::from_fn(|band| 2.0 * self.peak_sq[band].sqrt());

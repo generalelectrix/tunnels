@@ -9,7 +9,7 @@
 //! | low end | [`Role::Kick`] | [`Role::Bass`] |
 //! | high end | [`Role::Hats`] | [`Role::Shimmer`] |
 
-use crate::bank::NUM_BANDS;
+use crate::bank::{NUM_BANDS, ResonatorBank};
 use crate::processor::{
     AdaptiveNormalizer, AsymmetricOnePole, BandStages, NormalizerParams, NormalizerTuning,
     OnePoleSmoother, halflife_to_coeff,
@@ -85,6 +85,10 @@ fn peak_follower(secs: f32, rate: f32) -> AsymmetricOnePole {
 /// Hits in one band: how far its envelope stands above where it has just
 /// been, as a fraction of how loud the band has recently been, so a hit
 /// reads the same at any level.
+///
+/// Traced at the audio rate, sample by sample, and reported per buffer as
+/// the largest hit the buffer held, so a hit reads the same wherever it
+/// falls relative to the buffer grid.
 struct KickRole {
     /// The band's envelope, holding each peak for a few milliseconds.
     envelope: AsymmetricOnePole,
@@ -96,7 +100,9 @@ struct KickRole {
     /// The band's loudest over the last phrase, for gating out noise once the
     /// music has stopped.
     phrase_peak: AsymmetricOnePole,
-    /// The output, falling away after each hit.
+    /// The largest hit since the last buffer was reported.
+    buffer_hit: f32,
+    /// The output, falling away after each hit, at the buffer rate.
     release: AsymmetricOnePole,
 }
 
@@ -111,107 +117,182 @@ impl KickRole {
     /// And below this absolute level, where there is nothing but noise.
     const ABSOLUTE_GATE: f32 = 0.001;
 
-    fn new(rate: f32) -> Self {
+    /// The release follower is replaced once the buffer rate is known.
+    const RELEASE_SECS: f32 = 0.080;
+
+    fn new(sample_rate: f32) -> Self {
         Self {
-            envelope: peak_follower(0.004, rate),
-            baseline: AsymmetricOnePole::new(tc_coeff(0.030, rate), tc_coeff(0.005, rate)),
-            recent_peak: peak_follower(3.0, rate),
-            phrase_peak: peak_follower(20.0, rate),
-            release: peak_follower(0.080, rate),
+            envelope: peak_follower(0.004, sample_rate),
+            baseline: AsymmetricOnePole::new(
+                tc_coeff(0.030, sample_rate),
+                tc_coeff(0.005, sample_rate),
+            ),
+            recent_peak: peak_follower(3.0, sample_rate),
+            phrase_peak: peak_follower(20.0, sample_rate),
+            buffer_hit: 0.0,
+            release: peak_follower(Self::RELEASE_SECS, 0.0),
         }
     }
 
-    fn process(&mut self, band_peak: f32) -> f32 {
-        let level = self.envelope.step(band_peak);
+    /// Set the buffer rate the output's release runs at.
+    fn set_buffer_rate(&mut self, rate: f32) {
+        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate);
+    }
+
+    /// Follow the band's envelope at one sample.
+    #[inline]
+    fn push(&mut self, magnitude: f32) {
+        let level = self.envelope.step(magnitude);
         let baseline = self.baseline.step(level);
         let recent = self.recent_peak.step(level);
         let phrase = self.phrase_peak.step(level);
-        let rise = (level - baseline).max(0.0) / recent.max(1e-9);
-        let gated = level > phrase * Self::RELATIVE_GATE && level > Self::ABSOLUTE_GATE;
-        let hit = if gated {
-            ((rise - Self::KNEE) / (Self::FULL - Self::KNEE)).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        if level > phrase * Self::RELATIVE_GATE && level > Self::ABSOLUTE_GATE {
+            let rise = (level - baseline).max(0.0) / recent.max(1e-9);
+            let hit = ((rise - Self::KNEE) / (Self::FULL - Self::KNEE)).clamp(0.0, 1.0);
+            self.buffer_hit = self.buffer_hit.max(hit);
+        }
+    }
+
+    /// The output for the buffer just ended.
+    fn finish(&mut self) -> f32 {
+        let hit = std::mem::take(&mut self.buffer_hit);
         self.release.step(hit)
     }
 }
 
-/// Buffers of level history a region keeps per band.
-const HISTORY: usize = 64;
+/// The highest level over a window that ends some time ago: at sample `n`,
+/// the maximum of the levels from `from` samples ago to `to` samples ago,
+/// exactly, at every sample.
+///
+/// A queue of the window's candidates for maximum, each larger than every
+/// candidate after it, makes each sample's update amortized constant time.
+/// Its storage is sized for the window when built, so following a signal
+/// allocates nothing.
+struct LaggedMax {
+    /// The last `to` levels, so each enters the window `to` samples late.
+    delay: Box<[f32]>,
+    delay_head: usize,
+    /// The candidates, as a ring of (sample index, level), oldest at `front`.
+    queue: Box<[(u64, f32)]>,
+    front: usize,
+    len: usize,
+    from: u64,
+    to: u64,
+    /// Samples followed so far.
+    n: u64,
+}
+
+impl LaggedMax {
+    fn new(from: usize, to: usize) -> Self {
+        let to = to.max(1);
+        let from = from.max(to);
+        Self {
+            delay: vec![0.0; to].into_boxed_slice(),
+            delay_head: 0,
+            queue: vec![(0, 0.0); from - to + 2].into_boxed_slice(),
+            front: 0,
+            len: 0,
+            from: from as u64,
+            to: to as u64,
+            n: 0,
+        }
+    }
+
+    /// Follow one more level, returning the window's maximum, or nothing until
+    /// the window has filled.
+    #[inline]
+    fn push(&mut self, level: f32) -> Option<f32> {
+        // The level `to` samples ago enters the window now.
+        let entering = std::mem::replace(&mut self.delay[self.delay_head], level);
+        self.delay_head = (self.delay_head + 1) % self.delay.len();
+        let cap = self.queue.len();
+        if self.n >= self.to {
+            let index = self.n - self.to;
+            while self.len > 0 && self.queue[(self.front + self.len - 1) % cap].1 <= entering {
+                self.len -= 1;
+            }
+            self.queue[(self.front + self.len) % cap] = (index, entering);
+            self.len += 1;
+        }
+        // Candidates from more than `from` samples ago have left it.
+        while self.len > 0 && self.queue[self.front].0 + self.from < self.n {
+            self.front = (self.front + 1) % cap;
+            self.len -= 1;
+        }
+        self.n += 1;
+        (self.n > self.from && self.len > 0).then(|| self.queue[self.front].1)
+    }
+}
 
 /// The most bands a region holds.
 const MAX_REGION: usize = 6;
 
-/// How sharply a group of bands has just risen: the median, across the bands,
-/// of each band's rise in dB above its own loudest over the preceding few
-/// milliseconds. A noisy hit rises in every band at once; a note rises in a
-/// few, so the median ignores it.
-///
-/// Fixed in size, so building one allocates nothing.
+/// How sharply a group of bands has just risen, traced sample by sample: the
+/// median, across the bands, of each band's rise in dB above its own loudest
+/// over the preceding few milliseconds. A noisy hit rises in every band at
+/// once; a note rises in a few, so the median ignores it.
 struct RiseRegion {
     bands: [usize; MAX_REGION],
     len: usize,
     envelopes: [AsymmetricOnePole; MAX_REGION],
-    /// Each band's recent levels in dB, newest at `head`.
-    history: [[f32; HISTORY]; MAX_REGION],
-    head: usize,
-    /// The span of the history a rise is measured from, in buffers ago.
-    from_lag: usize,
-    to_lag: usize,
+    /// Each band's loudest over the look-back.
+    earlier: [LaggedMax; MAX_REGION],
 }
 
 impl RiseRegion {
-    /// The window a rise is measured over: from this long ago...
+    /// The look-back a rise is measured from: from this long ago...
     const FROM_SECS: f32 = 0.0133;
     /// ...to this long ago.
     const TO_SECS: f32 = 0.0053;
 
-    fn new(bands: &[usize], live: impl Fn(usize) -> bool, rate: f32) -> Self {
+    fn new(bands: &[usize], live: impl Fn(usize) -> bool, sample_rate: f32) -> Self {
+        let from = (Self::FROM_SECS * sample_rate).round() as usize;
+        let to = (Self::TO_SECS * sample_rate).round() as usize;
         let mut region = Self {
             bands: [0; MAX_REGION],
             len: 0,
-            envelopes: [peak_follower(0.004, rate); MAX_REGION],
-            // History starts out loud, so nothing is a rise until the region
-            // has heard enough to measure one.
-            history: [[f32::MAX; HISTORY]; MAX_REGION],
-            head: 0,
-            from_lag: 0,
-            to_lag: 0,
+            envelopes: [peak_follower(0.004, sample_rate); MAX_REGION],
+            earlier: std::array::from_fn(|_| LaggedMax::new(from, to)),
         };
         for &band in bands.iter().filter(|&&b| live(b)).take(MAX_REGION) {
             region.bands[region.len] = band;
             region.len += 1;
         }
-        region.to_lag = ((Self::TO_SECS * rate).round() as usize).max(1);
-        region.from_lag =
-            ((Self::FROM_SECS * rate).round() as usize).clamp(region.to_lag, HISTORY - 1);
         region
     }
 
-    /// The region's rise in dB, or nothing if none of its bands can be heard.
-    fn process(&mut self, peaks: &[f32; NUM_BANDS]) -> Option<f32> {
+    /// The region's rise in dB at this sample, or nothing if none of its bands
+    /// can be heard.
+    #[inline]
+    fn push(&mut self, bank: &ResonatorBank) -> Option<f32> {
         if self.len == 0 {
             return None;
         }
-        self.head = (self.head + 1) % HISTORY;
-        let mut rises = [0.0_f32; MAX_REGION];
-        for i in 0..self.len {
-            let level = 20.0 * (self.envelopes[i].step(peaks[self.bands[i]]) + 1e-9).log10();
-            let earlier = (self.to_lag..=self.from_lag)
-                .map(|lag| self.history[i][(self.head + HISTORY - lag) % HISTORY])
-                .fold(f32::MIN, f32::max);
-            self.history[i][self.head] = level;
-            rises[i] = (level - earlier).max(0.0);
+        // A rise in dB is the log of a ratio of levels, and the log keeps
+        // their order: the median rise is the log of the median ratio, taken
+        // once rather than per band. Until the look-back has filled, nothing
+        // is a rise.
+        let mut ratios = [1.0_f32; MAX_REGION];
+        for (((&band, envelope), earlier), ratio) in self.bands[..self.len]
+            .iter()
+            .zip(&mut self.envelopes)
+            .zip(&mut self.earlier)
+            .zip(&mut ratios)
+        {
+            let level = envelope.step(bank.magnitude(band));
+            if let Some(earlier) = earlier.push(level) {
+                *ratio = (level / earlier.max(1e-12)).max(1.0);
+            }
         }
-        let rises = &mut rises[..self.len];
-        rises.sort_unstable_by(f32::total_cmp);
-        let n = rises.len();
-        Some(if n % 2 == 1 {
-            rises[n / 2]
+        let ratios = &mut ratios[..self.len];
+        ratios.sort_unstable_by(f32::total_cmp);
+        let n = ratios.len();
+        let median = if n % 2 == 1 {
+            ratios[n / 2]
         } else {
-            0.5 * (rises[n / 2 - 1] + rises[n / 2])
-        })
+            (ratios[n / 2 - 1] * ratios[n / 2]).sqrt()
+        };
+        Some(20.0 * median.log10())
     }
 }
 
@@ -220,6 +301,11 @@ impl RiseRegion {
 /// consonant's for nothing. Rises are measured in dB, which makes them the
 /// same at any level, so the same gate as [`KickRole`]'s keeps a faint tick
 /// over near-silence from counting.
+///
+/// Traced sample by sample and reported per buffer as the largest hit the
+/// buffer held, like [`KickRole`]: the two regions respond at different
+/// speeds, and comparing them once a buffer would make a hit's reading
+/// depend on where it fell against the buffers.
 struct HatsRole {
     high: RiseRegion,
     presence: RiseRegion,
@@ -227,37 +313,59 @@ struct HatsRole {
     /// milliseconds, and its loudest over the last phrase.
     level: AsymmetricOnePole,
     phrase_peak: AsymmetricOnePole,
+    /// The largest hit since the last buffer was reported.
+    buffer_hit: f32,
+    /// The output, falling away after each hit, at the buffer rate.
     release: AsymmetricOnePole,
 }
 
 impl HatsRole {
     /// A rise this many dB across the high bands is a full hit.
     const FULL_DB: f32 = 6.0;
+    const RELEASE_SECS: f32 = 0.080;
 
-    fn new(live: impl Fn(usize) -> bool + Copy, rate: f32) -> Self {
+    fn new(live: impl Fn(usize) -> bool + Copy, sample_rate: f32) -> Self {
         Self {
-            high: RiseRegion::new(HIGH_BANDS, live, rate),
-            presence: RiseRegion::new(PRESENCE_BANDS, live, rate),
-            level: peak_follower(0.004, rate),
-            phrase_peak: peak_follower(20.0, rate),
-            release: peak_follower(0.080, rate),
+            high: RiseRegion::new(HIGH_BANDS, live, sample_rate),
+            presence: RiseRegion::new(PRESENCE_BANDS, live, sample_rate),
+            level: peak_follower(0.004, sample_rate),
+            phrase_peak: peak_follower(20.0, sample_rate),
+            buffer_hit: 0.0,
+            release: peak_follower(Self::RELEASE_SECS, 0.0),
         }
     }
 
-    fn process(&mut self, peaks: &[f32; NUM_BANDS]) -> f32 {
-        let power: f32 = HIGH_BANDS.iter().map(|&b| peaks[b] * peaks[b]).sum();
+    /// Set the buffer rate the output's release runs at.
+    fn set_buffer_rate(&mut self, rate: f32) {
+        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate);
+    }
+
+    /// Follow the high end at one sample.
+    #[inline]
+    fn push(&mut self, bank: &ResonatorBank) {
+        let power: f32 = HIGH_BANDS
+            .iter()
+            .map(|&b| {
+                let m = bank.magnitude(b);
+                m * m
+            })
+            .sum();
         let level = self.level.step(power.sqrt());
         let phrase = self.phrase_peak.step(level);
-        let gated = level > phrase * KickRole::RELATIVE_GATE && level > KickRole::ABSOLUTE_GATE;
-        let presence = self.presence.process(peaks).unwrap_or(0.0) / Self::FULL_DB;
-        let hit = match self.high.process(peaks) {
-            Some(_) if !gated => 0.0,
-            Some(high) => {
-                let high = high / Self::FULL_DB;
-                (high * (high - presence + 0.5).clamp(0.0, 1.0)).clamp(0.0, 1.0)
-            }
-            None => 0.0,
+        let presence = self.presence.push(bank).unwrap_or(0.0) / Self::FULL_DB;
+        let Some(high) = self.high.push(bank) else {
+            return;
         };
+        if level > phrase * KickRole::RELATIVE_GATE && level > KickRole::ABSOLUTE_GATE {
+            let high = high / Self::FULL_DB;
+            let hit = (high * (high - presence + 0.5).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+            self.buffer_hit = self.buffer_hit.max(hit);
+        }
+    }
+
+    /// The output for the buffer just ended.
+    fn finish(&mut self) -> f32 {
+        let hit = std::mem::take(&mut self.buffer_hit);
         self.release.step(hit)
     }
 }
@@ -265,9 +373,15 @@ impl HatsRole {
 /// The level of a group of bands: their combined envelope through the
 /// operator's envelope follower and smoother, then normalized against its own
 /// recent range.
+///
+/// The envelope follower runs sample by sample and is read at the end of
+/// each buffer, so the level does not depend on where the music falls against
+/// the buffers; the smoother and normalizer run once per buffer.
 struct LevelRole {
     bands: &'static [usize],
     envelope: AsymmetricOnePole,
+    /// The envelope at the latest sample.
+    level: f32,
     smoother: OnePoleSmoother,
     normalizer: AdaptiveNormalizer,
 }
@@ -277,20 +391,29 @@ impl LevelRole {
         Self {
             bands,
             envelope: AsymmetricOnePole::default(),
+            level: 0.0,
             smoother: OnePoleSmoother::default(),
             normalizer: AdaptiveNormalizer::new(tuning),
         }
     }
 
-    fn process(
-        &mut self,
-        peaks: &[f32; NUM_BANDS],
-        smooth_coeff: f32,
-        norm: &NormalizerParams,
-    ) -> f32 {
-        let power: f32 = self.bands.iter().map(|&b| peaks[b] * peaks[b]).sum();
-        let level = self.envelope.step(power.sqrt());
-        let smoothed = self.smoother.update(smooth_coeff, level);
+    /// Follow the bands' combined envelope at one sample.
+    #[inline]
+    fn push(&mut self, bank: &ResonatorBank) {
+        let power: f32 = self
+            .bands
+            .iter()
+            .map(|&b| {
+                let m = bank.magnitude(b);
+                m * m
+            })
+            .sum();
+        self.level = self.envelope.step(power.sqrt());
+    }
+
+    /// The output for the buffer just ended.
+    fn finish(&mut self, smooth_coeff: f32, norm: &NormalizerParams) -> f32 {
+        let smoothed = self.smoother.update(smooth_coeff, self.level);
         self.normalizer.process(smoothed, norm)
     }
 
@@ -299,26 +422,31 @@ impl LevelRole {
     }
 }
 
-/// Every role, run once per buffer from the bank's band peaks.
+/// Every role, following the bank sample by sample and reported once per
+/// buffer.
 pub(crate) struct Roles {
     kick: KickRole,
     bass: LevelRole,
     hats: HatsRole,
     shimmer: LevelRole,
-    /// Buffers per second the hit roles' timing was built for.
+    sample_rate: f32,
+    /// Buffers per second the hit roles' release was last set for.
     rate: f32,
-    live: [bool; NUM_BANDS],
 }
 
 impl Roles {
-    pub(crate) fn new(live: [bool; NUM_BANDS], tuning: &NormalizerTuning) -> Self {
+    pub(crate) fn new(
+        live: [bool; NUM_BANDS],
+        tuning: &NormalizerTuning,
+        sample_rate: f32,
+    ) -> Self {
         Self {
-            kick: KickRole::new(0.0),
+            kick: KickRole::new(sample_rate),
             bass: LevelRole::new(LOW_BANDS, tuning),
-            hats: HatsRole::new(|b| live[b], 0.0),
+            hats: HatsRole::new(|b| live[b], sample_rate),
             shimmer: LevelRole::new(HIGH_BANDS, tuning),
+            sample_rate,
             rate: 0.0,
-            live,
         }
     }
 
@@ -329,33 +457,39 @@ impl Roles {
     }
 
     /// Set the level roles' envelope attack and release half-lives, in
-    /// seconds, at `rate` buffers per second; and rebuild the hit roles if the
-    /// rate has changed, since their timing is fixed in seconds.
+    /// seconds, and the buffer rate the hit roles' release runs at.
     pub(crate) fn set_timing(&mut self, attack: f32, release: f32, rate: f32) {
         for level in [&mut self.bass, &mut self.shimmer] {
-            level.envelope.rise = halflife_to_coeff(attack, rate);
-            level.envelope.fall = halflife_to_coeff(release, rate);
+            level.envelope.rise = halflife_to_coeff(attack, self.sample_rate);
+            level.envelope.fall = halflife_to_coeff(release, self.sample_rate);
         }
         if rate != self.rate {
             self.rate = rate;
-            let live = self.live;
-            self.kick = KickRole::new(rate);
-            self.hats = HatsRole::new(move |b| live[b], rate);
+            self.kick.set_buffer_rate(rate);
+            self.hats.set_buffer_rate(rate);
         }
     }
 
+    /// Follow the bank at one sample.
+    #[inline]
+    pub(crate) fn push_sample(&mut self, bank: &ResonatorBank) {
+        self.kick.push(bank.magnitude(KICK_BAND));
+        self.bass.push(bank);
+        self.hats.push(bank);
+        self.shimmer.push(bank);
+    }
+
     /// Every role's output for one buffer, in [`Role::ALL`] order.
-    pub(crate) fn process(
+    pub(crate) fn finish(
         &mut self,
-        peaks: &[f32; NUM_BANDS],
         smooth_coeff: f32,
         norm: &NormalizerParams,
     ) -> [f32; NUM_ROLES] {
         [
-            self.kick.process(peaks[KICK_BAND]),
-            self.bass.process(peaks, smooth_coeff, norm),
-            self.hats.process(peaks),
-            self.shimmer.process(peaks, smooth_coeff, norm),
+            self.kick.finish(),
+            self.bass.finish(smooth_coeff, norm),
+            self.hats.finish(),
+            self.shimmer.finish(smooth_coeff, norm),
         ]
     }
 
@@ -434,6 +568,34 @@ mod tests {
             }
         }
         noise
+    }
+
+    /// The lagged maximum is exactly the brute-force maximum over its window
+    /// at every sample once the window has filled, and nothing before.
+    #[test]
+    fn lagged_max_is_exact() {
+        let (from, to) = (37, 11);
+        let mut lagged = LaggedMax::new(from, to);
+        let mut seed = 0x9e37_79b9_u32;
+        let mut levels = Vec::new();
+        for n in 0..2000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            // Runs of repeats test ties as well as ordinary values.
+            let level = (seed % 17) as f32;
+            levels.push(level);
+            let got = lagged.push(level);
+            if n < from {
+                assert_eq!(got, None, "sample {n}: the window has not filled");
+            } else {
+                let want = levels[n - from..=n - to]
+                    .iter()
+                    .copied()
+                    .fold(f32::MIN, f32::max);
+                assert_eq!(got, Some(want), "sample {n}");
+            }
+        }
     }
 
     /// Each role answers what it is for and stays quiet for what it is not:
