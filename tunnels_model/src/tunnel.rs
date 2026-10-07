@@ -1993,8 +1993,8 @@ mod test {
             fill
         };
 
-        let placed = fill(AnimWaveform::Square, 0);
-        let warped = fill(AnimWaveform::Square, 3);
+        let placed = fill(AnimWaveform::SineSquare, 0);
+        let warped = fill(AnimWaveform::SineSquare, 3);
         let flat = fill(AnimWaveform::Constant, 3);
 
         assert_ne!(
@@ -2038,7 +2038,7 @@ mod test {
         tunnel.thickness = UnipolarFloat::new(0.15).into();
         tunnel.anims[0].target = AnimationTarget::Thickness;
         for sc in [
-            AnimStateChange::Waveform(AnimWaveform::Sine),
+            AnimStateChange::Waveform(AnimWaveform::SineSquare),
             AnimStateChange::NPeriods(2),
             AnimStateChange::Size(UnipolarFloat::ONE),
         ] {
@@ -2158,10 +2158,9 @@ pub mod fixture {
 
         for (i, anim) in tunnel.anims.iter_mut().enumerate() {
             anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::Waveform(match i % 4 {
-                    0 => Waveform::Sine,
+                AnimControlMessage::Set(AnimStateChange::Waveform(match i % 3 {
+                    0 => Waveform::SineSquare,
                     1 => Waveform::Triangle,
-                    2 => Waveform::Square,
                     _ => Waveform::Sawtooth,
                 })),
                 &mut NoopEmitter,
@@ -2620,10 +2619,9 @@ pub mod fixture {
     /// Written out for the same reason as `TARGETS`, and its length taken from
     /// the enum for the same reason.
     const WAVEFORMS: [Waveform; Waveform::VARIANTS.len()] = [
-        Waveform::Sine,
+        Waveform::SineSquare,
         Waveform::Triangle,
         Waveform::Sawtooth,
-        Waveform::Square,
         Waveform::Noise,
         Waveform::Constant,
     ];
@@ -2893,7 +2891,7 @@ pub mod fixture {
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
         tunnel.anims[0].target = AnimationTarget::ColorSaturation;
         tunnel.anims[0].animation.control(
-            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::SineSquare)),
             &mut NoopEmitter,
         );
         tunnel.anims[0].animation.control(
@@ -2985,7 +2983,7 @@ pub mod fixture {
         tunnel.size = UnipolarFloat::new(0.3).into();
         tunnel.anims[0].target = AnimationTarget::Size;
         tunnel.anims[0].animation.control(
-            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::SineSquare)),
             &mut NoopEmitter,
         );
         tunnel.anims[0].animation.control(
@@ -3024,7 +3022,7 @@ pub mod fixture {
         tunnel.phase_axis = PhaseAxis::Linear;
         tunnel.anims[0].target = AnimationTarget::PositionX;
         for sc in [
-            AnimStateChange::Waveform(Waveform::Sine),
+            AnimStateChange::Waveform(Waveform::SineSquare),
             AnimStateChange::NPeriods(2),
             AnimStateChange::Size(UnipolarFloat::new(0.4)),
         ] {
@@ -3246,7 +3244,7 @@ pub mod fixture {
         tunnel.phase_axis = PhaseAxis::Angle;
         tunnel.anims[0].target = AnimationTarget::Thickness;
         for sc in [
-            AnimStateChange::Waveform(Waveform::Sine),
+            AnimStateChange::Waveform(Waveform::SineSquare),
             AnimStateChange::NPeriods(n_periods),
             AnimStateChange::Size(UnipolarFloat::ONE),
         ] {

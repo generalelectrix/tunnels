@@ -741,9 +741,11 @@ mod test {
             a("anim/size", A::Size(uni));
             a("anim/duty_cycle", A::DutyCycle(uni));
             a("anim/smoothing", A::Smoothing(uni));
-            a("anim/waveform_sine", A::Waveform(Waveform::Sine));
+            a(
+                "anim/waveform_sine_square",
+                A::Waveform(Waveform::SineSquare),
+            );
             a("anim/waveform_triangle", A::Waveform(Waveform::Triangle));
-            a("anim/waveform_square", A::Waveform(Waveform::Square));
             a("anim/waveform_sawtooth", A::Waveform(Waveform::Sawtooth));
             a("anim/waveform_noise", A::Waveform(Waveform::Noise));
             a("anim/waveform_constant", A::Waveform(Waveform::Constant));

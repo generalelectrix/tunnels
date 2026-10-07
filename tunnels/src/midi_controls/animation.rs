@@ -18,9 +18,8 @@ const DUTY_CYCLE: Mapping = cc_ch0(50);
 const SMOOTHING: Mapping = cc_ch0(51);
 
 // waveform type buttons
-const SINE: Mapping = note_on_ch0(24);
+const SINE_SQUARE: Mapping = note_on_ch0(24);
 const TRIANGLE: Mapping = note_on_ch0(25);
-const SQUARE: Mapping = note_on_ch0(26);
 const SAWTOOTH: Mapping = note_on_ch0(27);
 const NOISE: Mapping = note_on_ch0(28);
 const CONSTANT: Mapping = note_on_ch0(29);
@@ -36,7 +35,7 @@ const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
 lazy_static! {
     static ref WAVEFORM_SELECT_BUTTONS: RadioButtons = RadioButtons {
-        mappings: vec!(SINE, TRIANGLE, SQUARE, SAWTOOTH, NOISE, CONSTANT), off: 0, on: 1,
+        mappings: vec!(SINE_SQUARE, TRIANGLE, SAWTOOTH, NOISE, CONSTANT), off: 0, on: 1,
     };
     static ref N_PERIODS_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..15).map(note_on_ch0).collect(), off: 0, on: 1,
@@ -64,9 +63,8 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         SIZE => Animation(Set(Size(unipolar_from_midi(v)))),
         DUTY_CYCLE => Animation(Set(DutyCycle(unipolar_from_midi(v)))),
         SMOOTHING => Animation(Set(Smoothing(unipolar_from_midi(v)))),
-        SINE => Animation(Set(Waveform(Sine))),
+        SINE_SQUARE => Animation(Set(Waveform(SineSquare))),
         TRIANGLE => Animation(Set(Waveform(Triangle))),
-        SQUARE => Animation(Set(Waveform(Square))),
         SAWTOOTH => Animation(Set(Waveform(Sawtooth))),
         NOISE => Animation(Set(Waveform(Noise))),
         CONSTANT => Animation(Set(Waveform(Constant))),
@@ -112,9 +110,8 @@ pub fn update_animation_control(sc: StateChange, manager: &mut impl MidiOutput) 
             use WaveformType::*;
             WAVEFORM_SELECT_BUTTONS.select(
                 match v {
-                    Sine => SINE,
+                    SineSquare => SINE_SQUARE,
                     Triangle => TRIANGLE,
-                    Square => SQUARE,
                     Sawtooth => SAWTOOTH,
                     Noise => NOISE,
                     Constant => CONSTANT,

@@ -16,9 +16,8 @@ use tunnels_lib::smooth::Smoothed;
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug, VariantArray)]
 pub enum Waveform {
-    Sine,
+    SineSquare,
     Triangle,
-    Square,
     Sawtooth,
     Noise,
     Constant,
@@ -31,7 +30,7 @@ impl Waveform {
     /// otherwise resolve it across a coordinate can resolve it once.
     pub fn varies_with_phase(self) -> bool {
         match self {
-            Self::Sine | Self::Triangle | Self::Square | Self::Sawtooth | Self::Noise => true,
+            Self::SineSquare | Self::Triangle | Self::Sawtooth | Self::Noise => true,
             Self::Constant => false,
         }
     }
@@ -55,7 +54,7 @@ pub struct StaticParams {
 impl Default for StaticParams {
     fn default() -> Self {
         Self {
-            waveform: Waveform::Sine,
+            waveform: Waveform::SineSquare,
             pulse: false,
             standing: false,
             invert: false,
@@ -418,8 +417,9 @@ impl PreparedAnimation {
     /// The waveform's own value, before amplitude.
     pub fn unit_value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
         let result = match self.static_params.waveform {
-            Waveform::Sine => waveforms::sine(&self.waveform_args(spatial_phase_offset)),
-            Waveform::Square => waveforms::square(&self.waveform_args(spatial_phase_offset)),
+            Waveform::SineSquare => {
+                waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
+            }
             Waveform::Sawtooth => waveforms::sawtooth(&self.waveform_args(spatial_phase_offset)),
             Waveform::Triangle => waveforms::triangle(&self.waveform_args(spatial_phase_offset)),
             Waveform::Noise => {
@@ -730,13 +730,13 @@ mod test {
             animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
         };
 
-        assert!(prepare(Waveform::Sine, 1, 1.0).varies_in_space());
+        assert!(prepare(Waveform::SineSquare, 1, 1.0).varies_in_space());
         assert!(
-            !prepare(Waveform::Sine, 0, 1.0).varies_in_space(),
+            !prepare(Waveform::SineSquare, 0, 1.0).varies_in_space(),
             "no periodicity is one value everywhere"
         );
         assert!(
-            !prepare(Waveform::Sine, 1, 0.0).varies_in_space(),
+            !prepare(Waveform::SineSquare, 1, 0.0).varies_in_space(),
             "no amplitude is zero everywhere"
         );
         assert!(

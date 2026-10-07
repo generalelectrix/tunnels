@@ -3,7 +3,6 @@ use std::f64::consts::PI;
 use tunnels_lib::number::{Phase, UnipolarFloat};
 
 const TWO_PI: f64 = 2.0 * PI;
-const HALF_PI: f64 = PI / 2.0;
 
 /// Common args passed to all waveform generating functions.
 /// Spaital and temporal phases are equivalent for travelling waves and will be
@@ -76,22 +75,6 @@ impl WaveformArgsSpatial {
     }
 }
 
-pub fn sine(args: &WaveformArgs) -> f64 {
-    let (amplitude, args) = args.spatial_params();
-    amplitude * sine_spatial(&args)
-}
-
-fn sine_spatial(args: &WaveformArgsSpatial) -> f64 {
-    if args.outside_duty_cycle() {
-        return 0.0;
-    }
-    let phase = args.duty_cycle_scaled_phase();
-    if args.pulse {
-        return ((TWO_PI * phase.val() - HALF_PI).sin() + 1.0) / 2.0;
-    }
-    (TWO_PI * phase.val()).sin()
-}
-
 pub fn triangle(args: &WaveformArgs) -> f64 {
     let (amplitude, args) = args.spatial_params();
     amplitude * triangle_spatial(&args)
@@ -119,12 +102,14 @@ fn triangle_spatial(args: &WaveformArgsSpatial) -> f64 {
     }
 }
 
-pub fn square(args: &WaveformArgs) -> f64 {
+/// A square whose edges are cosine, from a hard edge at the bottom of the
+/// smoothing range to a sine at the top.
+pub fn sine_square(args: &WaveformArgs) -> f64 {
     let (amplitude, args) = args.spatial_params();
-    amplitude * square_spatial(&args)
+    amplitude * sine_square_spatial(&args)
 }
 
-fn square_spatial(args: &WaveformArgsSpatial) -> f64 {
+fn sine_square_spatial(args: &WaveformArgsSpatial) -> f64 {
     if args.outside_duty_cycle() {
         return 0.0;
     }
@@ -309,7 +294,7 @@ mod test {
     /// windows the cycle has to compress into.
     const DUTY_CYCLES: [f64; 3] = [1.0, 0.5, 0.25];
 
-    /// A sine, a triangle and a square are each symmetric about the middle of
+    /// A triangle and a sine square are each symmetric about the middle of
     /// their period, and each reaches the unipolar range by being rescaled
     /// into it or built inside it rather than clipped at zero, so each stays
     /// symmetric once pulsed. A clipped waveform would not: clipping widens
@@ -320,9 +305,8 @@ mod test {
     #[test]
     fn a_pulse_keeps_the_symmetry_of_its_waveform() {
         for (name, waveform) in [
-            ("sine", sine as fn(&WaveformArgs) -> f64),
-            ("triangle", triangle),
-            ("square", square),
+            ("triangle", triangle as fn(&WaveformArgs) -> f64),
+            ("sine square", sine_square),
         ] {
             for smoothing in SMOOTHINGS {
                 for duty_cycle in DUTY_CYCLES {
@@ -353,9 +337,8 @@ mod test {
     #[test]
     fn the_phase_at_the_duty_cycle_is_outside_the_window() {
         for (name, waveform) in [
-            ("sine", sine as fn(&WaveformArgs) -> f64),
-            ("triangle", triangle),
-            ("square", square),
+            ("triangle", triangle as fn(&WaveformArgs) -> f64),
+            ("sine square", sine_square),
             ("sawtooth", sawtooth),
         ] {
             for duty_cycle in DUTY_CYCLES.into_iter().filter(|d| *d < 1.0) {
@@ -387,9 +370,8 @@ mod test {
     #[test]
     fn a_pulse_spans_the_unipolar_range_from_zero() {
         for (name, waveform) in [
-            ("sine", sine as fn(&WaveformArgs) -> f64),
-            ("triangle", triangle),
-            ("square", square),
+            ("triangle", triangle as fn(&WaveformArgs) -> f64),
+            ("sine square", sine_square),
             ("sawtooth", sawtooth),
         ] {
             for smoothing in SMOOTHINGS {
@@ -421,9 +403,8 @@ mod test {
     #[test]
     fn a_pulse_compressed_by_a_duty_cycle_leaves_the_rest_of_the_period_silent() {
         for (name, waveform) in [
-            ("sine", sine as fn(&WaveformArgs) -> f64),
-            ("triangle", triangle),
-            ("square", square),
+            ("triangle", triangle as fn(&WaveformArgs) -> f64),
+            ("sine square", sine_square),
             ("sawtooth", sawtooth),
         ] {
             for smoothing in SMOOTHINGS {
@@ -462,25 +443,25 @@ mod test {
         }
     }
 
-    /// `sin(2πp)`, the wave a square reaches at the top of its smoothing
+    /// `sin(2πp)`, the wave a sine square reaches at the top of its smoothing
     /// range.
     ///
-    /// Written out as a closed form, so that a square compared against it is
-    /// not being compared to another branch of itself.
+    /// Written out as a closed form, so that a sine square compared against it
+    /// is not being compared to another branch of itself.
     fn sine_wave(phase: f64) -> f64 {
         (TWO_PI * phase).sin()
     }
 
-    /// `(1 - cos(2πp)) / 2`, the pulse a square reaches at the top of its
+    /// `(1 - cos(2πp)) / 2`, the pulse a sine square reaches at the top of its
     /// smoothing range.
     ///
-    /// Written out as a closed form, so that a square compared against it is
-    /// not being compared to another branch of itself.
+    /// Written out as a closed form, so that a sine square compared against it
+    /// is not being compared to another branch of itself.
     fn sine_pulse(phase: f64) -> f64 {
         (1.0 - (TWO_PI * phase).cos()) / 2.0
     }
 
-    /// A square pulse fills its duty cycle window, holding the top of its
+    /// A sine square pulse fills its duty cycle window, holding the top of its
     /// range across the whole of it but for the two edges smoothing opens at
     /// either end, which take half the window between them at the top of the
     /// range.
@@ -490,11 +471,11 @@ mod test {
     /// much of that it spends at rest. The window is the pulse's length, and
     /// nothing inside it is a second way of saying so.
     #[test]
-    fn a_pulsed_square_fills_its_window() {
+    fn a_pulsed_sine_square_fills_its_window() {
         for smoothing in SMOOTHINGS {
             let edge = 0.5 * smoothing;
             for duty_cycle in DUTY_CYCLES {
-                let samples = pulse_period(square, smoothing, duty_cycle);
+                let samples = pulse_period(sine_square, smoothing, duty_cycle);
                 // Counted from where the samples sit rather than from the
                 // width of the top, because a sample never lands on an edge's
                 // boundary.
@@ -504,7 +485,7 @@ mod test {
                     .count();
                 assert_eq!(
                     held, expected,
-                    "a square pulse at smoothing {smoothing} and duty cycle \
+                    "a sine square pulse at smoothing {smoothing} and duty cycle \
                      {duty_cycle} holds the top of its range for {held} of \
                      {SAMPLES} samples, where edges {edge} wide leave room for \
                      {expected}"
@@ -513,30 +494,30 @@ mod test {
         }
     }
 
-    /// A square pulse's smoothing runs between two exact waveforms: a window
-    /// held full for the whole of its length at the bottom of the range, and a
-    /// sine pulse at the top.
+    /// A sine square pulse's smoothing runs between two exact waveforms: a
+    /// window held full for the whole of its length at the bottom of the
+    /// range, and a sine pulse at the top.
     ///
     /// The flat window is the accepted cost of a hard edge having nothing to
     /// pulse against at a duty cycle of one. A shorter pulse comes from
     /// turning the duty cycle down, which is the knob that means length.
     #[test]
-    fn a_square_pulse_smooths_from_a_flat_window_into_a_sine_pulse() {
+    fn a_sine_square_pulse_runs_from_a_flat_window_to_a_sine_pulse() {
         for duty_cycle in DUTY_CYCLES {
-            let hard = pulse_period(square, 0.0, duty_cycle);
-            let smooth = pulse_period(square, 1.0, duty_cycle);
+            let hard = pulse_period(sine_square, 0.0, duty_cycle);
+            let smooth = pulse_period(sine_square, 1.0, duty_cycle);
             for i in 0..SAMPLES {
                 let phase = window_phase(i);
                 assert_eq!(
                     hard[i], 1.0,
-                    "an unsmoothed square pulse reads {} at phase {phase} of a \
+                    "an unsmoothed sine square pulse reads {} at phase {phase} of a \
                      duty cycle of {duty_cycle}, where it fills its window",
                     hard[i]
                 );
                 let sine = sine_pulse(phase);
                 assert_eq!(
                     smooth[i], sine,
-                    "a fully smoothed square pulse reads {} at phase {phase} of \
+                    "a fully smoothed sine square pulse reads {} at phase {phase} of \
                      a duty cycle of {duty_cycle}, where a sine pulse reads {sine}",
                     smooth[i]
                 );
@@ -544,36 +525,36 @@ mod test {
         }
     }
 
-    /// A square's smoothing runs between two exact waveforms: a hard square at
-    /// the bottom of the range and a sine at the top.
+    /// A sine square's smoothing runs between two exact waveforms: a hard
+    /// square at the bottom of the range and a sine at the top.
     ///
     /// The sine is what makes the knob a control over the whole of its range.
     /// A square whose edges are linear ramps arrives at a triangle instead,
-    /// which is a waveform the set already holds, so the top of the range
-    /// stops being a place worth putting the knob.
+    /// which is a shape another waveform already reaches, so the top of the
+    /// range stops being a place worth putting the knob.
     #[test]
-    fn a_square_smooths_from_a_hard_edge_into_a_sine() {
+    fn a_sine_square_runs_from_a_hard_edge_to_a_sine() {
         for duty_cycle in DUTY_CYCLES {
             let sampling = |smoothing| Sampling {
                 smoothing,
                 duty_cycle,
                 pulse: false,
             };
-            let hard = period(square, sampling(0.0));
-            let smooth = period(square, sampling(1.0));
+            let hard = period(sine_square, sampling(0.0));
+            let smooth = period(sine_square, sampling(1.0));
             for i in 0..SAMPLES {
                 let phase = window_phase(i);
                 let edged = if phase < 0.5 { 1.0 } else { -1.0 };
                 assert_eq!(
                     hard[i], edged,
-                    "an unsmoothed square reads {} at phase {phase} of a duty \
+                    "an unsmoothed sine square reads {} at phase {phase} of a duty \
                      cycle of {duty_cycle}, where a hard square reads {edged}",
                     hard[i]
                 );
                 let sine = sine_wave(phase);
                 assert_eq!(
                     smooth[i], sine,
-                    "a fully smoothed square reads {} at phase {phase} of a duty \
+                    "a fully smoothed sine square reads {} at phase {phase} of a duty \
                      cycle of {duty_cycle}, where a sine reads {sine}",
                     smooth[i]
                 );
@@ -581,17 +562,18 @@ mod test {
         }
     }
 
-    /// A square reads exactly zero where its cycle starts, at every smoothing.
+    /// A sine square reads exactly zero where its cycle starts, at every
+    /// smoothing.
     ///
     /// The model reads an animation at the start of its cycle wherever a shape
     /// has no coordinate to read it along, and folds the answer into the
     /// parameter it drives. An answer a rounding away from zero displaces that
     /// parameter where the animation was meant to leave it alone.
     #[test]
-    fn a_square_crosses_zero_where_its_cycle_starts() {
+    fn a_sine_square_crosses_zero_where_its_cycle_starts() {
         for smoothing in SMOOTHINGS {
             for duty_cycle in DUTY_CYCLES {
-                let value = square(&WaveformArgs {
+                let value = sine_square(&WaveformArgs {
                     phase_spatial: Phase::ZERO,
                     phase_temporal: Phase::ZERO,
                     smoothing: UnipolarFloat::new(smoothing),
@@ -604,7 +586,7 @@ mod test {
                 let expected = if smoothing == 0.0 { 1.0 } else { 0.0 };
                 assert_eq!(
                     value, expected,
-                    "a square at smoothing {smoothing} and duty cycle \
+                    "a sine square at smoothing {smoothing} and duty cycle \
                      {duty_cycle} reads {value} where its cycle starts, not \
                      {expected}"
                 );
@@ -612,7 +594,7 @@ mod test {
         }
     }
 
-    /// A square's edges are cosine, so each one reaches a quarter of the
+    /// A sine square's edges are cosine, so each one reaches a quarter of the
     /// period either side of where it sits at the top of the smoothing range,
     /// and arrives at the dwell in front of it with no slope left.
     ///
@@ -621,13 +603,13 @@ mod test {
     /// instants rather than into arrivals, which is the difference between a
     /// wave that breathes and one that snaps.
     #[test]
-    fn a_smoothed_square_reaches_its_dwells_without_a_corner() {
+    fn a_smoothed_sine_square_reaches_its_dwells_without_a_corner() {
         // Both ends of the smoothing range are closed forms of their own, and
         // at the top of it the dwells have no width left to measure.
         for smoothing in SMOOTHINGS.into_iter().filter(|s| *s > 0.0 && *s < 0.95) {
             let edge = 0.25 * smoothing;
             let samples = period(
-                square,
+                sine_square,
                 Sampling {
                     smoothing,
                     duty_cycle: 1.0,
@@ -650,7 +632,7 @@ mod test {
                     spanning(edge..=0.5 - edge),
                     spanning(0.5 + edge..=1.0 - edge)
                 ),
-                "a square at smoothing {smoothing} holds the top of its range for \
+                "a sine square at smoothing {smoothing} holds the top of its range for \
                  {} of {SAMPLES} samples and the bottom for {}, where edges {edge} \
                  wide leave room for {} and {}",
                 held(1.0),
@@ -671,7 +653,7 @@ mod test {
             let arriving = *falling.last().expect("an edge spans at least one step");
             assert!(
                 arriving < steepest / 10.0,
-                "a square at smoothing {smoothing} arrives at the bottom of its \
+                "a sine square at smoothing {smoothing} arrives at the bottom of its \
                  range on a step of {arriving}, against the {steepest} of its \
                  steepest, so the edge still has slope where it meets the dwell"
             );
