@@ -29,10 +29,12 @@ The audio system lives in the `tunnels_audio` crate. Key points:
 - The GUI reads parameter state from an `AudioSnapshot` built by `AudioInput::snapshot()` and published through `GuiState::audio_state` (a `Notified<AudioSnapshot>`). Writes to the snapshot atomically wake the GUI.
 - Envelope data streams from the audio thread to the GUI via lock-free SPSC ring buffers (`EnvelopeProducer`/`EnvelopeStream` in `ring_buffer.rs`, backed by `rtrb`). On every successful device open — initial and each reconnect — the audio thread sends a fresh `EnvelopeStreams` bundle over an `mpsc` channel owned by the console's `ConfigApp`, which reattaches the envelope viewer without user intervention.
 - The bundle also carries a `Weak` handle to the processor's `InputMeter` (`input_meter.rs`): atomics holding the automatic trim's gain and whether the clip indicator is lit, written once per buffer and read by the GUI every frame. The processor holds the only strong reference, so when a disconnect drops the stream the handle stops upgrading and the GUI shows no clip LED and no trim until a new stream's bundle arrives. Snapshots carry user-set state through the show; live meters (envelopes, trim, clipping) go straight from the processor to the GUI.
-- `Processor` structures its work as an array-of-structs: a `Vec<LowpassChannel>` (one per audio channel) and a `[WaveletBand; NUM_BANDS]`. Ahead of both chains every channel passes through an always-on automatic trim, a guard that zeroes non-finite samples, and a DC blocker. Each buffer is checked for a run of samples pinned at full scale on any one channel; a buffer that has one lights the clip indicator, which stays lit for 300 ms. Each band's envelope passes through the output smoother and an `AdaptiveNormalizer`, whose ceiling decays per unit of envelope motion rather than per unit of time. Shared bookkeeping (`OnePoleSmoother` state, `SmootherCoeff` cache, `NormalizerParams`) lives on `Processor` itself; parameter propagation to the chains runs in `maybe_update_parameters`.
+- Each input buffer is checked for a run of samples pinned at full scale on any one channel; a buffer that has one lights the clip indicator, which stays lit for 300 ms. The mono mix then passes through the automatic trim, a guard that zeroes non-finite samples, and a DC blocker.
+- `Processor` runs the mono mix through a 26-band constant-Q resonator bank (`bank.rs`: two octave bands below 250 Hz, then quarter octaves to 16 kHz; complex resonators, so each band's magnitude is its envelope) and derives five roles from it (`roles.rs`), following the bank sample by sample and reporting once per buffer, so no role depends on where the music falls against the buffers: Kick and Hats are level-independent hits in the low and high end, Bass, Mid and Shimmer are the low, middle and high levels through the operator's envelope follower, smoother and an `AdaptiveNormalizer`. `active_role` picks the one that feeds the show; the shared smoother coefficient and `NormalizerParams` live on `Processor`, and parameter propagation runs in `maybe_update_parameters`.
 - The `tunnels/src/audio/` module is a thin re-export layer plus the `ShowEmitter` adapter.
 - The audio callback sets flush-to-zero on its thread (`denormals.rs`), so filters decaying on digital silence don't fall into slow subnormal arithmetic.
-- The render loop runs at 240fps. The audio buffer is ~1ms. The fast envelope follower's 4ms release matches the render frame budget.
+- The render loop runs at 240fps. The audio buffer is ~1ms. The hit roles hold each peak for 4ms, about a render frame, and fall over 80ms.
+- The envelope chain is pinned by `tunnels_audio/tests/envelope_golden.rs` and `music_convergence.rs`.
 
 ## GUI architecture
 
@@ -61,7 +63,7 @@ nothing more.
 |-------|---------|
 | `tunnels` | Main library: show loop, audio, clocks, MIDI, OSC, control dispatch |
 | `tunnels_model` | The show model and its render: mixer, beams, tunnels, animations, clocks, palette |
-| `tunnels_audio` | Audio input, envelope extraction, wavelet decomposition, ring buffers |
+| `tunnels_audio` | Audio input, resonator bank, role envelopes, ring buffers |
 | `tunnels_lib` | Cross-crate primitives: number types, color, smoothing, GUI repaint (`RepaintSignal`, `Notified`), transient indicator, bootstrap push protocol |
 | `tunnels_net` | The network services a show is made of: the show frame stream |
 | `console` | GUI binary (eframe/egui): show configuration, MIDI, audio, animation viz |

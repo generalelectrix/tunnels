@@ -1,16 +1,22 @@
+//! Audio input and envelope extraction: the role envelopes (see [`roles`]),
+//! derived on the audio thread from a resonator bank.
+//!
+//! The chain's behaviour is pinned by `tests/envelope_golden.rs` (response
+//! shapes), `tests/music_convergence.rs` (long-term stability) and
+//! `tests/alignment.rs` (independence from the buffer grid).
+
+pub mod bank;
 pub mod denormals;
-pub mod hilbert;
 pub mod input_meter;
-pub mod log_scale;
 pub mod processor;
 pub mod reconnect;
 pub mod ring_buffer;
+pub mod roles;
 pub mod time;
-pub mod wavelet;
 
 use anyhow::{Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait};
-use log::{info, warn};
+use log::info;
 use std::sync::Weak;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
@@ -20,18 +26,20 @@ use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
 
 pub use self::input_meter::InputMeter;
 pub use self::processor::UpdateRate;
-use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, ProcessorSettingsInner};
+use self::processor::{ProcessorSettings, ProcessorSettingsInner};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
+use self::roles::{NUM_ROLES, Role};
 use self::time::HalfLife;
 
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
 
 /// The live output of one open audio input, for display: its envelope
-/// streams, the rate they update at, and its input meter.
+/// streams, one per role in [`Role::ALL`] order, the rate they update at,
+/// and its input meter.
 pub struct EnvelopeStreams {
-    pub streams: [EnvelopeStream; NUM_OUTPUT_BANDS],
+    pub streams: [EnvelopeStream; NUM_ROLES],
     pub update_rate: UpdateRate,
     /// The input's trim and clip indicator, which upgrade only while the
     /// input is open.
@@ -42,11 +50,10 @@ pub struct EnvelopeStreams {
 #[derive(Debug, Clone)]
 pub struct AudioSnapshot {
     pub device_name: String,
-    pub filter_cutoff_hz: f32,
     pub envelope_attack: Duration,
     pub envelope_release: Duration,
     pub output_smoothing: Duration,
-    pub active_band: u32,
+    pub active_role: Role,
     pub norm_floor_halflife: HalfLife,
     pub norm_ceiling_halflife: HalfLife,
 }
@@ -56,11 +63,11 @@ impl AudioSnapshot {
     fn read(device_name: &str, ps: &ProcessorSettingsInner) -> Self {
         Self {
             device_name: device_name.to_string(),
-            filter_cutoff_hz: ps.filter_cutoff.get(),
             envelope_attack: ps.envelope_attack.get(),
             envelope_release: ps.envelope_release.get(),
             output_smoothing: ps.output_smoothing.get(),
-            active_band: ps.active_band.load(Ordering::Relaxed),
+            active_role: Role::from_index(ps.active_role.load(Ordering::Relaxed) as usize)
+                .unwrap_or(ProcessorSettingsInner::DEFAULT_ROLE),
             norm_floor_halflife: ps.norm_floor_halflife.get(),
             norm_ceiling_halflife: ps.norm_ceiling_halflife.get(),
         }
@@ -164,7 +171,6 @@ impl AudioInput {
         use StateChange::*;
         emitter.emit_audio_state_change(EnvelopeValue(self.envelope_value));
         emitter.emit_audio_state_change(Monitor(self.monitor));
-        emitter.emit_audio_state_change(FilterCutoff(self.processor_settings.filter_cutoff.get()));
         emitter.emit_audio_state_change(EnvelopeAttack(
             self.processor_settings.envelope_attack.get(),
         ));
@@ -174,9 +180,7 @@ impl AudioInput {
         emitter.emit_audio_state_change(OutputSmoothing(
             self.processor_settings.output_smoothing.get(),
         ));
-        emitter.emit_audio_state_change(ActiveBand(
-            self.processor_settings.active_band.load(Ordering::Relaxed),
-        ));
+        emitter.emit_audio_state_change(ActiveRole(self.snapshot().active_role));
         emitter.emit_audio_state_change(NormFloorHalflife(
             self.processor_settings.norm_floor_halflife.get(),
         ));
@@ -210,21 +214,13 @@ impl AudioInput {
         match sc {
             EnvelopeValue(_) => return, // output only
             Monitor(v) => self.monitor = v,
-            FilterCutoff(v) => {
-                if v <= 0. {
-                    warn!("Invalid filter cutoff frequency {v} (<= 0).");
-                    return;
-                }
-                self.processor_settings.filter_cutoff.set(v);
-            }
             EnvelopeAttack(v) => self.processor_settings.envelope_attack.set(v),
             EnvelopeRelease(v) => self.processor_settings.envelope_release.set(v),
             OutputSmoothing(v) => self.processor_settings.output_smoothing.set(v),
-            ActiveBand(v) => {
-                let clamped = v.min((NUM_OUTPUT_BANDS - 1) as u32);
+            ActiveRole(role) => {
                 self.processor_settings
-                    .active_band
-                    .store(clamped, Ordering::Relaxed);
+                    .active_role
+                    .store(role.index() as u32, Ordering::Relaxed);
             }
             NormFloorHalflife(v) => self.processor_settings.norm_floor_halflife.set(v),
             NormCeilingHalflife(v) => self.processor_settings.norm_ceiling_halflife.set(v),
@@ -252,11 +248,10 @@ impl AudioInput {
 pub enum StateChange {
     Monitor(bool),
     EnvelopeValue(UnipolarFloat),
-    FilterCutoff(f32),
     EnvelopeAttack(Duration),
     EnvelopeRelease(Duration),
     OutputSmoothing(Duration),
-    ActiveBand(u32),
+    ActiveRole(Role),
     NormFloorHalflife(HalfLife),
     /// Ceiling half-life, as a span of music at the reference motion rate.
     NormCeilingHalflife(HalfLife),

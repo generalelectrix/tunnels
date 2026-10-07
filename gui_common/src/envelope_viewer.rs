@@ -1,26 +1,23 @@
 use eframe::egui::{self, Color32};
-use tunnels_audio::processor::{NUM_OUTPUT_BANDS, OUTPUT_BAND_LABELS, UpdateRate};
+use tunnels_audio::processor::UpdateRate;
+use tunnels_audio::roles::{NUM_ROLES, Role};
 use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
 
 use crate::scrolling_plot::ScrollingPlot;
 
-const BAND_LABELS: [&str; NUM_OUTPUT_BANDS] = OUTPUT_BAND_LABELS;
-
-const BAND_COLORS: [Color32; NUM_OUTPUT_BANDS] = [
-    Color32::from_rgb(160, 160, 160), // sub-bass — grey
-    Color32::from_rgb(180, 80, 255),  // 187-375 — violet
-    Color32::from_rgb(80, 120, 255),  // 375-750 — blue
-    Color32::from_rgb(60, 220, 255),  // 750-1.5k — cyan
-    Color32::from_rgb(60, 255, 120),  // 1.5-3k — green
-    Color32::from_rgb(255, 240, 60),  // 3-6k — yellow
-    Color32::from_rgb(255, 160, 40),  // 6-12k — orange
-    Color32::from_rgb(255, 60, 60),   // 12-24k — red
+/// One colour per role, in [`Role::ALL`] order.
+const ROLE_COLORS: [Color32; NUM_ROLES] = [
+    Color32::from_rgb(255, 155, 61),  // Kick — orange
+    Color32::from_rgb(167, 149, 255), // Bass — violet
+    Color32::from_rgb(95, 208, 214),  // Mid — cyan
+    Color32::from_rgb(217, 227, 106), // Hats — yellow-green
+    Color32::from_rgb(240, 163, 230), // Shimmer — pink
 ];
 
 pub struct EnvelopeViewerState {
     open: bool,
     plot: ScrollingPlot,
-    envelope_streams: Option<[EnvelopeStream; NUM_OUTPUT_BANDS]>,
+    envelope_streams: Option<[EnvelopeStream; NUM_ROLES]>,
     update_rate: Option<UpdateRate>,
     start_time: std::time::Instant,
 }
@@ -34,8 +31,8 @@ impl Default for EnvelopeViewerState {
 impl EnvelopeViewerState {
     pub fn new() -> Self {
         let mut plot = ScrollingPlot::new(3.0, 0.0, 1.1);
-        for i in 0..NUM_OUTPUT_BANDS {
-            plot.add_trace(BAND_LABELS[i], BAND_COLORS[i]);
+        for (role, color) in Role::ALL.into_iter().zip(ROLE_COLORS) {
+            plot.add_trace(role.label(), color);
         }
         Self {
             open: false,
@@ -58,7 +55,7 @@ impl EnvelopeViewerState {
 
     /// Provide new envelope streams (e.g. after a device change).
     pub fn set_envelope_streams(&mut self, new_streams: EnvelopeStreams) {
-        // Clear stale plot data from any previous device.
+        // The new device's history starts now.
         for trace in &mut self.plot.traces {
             trace.points.clear();
         }
@@ -117,7 +114,7 @@ impl EnvelopeViewerState {
 
         // Render the plot — fill remaining vertical space, minimum 150px.
         let height = ui.available_height().max(150.0);
-        let all_enabled = [true; NUM_OUTPUT_BANDS];
+        let all_enabled = [true; NUM_ROLES];
         self.plot.ui_with_options(
             ui,
             "envelope_viewer",
