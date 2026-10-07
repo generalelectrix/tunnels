@@ -61,8 +61,13 @@ struct WaveformArgsSpatial {
 
 impl WaveformArgsSpatial {
     /// Return true if the value should be 0 due to set duty cycle.
+    ///
+    /// The window is open at its far end. A phase equal to the duty cycle
+    /// scales to exactly one cycle, which wraps to the window's near end, so
+    /// leaving that phase inside would read the close of the window as its
+    /// opening.
     fn outside_duty_cycle(&self) -> bool {
-        self.phase > self.duty_cycle || self.duty_cycle == 0.0
+        self.phase >= self.duty_cycle || self.duty_cycle == 0.0
     }
 
     /// Return the phase scaled to the duty cycle.
@@ -314,6 +319,46 @@ mod test {
                      for {low}, where the edges leave room for {expected_high} at \
                      the top and the rest is {expected_low}"
                 );
+            }
+        }
+    }
+
+    /// The duty cycle window is open at its far end, so the phase that lands
+    /// exactly on it is outside the window and reads as rest.
+    ///
+    /// Scaling a phase into the window divides by the duty cycle, and a phase
+    /// equal to it divides to exactly one — which wraps to zero, the window's
+    /// near end. Were that phase still inside the window it would be read as
+    /// the window's opening rather than its close, and a waveform that is full
+    /// at the opening would paint full brightness at the instant it should be
+    /// dark.
+    #[test]
+    fn the_phase_at_the_duty_cycle_is_outside_the_window() {
+        for (name, waveform) in [
+            ("sine", sine as fn(&WaveformArgs) -> f64),
+            ("triangle", triangle),
+            ("square", square),
+            ("sawtooth", sawtooth),
+        ] {
+            for duty_cycle in DUTY_CYCLES.into_iter().filter(|d| *d < 1.0) {
+                for smoothing in SMOOTHINGS {
+                    for pulse in [false, true] {
+                        let value = waveform(&WaveformArgs {
+                            phase_spatial: Phase::new(duty_cycle),
+                            phase_temporal: Phase::ZERO,
+                            smoothing: UnipolarFloat::new(smoothing),
+                            duty_cycle: UnipolarFloat::new(duty_cycle),
+                            pulse,
+                            standing: false,
+                        });
+                        assert_eq!(
+                            value, 0.0,
+                            "a {name} at smoothing {smoothing}, duty cycle \
+                             {duty_cycle} and pulse {pulse} reads {value} at the \
+                             phase that closes its window, where it rests"
+                        );
+                    }
+                }
             }
         }
     }
