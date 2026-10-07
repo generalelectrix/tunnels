@@ -179,7 +179,7 @@ fn open_audio_device(name: &str) -> Result<Device> {
     bail!(err_msg);
 }
 
-/// An open input stream with what the rest of the show needs to read it.
+/// An open input stream, its buffer rate, and its envelope streams.
 struct AudioStream {
     stream: Stream,
     update_rate: UpdateRate,

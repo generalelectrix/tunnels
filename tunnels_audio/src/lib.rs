@@ -1,16 +1,15 @@
-//! Audio input and envelope extraction: the four role envelopes (see
-//! [`roles`]), derived on the audio thread from a resonator bank and read by
-//! the show.
+//! Audio input and envelope extraction: the role envelopes (see [`roles`]),
+//! derived on the audio thread from a resonator bank.
 //!
-//! The chain is pinned by `tests/envelope_golden.rs` (response shapes) and
-//! `tests/music_convergence.rs` (long-term stability). When either fails, or
-//! before changing the processor, run the characterisation harness:
-//! `cargo run -p tunnels_audio --release --example envelope_suite -- <dir>`
-//! records every role and the level roles' stages per buffer for a suite of synthetic
-//! waveforms and prints their metrics; `--music tests/data/<clip> --loops N`
-//! does the same for a looped real-music clip.
+//! The chain's behaviour is pinned by `tests/envelope_golden.rs` (response
+//! shapes), `tests/music_convergence.rs` (long-term stability) and
+//! `tests/alignment.rs` (independence from the buffer grid). The harness
+//! `examples/envelope_suite.rs` records every role and the level roles'
+//! stages per buffer for a suite of synthetic waveforms, or for a looped
+//! music clip, and prints their metrics.
 
 pub mod bank;
+pub mod denormals;
 pub mod processor;
 pub mod reconnect;
 pub mod ring_buffer;
@@ -56,8 +55,7 @@ pub struct AudioSnapshot {
     pub trim_db: f32,
 }
 
-/// The resolution input trim is reported at. The trim moves slowly and
-/// continuously, so a coarse step keeps it from republishing every frame.
+/// The resolution input trim is reported at.
 pub const TRIM_DISPLAY_STEP_DB: f32 = 0.5;
 
 /// A trim gain in dB, to the nearest [`TRIM_DISPLAY_STEP_DB`].

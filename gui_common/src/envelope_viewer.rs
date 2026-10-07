@@ -5,11 +5,11 @@ use tunnels_audio::{EnvelopeStream, EnvelopeStreams};
 
 use crate::scrolling_plot::ScrollingPlot;
 
-/// One colour per role, in [`Role::ALL`] order: warm for the low end, cool
-/// for the high.
+/// One colour per role, in [`Role::ALL`] order.
 const ROLE_COLORS: [Color32; NUM_ROLES] = [
     Color32::from_rgb(255, 155, 61),  // Kick — orange
     Color32::from_rgb(167, 149, 255), // Bass — violet
+    Color32::from_rgb(95, 208, 214),  // Mid — cyan
     Color32::from_rgb(217, 227, 106), // Hats — yellow-green
     Color32::from_rgb(240, 163, 230), // Shimmer — pink
 ];
@@ -55,6 +55,10 @@ impl EnvelopeViewerState {
 
     /// Provide new envelope streams (e.g. after a device change).
     pub fn set_envelope_streams(&mut self, new_streams: EnvelopeStreams) {
+        // The new device's history starts now.
+        for trace in &mut self.plot.traces {
+            trace.points.clear();
+        }
         self.envelope_streams = Some(new_streams.streams);
         self.update_rate = Some(new_streams.update_rate);
     }

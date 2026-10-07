@@ -1,18 +1,19 @@
-//! The four envelopes the show can follow, derived from the resonator bank.
+//! The envelopes the show can follow, derived from the resonator bank.
 //!
-//! They split the spectrum's two ends by what they track: hits (fast,
-//! level-independent onsets) and level (the end's loudness, normalized
-//! against its own recent range).
+//! Each tracks one part of the spectrum, either its hits (fast,
+//! level-independent onsets) or its level (its loudness, normalized against
+//! its own recent range).
 //!
 //! | | hits | level |
 //! |---|---|---|
 //! | low end | [`Role::Kick`] | [`Role::Bass`] |
+//! | middle | | [`Role::Mid`] |
 //! | high end | [`Role::Hats`] | [`Role::Shimmer`] |
 
 use crate::bank::{NUM_BANDS, ResonatorBank};
 use crate::processor::{
     AdaptiveNormalizer, AsymmetricOnePole, BandStages, NormalizerParams, NormalizerTuning,
-    OnePoleSmoother, halflife_to_coeff,
+    OnePoleSmoother, UpdateRate, halflife_to_coeff,
 };
 
 /// An envelope the show can follow.
@@ -22,6 +23,8 @@ pub enum Role {
     Kick,
     /// The low end's level, kick included.
     Bass,
+    /// The middle's level: voices, keys, guitars, the body of a snare.
+    Mid,
     /// Hits in the high end: hats, shakers, snare wires, cymbal strikes.
     Hats,
     /// The high end's level: cymbals, hats, sibilance and air.
@@ -29,11 +32,12 @@ pub enum Role {
 }
 
 /// Number of roles.
-pub const NUM_ROLES: usize = 4;
+pub const NUM_ROLES: usize = 5;
 
 impl Role {
     /// Every role, in output order.
-    pub const ALL: [Self; NUM_ROLES] = [Self::Kick, Self::Bass, Self::Hats, Self::Shimmer];
+    pub const ALL: [Self; NUM_ROLES] =
+        [Self::Kick, Self::Bass, Self::Mid, Self::Hats, Self::Shimmer];
 
     /// The role at an output index, if there is one.
     pub fn from_index(index: usize) -> Option<Self> {
@@ -50,6 +54,7 @@ impl Role {
         match self {
             Self::Kick => "Kick",
             Self::Bass => "Bass",
+            Self::Mid => "Mid",
             Self::Hats => "Hats",
             Self::Shimmer => "Shimmer",
         }
@@ -58,6 +63,8 @@ impl Role {
 
 /// Bands the low end is heard in: about 50 to 250 Hz.
 const LOW_BANDS: &[usize] = &[0, 1];
+/// Bands the middle is heard in: about 250 Hz to 3 kHz.
+const MID_BANDS: &[usize] = &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 /// The band kicks are found in: about 50 to 100 Hz, below most bass notes'
 /// fundamentals.
 const KICK_BAND: usize = 0;
@@ -117,7 +124,7 @@ impl KickRole {
     /// And below this absolute level, where there is nothing but noise.
     const ABSOLUTE_GATE: f32 = 0.001;
 
-    /// The release follower is replaced once the buffer rate is known.
+    /// Time constant of the output's fall after a hit.
     const RELEASE_SECS: f32 = 0.080;
 
     fn new(sample_rate: f32) -> Self {
@@ -135,8 +142,8 @@ impl KickRole {
     }
 
     /// Set the buffer rate the output's release runs at.
-    fn set_buffer_rate(&mut self, rate: f32) {
-        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate);
+    fn set_buffer_rate(&mut self, rate: UpdateRate) {
+        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate.as_hz());
     }
 
     /// Follow the band's envelope at one sample.
@@ -303,9 +310,7 @@ impl RiseRegion {
 /// over near-silence from counting.
 ///
 /// Traced sample by sample and reported per buffer as the largest hit the
-/// buffer held, like [`KickRole`]: the two regions respond at different
-/// speeds, and comparing them once a buffer would make a hit's reading
-/// depend on where it fell against the buffers.
+/// buffer held, like [`KickRole`].
 struct HatsRole {
     high: RiseRegion,
     presence: RiseRegion,
@@ -336,8 +341,8 @@ impl HatsRole {
     }
 
     /// Set the buffer rate the output's release runs at.
-    fn set_buffer_rate(&mut self, rate: f32) {
-        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate);
+    fn set_buffer_rate(&mut self, rate: UpdateRate) {
+        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate.as_hz());
     }
 
     /// Follow the high end at one sample.
@@ -428,10 +433,11 @@ pub(crate) struct Roles {
     kick: KickRole,
     bass: LevelRole,
     hats: HatsRole,
+    mid: LevelRole,
     shimmer: LevelRole,
     sample_rate: f32,
-    /// Buffers per second the hit roles' release was last set for.
-    rate: f32,
+    /// The buffer rate the hit roles' release was last set for.
+    buffer_rate: Option<UpdateRate>,
 }
 
 impl Roles {
@@ -443,30 +449,32 @@ impl Roles {
         Self {
             kick: KickRole::new(sample_rate),
             bass: LevelRole::new(LOW_BANDS, tuning),
+            mid: LevelRole::new(MID_BANDS, tuning),
             hats: HatsRole::new(|b| live[b], sample_rate),
             shimmer: LevelRole::new(HIGH_BANDS, tuning),
             sample_rate,
-            rate: 0.0,
+            buffer_rate: None,
         }
     }
 
     /// Restart the level roles' normalizers with a new tuning.
     pub(crate) fn set_normalizer_tuning(&mut self, tuning: &NormalizerTuning) {
         self.bass.normalizer = AdaptiveNormalizer::new(tuning);
+        self.mid.normalizer = AdaptiveNormalizer::new(tuning);
         self.shimmer.normalizer = AdaptiveNormalizer::new(tuning);
     }
 
     /// Set the level roles' envelope attack and release half-lives, in
     /// seconds, and the buffer rate the hit roles' release runs at.
-    pub(crate) fn set_timing(&mut self, attack: f32, release: f32, rate: f32) {
-        for level in [&mut self.bass, &mut self.shimmer] {
+    pub(crate) fn set_timing(&mut self, attack: f32, release: f32, buffer_rate: UpdateRate) {
+        for level in [&mut self.bass, &mut self.mid, &mut self.shimmer] {
             level.envelope.rise = halflife_to_coeff(attack, self.sample_rate);
             level.envelope.fall = halflife_to_coeff(release, self.sample_rate);
         }
-        if rate != self.rate {
-            self.rate = rate;
-            self.kick.set_buffer_rate(rate);
-            self.hats.set_buffer_rate(rate);
+        if self.buffer_rate != Some(buffer_rate) {
+            self.buffer_rate = Some(buffer_rate);
+            self.kick.set_buffer_rate(buffer_rate);
+            self.hats.set_buffer_rate(buffer_rate);
         }
     }
 
@@ -476,6 +484,7 @@ impl Roles {
         self.kick.push(bank.magnitude(KICK_BAND));
         self.bass.push(bank);
         self.hats.push(bank);
+        self.mid.push(bank);
         self.shimmer.push(bank);
     }
 
@@ -488,6 +497,7 @@ impl Roles {
         [
             self.kick.finish(),
             self.bass.finish(smooth_coeff, norm),
+            self.mid.finish(smooth_coeff, norm),
             self.hats.finish(),
             self.shimmer.finish(smooth_coeff, norm),
         ]
@@ -497,6 +507,7 @@ impl Roles {
     pub(crate) fn stages(&self, role: Role) -> Option<BandStages> {
         match role {
             Role::Bass => Some(self.bass.stages()),
+            Role::Mid => Some(self.mid.stages()),
             Role::Shimmer => Some(self.shimmer.stages()),
             Role::Kick | Role::Hats => None,
         }
@@ -600,7 +611,7 @@ mod tests {
 
     /// Each role answers what it is for and stays quiet for what it is not:
     /// low thumps are Kick and not Hats, bright ticks are Hats and not Kick,
-    /// and a held low or high tone is Bass or Shimmer, not the other.
+    /// and a held low, middle or high tone is Bass, Mid or Shimmer alone.
     #[test]
     fn each_role_hears_its_own_end_of_the_spectrum() {
         let n = (8.0 * RATE) as usize;
@@ -657,38 +668,34 @@ mod tests {
             "ticks are not kicks"
         );
 
-        // Two seconds of a held 80 Hz tone, then two of a held 10 kHz tone.
-        let tones: Vec<f32> = (0..(4.0 * RATE) as usize)
+        // Two seconds each of a held 80 Hz, 1 kHz and 10 kHz tone: each level
+        // role hears its own and not the others.
+        let tones: Vec<f32> = (0..(6.0 * RATE) as usize)
             .map(|i| {
-                let f = if t(i) < 2.0 { 80.0 } else { 10_000.0 };
+                let f = [80.0, 1_000.0, 10_000.0][(t(i) / 2.0) as usize];
                 0.5 * (std::f32::consts::TAU * f * t(i)).sin()
             })
             .collect();
         let out = run(&tones);
-        let low = &out[at(1.0)..at(2.0)];
-        let high = &out[at(3.0)..at(4.0)];
         let mean = |span: &[[f32; NUM_ROLES]], role: Role| {
             span.iter().map(|o| o[role.index()]).sum::<f32>() / span.len() as f32
         };
-        assert!(
-            mean(low, Role::Bass) > 0.5,
-            "Bass during the low tone: {}",
-            mean(low, Role::Bass)
-        );
-        assert!(
-            mean(low, Role::Shimmer) < 0.05,
-            "Shimmer during the low tone: {}",
-            mean(low, Role::Shimmer)
-        );
-        assert!(
-            mean(high, Role::Shimmer) > 0.5,
-            "Shimmer during the high tone: {}",
-            mean(high, Role::Shimmer)
-        );
-        assert!(
-            mean(high, Role::Bass) < 0.05,
-            "Bass during the high tone: {}",
-            mean(high, Role::Bass)
-        );
+        let levels = [Role::Bass, Role::Mid, Role::Shimmer];
+        for (tone, &own) in levels.iter().enumerate() {
+            let span = &out[at(2.0 * tone as f32 + 1.0)..at(2.0 * tone as f32 + 2.0)];
+            for &role in &levels {
+                let level = mean(span, role);
+                if role == own {
+                    assert!(level > 0.5, "{} during its own tone: {level}", role.label());
+                } else {
+                    assert!(
+                        level < 0.05,
+                        "{} during {}'s tone: {level}",
+                        role.label(),
+                        own.label()
+                    );
+                }
+            }
+        }
     }
 }

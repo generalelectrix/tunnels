@@ -1,11 +1,10 @@
-//! Pinned envelope responses. Each case runs a signal the chain was tuned
-//! on through the processor and compares every role's output against
-//! a checked-in golden. A behaviour change shows up as a per-role report of
-//! how far, where, and how often the output moved, and the actual output is
-//! written beside the golden for plotting.
+//! Pinned envelope responses. Each case runs a signal through the processor
+//! and compares every role's output against a checked-in golden. A behaviour
+//! change shows up as a per-role report of how far, where, and how often the
+//! output moved, and the actual output is written beside the golden.
 //!
-//! To accept a change: `UPDATE_GOLDENS=1 cargo test -p tunnels_audio --test
-//! envelope_golden`, then include a before/after plot with the new bytes.
+//! `UPDATE_GOLDENS=1 cargo test -p tunnels_audio --test envelope_golden`
+//! rewrites the goldens from the current output.
 
 mod common;
 

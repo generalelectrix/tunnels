@@ -51,6 +51,7 @@ struct Row {
     roles: [f32; NUM_ROLES],
     /// The level roles' intermediate stages.
     bass_stages: BandStages,
+    mid_stages: BandStages,
     shimmer_stages: BandStages,
 }
 
@@ -69,6 +70,7 @@ impl Row {
     fn stages(&self, role: Role) -> Option<&BandStages> {
         match role {
             Role::Bass => Some(&self.bass_stages),
+            Role::Mid => Some(&self.mid_stages),
             Role::Shimmer => Some(&self.shimmer_stages),
             Role::Kick | Role::Hats => None,
         }
@@ -119,6 +121,7 @@ fn run(cfg: RunConfig, signal: &Signal) -> Vec<Row> {
                 raw_peak,
                 roles: *outputs,
                 bass_stages: processor.stages(Role::Bass).expect("Bass is a level role"),
+                mid_stages: processor.stages(Role::Mid).expect("Mid is a level role"),
                 shimmer_stages: processor
                     .stages(Role::Shimmer)
                     .expect("Shimmer is a level role"),
@@ -133,7 +136,7 @@ fn write_csv(path: &Path, rows: &[Row]) {
     for role in Role::ALL {
         let _ = write!(s, ",{}", role.label().to_lowercase());
     }
-    for name in ["bass", "shimmer"] {
+    for name in ["bass", "mid", "shimmer"] {
         let _ = write!(s, ",{name}_sm,{name}_fl,{name}_ceil");
     }
     s.push('\n');
@@ -142,7 +145,7 @@ fn write_csv(path: &Path, rows: &[Row]) {
         for v in r.roles {
             let _ = write!(s, ",{v:.5}");
         }
-        for st in [&r.bass_stages, &r.shimmer_stages] {
+        for st in [&r.bass_stages, &r.mid_stages, &r.shimmer_stages] {
             let _ = write!(s, ",{:.5},{:.5},{:.5}", st.smoothed, st.floor, st.ceiling);
         }
         s.push('\n');
@@ -348,7 +351,7 @@ fn fmt_mean(vals: impl Iterator<Item = f32>) -> String {
     }
 }
 
-/// Fraction of rows in a window whose band-0 output is at full scale.
+/// Fraction of rows in a window whose Bass output is at full scale.
 fn full_fraction(rows: &[Row], from: f32, to: f32) -> f32 {
     let (mut n, mut full) = (0.0_f32, 0.0_f32);
     for r in window(rows, from, to) {
@@ -370,7 +373,10 @@ fn motion_rate(rows: &[Row], role: Role, from: f32, to: f32) -> f32 {
         let Some(stages) = r.stages(role) else {
             return f32::NAN;
         };
-        let lg = stages.smoothed.max(0.01).ln();
+        let lg = stages
+            .smoothed
+            .max(NormalizerTuning::DEFAULT.noise_gate)
+            .ln();
         if let Some(p) = prev {
             total += (lg - p).abs();
         }
@@ -1356,7 +1362,7 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
     );
     let _ = writeln!(
         report,
-        "  loop   floor   ceil   |  dfloor   dceil   | b0 dist | b0 min  b0 max  kicks  | b0 hit peaks p10/p50/p90  full%"
+        "  loop   floor   ceil   |  dfloor   dceil   | bass dist | bass min  bass max  kicks  | bass hit peaks p10/p50/p90  full%"
     );
     let mut prev: Option<&[Row]> = None;
     let mut prev_end: Option<&Row> = None;
@@ -1406,7 +1412,7 @@ fn run_music(out_dir: &Path, path: &str, loops: usize, cfg: RunConfig) {
             &rows[(loops - 1) * buffers_per_loop..(loops * buffers_per_loop).min(rows.len())];
         let (from, to) = (last[0].t, last[last.len() - 1].t);
         let _ = write!(report, "  motion rate on the last loop, np/s:");
-        for role in [Role::Bass, Role::Shimmer] {
+        for role in [Role::Bass, Role::Mid, Role::Shimmer] {
             let _ = write!(
                 report,
                 " {} {:.1}",

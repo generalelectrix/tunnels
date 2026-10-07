@@ -2,7 +2,7 @@
 //! input.
 //!
 //! On the mono mix of the input channels: automatic trim → DC blocker →
-//! constant-Q resonator bank → the four roles, which follow the bank sample by
+//! constant-Q resonator bank → the roles, which follow the bank sample by
 //! sample and report once per buffer
 //! (see [`crate::roles`]). The role selected by `active_role` feeds the show.
 use std::sync::Arc;
@@ -33,8 +33,8 @@ impl AtomicF32 {
 /// Ring buffer capacity: ~16 seconds of history at ~1kHz buffer rate.
 pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 
-/// The envelope ring buffers for every role: the producers feed a
-/// `Processor`, the streams are read by whoever displays or records them.
+/// One envelope ring buffer per role: the producing ends and the reading
+/// ends, each in [`Role::ALL`] order.
 pub struct EnvelopeRingBuffers {
     pub producers: [EnvelopeProducer; NUM_ROLES],
     pub streams: [EnvelopeStream; NUM_ROLES],
@@ -53,7 +53,7 @@ pub fn envelope_ring_buffers() -> EnvelopeRingBuffers {
 }
 
 /// Audio callback rate in Hz (sample_rate / frames_per_buffer).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UpdateRate(f32);
 
 impl UpdateRate {
@@ -89,11 +89,10 @@ pub struct ProcessorSettingsInner {
 
     /// Which role feeds `envelope`, as its index in [`Role::ALL`].
     pub active_role: AtomicU32,
-    /// The gain the trim is currently applying, for display.
+    /// The gain the automatic trim is currently applying, as a multiplier.
     pub trim_gain: AtomicF32,
-    /// Runs of input samples pinned at full scale, counted since the
-    /// processor was built. Only its changes mean anything: the control
-    /// side watches it to tell whether the input is clipping now.
+    /// Runs of samples pinned at full scale on any one input channel,
+    /// counted since the processor was built; it wraps on overflow.
     pub input_clips: AtomicU32,
 }
 
@@ -105,9 +104,7 @@ impl ProcessorSettingsInner {
     /// Floor half-life: slow enough that a bass line is above its own bed,
     /// fast enough that a held tone stops being news within a phrase or two.
     pub const DEFAULT_FLOOR_HALFLIFE: f32 = 10.0;
-    /// Ceiling half-life of about one four-bar phrase. A beat moves the log
-    /// envelope about 8 nepers whatever the tempo, so 8 s at
-    /// `REFERENCE_MOTION_RATE` is ~52 nepers, and each band is measured
+    /// Ceiling half-life of about a phrase: each level role is measured
     /// against the loudest thing in the phrase it is part of.
     pub const DEFAULT_CEILING_HALFLIFE: f32 = 8.0;
     /// The role the show follows until told otherwise: the low end's level,
@@ -144,10 +141,9 @@ impl Default for ProcessorSettingsInner {
 
 pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
 
-/// Brings the input to a consistent level before the bands see it, so that
-/// how hot the interface is set stops deciding which bands are above the
-/// noise gate. Everything downstream is relative to its own band, so the
-/// trim is free to move slowly and be approximately right.
+/// A slow automatic gain that brings the input's peaks toward a fixed target,
+/// within limits, so the level the interface is set to does not decide what
+/// sits above the noise gate. It holds still on silence.
 struct AutoTrim {
     /// Tracked input peak: instant attack, slow decay.
     peak: f32,
@@ -170,9 +166,8 @@ impl AutoTrim {
     const MAX_GAIN_DB: f32 = 20.0;
     /// Peak tracker fall half-life.
     const PEAK_FALL_HALFLIFE: f32 = 10.0;
-    /// Gain slew half-life, the same in both directions. A band's ceiling
-    /// follows a slow change of level transparently, so there is nothing to
-    /// race toward and a stray peak costs only a gentle, brief dip.
+    /// Gain slew half-life, the same in both directions: slow enough that a
+    /// stray peak costs only a gentle, brief dip.
     const GAIN_HALFLIFE: f32 = 5.0;
     /// Input peak below which the trim holds still, so silence and idle
     /// noise are never boosted toward the target.
@@ -230,22 +225,19 @@ impl AutoTrim {
 /// Level at or beyond which an input sample is at the converter's ceiling.
 const CLIP_LEVEL: f32 = 0.999;
 
-/// Consecutive samples at that level before it counts as clipping rather
-/// than a signal that happens to touch full scale.
+/// Consecutive samples on one channel at that level before it counts as
+/// clipping rather than a signal that happens to touch full scale.
 const CLIP_RUN: u32 = 3;
 
-/// Nepers per second the log envelope of a band moves on music: the median
-/// over five tracks and seven bands, where the spread is 4.0 to 10.1,
-/// measured at 64 frames per buffer. The ceiling's memory is a quantity of
-/// envelope motion; this rate is what converts it to a half-life in seconds
-/// for the operator's benefit.
+/// Nepers per second a level role's log envelope moves on music: the median
+/// over twelve tracks of varied genres and the three level roles, at 64
+/// frames per buffer. A role with nothing in its range barely moves; a busy
+/// one moves up to about three times this. The ceiling's memory is a quantity
+/// of envelope motion, and this rate converts it to a half-life in seconds.
 ///
 /// Motion accrues once per buffer, so a longer buffer misses ripple finer
 /// than its period and forgets a little more slowly than the half-life says.
-/// Total variation telescopes over a monotone run, so only the ripple is
-/// lost: at the default half-life the same kicks measure a per-hit ceiling
-/// loss of 0.097 at 64 frames and 0.095 at 512.
-pub const REFERENCE_MOTION_RATE: f32 = 6.5;
+pub const REFERENCE_MOTION_RATE: f32 = 4.2;
 
 /// One-pole EMA coefficient that halves the distance to the target every
 /// `halflife_secs` at `update_rate` updates per second. A non-positive
@@ -366,12 +358,10 @@ pub(crate) struct AdaptiveNormalizer {
 }
 
 impl AdaptiveNormalizer {
-    /// The ceiling a band starts from, before it has heard anything: half
-    /// the loudest an envelope can be. A band that starts here under-reports
-    /// until it learns the real level, rather than calling the first sound
-    /// it hears full scale, and the error is on the safe side. Starting a
-    /// halving below the maximum costs one hit's worth of clipping if the
-    /// material turns out louder, and halves the time to settle.
+    /// The ceiling a normalizer starts from, before it has heard anything:
+    /// half a full-scale tone's envelope. Starting high under-reports until the
+    /// real level is learnt, rather than calling the first sound full scale;
+    /// louder material costs one hit's worth of clipping.
     const INITIAL_CEILING: f32 = 0.5;
 
     pub(crate) fn new(tuning: &NormalizerTuning) -> Self {
@@ -419,9 +409,7 @@ impl AdaptiveNormalizer {
 }
 
 /// One-pole DC blocker: `y[n] = x[n] - x[n-1] + coeff * y[n-1]`, the
-/// difference equation of a series capacitor. An offset is not something a
-/// band can hear, but the lowest band's skirt still reaches down to it, where
-/// it would sit under the envelope as a pedestal.
+/// difference equation of a series capacitor, removing any constant offset.
 struct DcBlocker {
     coeff: f32,
     x_prev: f32,
@@ -429,8 +417,7 @@ struct DcBlocker {
 }
 
 impl DcBlocker {
-    /// Corner frequency, low enough to leave the lowest band alone: it reaches
-    /// down to a few tens of Hz, where this is within 0.2 dB of flat.
+    /// Corner frequency: within 0.2 dB of flat from a few tens of hertz up.
     const CORNER_HZ: f32 = 5.0;
 
     fn new(sample_rate: f32) -> Self {
@@ -557,9 +544,9 @@ pub struct Processor {
 
     /// Brings the input to a consistent level ahead of everything else.
     auto_trim: AutoTrim,
-    /// Input samples at full scale so far, for detecting a clipping run
-    /// that straddles two buffers.
-    clip_run: u32,
+    /// Each channel's samples at full scale so far, for detecting a clipping
+    /// run that straddles two buffers.
+    clip_runs: Box<[u32]>,
     /// Removes any offset from the mix before it reaches the bank.
     dc_blocker: DcBlocker,
     /// Splits the mix into the bands every role is built from.
@@ -595,7 +582,7 @@ impl Processor {
             sample_rate,
             envelope_producers,
             auto_trim: AutoTrim::new(),
-            clip_run: 0,
+            clip_runs: vec![0; channel_count.max(1)].into_boxed_slice(),
             dc_blocker: DcBlocker::new(sample_rate),
             bank,
             roles,
@@ -611,23 +598,23 @@ impl Processor {
         self.roles.set_normalizer_tuning(&tuning);
     }
 
-    /// Count runs of samples pinned at full scale, which mean the signal
-    /// was already clipped before it reached us — by the interface's input
-    /// gain or by whatever fed it. No amount of normalizing downstream
-    /// recovers what the converter threw away.
+    /// Count each channel's runs of samples pinned at full scale into
+    /// `input_clips`, and return the buffer's peak level across all channels.
     fn count_input_clipping(&mut self, interleaved_buffer: &[f32]) -> f32 {
         let mut clips = 0;
         let mut peak = 0.0_f32;
-        for sample in interleaved_buffer {
-            let level = sample.abs();
-            peak = peak.max(level);
-            if level >= CLIP_LEVEL {
-                self.clip_run += 1;
-                if self.clip_run == CLIP_RUN {
-                    clips += 1;
+        for frame in interleaved_buffer.chunks(self.channel_count) {
+            for (sample, run) in frame.iter().zip(self.clip_runs.iter_mut()) {
+                let level = sample.abs();
+                peak = peak.max(level);
+                if level >= CLIP_LEVEL {
+                    *run += 1;
+                    if *run == CLIP_RUN {
+                        clips += 1;
+                    }
+                } else {
+                    *run = 0;
                 }
-            } else {
-                self.clip_run = 0;
             }
         }
         if clips > 0 {
@@ -643,7 +630,8 @@ impl Processor {
         self.roles.stages(role)
     }
 
-    fn maybe_update_parameters(&mut self, update_rate: f32) {
+    fn maybe_update_parameters(&mut self, buffer_rate: UpdateRate) {
+        let update_rate = buffer_rate.as_hz();
         let attack = self.settings.envelope_attack.get();
         let release = self.settings.envelope_release.get();
         if attack != self.envelope_attack
@@ -653,7 +641,7 @@ impl Processor {
             self.envelope_attack = attack;
             self.envelope_release = release;
             self.update_rate = update_rate;
-            self.roles.set_timing(attack, release, update_rate);
+            self.roles.set_timing(attack, release, buffer_rate);
         }
 
         self.smooth_coeff
@@ -663,6 +651,9 @@ impl Processor {
 
     /// Process a buffer of interleaved audio data.
     pub fn process(&mut self, interleaved_buffer: &[f32]) {
+        // Exact digital silence decays the bank and followers into subnormal
+        // values, which some CPUs process many times more slowly.
+        crate::denormals::flush_subnormals_to_zero();
         if interleaved_buffer.is_empty() {
             return;
         }
@@ -671,9 +662,10 @@ impl Processor {
         if frames == 0 {
             return;
         }
-        let update_rate = self.sample_rate / frames as f32;
+        let buffer_rate = UpdateRate::new(self.sample_rate as u32, frames as u32);
+        let update_rate = buffer_rate.as_hz();
 
-        self.maybe_update_parameters(update_rate);
+        self.maybe_update_parameters(buffer_rate);
 
         // The trim reads the input before its own gain reaches it, so it
         // cannot chase itself.
@@ -721,7 +713,9 @@ mod tests {
     #[test]
     fn processor_produces_envelope_from_sine() {
         let settings = ProcessorSettings::default();
-        let envelope = run_processor_with_sine(0.7, 100.0, 1.0, &settings);
+        let envelope = run_processor(&settings, 48000, 1.0, |t| {
+            0.7 * (std::f32::consts::TAU * 100.0 * t).sin()
+        });
         assert!(
             envelope > 0.3,
             "Envelope should be non-trivial after 1s of 100Hz sine, got {:.3}",
@@ -843,6 +837,28 @@ mod tests {
             1,
             "eight samples pinned at full scale are one clipped run"
         );
+
+        // Stereo: runs are counted per channel, not across the interleave.
+        let settings = ProcessorSettings::default();
+        let mut processor = Processor::new(settings.clone(), 48000, 2, test_producers());
+        let mut stereo = vec![0.5_f32; 128];
+        for frame in 10..18 {
+            stereo[2 * frame] = 1.0;
+        }
+        processor.process(&stereo);
+        assert_eq!(
+            settings.input_clips.load(Ordering::Relaxed),
+            1,
+            "one channel pinned for eight frames is clipping, whatever the other does"
+        );
+        let mut stereo = vec![0.5_f32; 128];
+        stereo[40..44].fill(1.0);
+        processor.process(&stereo);
+        assert_eq!(
+            settings.input_clips.load(Ordering::Relaxed),
+            1,
+            "both channels at full scale for two frames is two samples per channel, not a run"
+        );
     }
 
     /// Helper: feed a processor one mono signal in 48-sample buffers for the
@@ -862,35 +878,6 @@ mod tests {
             let end = (idx + buffer_size).min(total_samples);
             let buffer: Vec<f32> = (idx..end)
                 .map(|i| sample(i as f32 / sample_rate as f32))
-                .collect();
-            processor.process(&buffer);
-            idx = end;
-        }
-
-        settings.envelope.get()
-    }
-
-    /// Helper: generate a mono sine buffer and feed it through a processor
-    /// for the given duration. Returns the final envelope value.
-    fn run_processor_with_sine(
-        amplitude: f32,
-        freq_hz: f32,
-        duration_secs: f32,
-        settings: &ProcessorSettings,
-    ) -> f32 {
-        let sample_rate = 48000_u32;
-        let buffer_size = 48;
-        let total_samples = (duration_secs * sample_rate as f32) as usize;
-        let mut processor = Processor::new(settings.clone(), sample_rate, 1, test_producers());
-
-        let mut idx = 0;
-        while idx < total_samples {
-            let end = (idx + buffer_size).min(total_samples);
-            let buffer: Vec<f32> = (idx..end)
-                .map(|i| {
-                    let t = i as f32 / sample_rate as f32;
-                    (2.0 * std::f32::consts::PI * freq_hz * t).sin() * amplitude
-                })
                 .collect();
             processor.process(&buffer);
             idx = end;
