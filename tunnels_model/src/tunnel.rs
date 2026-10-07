@@ -2082,6 +2082,40 @@ mod test {
         );
     }
 
+    /// Every waveform is drawn both pulsed and unpulsed across the slots a
+    /// mixerful of max-variation tunnels hands out.
+    ///
+    /// A pulse is half of what a waveform does, and the renders those slots
+    /// produce are the only place most of it is ever looked at. Three bugs in
+    /// one pulse went unseen because the slot that would have drawn it never
+    /// came up.
+    #[test]
+    fn every_waveform_is_drawn_both_pulsed_and_unpulsed() {
+        use crate::animation::Waveform;
+        use crate::tunnel::fixture::SlotWaveform;
+        use strum::VariantArray;
+
+        // One mixerful: eight channels of four animation slots each.
+        let slots = 8 * N_ANIM;
+        for waveform in Waveform::VARIANTS {
+            let drawn = |pulse: bool| {
+                (0..slots).any(|slot| {
+                    let shaping = SlotWaveform::for_slot(slot);
+                    shaping.pulse == pulse
+                        && std::mem::discriminant(&shaping.waveform)
+                            == std::mem::discriminant(waveform)
+                })
+            };
+            assert!(
+                drawn(true) && drawn(false),
+                "across {slots} slots a {waveform:?} is drawn pulsed {} and \
+                 unpulsed {}",
+                drawn(true),
+                drawn(false)
+            );
+        }
+    }
+
     fn render_fixture(tunnel: &Tunnel) -> Layer {
         tunnel.render(
             UnipolarFloat::ONE,
@@ -2436,6 +2470,45 @@ pub mod fixture {
         snapshot(render_default(&tunnel))
     }
 
+    /// Render a tunnel whose thickness is driven by a pulsed sine square.
+    ///
+    /// A duty cycle below one and a smoothing in the middle of its range put
+    /// all four parts of the pulse on one ring: the rise into the window, the
+    /// flat top, the fall out of it, and the rest between one window and the
+    /// next. No other render reads a pulse at all, and a pulse is the half of
+    /// a waveform that a bipolar wave says nothing about.
+    pub fn pulsed_square_thickness_snapshot() -> LayerCollection {
+        let mut tunnel = Tunnel {
+            render_mode: RenderMode::Dot,
+            ..Default::default()
+        };
+        // Few enough dots that each one is big enough to read the value it
+        // stands for, and a radius at rest small enough that the pulse has
+        // most of the range to climb through.
+        set_segments(&mut tunnel, 48);
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(0.05)),
+            &mut NoopEmitter,
+        );
+        tunnel.anims[0].target = AnimationTarget::Thickness;
+        for sc in [
+            AnimStateChange::Waveform(Waveform::SineSquare),
+            AnimStateChange::Pulse(true),
+            AnimStateChange::NPeriods(1),
+            AnimStateChange::Size(UnipolarFloat::ONE),
+            AnimStateChange::DutyCycle(UnipolarFloat::new(0.5)),
+            AnimStateChange::Smoothing(UnipolarFloat::new(0.5)),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
+        }
+        // Smoothing is reached over time rather than set. The animation runs
+        // at no speed, so its phase stays where it starts while it gets there.
+        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+        snapshot(render_default(&tunnel))
+    }
+
     /// Render a saucer tunnel on a line path with spin animation.
     pub fn saucer_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
@@ -2625,6 +2698,29 @@ pub mod fixture {
         Waveform::Constant,
     ];
 
+    /// Which waveform a slot draws and whether it pulses.
+    ///
+    /// The position in the waveform table drifts by one every time round it,
+    /// so that the table shares no period with the pulse flag alternating
+    /// beside it. In step, a waveform at an even position would only ever be
+    /// drawn pulsed and one at an odd position never, which is a whole half of
+    /// every waveform left undrawn for no better reason than the table being
+    /// an even number of entries long.
+    pub(super) struct SlotWaveform {
+        pub waveform: Waveform,
+        pub pulse: bool,
+    }
+
+    impl SlotWaveform {
+        pub(super) fn for_slot(slot: usize) -> Self {
+            let turns = slot / WAVEFORMS.len();
+            Self {
+                waveform: WAVEFORMS[(slot + turns) % WAVEFORMS.len()],
+                pulse: slot.is_multiple_of(2),
+            }
+        }
+    }
+
     /// Configure a tunnel to vary as much as a tunnel can: full colour spread,
     /// no blacking, both integrated angles turning, and every animation slot
     /// spent on its own target, waveform and set of shaping flags.
@@ -2765,7 +2861,8 @@ pub mod fixture {
             anim.animation
                 .control(AnimControlMessage::Set(sc), &mut NoopEmitter)
         };
-        set(Waveform(WAVEFORMS[slot % WAVEFORMS.len()]));
+        let shaping = SlotWaveform::for_slot(slot);
+        set(Waveform(shaping.waveform));
         // Never zero: noise reads its smoothing as a cross-correlation term
         // only where the period count is not.
         set(NPeriods(1 + (slot % 4) as u16));
@@ -2779,7 +2876,7 @@ pub mod fixture {
             1.0 - 0.05 * (slot % 3) as f64,
         )));
         set(Smoothing(UnipolarFloat::new((slot % 5) as f64 / 5.0)));
-        set(Pulse(slot.is_multiple_of(2)));
+        set(Pulse(shaping.pulse));
         set(Standing(slot.is_multiple_of(3)));
         set(Invert(slot.is_multiple_of(5)));
     }
