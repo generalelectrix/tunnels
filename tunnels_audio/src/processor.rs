@@ -1,6 +1,7 @@
 //! A multi-channel audio processor that derives per-band envelopes from its input.
 //!
-//! Processing chains:
+//! Every input channel first passes through an automatic trim and a DC
+//! blocker. Processing chains:
 //!   Lowpass: per-channel lowpass → Hilbert |z(t)| → fast envelope → slow envelope
 //!   Wavelet: mono D4 decomposition → per-band Hilbert → fast → slow envelope
 //!
@@ -10,11 +11,14 @@ use audio_processor_traits::AudioProcessorSettings;
 use audio_processor_traits::{AtomicF32, AudioContext, simple_processor::MonoAudioProcessor};
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use log::debug;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
+use tunnels_lib::transient_indicator::TransientIndicator;
 
 use crate::hilbert::HilbertTransform;
+use crate::input_meter::InputMeter;
 use crate::ring_buffer::EnvelopeProducer;
 use crate::wavelet::{NUM_BANDS, NUM_LEVELS, WaveletDecomposition, WaveletType};
 
@@ -55,14 +59,8 @@ pub struct ProcessorSettingsInner {
     pub filter_cutoff: AtomicF32,    // Hz
     pub envelope_attack: AtomicF32,  // sec (slow stage)
     pub envelope_release: AtomicF32, // sec (slow stage)
-    /// Input signal gain multiplier (linear scale).
-    pub gain: AtomicF32,
     /// Symmetric output smoothing time constant (seconds). 0 = disabled.
     pub output_smoothing: AtomicF32,
-    /// Whether the auto-trim is enabled.
-    pub auto_trim_enabled: AtomicBool,
-    /// Current auto-trim gain factor (read by GUI for display).
-    pub auto_trim_gain: AtomicF32,
 
     /// Floor tracking half-life in seconds (slow — adapts to ambient level).
     pub norm_floor_halflife: AtomicF32,
@@ -87,8 +85,6 @@ impl ProcessorSettingsInner {
         self.envelope_attack.set(Self::DEFAULT_ENVELOPE_ATTACK);
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
-        self.gain.set(1.0);
-        self.auto_trim_enabled.store(true, Ordering::Relaxed);
         self.active_band.store(0, Ordering::Relaxed);
         self.norm_floor_halflife.set(10.0);
         self.norm_ceiling_halflife.set(5.0);
@@ -106,10 +102,7 @@ impl Default for ProcessorSettingsInner {
             filter_cutoff: AtomicF32::new(Self::DEFAULT_FILTER_CUTOFF),
             envelope_attack: AtomicF32::new(Self::DEFAULT_ENVELOPE_ATTACK),
             envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
-            gain: AtomicF32::new(1.0),
             output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
-            auto_trim_enabled: AtomicBool::new(true),
-            auto_trim_gain: AtomicF32::new(1.0),
             norm_floor_halflife: AtomicF32::new(10.0),
             norm_ceiling_halflife: AtomicF32::new(5.0),
             norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
@@ -121,44 +114,46 @@ impl Default for ProcessorSettingsInner {
 
 pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
 
-/// Input gain trim: slow automatic gain that compensates for gradual drift
-/// in the feed level. NOT compression — just keeping the pipe full.
-///
-/// Slews in dB (log) space so that equal perceptual changes (+6 dB vs -6 dB)
-/// take equal time at the same coefficient, independent of the current gain.
+/// A slow automatic gain that brings the input's peaks toward a fixed target,
+/// within limits, so the level the interface is set to does not decide the
+/// level every band works from. It holds still on silence.
 struct AutoTrim {
-    /// Tracked peak level, decays slowly toward zero.
-    peak_tracker: f32,
-    /// Current trim gain in dB.
+    /// Tracked input peak: instant attack, slow decay.
+    peak: f32,
     gain_db: f32,
-    /// Current trim gain as a linear multiplier (cached from gain_db).
+    /// `gain_db` as a multiplier.
     gain: f32,
-    /// The clamped target gain the slew is heading toward (linear).
-    desired_gain: f32,
+    update_rate: f32,
+    peak_fall_coeff: f32,
+    gain_coeff: f32,
 }
 
 impl AutoTrim {
-    /// Target peak level. Unity — downstream is all floating point,
-    /// so brief transient overshoot just means the envelope exceeds 1.0
-    /// momentarily (clamped at final output). The 20:1 asymmetry between
-    /// up (20s) and down (0.5s) time constants prevents oscillation.
+    /// Peak level the trim aims for. Unity: downstream is floating point
+    /// and a momentary overshoot costs nothing.
     const TARGET: f32 = 1.0;
-    /// Gain range in dB.
+    /// How far the trim may go. The boost reaches a feed run well below a
+    /// mastered level; past that it would mostly be lifting the interface's
+    /// own noise.
     const MIN_GAIN_DB: f32 = -10.0;
-    const MAX_GAIN_DB: f32 = 10.0;
-    /// Peak tracker release time constant (~10s at 1kHz buffer rate).
-    const PEAK_RELEASE_COEFF: f32 = 0.9999;
-    /// Gain adjustment rate upward: slow (~20s time constant at 1kHz).
-    const GAIN_UP_COEFF: f32 = 0.99995;
-    /// Gain adjustment rate downward: faster (~0.5s time constant at 1kHz).
-    const GAIN_DOWN_COEFF: f32 = 0.998;
+    const MAX_GAIN_DB: f32 = 20.0;
+    /// Peak tracker fall half-life.
+    const PEAK_FALL_HALFLIFE: Duration = Duration::from_secs(10);
+    /// Gain slew half-life, the same in both directions: slow enough that a
+    /// stray peak costs only a gentle, brief dip.
+    const GAIN_HALFLIFE: Duration = Duration::from_secs(5);
+    /// Input peak below which the trim holds still, so silence and idle
+    /// noise are never boosted toward the target.
+    const SILENCE: f32 = 0.01;
 
     fn new() -> Self {
         Self {
-            peak_tracker: 0.0,
+            peak: 0.0,
             gain_db: 0.0,
             gain: 1.0,
-            desired_gain: 1.0,
+            update_rate: 0.0,
+            peak_fall_coeff: 0.0,
+            gain_coeff: 0.0,
         }
     }
 
@@ -166,40 +161,87 @@ impl AutoTrim {
         10.0_f32.powf(db / 20.0)
     }
 
-    fn linear_to_db(lin: f32) -> f32 {
-        20.0 * lin.log10()
+    fn linear_to_db(linear: f32) -> f32 {
+        20.0 * linear.log10()
     }
 
-    /// Update the trim based on the peak level observed in this buffer.
-    /// Returns the current trim gain to apply.
-    fn update(&mut self, buffer_peak: f32) -> f32 {
-        // Track the peak: instant attack, slow release.
-        if buffer_peak > self.peak_tracker {
-            self.peak_tracker = buffer_peak;
+    /// Refresh the cached coefficients for the update rate. Safe to call
+    /// every buffer.
+    fn set_params(&mut self, update_rate: f32) {
+        if update_rate == self.update_rate {
+            return;
+        }
+        self.update_rate = update_rate;
+        self.peak_fall_coeff = halflife_to_coeff(Self::PEAK_FALL_HALFLIFE, update_rate);
+        self.gain_coeff = halflife_to_coeff(Self::GAIN_HALFLIFE, update_rate);
+    }
+
+    /// Update the trim from the peak level of one buffer of input.
+    fn update(&mut self, buffer_peak: f32) {
+        if buffer_peak < Self::SILENCE {
+            return;
+        }
+
+        self.peak = if buffer_peak > self.peak {
+            buffer_peak
         } else {
-            self.peak_tracker = Self::PEAK_RELEASE_COEFF * self.peak_tracker
-                + (1.0 - Self::PEAK_RELEASE_COEFF) * buffer_peak;
-        }
+            self.peak_fall_coeff * self.peak + (1.0 - self.peak_fall_coeff) * buffer_peak
+        };
 
-        // Compute desired gain in dB to bring tracked peak to target.
-        if self.peak_tracker > 0.001 {
-            let desired_linear = Self::TARGET / self.peak_tracker;
-            let desired_db =
-                Self::linear_to_db(desired_linear).clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
-            self.desired_gain = Self::db_to_linear(desired_db);
-
-            // Slew in dB space: slow up, fast down.
-            let coeff = if desired_db > self.gain_db {
-                Self::GAIN_UP_COEFF
-            } else {
-                Self::GAIN_DOWN_COEFF
-            };
-            self.gain_db = coeff * self.gain_db + (1.0 - coeff) * desired_db;
-            self.gain = Self::db_to_linear(self.gain_db);
-        }
-
-        self.gain
+        let desired_db = Self::linear_to_db(Self::TARGET / self.peak)
+            .clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
+        self.gain_db = self.gain_coeff * self.gain_db + (1.0 - self.gain_coeff) * desired_db;
+        self.gain = Self::db_to_linear(self.gain_db);
     }
+}
+
+/// Level at or beyond which an input sample is at the converter's ceiling.
+const CLIP_LEVEL: f32 = 0.999;
+
+/// Consecutive samples on one channel at that level before it counts as
+/// clipping rather than a signal that happens to touch full scale.
+const CLIP_RUN: u32 = 3;
+
+/// How long the clip indicator stays lit after the last buffer that clipped.
+const CLIP_HOLD: Duration = Duration::from_millis(300);
+
+/// Whether any one channel of an interleaved buffer of `channel_count`
+/// channels holds a run of [`CLIP_RUN`] consecutive samples at
+/// [`CLIP_LEVEL`] or beyond.
+fn buffer_clips(interleaved_buffer: &[f32], channel_count: NonZeroUsize) -> bool {
+    let channel_count = channel_count.get();
+    (0..channel_count).any(|channel| {
+        let mut run = 0;
+        interleaved_buffer
+            .iter()
+            .skip(channel)
+            .step_by(channel_count)
+            .any(|sample| {
+                if sample.abs() >= CLIP_LEVEL {
+                    run += 1;
+                } else {
+                    run = 0;
+                }
+                run >= CLIP_RUN
+            })
+    })
+}
+
+/// One-pole EMA coefficient that halves the distance to the target every
+/// `halflife` at `update_rate` updates per second. A zero half-life means no
+/// smoothing.
+pub(crate) fn halflife_to_coeff(halflife: Duration, update_rate: f32) -> f32 {
+    let halflife_secs = halflife.as_secs_f32();
+    if halflife_secs <= 0.0 || update_rate <= 0.0 {
+        return 0.0;
+    }
+    (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
+}
+
+/// A count of seconds as a duration; zero for a count that is negative, not
+/// a number, or too large to represent.
+fn secs_to_duration(secs: f32) -> Duration {
+    Duration::try_from_secs_f32(secs).unwrap_or(Duration::ZERO)
 }
 
 /// Tracking mode for floor/ceiling.
@@ -254,24 +296,22 @@ impl AdaptiveNormalizer {
         }
     }
 
-    fn set_params(&mut self, floor_halflife: f32, ceiling_halflife: f32, update_rate: f32) {
+    fn set_params(
+        &mut self,
+        floor_halflife: Duration,
+        ceiling_halflife: Duration,
+        update_rate: f32,
+    ) {
         if update_rate <= 0.0 {
             return;
         }
         // Average mode: slow rise, faster fall.
-        self.floor_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
-        self.floor_fall_coeff = Self::halflife_to_coeff(floor_halflife * 0.2, update_rate);
+        self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_fall_coeff = halflife_to_coeff(floor_halflife.mul_f32(0.2), update_rate);
         // Limit mode: instant drop to min, slow rise back.
-        self.floor_limit_rise_coeff = Self::halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
         // Ceiling: instant attack, decays at ceiling halflife.
-        self.ceiling_fall_coeff = Self::halflife_to_coeff(ceiling_halflife, update_rate);
-    }
-
-    fn halflife_to_coeff(halflife_secs: f32, update_rate: f32) -> f32 {
-        if halflife_secs <= 0.0 {
-            return 0.0;
-        }
-        (-f32::ln(2.0) / (halflife_secs * update_rate)).exp()
+        self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
     }
 
     #[inline]
@@ -320,6 +360,35 @@ impl AdaptiveNormalizer {
 
         let range = (self.ceiling - self.floor).max(Self::MIN_RANGE);
         ((envelope - self.floor) / range).clamp(0.0, 1.0)
+    }
+}
+
+/// One-pole DC blocker: `y[n] = x[n] - x[n-1] + coeff * y[n-1]`, the
+/// difference equation of a series capacitor, removing any constant offset.
+struct DcBlocker {
+    coeff: f32,
+    x_prev: f32,
+    y_prev: f32,
+}
+
+impl DcBlocker {
+    /// Corner frequency: within 0.2 dB of flat from a few tens of hertz up.
+    const CORNER_HZ: f32 = 5.0;
+
+    fn new(sample_rate: f32) -> Self {
+        Self {
+            coeff: 1.0 - std::f32::consts::TAU * Self::CORNER_HZ / sample_rate,
+            x_prev: 0.0,
+            y_prev: 0.0,
+        }
+    }
+
+    #[inline]
+    fn process(&mut self, input: f32) -> f32 {
+        let output = input - self.x_prev + self.coeff * self.y_prev;
+        self.x_prev = input;
+        self.y_prev = output;
+        output
     }
 }
 
@@ -424,11 +493,22 @@ pub struct Processor {
     filter_cutoff: f32,
     envelope_attack: f32,
     envelope_release: f32,
-    channel_count: usize,
+    /// Interleaved channels per frame.
+    channel_count: NonZeroUsize,
     context: AudioContext,
 
     /// Envelope ring buffer producers — one per output band.
     envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
+
+    /// Brings the input to a consistent level ahead of everything else.
+    auto_trim: AutoTrim,
+    /// Lit by a buffer in which the input clipped, and held for [`CLIP_HOLD`].
+    clip_indicator: TransientIndicator,
+    /// Where the trim and the clip indicator are published each buffer.
+    input_meter: Arc<InputMeter>,
+    /// One per channel: removes any offset from the input before it reaches
+    /// either chain.
+    dc_blockers: Box<[DcBlocker]>,
 
     /// Lowpass chain: one per audio channel.
     lowpass: Vec<LowpassChannel>,
@@ -440,9 +520,6 @@ pub struct Processor {
     /// Cached smoother coefficient shared across the lowpass smoother and
     /// every wavelet-band smoother.
     smooth_coeff: SmootherCoeff,
-
-    /// Automatic input gain trim.
-    auto_trim: AutoTrim,
 
     /// Wavelet decomposition (D4) + per-band envelope extraction.
     wavelet: WaveletDecomposition,
@@ -464,17 +541,17 @@ impl Processor {
     pub fn new(
         handle: ProcessorSettings,
         sample_rate: u32,
-        channel_count: usize,
+        channel_count: NonZeroUsize,
         envelope_producers: [EnvelopeProducer; NUM_OUTPUT_BANDS],
     ) -> Self {
+        let n = channel_count.get();
         let mut context: AudioContext = AudioProcessorSettings {
             sample_rate: sample_rate as f32,
-            input_channels: channel_count,
-            output_channels: channel_count,
+            input_channels: n,
+            output_channels: n,
             ..Default::default()
         }
         .into();
-        let n = context.settings.input_channels;
 
         let filter_cutoff = handle.filter_cutoff.get();
         let envelope_attack = handle.envelope_attack.get();
@@ -528,17 +605,28 @@ impl Processor {
             envelope_attack,
             envelope_release,
             settings: handle,
-            channel_count: n,
+            channel_count,
             context,
             envelope_producers,
+            auto_trim: AutoTrim::new(),
+            clip_indicator: TransientIndicator::new(CLIP_HOLD),
+            input_meter: Arc::new(InputMeter::default()),
+            dc_blockers: (0..n).map(|_| DcBlocker::new(base_sr)).collect(),
             lowpass,
             lowpass_smoother: OnePoleSmoother::default(),
             lowpass_normalizer: AdaptiveNormalizer::new(),
             smooth_coeff: SmootherCoeff::default(),
-            auto_trim: AutoTrim::new(),
             wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
             wavelet_bands,
         }
+    }
+
+    /// The meter this processor publishes its trim and clip indicator to.
+    ///
+    /// The processor holds the meter's only strong reference, so the handle
+    /// upgrades exactly as long as the processor exists.
+    pub fn input_meter(&self) -> Weak<InputMeter> {
+        Arc::downgrade(&self.input_meter)
     }
 
     fn maybe_update_parameters(&mut self, update_rate: f32) {
@@ -575,49 +663,65 @@ impl Processor {
 
     /// Process a buffer of interleaved audio data.
     pub fn process(&mut self, interleaved_buffer: &[f32]) {
+        // Exact digital silence decays the filters and followers into
+        // subnormal values, which some CPUs process many times more slowly.
+        crate::denormals::flush_subnormals_to_zero();
         if interleaved_buffer.is_empty() {
             return;
         }
 
-        let frames = interleaved_buffer.len() / self.channel_count.max(1);
-        let update_rate = if frames > 0 {
-            self.context.settings.sample_rate / frames as f32
-        } else {
-            1000.0
-        };
+        let channel_count = self.channel_count.get();
+        let frames = interleaved_buffer.len() / channel_count;
+        if frames == 0 {
+            return;
+        }
+        let sample_rate = self.context.settings.sample_rate;
+        let update_rate = sample_rate / frames as f32;
 
         self.maybe_update_parameters(update_rate);
 
-        let mut raw_peak: f32 = 0.0;
-        let mut input_peak: f32 = 0.0;
-        let auto_trim_enabled = self.settings.auto_trim_enabled.load(Ordering::Relaxed);
+        // The trim reads the input before its own gain reaches it, so it
+        // cannot chase itself.
+        let input_peak = interleaved_buffer
+            .iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        self.auto_trim.set_params(update_rate);
+        self.auto_trim.update(input_peak);
+        let gain = self.auto_trim.gain;
 
-        // Either manual gain or auto-trim, never both.
-        let effective_gain = if auto_trim_enabled {
-            self.auto_trim.gain
-        } else {
-            self.settings.gain.get()
-        };
+        self.clip_indicator.update_state(
+            secs_to_duration(frames as f32 / sample_rate),
+            buffer_clips(interleaved_buffer, self.channel_count),
+        );
+        self.input_meter
+            .set(self.auto_trim.gain_db, self.clip_indicator.state());
 
-        let ch_count_f = self.channel_count as f32;
+        let ch_count_f = channel_count as f32;
 
-        for frame in interleaved_buffer.chunks(self.channel_count) {
-            // Compute mono mix for wavelet input.
-            let mono = frame.iter().sum::<f32>() / ch_count_f;
-
-            for (chan, raw_sample) in self.lowpass.iter_mut().zip(frame) {
-                raw_peak = raw_peak.max(raw_sample.abs());
-                let sample = *raw_sample * effective_gain;
-                input_peak = input_peak.max(sample.abs());
+        for frame in interleaved_buffer.chunks(channel_count) {
+            let mut mono = 0.0;
+            for ((chan, dc_blocker), raw_sample) in self
+                .lowpass
+                .iter_mut()
+                .zip(self.dc_blockers.iter_mut())
+                .zip(frame)
+            {
+                // A device that hands us a non-finite sample would otherwise
+                // poison the filters and followers for the rest of the show:
+                // their state is recursive, so a NaN in it never washes out.
+                let sample = raw_sample * gain;
+                let sample = if sample.is_finite() { sample } else { 0.0 };
+                let sample = dc_blocker.process(sample);
+                mono += sample;
                 chan.process_sample(sample, &mut self.context);
             }
+            let mono = mono / ch_count_f;
 
             // Wavelet decomposition -> per-band envelope extraction.
             // Whitening: multiply by 2^(NUM_LEVELS - level) to correct for
             // the 1/f power spectrum of music. Higher bands get more boost.
-            let mono_gained = mono * effective_gain;
             let bands = &mut self.wavelet_bands;
-            self.wavelet.push(mono_gained, |band, sample| {
+            self.wavelet.push(mono, |band, sample| {
                 // Skip the residual band (== lowpass, redundant with our LP chain).
                 if band == NUM_LEVELS {
                     return;
@@ -627,28 +731,19 @@ impl Processor {
             });
         }
 
-        // Update auto-trim based on the pre-gain peak (raw signal level).
-        // We feed raw_peak, not input_peak, to avoid a feedback loop where
-        // the trim adjusts based on its own output.
-        if auto_trim_enabled {
-            self.auto_trim.update(raw_peak);
-            self.settings.auto_trim_gain.set(self.auto_trim.gain);
-        }
-
-        let ch_count = self.channel_count as f32;
         let envelope = self
             .lowpass
             .iter()
             .map(LowpassChannel::slow_envelope_state)
             .sum::<f32>()
-            / ch_count;
+            / ch_count_f;
 
         let coeff = self.smooth_coeff.get();
         let smoothed_lowpass = self.lowpass_smoother.update(coeff, envelope);
 
         // Normalization params (shared between lowpass and wavelet normalizers).
-        let floor_hl = self.settings.norm_floor_halflife.get();
-        let ceil_hl = self.settings.norm_ceiling_halflife.get();
+        let floor_hl = secs_to_duration(self.settings.norm_floor_halflife.get());
+        let ceil_hl = secs_to_duration(self.settings.norm_ceiling_halflife.get());
         let floor_mode = self.settings.norm_floor_mode.load(Ordering::Relaxed);
         let ceil_mode = self.settings.norm_ceiling_mode.load(Ordering::Relaxed);
 
@@ -695,6 +790,10 @@ mod tests {
     use super::*;
     use crate::ring_buffer::envelope_ring_buffer;
 
+    fn channels(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).expect("a test processor has at least one channel")
+    }
+
     fn test_producers() -> [EnvelopeProducer; NUM_OUTPUT_BANDS] {
         let mut producers = Vec::with_capacity(NUM_OUTPUT_BANDS);
         for _ in 0..NUM_OUTPUT_BANDS {
@@ -705,146 +804,11 @@ mod tests {
     }
 
     #[test]
-    fn auto_trim_boosts_quiet_signal() {
-        let mut trim = AutoTrim::new();
-        assert!((trim.gain - 1.0).abs() < 1e-6);
-
-        // Feed a consistently quiet signal (0.2 peak) for many buffers.
-        // The upward adjustment is very slow (~20s at 1kHz), so we need
-        // ~30000 iterations to see significant movement.
-        for _ in 0..30000 {
-            trim.update(0.2);
-        }
-        assert!(
-            trim.gain > 1.3,
-            "Trim should boost quiet signal, got {:.3}",
-            trim.gain
-        );
-        assert!(
-            trim.gain <= AutoTrim::db_to_linear(AutoTrim::MAX_GAIN_DB) + 0.01,
-            "Trim should not exceed MAX_GAIN, got {:.3}",
-            trim.gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_reduces_loud_signal() {
-        let mut trim = AutoTrim::new();
-
-        // Feed a consistently loud signal (1.5 peak) for many buffers.
-        // Desired = 0.85 / 1.5 ≈ 0.567.
-        for _ in 0..5000 {
-            trim.update(1.5);
-        }
-        assert!(
-            trim.gain < 0.7,
-            "Trim should reduce loud signal, got {:.3}",
-            trim.gain
-        );
-        assert!(
-            trim.gain >= AutoTrim::db_to_linear(AutoTrim::MIN_GAIN_DB) - 0.01,
-            "Trim should not go below MIN_GAIN, got {:.3}",
-            trim.gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_stays_near_unity_at_target() {
-        let mut trim = AutoTrim::new();
-
-        // Feed signal right at target level.
-        for _ in 0..5000 {
-            trim.update(AutoTrim::TARGET);
-        }
-        assert!(
-            (trim.gain - 1.0).abs() < 0.05,
-            "Trim should stay near 1.0 for target-level signal, got {:.3}",
-            trim.gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_downward_is_faster_than_upward() {
-        // Start from unity, feed loud signal, measure convergence speed.
-        let mut trim_down = AutoTrim::new();
-        for _ in 0..500 {
-            trim_down.update(1.5);
-        }
-        let down_deviation = (trim_down.gain - 1.0).abs();
-
-        // Start from unity, feed quiet signal, measure convergence speed.
-        let mut trim_up = AutoTrim::new();
-        for _ in 0..500 {
-            trim_up.update(0.2);
-        }
-        let up_deviation = (trim_up.gain - 1.0).abs();
-
-        assert!(
-            down_deviation > up_deviation,
-            "Downward adjustment ({:.4}) should be faster than upward ({:.4})",
-            down_deviation,
-            up_deviation
-        );
-    }
-
-    #[test]
-    fn auto_trim_ignores_silence() {
-        let mut trim = AutoTrim::new();
-
-        // Feed silence — trim should stay at 1.0 (peak tracker stays near 0,
-        // which is below the 0.001 threshold).
-        for _ in 0..5000 {
-            trim.update(0.0);
-        }
-        assert!(
-            (trim.gain - 1.0).abs() < 0.01,
-            "Trim should stay at 1.0 during silence, got {:.3}",
-            trim.gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_disabled_stays_at_unity() {
-        let settings = ProcessorSettings::default();
-        settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disabled
-        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
-
-        // Feed quiet signal — without trim, gain should stay at 1.0.
-        let buffer: Vec<f32> = vec![0.1; 48];
-        for _ in 0..100 {
-            processor.process(&buffer);
-        }
-        assert!(
-            (settings.auto_trim_gain.get() - 1.0).abs() < 0.01,
-            "Auto-trim gain should stay at 1.0 when disabled, got {:.3}",
-            settings.auto_trim_gain.get()
-        );
-    }
-
-    #[test]
     fn processor_produces_envelope_from_sine() {
         let settings = ProcessorSettings::default();
-        settings.auto_trim_enabled.store(false, Ordering::Relaxed); // disable trim for deterministic test
-        let mut processor = Processor::new(settings.clone(), 48000, 1, test_producers());
-
-        // Feed a 100Hz sine for 1 second.
-        let sample_rate = 48000.0_f32;
-        let total_samples = 48000;
-        let buffer_size = 48;
-        let mut idx = 0;
-        while idx < total_samples {
-            let end = (idx + buffer_size).min(total_samples);
-            let buffer: Vec<f32> = (idx..end)
-                .map(|i| {
-                    let t = i as f32 / sample_rate;
-                    (2.0 * std::f32::consts::PI * 100.0 * t).sin() * 0.7
-                })
-                .collect();
-            processor.process(&buffer);
-            idx = end;
-        }
-
-        let envelope = settings.envelope.get();
+        let envelope = run_processor(&settings, 48000, 1.0, |t| {
+            0.7 * (std::f32::consts::TAU * 100.0 * t).sin()
+        });
         assert!(
             envelope > 0.3,
             "Envelope should be non-trivial after 1s of 100Hz sine, got {:.3}",
@@ -852,97 +816,198 @@ mod tests {
         );
     }
 
-    /// Helper: generate a mono sine buffer and feed it through a processor
-    /// for the given duration. Returns the final envelope value.
-    fn run_processor_with_sine(
-        amplitude: f32,
-        freq_hz: f32,
-        duration_secs: f32,
+    /// A band whose input is a constant offset is not hearing anything, so
+    /// its envelope stays at zero.
+    #[test]
+    fn dc_offset_produces_no_envelope() {
+        let settings = ProcessorSettings::default();
+        let envelope = run_processor(&settings, 48000, 1.0, |_| 0.5);
+        assert!(
+            envelope < 0.05,
+            "a 0.5 DC offset should read as silence, got {envelope:.3}"
+        );
+    }
+
+    /// The trim follows the input's level, stops at its limits, and treats
+    /// silence as nothing to act on.
+    #[test]
+    fn auto_trim_follows_level_and_holds_on_silence() {
+        fn trim_at_1khz() -> AutoTrim {
+            let mut trim = AutoTrim::new();
+            trim.set_params(1000.0);
+            trim
+        }
+        fn feed(trim: &mut AutoTrim, peak: f32, updates: usize) {
+            for _ in 0..updates {
+                trim.update(peak);
+            }
+        }
+
+        // Right at target: stays put, and silence afterwards leaves it there.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, AutoTrim::TARGET, 5000);
+        assert!(
+            (trim.gain - 1.0).abs() < 0.05,
+            "at target the trim should hold near 1.0, got {:.3}",
+            trim.gain
+        );
+        feed(&mut trim, 0.0, 5000);
+        feed(&mut trim, 0.005, 5000);
+        assert!(
+            (trim.gain - 1.0).abs() < 0.01,
+            "silence should leave the trim where it was, got {:.3}",
+            trim.gain
+        );
+
+        // A quiet feed is boosted, up to the limit.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 0.02, 60000);
+        let max = AutoTrim::db_to_linear(AutoTrim::MAX_GAIN_DB);
+        assert!(
+            trim.gain > 0.9 * max && trim.gain <= max + 0.01,
+            "a feed 34 dB down should reach the boost limit {max:.1}, got {:.3}",
+            trim.gain
+        );
+
+        // A hot feed is reduced, down to the limit.
+        let mut trim = trim_at_1khz();
+        feed(&mut trim, 1.5, 15000);
+        let min = AutoTrim::db_to_linear(AutoTrim::MIN_GAIN_DB);
+        assert!(
+            trim.gain < 0.75 && trim.gain >= min - 0.01,
+            "a hot feed should be reduced but not below {min:.2}, got {:.3}",
+            trim.gain
+        );
+    }
+
+    /// A signal that touches full scale is not clipping; one that sits
+    /// there has been through a converter that ran out of range. Runs are
+    /// counted per channel, and any one channel clipping is enough.
+    #[test]
+    fn a_run_at_full_scale_on_any_channel_is_clipping() {
+        let mono = channels(1);
+        let mut buffer = vec![0.5_f32; 64];
+        buffer[10] = 1.0;
+        buffer[30] = -1.0;
+        assert!(
+            !buffer_clips(&buffer, mono),
+            "isolated samples at full scale are not clipping"
+        );
+        buffer[20..22].fill(1.0);
+        assert!(
+            !buffer_clips(&buffer, mono),
+            "two samples at full scale are not a run"
+        );
+        buffer[40..43].fill(-1.0);
+        assert!(
+            buffer_clips(&buffer, mono),
+            "three samples pinned at negative full scale are a run"
+        );
+
+        let stereo = channels(2);
+        for channel in 0..2 {
+            let mut buffer = vec![0.5_f32; 128];
+            for frame in 10..18 {
+                buffer[2 * frame + channel] = 1.0;
+            }
+            assert!(
+                buffer_clips(&buffer, stereo),
+                "channel {channel} pinned for eight frames is clipping, whatever the other does"
+            );
+        }
+        let mut buffer = vec![0.5_f32; 128];
+        buffer[40..44].fill(1.0);
+        assert!(
+            !buffer_clips(&buffer, stereo),
+            "both channels at full scale for two frames is two samples per channel, not a run"
+        );
+    }
+
+    /// The clip indicator lights on a buffer that clipped and stays lit for
+    /// the hold time of clean input after it.
+    #[test]
+    fn clip_indicator_holds_after_a_clipped_buffer() {
+        // 48 frames at 48 kHz: each buffer is 1 ms.
+        let mut processor = Processor::new(
+            ProcessorSettings::default(),
+            48000,
+            channels(1),
+            test_producers(),
+        );
+        let clean = vec![0.5_f32; 48];
+        let mut clipped = clean.clone();
+        clipped[20..28].fill(1.0);
+
+        processor.process(&clean);
+        assert!(
+            !processor.input_meter.clip_lit(),
+            "clean input leaves the indicator dark"
+        );
+        processor.process(&clipped);
+        assert!(
+            processor.input_meter.clip_lit(),
+            "a clipped buffer lights the indicator"
+        );
+        for _ in 0..299 {
+            processor.process(&clean);
+        }
+        assert!(
+            processor.input_meter.clip_lit(),
+            "299 ms of clean input after clipping is within the hold"
+        );
+        for _ in 0..2 {
+            processor.process(&clean);
+        }
+        assert!(
+            !processor.input_meter.clip_lit(),
+            "301 ms of clean input after clipping is past the hold"
+        );
+    }
+
+    /// The meter handle stops upgrading once its processor is dropped.
+    #[test]
+    fn input_meter_lives_as_long_as_its_processor() {
+        let processor = Processor::new(
+            ProcessorSettings::default(),
+            48000,
+            channels(1),
+            test_producers(),
+        );
+        let meter = processor.input_meter();
+        assert!(
+            meter.upgrade().is_some(),
+            "the processor keeps its meter alive"
+        );
+        drop(processor);
+        assert!(
+            meter.upgrade().is_none(),
+            "nothing but the processor keeps its meter alive"
+        );
+    }
+
+    /// Helper: feed a processor one mono signal in 48-sample buffers for the
+    /// given duration. Returns the final envelope value.
+    fn run_processor(
         settings: &ProcessorSettings,
+        sample_rate: u32,
+        duration_secs: f32,
+        sample: impl Fn(f32) -> f32,
     ) -> f32 {
-        let sample_rate = 48000_u32;
         let buffer_size = 48;
         let total_samples = (duration_secs * sample_rate as f32) as usize;
-        let mut processor = Processor::new(settings.clone(), sample_rate, 1, test_producers());
+        let mut processor =
+            Processor::new(settings.clone(), sample_rate, channels(1), test_producers());
 
         let mut idx = 0;
         while idx < total_samples {
             let end = (idx + buffer_size).min(total_samples);
             let buffer: Vec<f32> = (idx..end)
-                .map(|i| {
-                    let t = i as f32 / sample_rate as f32;
-                    (2.0 * std::f32::consts::PI * freq_hz * t).sin() * amplitude
-                })
+                .map(|i| sample(i as f32 / sample_rate as f32))
                 .collect();
             processor.process(&buffer);
             idx = end;
         }
 
         settings.envelope.get()
-    }
-
-    #[test]
-    fn auto_trim_converges_quiet_signal_through_processor() {
-        // Feed a quiet 100Hz sine (amplitude 0.1) through the full processor
-        // with auto-trim enabled. Desired gain = 1.0/0.1 = +20 dB, clamped
-        // to +10 dB (3.162x). With a 20s upward time constant, 30s gets us
-        // ~78% of the way in dB space (0 dB toward +10 dB ≈ +7.8 dB ≈ 2.45x).
-        let settings = ProcessorSettings::default();
-
-        let _envelope = run_processor_with_sine(0.1, 100.0, 30.0, &settings);
-
-        let trim_gain = settings.auto_trim_gain.get();
-        assert!(
-            trim_gain > 1.5,
-            "Auto-trim gain should be well above unity for quiet signal, got {:.3}",
-            trim_gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_converges_loud_signal_through_processor() {
-        // Feed a loud 100Hz sine (amplitude 1.5, over unity) through the
-        // full processor. The trim should reduce gain so post-gain peaks
-        // approach the target (1.0).
-        let settings = ProcessorSettings::default();
-
-        let _envelope = run_processor_with_sine(1.5, 100.0, 10.0, &settings);
-
-        let trim_gain = settings.auto_trim_gain.get();
-        assert!(
-            trim_gain < 0.8,
-            "Auto-trim gain should be well below unity for 1.5x signal, got {:.3}",
-            trim_gain
-        );
-    }
-
-    #[test]
-    fn auto_trim_no_feedback_loop() {
-        // This is the specific regression test for the feedback loop bug.
-        // If the trim feeds back on its own output (post-gain peaks), it
-        // will oscillate or converge to the wrong value. If it correctly
-        // reads pre-gain peaks, the gain should converge to TARGET/amplitude.
-        let settings = ProcessorSettings::default();
-        let amplitude = 0.4_f32;
-
-        let _envelope = run_processor_with_sine(amplitude, 100.0, 30.0, &settings);
-
-        let trim_gain = settings.auto_trim_gain.get();
-        // Expected: gain ≈ TARGET / amplitude = 1.0 / 0.4 = 2.5
-        let expected = AutoTrim::TARGET / amplitude;
-
-        // With a 20s upward time constant and 30s of signal, we reach ~78%
-        // of the way from 1.0 to the target. Allow enough tolerance for that,
-        // but catch the feedback loop bug (which converges near 1.0).
-        let min_expected = 1.0 + (expected - 1.0) * 0.5; // at least halfway there
-        assert!(
-            trim_gain > min_expected,
-            "Auto-trim gain {:.3} should be converging toward TARGET/amplitude = {:.3} \
-             (expected at least {:.3} after 30s). \
-             If gain is near 1.0, the trim is feeding back on its own output.",
-            trim_gain,
-            expected,
-            min_expected,
-        );
     }
 }

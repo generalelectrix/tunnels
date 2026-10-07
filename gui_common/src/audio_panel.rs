@@ -1,8 +1,20 @@
-use eframe::egui;
+use eframe::egui::{self, Color32};
+use std::sync::Weak;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
-use tunnels_audio::OFFLINE_DEVICE_NAME;
 use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
+use tunnels_audio::{InputMeter, OFFLINE_DEVICE_NAME};
+
+use crate::STATUS_COLORS;
+
+/// The resolution the input trim is displayed at, in dB.
+const TRIM_DISPLAY_STEP_DB: f32 = 0.5;
+
+/// How often a GUI showing the input meter redraws to follow it.
+pub const METER_REFRESH: Duration = Duration::from_millis(30);
+
+/// The clip indicator's color while dark.
+const CLIP_LED_DARK: Color32 = Color32::from_gray(48);
 
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
@@ -11,22 +23,21 @@ pub trait AudioCommands {
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
-    fn set_gain(&mut self, gain_linear: f64);
-    fn set_auto_trim_enabled(&mut self, enabled: bool);
     fn set_active_band(&mut self, band: u32);
     fn set_norm_floor_halflife(&mut self, halflife: Duration);
     fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
     fn set_norm_floor_mode(&mut self, mode: TrackingMode);
     fn set_norm_ceiling_mode(&mut self, mode: TrackingMode);
-    fn toggle_monitor(&mut self);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
-    fn report_error(&mut self, error: impl std::fmt::Display);
 }
 
 pub struct AudioPanelState {
     selected_audio: Option<usize>,
     audio_devices: Vec<String>,
+    /// The input's meter, readable only while the input it belongs to is
+    /// open.
+    input_meter: Weak<InputMeter>,
 }
 
 impl AudioPanelState {
@@ -34,7 +45,20 @@ impl AudioPanelState {
         Self {
             selected_audio: None,
             audio_devices: devices,
+            input_meter: Weak::new(),
         }
+    }
+
+    /// Read the input trim and clip indicator from `meter` for as long as it
+    /// upgrades.
+    pub fn set_input_meter(&mut self, meter: Weak<InputMeter>) {
+        self.input_meter = meter;
+    }
+
+    /// Whether the input meter's clip indicator is lit, or `None` when no
+    /// live meter is attached.
+    pub fn input_clipping(&self) -> Option<bool> {
+        self.input_meter.upgrade().map(|m| m.clip_lit())
     }
 
     /// Sync the combo box selection from the authoritative show state.
@@ -119,27 +143,6 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.add_space(4.0);
 
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
-            // Auto input level toggle.
-            ui.label("Auto Input Level:");
-            let mut enabled = self.snapshot.auto_trim_enabled;
-            if ui.checkbox(&mut enabled, "").changed() {
-                self.commands.set_auto_trim_enabled(enabled);
-            }
-            ui.end_row();
-
-            // Manual gain — only shown when auto input level is off.
-            if !self.snapshot.auto_trim_enabled {
-                ui.label("Gain:");
-                let mut gain_db = 20.0 * (self.snapshot.gain_linear as f32).log10();
-                if ui
-                    .add(egui::Slider::new(&mut gain_db, -20.0..=30.0).suffix(" dB"))
-                    .changed()
-                {
-                    self.commands.set_gain(10.0_f64.powf(gain_db as f64 / 20.0));
-                }
-                ui.end_row();
-            }
-
             // Lowpass cutoff.
             ui.label("Lowpass:");
             let mut cutoff = self.snapshot.filter_cutoff_hz;
@@ -172,6 +175,15 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             if band != self.snapshot.active_band {
                 self.commands.set_active_band(band);
             }
+            ui.end_row();
+
+            ui.label("Input trim:").on_hover_text(
+                "Gain the input is automatically trimmed by, so its peaks sit near full scale.",
+            );
+            ui.label(match self.state.input_meter.upgrade() {
+                Some(meter) => format!("{:+.1} dB", displayed_trim_db(meter.trim_db())),
+                None => "--".to_string(),
+            });
             ui.end_row();
         });
     }
@@ -303,9 +315,47 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
     }
 }
 
+/// A trim in dB to the nearest [`TRIM_DISPLAY_STEP_DB`], never negative zero.
+fn displayed_trim_db(trim_db: f32) -> f32 {
+    (trim_db / TRIM_DISPLAY_STEP_DB).round() * TRIM_DISPLAY_STEP_DB + 0.0
+}
+
+/// Render the tab that holds the audio panel in a tab bar, labelled `label`,
+/// returning `true` if it was clicked this frame. With `clip` present, a round
+/// input-clipping LED sits inside the tab to the right of its label: red while
+/// `clip` is `Some(true)`, dark otherwise.
+pub fn audio_tab(ui: &mut egui::Ui, label: &str, selected: bool, clip: Option<bool>) -> bool {
+    let Some(lit) = clip else {
+        return ui.selectable_label(selected, label).clicked();
+    };
+    let led_atom = egui::Id::new("clip_led");
+    let diameter = ui.spacing().interact_size.y * 0.6;
+    let tab = egui::Button::selectable(
+        selected,
+        (
+            label,
+            egui::Atom::custom(led_atom, egui::Vec2::splat(diameter)),
+        ),
+    )
+    .atom_ui(ui);
+    if let Some(rect) = tab.rect(led_atom) {
+        let color = if lit {
+            STATUS_COLORS.error
+        } else {
+            CLIP_LED_DARK
+        };
+        ui.painter()
+            .circle_filled(rect.center(), diameter / 2.0, color);
+        ui.interact(rect, tab.response.id.with(led_atom), egui::Sense::hover())
+            .on_hover_text("Input clipping");
+    }
+    tab.response.clicked()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     struct MockAudioCommands {
         devices: Vec<String>,
@@ -323,19 +373,15 @@ mod tests {
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
-        fn set_gain(&mut self, _gain_linear: f64) {}
-        fn set_auto_trim_enabled(&mut self, _enabled: bool) {}
         fn set_active_band(&mut self, _band: u32) {}
         fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
         fn set_norm_floor_mode(&mut self, _mode: TrackingMode) {}
         fn set_norm_ceiling_mode(&mut self, _mode: TrackingMode) {}
-        fn toggle_monitor(&mut self) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {
             self.devices.clone()
         }
-        fn report_error(&mut self, _error: impl std::fmt::Display) {}
     }
 
     fn default_snapshot() -> AudioSnapshot {
@@ -370,6 +416,9 @@ mod tests {
         let mut commands = MockAudioCommands::new(devices.clone());
         let mut state = AudioPanelState::new(devices);
         state.selected_audio = Some(1);
+        let meter = Arc::new(InputMeter::default());
+        meter.set(3.4, true);
+        state.set_input_meter(Arc::downgrade(&meter));
         let snapshot = AudioSnapshot {
             device_name: "Scarlett 2i2 USB".to_string(),
             ..default_snapshot()
@@ -387,24 +436,67 @@ mod tests {
     }
 
     #[test]
-    fn render_auto_trim_disabled() {
+    fn render_audio_tab_states() {
         use egui_kittest::Harness;
+        // No meter (plain tab), meter dark, meter lit.
+        let mut harness = Harness::new_ui(|ui| {
+            ui.horizontal(|ui| {
+                let _ = audio_tab(ui, "Audio", false, None);
+                let _ = audio_tab(ui, "Audio", false, Some(false));
+                let _ = audio_tab(ui, "Audio", true, Some(true));
+            });
+        });
+        harness.run();
+        harness.snapshot("audio_tab_clip_led");
+    }
+
+    /// Render the panel for an open device and assert that `trim_text` is
+    /// shown in the input trim row.
+    fn assert_trim_row_reads(state: &mut AudioPanelState, trim_text: &str) {
+        use egui_kittest::{Harness, kittest::Queryable};
         let mut commands = MockAudioCommands::new(vec![]);
-        let mut state = AudioPanelState::new(vec![]);
         let snapshot = AudioSnapshot {
             device_name: "Scarlett 2i2 USB".to_string(),
-            auto_trim_enabled: false,
             ..default_snapshot()
         };
         let mut harness = Harness::new_ui(|ui| {
             AudioPanel {
                 commands: &mut commands,
-                state: &mut state,
+                state: &mut *state,
                 snapshot: &snapshot,
             }
             .ui(ui);
         });
         harness.run();
-        harness.snapshot("audio_panel_auto_trim_disabled");
+        harness.get_by_label(trim_text);
+    }
+
+    #[test]
+    fn meter_is_read_only_while_it_lives() {
+        let mut state = AudioPanelState::new(vec![]);
+        assert_eq!(state.input_clipping(), None, "no meter attached");
+        assert_trim_row_reads(&mut state, "--");
+
+        let meter = Arc::new(InputMeter::default());
+        meter.set(3.4, true);
+        state.set_input_meter(Arc::downgrade(&meter));
+        assert_eq!(state.input_clipping(), Some(true), "a live, lit meter");
+        assert_trim_row_reads(&mut state, "+3.5 dB");
+
+        drop(meter);
+        assert_eq!(state.input_clipping(), None, "the meter is gone");
+        assert_trim_row_reads(&mut state, "--");
+    }
+
+    #[test]
+    fn trim_is_displayed_to_the_nearest_half_db() {
+        assert_eq!(displayed_trim_db(3.1), 3.0);
+        assert_eq!(displayed_trim_db(3.4), 3.5);
+        assert_eq!(displayed_trim_db(-9.8), -10.0);
+        assert_eq!(
+            format!("{:+.1}", displayed_trim_db(-0.2)),
+            "+0.0",
+            "a trim that rounds to zero shows no sign of having been negative"
+        );
     }
 }

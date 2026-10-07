@@ -1,15 +1,17 @@
 //! Provide an audio input stream that automatically reconnects when disconnected.
 use anyhow::Result;
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use cpal::BufferSize;
 use cpal::SupportedBufferSize;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Stream, StreamError};
+use cpal::{ChannelCount, Device, Stream, StreamError};
 use log::{info, warn};
+use std::num::NonZeroUsize;
 use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::Duration;
 
+use crate::EnvelopeStreams;
 use crate::processor::{
     ENVELOPE_HISTORY_CAPACITY, NUM_OUTPUT_BANDS, Processor, ProcessorSettings, UpdateRate,
 };
@@ -100,7 +102,7 @@ fn reconnect(
                     });
 
                     match open_result {
-                        Ok((stream, update_rate, streams)) => {
+                        Ok((stream, envelope_streams)) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
                                 let _ = result_tx.send(Ok(()));
@@ -108,10 +110,7 @@ fn reconnect(
                             } else {
                                 info!("Successfully reopened audio input {device_name}.");
                             }
-                            let _ = envelope_tx.send(crate::EnvelopeStreams {
-                                streams,
-                                update_rate,
-                            });
+                            let _ = envelope_tx.send(envelope_streams);
                             _input_stream = Some(stream);
                         }
                         Err(e) => {
@@ -178,8 +177,9 @@ fn build_input_stream(
     device: &Device,
     processor_settings: ProcessorSettings,
     disconnect_sender: Sender<Cmd>,
-) -> Result<(Stream, UpdateRate, [EnvelopeStream; NUM_OUTPUT_BANDS])> {
+) -> Result<(Stream, EnvelopeStreams)> {
     let supported = device.default_input_config()?;
+    let channel_count = nonzero_channel_count(supported.channels())?;
 
     // Aim for about 1 ms of audio buffering latency.
     let sample_duration = 1. / supported.sample_rate().0 as f64;
@@ -236,9 +236,10 @@ fn build_input_stream(
     let mut processor = Processor::new(
         processor_settings,
         config.sample_rate.0,
-        config.channels as usize,
+        channel_count,
         producers,
     );
+    let input_meter = processor.input_meter();
 
     let handle_buffer = move |interleaved_buffer: &[f32], _: &cpal::InputCallbackInfo| {
         processor.process(interleaved_buffer);
@@ -257,5 +258,32 @@ fn build_input_stream(
     let input_stream = device.build_input_stream(&config, handle_buffer, handle_error, None)?;
 
     input_stream.play()?;
-    Ok((input_stream, update_rate, envelope_streams))
+    Ok((
+        input_stream,
+        EnvelopeStreams {
+            streams: envelope_streams,
+            update_rate,
+            input_meter,
+        },
+    ))
+}
+
+/// A device's channel count, which must not be zero.
+fn nonzero_channel_count(channels: ChannelCount) -> Result<NonZeroUsize> {
+    NonZeroUsize::new(channels.into())
+        .ok_or_else(|| anyhow!("the device reports no input channels"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_device_without_channels_is_refused() {
+        assert_eq!(
+            nonzero_channel_count(0).unwrap_err().to_string(),
+            "the device reports no input channels"
+        );
+        assert_eq!(nonzero_channel_count(2).ok(), NonZeroUsize::new(2));
+    }
 }

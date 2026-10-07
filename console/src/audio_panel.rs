@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+pub(crate) use gui_common::audio_panel::audio_tab;
 use gui_common::audio_panel::{
     AudioCommands, AudioPanel as SharedAudioPanel, AudioPanelState as SharedAudioPanelState,
     AudioSnapshot,
@@ -54,22 +55,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_gain(&mut self, gain_linear: f64) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::InputGain(gain_linear),
-            )));
-    }
-
-    fn set_auto_trim_enabled(&mut self, enabled: bool) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::AutoTrimEnabled(enabled),
-            )));
-    }
-
     fn set_active_band(&mut self, band: u32) {
         let _ = self
             .ctx
@@ -110,12 +95,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn toggle_monitor(&mut self) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::ToggleMonitor));
-    }
-
     fn reset_parameters(&mut self) {
         let _ = self
             .ctx
@@ -131,10 +110,6 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
                 vec![]
             }
         }
-    }
-
-    fn report_error(&mut self, error: impl std::fmt::Display) {
-        self.ctx.report_error(error);
     }
 }
 
