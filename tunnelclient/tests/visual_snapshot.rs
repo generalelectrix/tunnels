@@ -1,6 +1,9 @@
 mod software_graphics;
 
 use std::path::Path;
+use std::sync::LazyLock;
+
+use golden_image::{Goldens, Tolerance};
 
 use client_lib::config::ClientConfig;
 use graphics::Graphics;
@@ -59,154 +62,38 @@ fn render_snapshot(snapshot: &LayerCollection, cfg: &ClientConfig) -> image::Rgb
     render_snapshot_sized(snapshot, cfg, WIDTH, HEIGHT)
 }
 
-fn compare_to_fixture(actual: &image::RgbaImage, fixture_name: &str) {
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(fixture_name);
+/// How far a render may stray from its golden on any one channel.
+///
+/// The software rasteriser resolves a pixel's colour by slightly different
+/// arithmetic than the GL one does, so a couple of least-significant bits are
+/// not evidence of a change in what was drawn.
+const CHANNEL_TOLERANCE: Tolerance = Tolerance::per_channel(2);
 
-    if std::env::var("UPDATE_FIXTURES").is_ok() {
-        actual.save(&fixture_path).unwrap();
-        eprintln!("Updated fixture: {}", fixture_path.display());
-        return;
-    }
+/// The goldens a tunnel render is compared against.
+static GOLDENS: LazyLock<Goldens> = LazyLock::new(|| goldens(CHANNEL_TOLERANCE));
 
-    let expected = image::open(&fixture_path)
-        .unwrap_or_else(|_| {
-            panic!(
-                "Missing fixture {}. Run with UPDATE_FIXTURES=1 to generate.",
-                fixture_name
-            )
-        })
-        .to_rgba8();
-
-    assert_images_match(actual, &expected, 2, fixture_name);
-}
-
-fn compare_to_fixture_with_limit(
-    actual: &image::RgbaImage,
-    fixture_name: &str,
-    max_mismatches: usize,
-) {
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(fixture_name);
-
-    if std::env::var("UPDATE_FIXTURES").is_ok() {
-        actual.save(&fixture_path).unwrap();
-        eprintln!("Updated fixture: {}", fixture_path.display());
-        return;
-    }
-
-    let expected = image::open(&fixture_path)
-        .unwrap_or_else(|_| {
-            panic!("Missing fixture {fixture_name}. Run with UPDATE_FIXTURES=1 to generate.")
-        })
-        .to_rgba8();
-
-    assert_images_match_with_limit(actual, &expected, 2, max_mismatches, fixture_name);
-}
-
-/// Compare a figure render against its golden, allowing a few edge pixels.
+/// The goldens a figure render is compared against, allowing a few edge pixels.
 ///
 /// The software rasteriser makes different coverage decisions at a triangle
 /// edge than the GL one does, and a figure has tens of thousands of triangles
 /// where a tunnel has a hundred segments — so a change anywhere upstream that
 /// moves one vertex onto an edge moves a handful of pixels. The budget is
 /// small enough that a real change still fails.
-fn compare_fill_to_fixture(actual: &image::RgbaImage, fixture_name: &str) {
-    compare_to_fixture_with_limit(actual, fixture_name, 200);
-}
+static FIGURE_GOLDENS: LazyLock<Goldens> =
+    LazyLock::new(|| goldens(CHANNEL_TOLERANCE.allowing(200)));
 
-fn assert_images_match(
-    actual: &image::RgbaImage,
-    expected: &image::RgbaImage,
-    tolerance: u8,
-    name: &str,
-) {
-    assert_images_match_with_limit(actual, expected, tolerance, 0, name);
-}
-
-/// Whether two pixels are the same to within `tolerance` on every channel.
-fn within_tolerance(a: &image::Rgba<u8>, e: &image::Rgba<u8>, tolerance: u8) -> bool {
-    a.0.iter()
-        .zip(e.0.iter())
-        .all(|(ac, ec)| ac.abs_diff(*ec) <= tolerance)
-}
-
-/// Write what was rendered, what was expected, and where they differ, and
-/// return where they were put.
-///
-/// A count of differing pixels says a comparison failed but not how, and an
-/// image is the only form the answer takes: whether a shape moved, whether a
-/// colour shifted, or whether a handful of edge pixels landed on the other side
-/// of a triangle boundary are three different failures behind the same number.
-///
-/// The difference is drawn as the expected image dimmed to a quarter, with the
-/// pixels that differ picked out in magenta, so a change reads against the
-/// shape it happened to rather than against nothing.
-fn write_comparison(
-    actual: &image::RgbaImage,
-    expected: &image::RgbaImage,
-    tolerance: u8,
-    name: &str,
-) -> std::path::PathBuf {
-    let stem = name.strip_suffix(".png").unwrap_or(name);
-    // Cargo sets this for an integration test, inside the target directory, so
-    // it is never committed and never shared between test binaries.
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("image_mismatch");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return dir;
-    }
-
-    let mut diff = expected.clone();
-    for (px, (a, e)) in diff
-        .pixels_mut()
-        .zip(actual.pixels().zip(expected.pixels()))
-    {
-        *px = if within_tolerance(a, e, tolerance) {
-            image::Rgba([e.0[0] / 4, e.0[1] / 4, e.0[2] / 4, 255])
-        } else {
-            image::Rgba([255, 0, 255, 255])
-        };
-    }
-
-    for (suffix, img) in [("actual", actual), ("expected", expected), ("diff", &diff)] {
-        let _ = img.save(dir.join(format!("{stem}.{suffix}.png")));
-    }
-    dir
-}
-
-fn assert_images_match_with_limit(
-    actual: &image::RgbaImage,
-    expected: &image::RgbaImage,
-    tolerance: u8,
-    max_mismatches: usize,
-    name: &str,
-) {
-    assert_eq!(
-        actual.dimensions(),
-        expected.dimensions(),
-        "Image dimensions differ for {name}"
-    );
-    let mismatches: usize = actual
-        .pixels()
-        .zip(expected.pixels())
-        .filter(|(a, e)| !within_tolerance(a, e, tolerance))
-        .count();
-
-    if mismatches > max_mismatches {
-        let dir = write_comparison(actual, expected, tolerance, name);
-        panic!(
-            "Image mismatch for {}: {} pixels differ (out of {}, max allowed: {}). \
-             Rendered, expected and difference images written to {}. \
-             Run with UPDATE_FIXTURES=1 to update.",
-            name,
-            mismatches,
-            actual.width() * actual.height(),
-            max_mismatches,
-            dir.display(),
-        );
-    }
+/// This suite's goldens, held to the given tolerance.
+fn goldens(tolerance: Tolerance) -> Goldens {
+    Goldens::new(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        // Cargo sets this for an integration test, inside the target directory,
+        // so it is never committed. One such directory serves the whole
+        // workspace, so the crate name keeps one suite's images off another's.
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join("image_mismatch")
+            .join(env!("CARGO_PKG_NAME")),
+        tolerance,
+    )
 }
 
 /// Wrap shapes in a layer drawn with the default render mode and path shape,
@@ -257,7 +144,7 @@ fn test_arc(start: f64, hue: f64, radius: f64) -> ShapeGeometry {
 fn single_arc() {
     let snapshot = vec![default_layer(0.25, vec![test_arc(0.0, 0.0, 0.4)])];
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "single_arc.png");
+    GOLDENS.compare(&image, "single_arc.png");
 }
 
 #[test]
@@ -271,7 +158,7 @@ fn concentric_rings() {
         ],
     )];
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "concentric_rings.png");
+    GOLDENS.compare(&image, "concentric_rings.png");
 }
 
 #[test]
@@ -281,7 +168,7 @@ fn rotated_arc() {
     seg.placement.rot_angle = 0.125; // 45 degrees
     let snapshot = vec![default_layer(span, vec![seg])];
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "rotated_arc.png");
+    GOLDENS.compare(&image, "rotated_arc.png");
 }
 
 #[test]
@@ -296,7 +183,7 @@ fn flipped_horizontal() {
 
     // Render without flip and compare to fixture.
     let unflipped = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&unflipped, "flipped_horizontal_unflipped.png");
+    GOLDENS.compare(&unflipped, "flipped_horizontal_unflipped.png");
 
     // Render with flip_horizontal transform enabled.
     let flipped_cfg = ClientConfig::new(
@@ -316,49 +203,54 @@ fn flipped_horizontal() {
     // slightly different containment decisions when geometry is mirrored vs when
     // the final image is flipped, due to sub-pixel rounding at arc edges.
     let expected = image::imageops::flip_horizontal(&unflipped);
-    assert_images_match_with_limit(&flipped, &expected, 2, 100, "flipped_horizontal");
+    GOLDENS.assert_match(
+        &flipped,
+        &expected,
+        CHANNEL_TOLERANCE.allowing(100),
+        "flipped_horizontal",
+    );
 }
 
 #[test]
 fn default_tunnel() {
     let snapshot = tunnels_model::tunnel::fixture::default_tunnel_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "default_tunnel.png");
+    GOLDENS.compare(&image, "default_tunnel.png");
 }
 
 #[test]
 fn stress_tunnel() {
     let snapshot = tunnels_model::tunnel::fixture::stress_tunnel_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "stress_tunnel.png");
+    GOLDENS.compare(&image, "stress_tunnel.png");
 }
 
 #[test]
 fn pulsed_square_thickness() {
     let snapshot = tunnels_model::tunnel::fixture::pulsed_square_thickness_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "pulsed_square_thickness.png");
+    GOLDENS.compare(&image, "pulsed_square_thickness.png");
 }
 
 #[test]
 fn stress_tunnel_evolved() {
     let snapshot = tunnels_model::tunnel::fixture::stress_tunnel_evolved_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "stress_tunnel_evolved.png");
+    GOLDENS.compare(&image, "stress_tunnel_evolved.png");
 }
 
 #[test]
 fn default_tunnel_dot_mode() {
     let snapshot = tunnels_model::tunnel::fixture::default_tunnel_dot_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "default_tunnel_dot.png");
+    GOLDENS.compare(&image, "default_tunnel_dot.png");
 }
 
 #[test]
 fn stress_tunnel_dot_mode() {
     let snapshot = tunnels_model::tunnel::fixture::stress_tunnel_dot_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "stress_tunnel_dot.png");
+    GOLDENS.compare(&image, "stress_tunnel_dot.png");
 }
 
 #[test]
@@ -366,7 +258,7 @@ fn elliptical_tunnel() {
     let snapshot = tunnels_model::tunnel::fixture::elliptical_tunnel_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "elliptical_tunnel.png");
+    GOLDENS.compare(&image, "elliptical_tunnel.png");
 }
 
 #[test]
@@ -374,21 +266,21 @@ fn elliptical_tunnel_dot_mode() {
     let snapshot = tunnels_model::tunnel::fixture::elliptical_tunnel_dot_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "elliptical_tunnel_dot.png");
+    GOLDENS.compare(&image, "elliptical_tunnel_dot.png");
 }
 
 #[test]
 fn saucer_few_thin() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_few_thin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "saucer_few_thin.png");
+    GOLDENS.compare(&image, "saucer_few_thin.png");
 }
 
 #[test]
 fn saucer_many_thick() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_many_thick_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "saucer_many_thick.png");
+    GOLDENS.compare(&image, "saucer_many_thick.png");
 }
 
 #[test]
@@ -396,28 +288,28 @@ fn saucer_wide_ellipse() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_wide_ellipse_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "saucer_wide_ellipse.png");
+    GOLDENS.compare(&image, "saucer_wide_ellipse.png");
 }
 
 #[test]
 fn saucer_tall_ellipse() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_tall_ellipse_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "saucer_tall_ellipse.png");
+    GOLDENS.compare(&image, "saucer_tall_ellipse.png");
 }
 
 #[test]
 fn saucer_few_thin_spin() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_few_thin_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "saucer_few_thin_spin.png");
+    GOLDENS.compare(&image, "saucer_few_thin_spin.png");
 }
 
 #[test]
 fn saucer_many_thick_spin() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_many_thick_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "saucer_many_thick_spin.png");
+    GOLDENS.compare(&image, "saucer_many_thick_spin.png");
 }
 
 #[test]
@@ -425,14 +317,14 @@ fn saucer_wide_ellipse_spin() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_wide_ellipse_spin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "saucer_wide_ellipse_spin.png");
+    GOLDENS.compare(&image, "saucer_wide_ellipse_spin.png");
 }
 
 #[test]
 fn saucer_tall_ellipse_spin() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_tall_ellipse_spin_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "saucer_tall_ellipse_spin.png");
+    GOLDENS.compare(&image, "saucer_tall_ellipse_spin.png");
 }
 
 // --- Ellipse path: arc spin ---
@@ -441,14 +333,14 @@ fn saucer_tall_ellipse_spin() {
 fn arc_spin_many() {
     let snapshot = tunnels_model::tunnel::fixture::arc_spin_many_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "arc_spin_many.png");
+    GOLDENS.compare(&image, "arc_spin_many.png");
 }
 
 #[test]
 fn arc_spin_few() {
     let snapshot = tunnels_model::tunnel::fixture::arc_spin_few_snapshot();
     let image = render_snapshot(&snapshot, &test_config());
-    compare_to_fixture(&image, "arc_spin_few.png");
+    GOLDENS.compare(&image, "arc_spin_few.png");
 }
 
 #[test]
@@ -456,7 +348,7 @@ fn arc_spin_wide_ellipse() {
     let snapshot = tunnels_model::tunnel::fixture::arc_spin_wide_ellipse_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "arc_spin_wide_ellipse.png");
+    GOLDENS.compare(&image, "arc_spin_wide_ellipse.png");
 }
 
 // --- Line path: full-tunnel snapshots ---
@@ -466,7 +358,7 @@ fn default_tunnel_line() {
     let snapshot = tunnels_model::tunnel::fixture::default_tunnel_line_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "default_tunnel_line.png");
+    GOLDENS.compare(&image, "default_tunnel_line.png");
 }
 
 #[test]
@@ -474,7 +366,7 @@ fn default_tunnel_line_dot() {
     let snapshot = tunnels_model::tunnel::fixture::default_tunnel_line_dot_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "default_tunnel_line_dot.png");
+    GOLDENS.compare(&image, "default_tunnel_line_dot.png");
 }
 
 #[test]
@@ -482,7 +374,7 @@ fn saucer_line_few_thin() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_line_few_thin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "saucer_line_few_thin.png");
+    GOLDENS.compare(&image, "saucer_line_few_thin.png");
 }
 
 #[test]
@@ -490,7 +382,7 @@ fn saucer_line_spin() {
     let snapshot = tunnels_model::tunnel::fixture::saucer_line_spin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "saucer_line_spin.png");
+    GOLDENS.compare(&image, "saucer_line_spin.png");
 }
 
 #[test]
@@ -498,7 +390,7 @@ fn arc_line_spin() {
     let snapshot = tunnels_model::tunnel::fixture::arc_line_spin_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "arc_line_spin.png");
+    GOLDENS.compare(&image, "arc_line_spin.png");
 }
 
 // --- Line path: direct Shape edge-wrapping tests ---
@@ -560,7 +452,7 @@ fn line_arc_edge_wrap() {
     );
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "line_arc_edge_wrap.png");
+    GOLDENS.compare(&image, "line_arc_edge_wrap.png");
 }
 
 /// Dot near the edge of the line, cross-fading between ends.
@@ -584,7 +476,7 @@ fn line_dot_edge_crossfade() {
     );
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "line_dot_edge_crossfade.png");
+    GOLDENS.compare(&image, "line_dot_edge_crossfade.png");
 }
 
 /// Saucer near the edge of the line, cross-fading between ends.
@@ -608,7 +500,7 @@ fn line_saucer_edge_crossfade() {
     );
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "line_saucer_edge_crossfade.png");
+    GOLDENS.compare(&image, "line_saucer_edge_crossfade.png");
 }
 
 // --- Line path: aspect ratio animation (wiggle) ---
@@ -618,7 +510,7 @@ fn line_aspect_ratio_anim_arc() {
     let snapshot = tunnels_model::tunnel::fixture::line_aspect_ratio_anim_arc_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "line_aspect_ratio_anim_arc.png");
+    GOLDENS.compare(&image, "line_aspect_ratio_anim_arc.png");
 }
 
 #[test]
@@ -626,7 +518,7 @@ fn line_aspect_ratio_anim_dot() {
     let snapshot = tunnels_model::tunnel::fixture::line_aspect_ratio_anim_dot_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "line_aspect_ratio_anim_dot.png");
+    GOLDENS.compare(&image, "line_aspect_ratio_anim_dot.png");
 }
 
 #[test]
@@ -634,7 +526,7 @@ fn line_aspect_ratio_anim_saucer() {
     let snapshot = tunnels_model::tunnel::fixture::line_aspect_ratio_anim_saucer_snapshot();
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     let image = render_snapshot_sized(&snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-    compare_to_fixture(&image, "line_aspect_ratio_anim_saucer.png");
+    GOLDENS.compare(&image, "line_aspect_ratio_anim_saucer.png");
 }
 
 // --- Line path: saucer marquee evolution sequence ---
@@ -645,7 +537,7 @@ fn saucer_line_marquee_sequence() {
     let cfg = test_config_sized(WIDE_WIDTH, HEIGHT);
     for (i, snapshot) in snapshots.iter().enumerate() {
         let image = render_snapshot_sized(snapshot, &cfg, WIDE_WIDTH, HEIGHT);
-        compare_to_fixture(&image, &format!("saucer_line_marquee_f{i}.png"));
+        GOLDENS.compare(&image, &format!("saucer_line_marquee_f{i}.png"));
     }
 }
 
@@ -672,7 +564,7 @@ fn the_fixtures_draw_the_figures_they_were_taken_of() {
 #[test]
 fn sprite_flat() {
     let image = render_snapshot(&fixture::sprite_flat_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_flat.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_flat.png");
 }
 
 /// The colour sweep along each coordinate a figure can be indexed by.
@@ -688,7 +580,7 @@ fn sprite_color_on_each_axis() {
         (PhaseAxis::Linear, "sprite_color_linear.png"),
     ] {
         let image = render_snapshot(&fixture::sprite_color_snapshot(phase), &test_config());
-        compare_fill_to_fixture(&image, name);
+        FIGURE_GOLDENS.compare(&image, name);
     }
 }
 
@@ -697,7 +589,7 @@ fn sprite_color_on_each_axis() {
 #[test]
 fn sprite_shared_vertex() {
     let image = render_snapshot(&fixture::sprite_shared_vertex_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_shared_vertex.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_shared_vertex.png");
 }
 
 /// A colour animation over a figure that already carries a colour sweep. The
@@ -706,14 +598,14 @@ fn sprite_shared_vertex() {
 #[test]
 fn sprite_color_animation() {
     let image = render_snapshot(&fixture::sprite_color_animation_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_color_animation.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_color_animation.png");
 }
 
 /// Spin shears the figure: the centre pinned, the rim carrying the full turn.
 #[test]
 fn sprite_spin() {
     let image = render_snapshot(&fixture::sprite_spin_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_spin.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_spin.png");
 }
 
 /// The marquee turns a figure inside its box, so a wide figure stays wide
@@ -724,9 +616,9 @@ fn sprite_spin() {
 fn sprite_marquee_and_rotation_differ_on_a_wide_figure() {
     let cfg = test_config();
     let marquee = render_snapshot(&fixture::sprite_marquee_wide_snapshot(), &cfg);
-    compare_fill_to_fixture(&marquee, "sprite_marquee_wide.png");
+    FIGURE_GOLDENS.compare(&marquee, "sprite_marquee_wide.png");
     let rotation = render_snapshot(&fixture::sprite_rotation_wide_snapshot(), &cfg);
-    compare_fill_to_fixture(&rotation, "sprite_rotation_wide.png");
+    FIGURE_GOLDENS.compare(&rotation, "sprite_rotation_wide.png");
 }
 
 /// A marquee animation reaches the figure's angle the way the knob does, so
@@ -736,7 +628,12 @@ fn sprite_marquee_animation() {
     let cfg = test_config();
     let knob = render_snapshot(&fixture::sprite_marquee_wide_snapshot(), &cfg);
     let animation = render_snapshot(&fixture::sprite_marquee_animation_snapshot(), &cfg);
-    assert_images_match(&animation, &knob, 0, "sprite_marquee_animation");
+    GOLDENS.assert_match(
+        &animation,
+        &knob,
+        Tolerance::EXACT,
+        "sprite_marquee_animation",
+    );
 }
 
 /// A radial animation run around the angle, which deforms the outline into
@@ -744,7 +641,7 @@ fn sprite_marquee_animation() {
 #[test]
 fn sprite_radial_animation() {
     let image = render_snapshot(&fixture::sprite_radial_animation_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_radial_animation.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_radial_animation.png");
 }
 
 /// A position animation run along the figure, which shears it continuously
@@ -755,7 +652,7 @@ fn sprite_position_animation() {
         &fixture::sprite_position_animation_snapshot(),
         &test_config(),
     );
-    compare_fill_to_fixture(&image, "sprite_position_animation.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_position_animation.png");
 }
 
 /// The same shear on a stroked figure, which reaches a point through the
@@ -766,7 +663,7 @@ fn sprite_position_animation_outline() {
         &fixture::sprite_position_animation_outline_snapshot(),
         &test_config(),
     );
-    compare_fill_to_fixture(&image, "sprite_position_animation_outline.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_position_animation_outline.png");
 }
 
 /// A noise warp on an outline, which is the only waveform whose value depends
@@ -778,7 +675,7 @@ fn sprite_noise_warp_outline() {
         &fixture::sprite_noise_warp_outline_snapshot(),
         &test_config(),
     );
-    compare_fill_to_fixture(&image, "sprite_noise_warp_outline.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_noise_warp_outline.png");
 }
 
 /// A masked figure over a lit one intersects their apertures, which is how
@@ -786,7 +683,7 @@ fn sprite_noise_warp_outline() {
 #[test]
 fn sprite_masked_stack() {
     let image = render_snapshot(&fixture::sprite_masked_stack_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_masked_stack.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_masked_stack.png");
 }
 
 /// A gobo over a lit figure is the mask above inverted: the lit figure
@@ -795,7 +692,7 @@ fn sprite_masked_stack() {
 #[test]
 fn sprite_gobo_stack() {
     let image = render_snapshot(&fixture::sprite_gobo_stack_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_gobo_stack.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_gobo_stack.png");
 }
 
 /// A gobo blacks the frame rather than clipping it, so a beam drawn after one
@@ -803,7 +700,7 @@ fn sprite_gobo_stack() {
 #[test]
 fn sprite_gobo_then_lit() {
     let image = render_snapshot(&fixture::sprite_gobo_then_lit_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_gobo_then_lit.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_gobo_then_lit.png");
 }
 
 /// A look drawn as a gobo makes each of its channels a gobo in its own right,
@@ -811,7 +708,7 @@ fn sprite_gobo_then_lit() {
 #[test]
 fn look_gobo_intersection() {
     let image = render_snapshot(&fixture::look_gobo_intersection_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "look_gobo_intersection.png");
+    FIGURE_GOLDENS.compare(&image, "look_gobo_intersection.png");
 }
 
 /// A gobo whose window has closed blacks the frame entire.
@@ -868,7 +765,7 @@ fn gobo_closed_aperture() {
         "a gobo with an open window blacked the whole frame"
     );
 
-    compare_to_fixture(&image, "gobo_closed_aperture.png");
+    GOLDENS.compare(&image, "gobo_closed_aperture.png");
 }
 
 /// Assert every pixel is opaque black, naming what was drawn if one is not.
@@ -920,7 +817,7 @@ fn a_closed_gobo_shuts_as_far_as_its_fader_is_up() {
         "a gobo shut half way up its fader blacked the frame outright"
     );
 
-    compare_to_fixture(&half, "gobo_closed_aperture_half_level.png");
+    GOLDENS.compare(&half, "gobo_closed_aperture_half_level.png");
 }
 
 /// A mask fades what it covers in over its fader rather than switching it out.
@@ -950,7 +847,7 @@ fn a_mask_fades_in_over_its_fader() {
         "a mask did not fade over its fader: {off} unmasked, {half_light} half way, {full} at the top"
     );
 
-    compare_fill_to_fixture(&half, "sprite_mask_half_level.png");
+    FIGURE_GOLDENS.compare(&half, "sprite_mask_half_level.png");
 }
 
 /// A gobo fades in over its fader the way a mask does, on the other side of
@@ -981,7 +878,7 @@ fn a_gobo_fades_in_over_its_fader() {
         "a gobo did not fade over its fader: {off} open, {half_light} half way, {full} at the top"
     );
 
-    compare_fill_to_fixture(&half, "sprite_gobo_half_level.png");
+    FIGURE_GOLDENS.compare(&half, "sprite_gobo_half_level.png");
 }
 
 /// How much light a render carries, summed over every colour channel.
@@ -998,7 +895,7 @@ fn total_light(image: &image::RgbaImage) -> u64 {
 #[test]
 fn sprite_outline_color() {
     let image = render_snapshot(&fixture::sprite_outline_color_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_outline_color.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_outline_color.png");
 }
 
 /// Outline mode strokes the contours the build ships instead of filling them,
@@ -1006,7 +903,7 @@ fn sprite_outline_color() {
 #[test]
 fn sprite_outline() {
     let image = render_snapshot(&fixture::sprite_outline_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "sprite_outline.png");
+    FIGURE_GOLDENS.compare(&image, "sprite_outline.png");
 }
 
 /// A thickness animation's periodicity has to reach the outline.
@@ -1107,7 +1004,7 @@ fn the_generated_fixtures_select_the_figures_they_were_taken_of() {
 #[test]
 fn generated_flat() {
     let image = render_snapshot(&fixture::generated_flat_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "generated_flat.png");
+    FIGURE_GOLDENS.compare(&image, "generated_flat.png");
 }
 
 /// Two sets of parallel bars at a small angle to each other. Every crossing is
@@ -1117,7 +1014,7 @@ fn generated_flat() {
 #[test]
 fn generated_even_odd() {
     let image = render_snapshot(&fixture::generated_even_odd_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "generated_even_odd.png");
+    FIGURE_GOLDENS.compare(&image, "generated_even_odd.png");
 }
 
 /// A figure that runs well outside the frame it was built in, drawn at one
@@ -1127,7 +1024,7 @@ fn generated_even_odd() {
 #[test]
 fn generated_field() {
     let image = render_snapshot(&fixture::generated_field_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "generated_field.png");
+    FIGURE_GOLDENS.compare(&image, "generated_field.png");
 }
 
 /// A colour sweep across a generated figure, which is the meshed and ramped
@@ -1135,14 +1032,14 @@ fn generated_field() {
 #[test]
 fn generated_color() {
     let image = render_snapshot(&fixture::generated_color_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "generated_color.png");
+    FIGURE_GOLDENS.compare(&image, "generated_color.png");
 }
 
 /// A generated figure's contours stroked instead of its interior filled.
 #[test]
 fn generated_outline() {
     let image = render_snapshot(&fixture::generated_outline_snapshot(), &test_config());
-    compare_fill_to_fixture(&image, "generated_outline.png");
+    FIGURE_GOLDENS.compare(&image, "generated_outline.png");
 }
 
 /// The rasteriser's per-vertex colour paths, which no golden image reaches
