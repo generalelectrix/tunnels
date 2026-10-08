@@ -1167,6 +1167,17 @@ mod test {
         }
     }
 
+    /// An emitter that keeps the waveforms it was told about.
+    #[derive(Default)]
+    struct WaveformRecorder(Vec<AnimWaveform>);
+    impl crate::animation::EmitStateChange for WaveformRecorder {
+        fn emit_animation_state_change(&mut self, sc: AnimStateChange) {
+            if let AnimStateChange::Waveform(w) = sc {
+                self.0.push(w);
+            }
+        }
+    }
+
     /// A surface blanks the controls a figure has no use for, so a mode that
     /// does use them has to hear their values again. Restating the whole
     /// tunnel is what leaves nothing dark that the new mode reads.
@@ -1993,8 +2004,8 @@ mod test {
             fill
         };
 
-        let placed = fill(AnimWaveform::Square, 0);
-        let warped = fill(AnimWaveform::Square, 3);
+        let placed = fill(AnimWaveform::SineSquare, 0);
+        let warped = fill(AnimWaveform::SineSquare, 3);
         let flat = fill(AnimWaveform::Constant, 3);
 
         assert_ne!(
@@ -2038,7 +2049,7 @@ mod test {
         tunnel.thickness = UnipolarFloat::new(0.15).into();
         tunnel.anims[0].target = AnimationTarget::Thickness;
         for sc in [
-            AnimStateChange::Waveform(AnimWaveform::Sine),
+            AnimStateChange::Waveform(AnimWaveform::SineSquare),
             AnimStateChange::NPeriods(2),
             AnimStateChange::Size(UnipolarFloat::ONE),
         ] {
@@ -2080,6 +2091,68 @@ mod test {
             "at full amplitude the trough takes the width to nothing, not to {}",
             taper.value(Phase::new(0.375), 0)
         );
+    }
+
+    /// Every waveform is drawn both pulsed and unpulsed across the slots a
+    /// mixerful of max-variation tunnels hands out.
+    ///
+    /// A pulse is half of what a waveform does, and the renders those slots
+    /// produce are the only place most of it is ever looked at. Three bugs in
+    /// one pulse went unseen because the slot that would have drawn it never
+    /// came up.
+    #[test]
+    fn every_waveform_is_drawn_both_pulsed_and_unpulsed() {
+        use crate::animation::Waveform;
+        use crate::tunnel::fixture::SlotWaveform;
+        use strum::VariantArray;
+
+        // One mixerful: eight channels of four animation slots each.
+        let slots = 8 * N_ANIM;
+        for waveform in Waveform::VARIANTS {
+            let drawn = |pulse: bool| {
+                (0..slots).any(|slot| {
+                    let shaping = SlotWaveform::for_slot(slot);
+                    shaping.pulse == pulse && shaping.waveform == *waveform
+                })
+            };
+            assert!(
+                drawn(true) && drawn(false),
+                "across {slots} slots a {waveform:?} is drawn pulsed {} and \
+                 unpulsed {}",
+                drawn(true),
+                drawn(false)
+            );
+        }
+    }
+
+    /// The stress fixture reaches every waveform.
+    ///
+    /// The fixture exists to put the expensive paths under load, and the
+    /// waveforms are not alike in cost: noise samples a simplex field and is
+    /// bound by memory latency where the rest are a few arithmetic operations
+    /// on a phase. A fixture that skips one measures the half it kept.
+    ///
+    /// A waveform set that outgrows the animation slots fails here, where
+    /// whoever grew it has to decide what the fixture does about it, rather
+    /// than losing its last entries quietly.
+    #[test]
+    fn the_stress_fixture_reaches_every_waveform() {
+        let mut tunnel = Tunnel::default();
+        super::fixture::configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
+        let mut recorder = WaveformRecorder::default();
+        for anim in &tunnel.anims {
+            anim.animation.emit_state(&mut recorder);
+        }
+        for waveform in AnimWaveform::VARIANTS {
+            assert!(
+                recorder.0.contains(waveform),
+                "the stress fixture never reaches {waveform:?}: it spends {} \
+                 animation slots on {} waveforms and drew {:?}",
+                tunnel.anims.len(),
+                AnimWaveform::VARIANTS.len(),
+                recorder.0
+            );
+        }
     }
 
     fn render_fixture(tunnel: &Tunnel) -> Layer {
@@ -2158,12 +2231,16 @@ pub mod fixture {
 
         for (i, anim) in tunnel.anims.iter_mut().enumerate() {
             anim.animation.control(
-                AnimControlMessage::Set(AnimStateChange::Waveform(match i % 4 {
-                    0 => Waveform::Sine,
-                    1 => Waveform::Triangle,
-                    2 => Waveform::Square,
-                    _ => Waveform::Sawtooth,
-                })),
+                // A slot apiece, so that the load this fixture puts on a
+                // render includes the cost of every waveform rather than of
+                // whichever ones the slots happened to land on. Noise is the
+                // one that matters most: it samples a simplex field and waits
+                // on memory where the rest are arithmetic on a phase.
+                //
+                // Taken from the written-out table rather than from the enum,
+                // for the reason `WAVEFORMS` gives: which slot draws which
+                // waveform is what the recorded renders are of.
+                AnimControlMessage::Set(AnimStateChange::Waveform(WAVEFORMS[i % WAVEFORMS.len()])),
                 &mut NoopEmitter,
             );
             anim.animation.control(
@@ -2620,13 +2697,34 @@ pub mod fixture {
     /// Written out for the same reason as `TARGETS`, and its length taken from
     /// the enum for the same reason.
     const WAVEFORMS: [Waveform; Waveform::VARIANTS.len()] = [
-        Waveform::Sine,
-        Waveform::Triangle,
-        Waveform::Sawtooth,
-        Waveform::Square,
+        Waveform::SineSquare,
+        Waveform::TriSaw,
         Waveform::Noise,
         Waveform::Constant,
     ];
+
+    /// Which waveform a slot draws and whether it pulses.
+    ///
+    /// The position in the waveform table drifts by one every time round it,
+    /// so that the table shares no period with the pulse flag alternating
+    /// beside it. In step, a waveform at an even position would only ever be
+    /// drawn pulsed and one at an odd position never, which is a whole half of
+    /// every waveform left undrawn for no better reason than the table being
+    /// an even number of entries long.
+    pub(super) struct SlotWaveform {
+        pub waveform: Waveform,
+        pub pulse: bool,
+    }
+
+    impl SlotWaveform {
+        pub(super) fn for_slot(slot: usize) -> Self {
+            let turns = slot / WAVEFORMS.len();
+            Self {
+                waveform: WAVEFORMS[(slot + turns) % WAVEFORMS.len()],
+                pulse: slot.is_multiple_of(2),
+            }
+        }
+    }
 
     /// Configure a tunnel to vary as much as a tunnel can: full colour spread,
     /// no blacking, both integrated angles turning, and every animation slot
@@ -2768,7 +2866,8 @@ pub mod fixture {
             anim.animation
                 .control(AnimControlMessage::Set(sc), &mut NoopEmitter)
         };
-        set(Waveform(WAVEFORMS[slot % WAVEFORMS.len()]));
+        let shaping = SlotWaveform::for_slot(slot);
+        set(Waveform(shaping.waveform));
         // Never zero: noise reads its smoothing as a cross-correlation term
         // only where the period count is not.
         set(NPeriods(1 + (slot % 4) as u16));
@@ -2782,7 +2881,7 @@ pub mod fixture {
             1.0 - 0.05 * (slot % 3) as f64,
         )));
         set(Smoothing(UnipolarFloat::new((slot % 5) as f64 / 5.0)));
-        set(Pulse(slot.is_multiple_of(2)));
+        set(Pulse(shaping.pulse));
         set(Standing(slot.is_multiple_of(3)));
         set(Invert(slot.is_multiple_of(5)));
     }
@@ -2893,7 +2992,7 @@ pub mod fixture {
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
         tunnel.anims[0].target = AnimationTarget::ColorSaturation;
         tunnel.anims[0].animation.control(
-            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::SineSquare)),
             &mut NoopEmitter,
         );
         tunnel.anims[0].animation.control(
@@ -2985,7 +3084,7 @@ pub mod fixture {
         tunnel.size = UnipolarFloat::new(0.3).into();
         tunnel.anims[0].target = AnimationTarget::Size;
         tunnel.anims[0].animation.control(
-            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::Sine)),
+            AnimControlMessage::Set(AnimStateChange::Waveform(Waveform::SineSquare)),
             &mut NoopEmitter,
         );
         tunnel.anims[0].animation.control(
@@ -3024,7 +3123,7 @@ pub mod fixture {
         tunnel.phase_axis = PhaseAxis::Linear;
         tunnel.anims[0].target = AnimationTarget::PositionX;
         for sc in [
-            AnimStateChange::Waveform(Waveform::Sine),
+            AnimStateChange::Waveform(Waveform::SineSquare),
             AnimStateChange::NPeriods(2),
             AnimStateChange::Size(UnipolarFloat::new(0.4)),
         ] {
@@ -3246,7 +3345,7 @@ pub mod fixture {
         tunnel.phase_axis = PhaseAxis::Angle;
         tunnel.anims[0].target = AnimationTarget::Thickness;
         for sc in [
-            AnimStateChange::Waveform(Waveform::Sine),
+            AnimStateChange::Waveform(Waveform::SineSquare),
             AnimStateChange::NPeriods(n_periods),
             AnimStateChange::Size(UnipolarFloat::ONE),
         ] {

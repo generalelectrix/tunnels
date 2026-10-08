@@ -2412,6 +2412,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "golden_image"
+version = "0.1.0"
+dependencies = [
+ "image",
+]
+
+[[package]]
 name = "gpu-alloc"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5974,6 +5981,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client_lib",
+ "golden_image",
  "image",
  "log",
  "lyon_path",
@@ -6053,6 +6061,8 @@ name = "tunnels_model"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "golden_image",
+ "image",
  "log",
  "noise",
  "postcard",

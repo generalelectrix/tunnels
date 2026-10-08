@@ -4,7 +4,7 @@
 //! and everything here describes shapes on a screen.
 
 use crate::animation::{PreparedAnimation, TargetedAnimation};
-use crate::waveforms::{WaveformArgs, sawtooth};
+use crate::waveforms::{WaveformArgs, tri_saw};
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use tunnels_lib::number::{Phase, UnipolarFloat};
@@ -302,7 +302,7 @@ pub struct Placement {
 /// How a figure's colour is resolved from a coordinate on it.
 ///
 /// This is a tunnel's colour model with a figure's coordinate standing in for
-/// the segment index: `hue = center + 0.5 * width * sawtooth(phase * cycles)`.
+/// the segment index: `hue = center + 0.5 * width * tri_saw(phase * cycles)`.
 /// A closed figure has no segments, so [`PhaseAxis`] picks what does the
 /// indexing.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -355,7 +355,7 @@ impl ColorField {
             (self.center + adjust.center)
                 + 0.5
                     * (self.width + adjust.width)
-                    * sawtooth(&WaveformArgs {
+                    * tri_saw(&WaveformArgs {
                         phase_spatial: phase,
                         phase_temporal: Phase::ZERO,
                         smoothing: UnipolarFloat::ZERO,

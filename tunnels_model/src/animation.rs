@@ -14,12 +14,10 @@ use strum::VariantArray;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::Smoothed;
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, VariantArray)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq, Eq, VariantArray)]
 pub enum Waveform {
-    Sine,
-    Triangle,
-    Square,
-    Sawtooth,
+    SineSquare,
+    TriSaw,
     Noise,
     Constant,
 }
@@ -31,7 +29,7 @@ impl Waveform {
     /// otherwise resolve it across a coordinate can resolve it once.
     pub fn varies_with_phase(self) -> bool {
         match self {
-            Self::Sine | Self::Triangle | Self::Square | Self::Sawtooth | Self::Noise => true,
+            Self::SineSquare | Self::TriSaw | Self::Noise => true,
             Self::Constant => false,
         }
     }
@@ -55,7 +53,7 @@ pub struct StaticParams {
 impl Default for StaticParams {
     fn default() -> Self {
         Self {
-            waveform: Waveform::Sine,
+            waveform: Waveform::SineSquare,
             pulse: false,
             standing: false,
             invert: false,
@@ -115,7 +113,7 @@ impl Default for Animation {
             static_params: StaticParams::default(),
             size: UnipolarFloat::ZERO.into(),
             duty_cycle: UnipolarFloat::ONE.into(),
-            smoothing: UnipolarFloat::new(0.25).into(),
+            smoothing: UnipolarFloat::ONE.into(),
             internal_clock: Default::default(),
             clock_source: None,
             use_audio_size: false,
@@ -418,10 +416,10 @@ impl PreparedAnimation {
     /// The waveform's own value, before amplitude.
     pub fn unit_value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
         let result = match self.static_params.waveform {
-            Waveform::Sine => waveforms::sine(&self.waveform_args(spatial_phase_offset)),
-            Waveform::Square => waveforms::square(&self.waveform_args(spatial_phase_offset)),
-            Waveform::Sawtooth => waveforms::sawtooth(&self.waveform_args(spatial_phase_offset)),
-            Waveform::Triangle => waveforms::triangle(&self.waveform_args(spatial_phase_offset)),
+            Waveform::SineSquare => {
+                waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
+            }
+            Waveform::TriSaw => waveforms::tri_saw(&self.waveform_args(spatial_phase_offset)),
             Waveform::Noise => {
                 // Handle duty cycle - this is a bit odd compared to waveforms,
                 // since noise isn't periodic. Rather than trying to compress
@@ -730,13 +728,13 @@ mod test {
             animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
         };
 
-        assert!(prepare(Waveform::Sine, 1, 1.0).varies_in_space());
+        assert!(prepare(Waveform::SineSquare, 1, 1.0).varies_in_space());
         assert!(
-            !prepare(Waveform::Sine, 0, 1.0).varies_in_space(),
+            !prepare(Waveform::SineSquare, 0, 1.0).varies_in_space(),
             "no periodicity is one value everywhere"
         );
         assert!(
-            !prepare(Waveform::Sine, 1, 0.0).varies_in_space(),
+            !prepare(Waveform::SineSquare, 1, 0.0).varies_in_space(),
             "no amplitude is zero everywhere"
         );
         assert!(

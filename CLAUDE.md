@@ -72,3 +72,4 @@ nothing more.
 | `minusmq` | Messaging |
 | `bonsoir` | Bonjour/DNSSD wrapper |
 | `bootstrap-deploy` | Deployment tool |
+| `golden_image` | Comparison of a rendered image against a checked-in golden |

@@ -569,7 +569,7 @@ mod test {
 
         let mut animation = Animation::default();
         for sc in [
-            StateChange::Waveform(Waveform::Sawtooth),
+            StateChange::Waveform(Waveform::TriSaw),
             StateChange::NPeriods(1),
             StateChange::Size(UnipolarFloat::ONE),
             // Unsmoothed, so the ramp is the straight line the arithmetic here

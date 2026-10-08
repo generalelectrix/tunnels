@@ -24,3 +24,7 @@ tunnels_shapes = { path = "../tunnels_shapes" }
 # The frame payload is encoded tagless: the schema is the Rust type, so nothing
 # self-describing needs to travel with it.
 postcard.workspace = true
+
+[dev-dependencies]
+image.workspace = true
+golden_image = { path = "../golden_image" }
