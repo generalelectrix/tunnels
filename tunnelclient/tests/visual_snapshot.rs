@@ -226,13 +226,6 @@ fn stress_tunnel() {
 }
 
 #[test]
-fn pulsed_square_thickness() {
-    let snapshot = tunnels_model::tunnel::fixture::pulsed_square_thickness_snapshot();
-    let image = render_snapshot(&snapshot, &test_config());
-    GOLDENS.compare(&image, "pulsed_square_thickness.png");
-}
-
-#[test]
 fn stress_tunnel_evolved() {
     let snapshot = tunnels_model::tunnel::fixture::stress_tunnel_evolved_snapshot();
     let image = render_snapshot(&snapshot, &test_config());

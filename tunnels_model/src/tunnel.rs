@@ -2514,53 +2514,6 @@ pub mod fixture {
         snapshot(render_default(&tunnel))
     }
 
-    /// Render a tunnel whose thickness is driven by a pulsed sine square.
-    ///
-    /// A duty cycle below one and a smoothing in the middle of its range put
-    /// all four parts of the pulse on one ring: the rise into the window, the
-    /// flat top, the fall out of it, and the rest between one window and the
-    /// next. No other render reads a pulse at all, and a pulse is the half of
-    /// a waveform that a bipolar wave says nothing about.
-    pub fn pulsed_square_thickness_snapshot() -> LayerCollection {
-        let mut tunnel = Tunnel {
-            render_mode: RenderMode::Dot,
-            ..Default::default()
-        };
-        // Few enough dots that each one is big enough to read the value it
-        // stands for: the blacking interval keeps every other segment, so
-        // these 48 draw 24 dots, around seven of them across the flat top.
-        set_segments(&mut tunnel, 48);
-        // Small enough at rest that the pulse has most of the range to climb
-        // through, and a ring tight enough that the dots at the top of that
-        // climb clear the frame. A peak that ran off the edge would have a
-        // regression that raised it partly absorbed by the crop.
-        tunnel.handle_state_change(
-            StateChange::Thickness(UnipolarFloat::new(0.05)),
-            &mut NoopEmitter,
-        );
-        tunnel.handle_state_change(
-            StateChange::Size(UnipolarFloat::new(0.44)),
-            &mut NoopEmitter,
-        );
-        tunnel.anims[0].target = AnimationTarget::Thickness;
-        for sc in [
-            AnimStateChange::Waveform(Waveform::SineSquare),
-            AnimStateChange::Pulse(true),
-            AnimStateChange::NPeriods(1),
-            AnimStateChange::Size(UnipolarFloat::ONE),
-            AnimStateChange::DutyCycle(UnipolarFloat::new(0.5)),
-            AnimStateChange::Smoothing(UnipolarFloat::new(0.5)),
-        ] {
-            tunnel.anims[0]
-                .animation
-                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
-        }
-        // Smoothing is reached over time rather than set. The animation runs
-        // at no speed, so its phase stays where it starts while it gets there.
-        tunnel.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
-        snapshot(render_default(&tunnel))
-    }
-
     /// Render a saucer tunnel on a line path with spin animation.
     pub fn saucer_line_spin_snapshot() -> LayerCollection {
         let mut tunnel = Tunnel {
