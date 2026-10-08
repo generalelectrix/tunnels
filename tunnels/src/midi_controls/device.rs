@@ -147,8 +147,7 @@ impl MidiHandler for Device {
                 .or_else(|| super::animation_target::interpret(event))
                 .or_else(|| super::mixer::interpret(event, 0))
                 .or_else(|| super::master_ui::interpret(event, 0))
-                .or_else(|| super::clock::interpret_touchosc(event))
-                .or_else(|| super::audio::interpret_touchosc(event)),
+                .or_else(|| super::clock::interpret_touchosc(event)),
             Device::BehringerCmdMM1 { channel_offset } => None
                 .or_else(|| super::clock::interpret_cmdmm1(event, *channel_offset))
                 .or_else(|| super::audio::interpret_cmdmm1(event)),
