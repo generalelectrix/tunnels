@@ -19,4 +19,4 @@ pub mod render_context;
 pub mod show_frame;
 pub mod tunnel;
 mod typed_index;
-mod waveforms;
+pub mod waveforms;

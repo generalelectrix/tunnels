@@ -6061,6 +6061,8 @@ name = "tunnels_model"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "golden_image",
+ "image",
  "log",
  "noise",
  "postcard",
