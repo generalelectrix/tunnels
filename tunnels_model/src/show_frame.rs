@@ -11,6 +11,7 @@ use crate::mixer::Mixer;
 use crate::palette::ColorPalette;
 use crate::position_bank::PositionBank;
 use crate::render_context::RenderContext;
+use crate::spectrum::SpectrumTables;
 
 /// Everything a render reads to draw one frame, and nothing else.
 ///
@@ -68,13 +69,15 @@ impl FrameEncoder {
 }
 
 impl ShowFrame {
-    /// Borrow the sidecar state as the context a beam resolves against.
-    pub fn render_context(&self) -> RenderContext<'_> {
+    /// Borrow the sidecar state as the context a beam resolves against, with
+    /// `spectrum` as the shape of this frame's spectrum.
+    pub fn render_context<'f>(&self, spectrum: &'f SpectrumTables) -> RenderContext<'_, 'f> {
         RenderContext {
             clocks: &self.clocks,
             palette: &self.palette,
             positions: &self.positions,
             audio: &self.audio,
+            spectrum,
         }
     }
 
@@ -692,14 +695,16 @@ mod tests {
             let decoded = ShowFrame::decode(&wire).unwrap();
             assert_prints_identically(name, &frame, &decoded);
 
+            let spectrum = SpectrumTables::new(&frame.audio.frame);
+            let decoded_spectrum = SpectrumTables::new(&decoded.audio.frame);
             for channel in 0..Mixer::N_VIDEO_CHANNELS {
                 let video_channel = VideoChannel(channel);
                 let expected = frame
                     .mixer
-                    .render_video_channel(video_channel, frame.render_context());
+                    .render_video_channel(video_channel, frame.render_context(&spectrum));
                 let actual = decoded
                     .mixer
-                    .render_video_channel(video_channel, decoded.render_context());
+                    .render_video_channel(video_channel, decoded.render_context(&decoded_spectrum));
                 compared.add(assert_identical(
                     &format!("{name}, video channel {channel}"),
                     &expected,

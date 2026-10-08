@@ -1,8 +1,8 @@
 used channel 1 notes:
 animation:
 24-31 wave select
-  24 sine square, 25 tri-saw, 26 noise, 27 constant
-  28-31 free; a waveform added to the set goes on 28
+  24 sine square, 25 tri-saw, 26 noise, 27 spectrum, 28 constant
+  29-31 free; a waveform added to the set goes on 29
 0-15 period select
 35-42, 43-47 target select
 101 copy

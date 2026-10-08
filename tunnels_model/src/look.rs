@@ -30,12 +30,12 @@ impl Look {
     ///
     /// Each subchannel contributes its own layers, so a look never merges shapes
     /// that are drawn differently into one layer.
-    pub fn render(
+    pub fn render<'f>(
         &self,
         level: UnipolarFloat,
         mode: PaintMode,
-        ctx: RenderContext,
-        out: &mut Vec<Layer>,
+        ctx: RenderContext<'_, 'f>,
+        out: &mut Vec<Layer<'f>>,
     ) {
         for channel in &self.channels {
             channel.render(level, mode, ctx, out);

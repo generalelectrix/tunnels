@@ -62,11 +62,11 @@ impl Mixer {
     ///
     /// Channels that are not routed to `video_channel` are not expanded at all,
     /// so the work is proportional to what that one video channel draws.
-    pub fn render_video_channel(
+    pub fn render_video_channel<'f>(
         &self,
         video_channel: VideoChannel,
-        ctx: RenderContext,
-    ) -> LayerCollection {
+        ctx: RenderContext<'_, 'f>,
+    ) -> LayerCollection<'f> {
         let mut video_out = Vec::new();
         // One buffer, reused across channels: a channel's layers are drained
         // into the output before the next channel renders into it.
@@ -203,12 +203,12 @@ impl Channel {
     }
 
     /// Render the beam in this channel.
-    pub fn render(
+    pub fn render<'f>(
         &self,
         level_scale: UnipolarFloat,
         mode: PaintMode,
-        ctx: RenderContext,
-        out: &mut Vec<Layer>,
+        ctx: RenderContext<'_, 'f>,
+        out: &mut Vec<Layer<'f>>,
     ) {
         let mut level: UnipolarFloat = if self.bump {
             UnipolarFloat::ONE
@@ -276,6 +276,7 @@ mod test {
     use crate::clock_bank::ClockBank;
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use crate::spectrum::SpectrumTables;
     use crate::tunnel::Tunnel;
 
     /// A channel taken off its upfader emits no layer, whatever mode it is in.
@@ -295,6 +296,7 @@ mod test {
             palette: &palette,
             positions: &positions,
             audio: &AudioState::default(),
+            spectrum: &SpectrumTables::SILENT,
         };
         let channel = |level| Channel {
             beam: Beam::Tunnel(Tunnel::default()),

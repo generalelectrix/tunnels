@@ -12,7 +12,23 @@ use std::time::{Duration, Instant};
 use tunnelclient::fill::Renderer;
 use tunnels_model::mixer::VideoChannel;
 use tunnels_model::show_frame::ShowFrame;
+use tunnels_model::spectrum::SpectrumTables;
 use tunnels_net::{FrameSubscriber, SubscriberStop};
+
+/// A show frame as it arrived, with the shape of its spectrum.
+pub struct ReceivedFrame {
+    pub frame: ShowFrame,
+    /// Baked from `frame`'s audio.
+    pub spectrum: SpectrumTables,
+}
+
+impl ReceivedFrame {
+    /// Take a frame, baking the shape of its spectrum.
+    fn new(frame: ShowFrame) -> Self {
+        let spectrum = SpectrumTables::new(&frame.audio.frame);
+        Self { frame, spectrum }
+    }
+}
 
 /// A client's end of one console's stream of show frames.
 ///
@@ -21,7 +37,7 @@ use tunnels_net::{FrameSubscriber, SubscriberStop};
 /// never worth drawing.
 pub struct FrameReceiver {
     /// The most recent frame to have arrived, if any has.
-    latest: Arc<Mutex<Option<Arc<ShowFrame>>>>,
+    latest: Arc<Mutex<Option<Arc<ReceivedFrame>>>>,
     /// Stops the subscription the receiving thread is reading from.
     stop: SubscriberStop,
     /// The thread taking frames off the stream, which lasts as long as the
@@ -40,7 +56,7 @@ impl FrameReceiver {
     pub fn new(host: &str) -> Result<Self> {
         let mut subscriber = FrameSubscriber::new(host);
         let stop = subscriber.stop_handle();
-        let latest: Arc<Mutex<Option<Arc<ShowFrame>>>> = Arc::new(Mutex::new(None));
+        let latest: Arc<Mutex<Option<Arc<ReceivedFrame>>>> = Arc::new(Mutex::new(None));
         let service = thread::Builder::new()
             .name("frame_receiver".to_string())
             .spawn({
@@ -53,7 +69,10 @@ impl FrameReceiver {
                                 info!("Frame subscription stopped.");
                                 break;
                             }
-                            Some(Ok(frame)) => *latest.lock().unwrap() = Some(Arc::new(frame)),
+                            Some(Ok(frame)) => {
+                                let received = Arc::new(ReceivedFrame::new(frame));
+                                *latest.lock().unwrap() = Some(received);
+                            }
                             Some(Err(e)) => match decode_errors.record(Instant::now()) {
                                 Some(ErrorReport::First) => error!("Frame decode error: {e}"),
                                 Some(ErrorReport::Repeated(count)) => error!(
@@ -75,7 +94,7 @@ impl FrameReceiver {
     }
 
     /// The newest frame to have arrived, if any has.
-    pub fn latest(&self) -> Option<Arc<ShowFrame>> {
+    pub fn latest(&self) -> Option<Arc<ReceivedFrame>> {
         self.latest.lock().unwrap().clone()
     }
 }
@@ -212,10 +231,11 @@ impl Show {
     /// than a dark screen.
     fn render(&mut self, args: &RenderArgs) {
         let frame = self.frames.latest();
-        let layers = frame.as_ref().map(|frame| {
-            frame
-                .mixer
-                .render_video_channel(self.video_channel, frame.render_context())
+        let layers = frame.as_ref().map(|received| {
+            received.frame.mixer.render_video_channel(
+                self.video_channel,
+                received.frame.render_context(&received.spectrum),
+            )
         });
         // Split apart so the renderer's own buffers can be written while the
         // backend the closure draws through is borrowed.

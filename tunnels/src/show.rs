@@ -480,6 +480,7 @@ mod test {
     use tunnels_lib::audio::{AudioFrame, UnipolarF32};
     use tunnels_model::render_context::RenderContext;
     use tunnels_model::show_frame::{FrameEncoder, ShowFrame};
+    use tunnels_model::spectrum::SpectrumTables;
 
     /// Test show rendering against static test expectations.
     /// The purpose of this test is to catch accidental regressions in the
@@ -534,7 +535,12 @@ mod test {
         let mut encoder = FrameEncoder::default();
         let decoded = ShowFrame::decode(encoder.encode(&show.show_frame())?)?;
         assert_eq!(decoded.audio, expected, "show frame");
-        assert_eq!(*decoded.render_context().audio, expected, "render context");
+        let spectrum = SpectrumTables::new(&decoded.audio.frame);
+        assert_eq!(
+            *decoded.render_context(&spectrum).audio,
+            expected,
+            "render context"
+        );
 
         let clock_bytes = postcard::to_allocvec(&show.clock_data())?;
         let clocks: SharedClockData = postcard::from_bytes(&clock_bytes)?;
@@ -554,6 +560,7 @@ mod test {
             palette: &show.state.color_palette,
             positions: &show.state.positions,
             audio: &AudioState::default(),
+            spectrum: &SpectrumTables::SILENT,
         };
 
         // Channel 0 should contain data, but none of the others.
@@ -815,6 +822,7 @@ mod test {
             );
             a("anim/waveform_tri_saw", A::Waveform(Waveform::TriSaw));
             a("anim/waveform_noise", A::Waveform(Waveform::Noise));
+            a("anim/waveform_spectrum", A::Waveform(Waveform::Spectrum));
             a("anim/waveform_constant", A::Waveform(Waveform::Constant));
             a("anim/n_periods", A::NPeriods(3));
             a("anim/pulse_on", A::Pulse(true));

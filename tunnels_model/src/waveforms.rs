@@ -2,6 +2,8 @@ use std::f64::consts::PI;
 
 use tunnels_lib::number::{Phase, UnipolarFloat};
 
+use crate::spectrum::SpectrumTables;
+
 const TWO_PI: f64 = 2.0 * PI;
 
 /// Common args passed to all waveform generating functions.
@@ -201,6 +203,26 @@ fn tri_saw_spatial(args: &WaveformArgsSpatial) -> f64 {
     } else {
         -(phase.val() - 0.5) / smoothing.val()
     }
+}
+
+/// The spectrum's level at a point, in [0, 1].
+///
+/// The spatial and temporal phases always sum, as a travelling wave's do:
+/// the standing flag does not reach the spectrum, and neither does pulse,
+/// since the spectrum is unipolar already. A duty cycle compresses the whole
+/// folded period into the front of the window, as it does a periodic
+/// waveform's.
+pub fn spectrum(args: &WaveformArgs, tables: &SpectrumTables) -> f64 {
+    let args = WaveformArgsSpatial {
+        phase: args.phase_spatial + args.phase_temporal,
+        smoothing: args.smoothing,
+        duty_cycle: args.duty_cycle,
+        pulse: false,
+    };
+    if args.outside_duty_cycle() {
+        return 0.0;
+    }
+    tables.value(args.duty_cycle_scaled_phase(), args.smoothing)
 }
 
 #[cfg(test)]

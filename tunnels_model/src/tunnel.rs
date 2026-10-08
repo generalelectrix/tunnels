@@ -395,13 +395,18 @@ impl Tunnel {
     }
 
     /// Render the current state of the tunnel.
-    pub fn render(&self, level_scale: UnipolarFloat, mode: PaintMode, ctx: RenderContext) -> Layer {
+    pub fn render<'f>(
+        &self,
+        level_scale: UnipolarFloat,
+        mode: PaintMode,
+        ctx: RenderContext<'_, 'f>,
+    ) -> Layer<'f> {
         // Resolve each animation's frame-constant state once. What an animation
         // costs is mostly deciding which clock drives it, where that clock is,
         // where its smoother has got to and what the amplitude works out to —
         // none of which depends on where in the figure the question is asked.
         let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] =
-            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio));
+            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio, ctx.spectrum));
 
         match self.shape_mode {
             ShapeMode::Ellipse => Layer::Segments(self.render_segments(
@@ -475,14 +480,14 @@ impl Tunnel {
     /// geometry is. Position is resolved in both places: the placement takes
     /// its whole value, in the units a position is measured in, and the points
     /// take how far each departs from that.
-    fn render_fill(
+    fn render_fill<'f>(
         &self,
         figure: FigureId,
         level_scale: UnipolarFloat,
         mode: PaintMode,
         ctx: RenderContext,
-        anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
-    ) -> FillLayer {
+        anims: &[TargetedAnimation<PreparedAnimation<'f>>; N_ANIM],
+    ) -> FillLayer<'f> {
         let (offset, base_hue) = self.placement_and_hue(ctx);
 
         // A figure has no segment index and no angle around a ring, so a
@@ -862,10 +867,10 @@ impl Tunnel {
 /// rest once per point of the figure — and neither wants to walk past the
 /// other. An animation contributing nothing is dropped rather than asked for a
 /// zero tens of thousands of times.
-fn fill_animations(
-    anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
+fn fill_animations<'f>(
+    anims: &[TargetedAnimation<PreparedAnimation<'f>>; N_ANIM],
     keep: impl Fn(AnimationTarget) -> bool,
-) -> Vec<TargetedAnimation<PreparedAnimation>> {
+) -> Vec<TargetedAnimation<PreparedAnimation<'f>>> {
     anims
         .iter()
         .filter(|a| a.animation.is_active() && a.target.varies_across_figure() && keep(a.target))
@@ -1146,6 +1151,7 @@ mod test {
     use crate::layer::DrawMode;
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use crate::spectrum::SpectrumTables;
     use strum::VariantArray;
     use tunnels_shapes::{Arity, Secondary, ShapeFamily};
 
@@ -1818,6 +1824,7 @@ mod test {
                     palette: &ColorPalette::default(),
                     positions: &PositionBank::default(),
                     audio: &AudioState::default(),
+                    spectrum: &SpectrumTables::SILENT,
                 },
             );
             let Layer::Segments(run) = &layer else {
@@ -1912,6 +1919,7 @@ mod test {
                     palette: &ColorPalette::default(),
                     positions: &PositionBank::default(),
                     audio: &AudioState::default(),
+                    spectrum: &SpectrumTables::SILENT,
                 },
             )
         };
@@ -2136,6 +2144,11 @@ mod test {
     /// A waveform set that outgrows the animation slots fails here, where
     /// whoever grew it has to decide what the fixture does about it, rather
     /// than losing its last entries quietly.
+    ///
+    /// The spectrum is the one waveform the fixture leaves out. It reads two
+    /// tables a few kilobytes long, so its cost is arithmetic on a phase like
+    /// the others', and the fixture has one slot fewer than there are
+    /// waveforms.
     #[test]
     fn the_stress_fixture_reaches_every_waveform() {
         let mut tunnel = Tunnel::default();
@@ -2144,7 +2157,10 @@ mod test {
         for anim in &tunnel.anims {
             anim.animation.emit_state(&mut recorder);
         }
-        for waveform in AnimWaveform::VARIANTS {
+        for waveform in AnimWaveform::VARIANTS
+            .iter()
+            .filter(|w| **w != AnimWaveform::Spectrum)
+        {
             assert!(
                 recorder.0.contains(waveform),
                 "the stress fixture never reaches {waveform:?}: it spends {} \
@@ -2156,7 +2172,7 @@ mod test {
         }
     }
 
-    fn render_fixture(tunnel: &Tunnel) -> Layer {
+    fn render_fixture(tunnel: &Tunnel) -> Layer<'static> {
         tunnel.render(
             UnipolarFloat::ONE,
             PaintMode::Normal,
@@ -2165,6 +2181,7 @@ mod test {
                 palette: &ColorPalette::default(),
                 positions: &PositionBank::default(),
                 audio: &AudioState::default(),
+                spectrum: &SpectrumTables::SILENT,
             },
         )
     }
@@ -2186,8 +2203,11 @@ pub mod fixture {
     use crate::mixer::Channel;
     use crate::palette::ColorPalette;
     use crate::position_bank::PositionBank;
+    use crate::spectrum::SpectrumTables;
     use std::collections::BTreeSet;
+    use std::sync::LazyLock;
     use strum::VariantArray;
+    use tunnels_lib::audio::{AudioFrame, SPECTRUM_BANDS, UnipolarF32};
 
     use super::*;
 
@@ -2202,11 +2222,11 @@ pub mod fixture {
     }
 
     /// Render a tunnel at rest in the state it was configured to.
-    fn render_default(tunnel: &Tunnel) -> Layer {
+    fn render_default(tunnel: &Tunnel) -> Layer<'static> {
         render_in(tunnel, PaintMode::Normal)
     }
 
-    fn snapshot(layer: Layer) -> LayerCollection {
+    fn snapshot(layer: Layer<'static>) -> LayerCollection<'static> {
         vec![layer]
     }
 
@@ -2236,7 +2256,8 @@ pub mod fixture {
                 // render includes the cost of every waveform rather than of
                 // whichever ones the slots happened to land on. Noise is the
                 // one that matters most: it samples a simplex field and waits
-                // on memory where the rest are arithmetic on a phase.
+                // on memory where the rest are arithmetic on a phase. The
+                // spectrum, last in the table, is the one left without a slot.
                 //
                 // Taken from the written-out table rather than from the enum,
                 // for the reason `WAVEFORMS` gives: which slot draws which
@@ -2262,12 +2283,12 @@ pub mod fixture {
     }
 
     /// Render a default tunnel to a snapshot for use in test fixtures.
-    pub fn default_tunnel_snapshot() -> LayerCollection {
+    pub fn default_tunnel_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&Tunnel::default()))
     }
 
     /// Render a tunnel with aspect ratio set halfway towards max for elliptical shape.
-    pub fn elliptical_tunnel_snapshot() -> LayerCollection {
+    pub fn elliptical_tunnel_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel::default();
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -2278,14 +2299,14 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel to a snapshot for use in test fixtures.
-    pub fn stress_tunnel_snapshot() -> LayerCollection {
+    pub fn stress_tunnel_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel::default();
         configure_stress(&mut tunnel, BipolarFloat::new(-1.0));
         snapshot(render_default(&tunnel))
     }
 
     /// Render a default tunnel in dot mode for snapshot testing.
-    pub fn default_tunnel_dot_snapshot() -> LayerCollection {
+    pub fn default_tunnel_dot_snapshot() -> LayerCollection<'static> {
         let tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -2294,7 +2315,7 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel in dot mode for snapshot testing.
-    pub fn stress_tunnel_dot_snapshot() -> LayerCollection {
+    pub fn stress_tunnel_dot_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -2304,7 +2325,7 @@ pub mod fixture {
     }
 
     /// Render an elliptical tunnel in dot mode for snapshot testing.
-    pub fn elliptical_tunnel_dot_snapshot() -> LayerCollection {
+    pub fn elliptical_tunnel_dot_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             ..Default::default()
@@ -2343,17 +2364,17 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments for snapshot testing.
-    pub fn saucer_few_thin_snapshot() -> LayerCollection {
+    pub fn saucer_few_thin_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&saucer_tunnel(12, 0.1)))
     }
 
     /// Render a saucer tunnel with many thick segments for snapshot testing.
-    pub fn saucer_many_thick_snapshot() -> LayerCollection {
+    pub fn saucer_many_thick_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&saucer_tunnel(126, 0.5)))
     }
 
     /// Render a saucer tunnel on a wide ellipse for snapshot testing.
-    pub fn saucer_wide_ellipse_snapshot() -> LayerCollection {
+    pub fn saucer_wide_ellipse_snapshot() -> LayerCollection<'static> {
         let mut tunnel = saucer_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -2364,7 +2385,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a tall ellipse for snapshot testing.
-    pub fn saucer_tall_ellipse_snapshot() -> LayerCollection {
+    pub fn saucer_tall_ellipse_snapshot() -> LayerCollection<'static> {
         let mut tunnel = saucer_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
@@ -2387,17 +2408,17 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments and spin animation.
-    pub fn saucer_few_thin_spin_snapshot() -> LayerCollection {
+    pub fn saucer_few_thin_spin_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&saucer_spin_tunnel(12, 0.1)))
     }
 
     /// Render a saucer tunnel with many thick segments and spin animation.
-    pub fn saucer_many_thick_spin_snapshot() -> LayerCollection {
+    pub fn saucer_many_thick_spin_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&saucer_spin_tunnel(126, 0.5)))
     }
 
     /// Render a saucer tunnel on a wide ellipse with spin animation.
-    pub fn saucer_wide_ellipse_spin_snapshot() -> LayerCollection {
+    pub fn saucer_wide_ellipse_spin_snapshot() -> LayerCollection<'static> {
         let mut tunnel = saucer_spin_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -2408,7 +2429,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a tall ellipse with spin animation.
-    pub fn saucer_tall_ellipse_spin_snapshot() -> LayerCollection {
+    pub fn saucer_tall_ellipse_spin_snapshot() -> LayerCollection<'static> {
         let mut tunnel = saucer_spin_tunnel(12, 0.1);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.25)),
@@ -2436,17 +2457,17 @@ pub mod fixture {
     }
 
     /// Many small arc segments with spin — dashes rotate like the line version.
-    pub fn arc_spin_many_snapshot() -> LayerCollection {
+    pub fn arc_spin_many_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&arc_spin_tunnel(126)))
     }
 
     /// Few large arc segments with spin — curvature visible when rotated.
-    pub fn arc_spin_few_snapshot() -> LayerCollection {
+    pub fn arc_spin_few_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&arc_spin_tunnel(12)))
     }
 
     /// Wide ellipse with few arcs and spin — exaggerated curvature effect.
-    pub fn arc_spin_wide_ellipse_snapshot() -> LayerCollection {
+    pub fn arc_spin_wide_ellipse_snapshot() -> LayerCollection<'static> {
         let mut tunnel = arc_spin_tunnel(12);
         tunnel.handle_state_change(
             StateChange::AspectRatio(UnipolarFloat::new(0.75)),
@@ -2457,7 +2478,7 @@ pub mod fixture {
     }
 
     /// Render a line-path tunnel in arc mode for snapshot testing.
-    pub fn default_tunnel_line_snapshot() -> LayerCollection {
+    pub fn default_tunnel_line_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel {
             shape_mode: ShapeMode::Line,
             ..Default::default()
@@ -2468,7 +2489,7 @@ pub mod fixture {
     }
 
     /// Render a line-path tunnel in dot mode for snapshot testing.
-    pub fn default_tunnel_line_dot_snapshot() -> LayerCollection {
+    pub fn default_tunnel_line_dot_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Dot,
             shape_mode: ShapeMode::Line,
@@ -2480,7 +2501,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel with few thin segments on a line path for snapshot testing.
-    pub fn saucer_line_few_thin_snapshot() -> LayerCollection {
+    pub fn saucer_line_few_thin_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             shape_mode: ShapeMode::Line,
@@ -2496,7 +2517,7 @@ pub mod fixture {
     }
 
     /// Render an arc tunnel on a line path with spin animation.
-    pub fn arc_line_spin_snapshot() -> LayerCollection {
+    pub fn arc_line_spin_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel {
             shape_mode: ShapeMode::Line,
             ..Default::default()
@@ -2516,7 +2537,7 @@ pub mod fixture {
     }
 
     /// Render a saucer tunnel on a line path with spin animation.
-    pub fn saucer_line_spin_snapshot() -> LayerCollection {
+    pub fn saucer_line_spin_snapshot() -> LayerCollection<'static> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             shape_mode: ShapeMode::Line,
@@ -2559,21 +2580,21 @@ pub mod fixture {
     }
 
     /// Line-path arc tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_arc_snapshot() -> LayerCollection {
+    pub fn line_aspect_ratio_anim_arc_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Arc,
         )))
     }
 
     /// Line-path dot tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_dot_snapshot() -> LayerCollection {
+    pub fn line_aspect_ratio_anim_dot_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Dot,
         )))
     }
 
     /// Line-path saucer tunnel with aspect ratio sine animation.
-    pub fn line_aspect_ratio_anim_saucer_snapshot() -> LayerCollection {
+    pub fn line_aspect_ratio_anim_saucer_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&line_aspect_ratio_anim_tunnel(
             RenderMode::Saucer,
         )))
@@ -2581,7 +2602,7 @@ pub mod fixture {
 
     /// Render a sequence of frames of a line-saucer tunnel with marquee motion,
     /// for evaluating edge transition behavior.
-    pub fn saucer_line_marquee_sequence() -> Vec<LayerCollection> {
+    pub fn saucer_line_marquee_sequence() -> Vec<LayerCollection<'static>> {
         let mut tunnel = Tunnel {
             render_mode: RenderMode::Saucer,
             shape_mode: ShapeMode::Line,
@@ -2614,6 +2635,7 @@ pub mod fixture {
                     positions: &PositionBank::default(),
 
                     audio: &AudioState::default(),
+                    spectrum: &SpectrumTables::SILENT,
                 },
             );
             snapshots.push(vec![arcs]);
@@ -2625,7 +2647,7 @@ pub mod fixture {
     }
 
     /// Render a stress-configured tunnel evolved by 20 frames for snapshot testing.
-    pub fn stress_tunnel_evolved_snapshot() -> LayerCollection {
+    pub fn stress_tunnel_evolved_snapshot() -> LayerCollection<'static> {
         let frame_interval = Duration::from_micros(25_300);
         let n_frames: u64 = 20;
 
@@ -2645,6 +2667,7 @@ pub mod fixture {
                 positions: &PositionBank::default(),
 
                 audio: &AudioState::default(),
+                spectrum: &SpectrumTables::SILENT,
             },
         );
         vec![arcs]
@@ -2702,6 +2725,7 @@ pub mod fixture {
         Waveform::TriSaw,
         Waveform::Noise,
         Waveform::Constant,
+        Waveform::Spectrum,
     ];
 
     /// Which waveform a slot draws and whether it pulses.
@@ -2963,7 +2987,7 @@ pub mod fixture {
     }
 
     /// A figure in one colour, which is the path that skips the ramp entirely.
-    pub fn sprite_flat_snapshot() -> LayerCollection {
+    pub fn sprite_flat_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&sprite_tunnel(SNOWFLAKE)))
     }
 
@@ -2971,7 +2995,7 @@ pub mod fixture {
     ///
     /// Three cycles rather than one, so the ramp's wrap and the seam where
     /// angular phase jumps are both in the picture.
-    pub fn sprite_color_snapshot(phase: PhaseAxis) -> LayerCollection {
+    pub fn sprite_color_snapshot(phase: PhaseAxis) -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
         tunnel.col_width = UnipolarFloat::ONE.into();
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
@@ -2987,7 +3011,7 @@ pub mod fixture {
     /// over a whole beam. An animation whose period came out as the colour's
     /// would put three saturation lobes here instead of one, and nothing else
     /// in the suite would see it.
-    pub fn sprite_color_animation_snapshot() -> LayerCollection {
+    pub fn sprite_color_animation_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
         tunnel.col_width = UnipolarFloat::ONE.into();
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
@@ -3013,14 +3037,14 @@ pub mod fixture {
     /// by the winding at that vertex. A figure built this way is the first
     /// thing to lose a region if the points it is tessellated from are not the
     /// points the library holds.
-    pub fn sprite_shared_vertex_snapshot() -> LayerCollection {
+    pub fn sprite_shared_vertex_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(PINWHEEL);
         tunnel.col_sat = UnipolarFloat::ZERO.into();
         snapshot(render_default(&tunnel))
     }
 
     /// A figure sheared by the spin knob: centre pinned, rim carrying the turn.
-    pub fn sprite_spin_snapshot() -> LayerCollection {
+    pub fn sprite_spin_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
         tunnel.spin_speed = BipolarFloat::new(0.25);
         snapshot(render_default(&tunnel))
@@ -3043,7 +3067,7 @@ pub mod fixture {
 
     /// A wide figure turned by the marquee: the box stays wide, and the
     /// figure is sheared through the turn inside it.
-    pub fn sprite_marquee_wide_snapshot() -> LayerCollection {
+    pub fn sprite_marquee_wide_snapshot() -> LayerCollection<'static> {
         let mut tunnel = wide_sprite();
         tunnel.curr_marquee_angle = Phase::new(0.125);
         snapshot(render_default(&tunnel))
@@ -3051,7 +3075,7 @@ pub mod fixture {
 
     /// A wide figure turned by the rotation knob, which turns box and all: the
     /// figure is not sheared, and the width now lies along the diagonal.
-    pub fn sprite_rotation_wide_snapshot() -> LayerCollection {
+    pub fn sprite_rotation_wide_snapshot() -> LayerCollection<'static> {
         let mut tunnel = wide_sprite();
         tunnel.curr_rot_angle = Phase::new(0.125);
         snapshot(render_default(&tunnel))
@@ -3062,7 +3086,7 @@ pub mod fixture {
     /// A constant waveform at an eighth of a turn, so the picture is the one
     /// the knob makes and the animation's route to the angle is what is
     /// checked.
-    pub fn sprite_marquee_animation_snapshot() -> LayerCollection {
+    pub fn sprite_marquee_animation_snapshot() -> LayerCollection<'static> {
         let mut tunnel = wide_sprite();
         tunnel.anims[0].target = AnimationTarget::MarqueeRotation;
         for sc in [
@@ -3078,7 +3102,7 @@ pub mod fixture {
 
     /// A figure deformed by a radial animation running around its angle,
     /// which is what turns an outline into petals.
-    pub fn sprite_radial_animation_snapshot() -> LayerCollection {
+    pub fn sprite_radial_animation_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(BULLSEYE);
         // Small enough that the deformation stays inside the frame: a golden
         // clipped by the viewport hides whatever it clipped.
@@ -3112,7 +3136,7 @@ pub mod fixture {
     /// A fill takes it through the refined mesh and an outline through the
     /// stroke's contour points, and the two arrive at a point by different
     /// routes.
-    fn sprite_position_animation(draw_mode: DrawMode) -> LayerCollection {
+    fn sprite_position_animation(draw_mode: DrawMode) -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(BULLSEYE);
         tunnel.draw_mode = draw_mode;
         tunnel.thickness = UnipolarFloat::new(0.05).into();
@@ -3136,12 +3160,12 @@ pub mod fixture {
     }
 
     /// A figure sheared by a position animation, filled.
-    pub fn sprite_position_animation_snapshot() -> LayerCollection {
+    pub fn sprite_position_animation_snapshot() -> LayerCollection<'static> {
         sprite_position_animation(DrawMode::Fill)
     }
 
     /// A figure sheared by a position animation, stroked.
-    pub fn sprite_position_animation_outline_snapshot() -> LayerCollection {
+    pub fn sprite_position_animation_outline_snapshot() -> LayerCollection<'static> {
         sprite_position_animation(DrawMode::Outline)
     }
 
@@ -3156,7 +3180,7 @@ pub mod fixture {
     ///
     /// Smoothing at zero is what puts the samples a full interval apart,
     /// which is where the difference is largest.
-    pub fn sprite_noise_warp_outline_snapshot() -> LayerCollection {
+    pub fn sprite_noise_warp_outline_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(BULLSEYE);
         tunnel.draw_mode = DrawMode::Outline;
         tunnel.thickness = UnipolarFloat::new(0.05).into();
@@ -3179,7 +3203,7 @@ pub mod fixture {
 
     /// A masked figure stacked over a lit one, which intersects their
     /// apertures the way stacking gobos does.
-    pub fn sprite_masked_stack_snapshot() -> LayerCollection {
+    pub fn sprite_masked_stack_snapshot() -> LayerCollection<'static> {
         let mut lit = sprite_tunnel(SNOWFLAKE);
         lit.col_width = UnipolarFloat::ONE.into();
         lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
@@ -3196,7 +3220,7 @@ pub mod fixture {
     /// with the upper one in the other black mode. Every pixel one of the two
     /// leaves lit the other blacks, so the pair reads as a check on what a
     /// gobo means as much as on how it draws.
-    pub fn sprite_gobo_stack_snapshot() -> LayerCollection {
+    pub fn sprite_gobo_stack_snapshot() -> LayerCollection<'static> {
         let (lit, gobo) = gobo_stack();
         vec![render_default(&lit), render_in(&gobo, PaintMode::Gobo)]
     }
@@ -3207,7 +3231,7 @@ pub mod fixture {
     /// finished by the time the next beam draws and that beam is not confined
     /// to the window. The pinwheel lands whole, across the boundary between
     /// the window and the black around it.
-    pub fn sprite_gobo_then_lit_snapshot() -> LayerCollection {
+    pub fn sprite_gobo_then_lit_snapshot() -> LayerCollection<'static> {
         let (lit, gobo) = gobo_stack();
         let mut over = sprite_tunnel(PINWHEEL);
         over.size = UnipolarFloat::new(0.55).into();
@@ -3225,7 +3249,7 @@ pub mod fixture {
     /// itself. What survives both is what lies inside both, which is why a
     /// gobo'd look reads as the intersection of its figures rather than their
     /// union.
-    pub fn look_gobo_intersection_snapshot() -> LayerCollection {
+    pub fn look_gobo_intersection_snapshot() -> LayerCollection<'static> {
         let mut lit = sprite_tunnel(SNOWFLAKE);
         lit.col_width = UnipolarFloat::ONE.into();
         lit.col_spread = UnipolarFloat::new(2.0 / COLOR_SPREAD_SCALE);
@@ -3259,6 +3283,7 @@ pub mod fixture {
                 palette: &ColorPalette::default(),
                 positions: &PositionBank::default(),
                 audio: &AudioState::default(),
+                spectrum: &SpectrumTables::SILENT,
             },
             &mut layers,
         );
@@ -3282,7 +3307,7 @@ pub mod fixture {
     /// part way up its fader. A mask's black goes down at the alpha its level
     /// asks for, so the rings the mask covers dim the figure under them by
     /// that much instead of taking it away.
-    pub fn sprite_mask_at_level_snapshot(level: UnipolarFloat) -> LayerCollection {
+    pub fn sprite_mask_at_level_snapshot(level: UnipolarFloat) -> LayerCollection<'static> {
         let (lit, mask) = gobo_stack();
         vec![
             render_default(&lit),
@@ -3296,7 +3321,7 @@ pub mod fixture {
     /// the window is the part laid down at that alpha, so what the window does
     /// not reach dims rather than goes out, and the window itself is as bright
     /// as it is at the top of the fader.
-    pub fn sprite_gobo_at_level_snapshot(level: UnipolarFloat) -> LayerCollection {
+    pub fn sprite_gobo_at_level_snapshot(level: UnipolarFloat) -> LayerCollection<'static> {
         let (lit, gobo) = gobo_stack();
         vec![
             render_default(&lit),
@@ -3310,7 +3335,7 @@ pub mod fixture {
     /// origin, where angular phase moves fastest — so if a stroke's colour
     /// were taken from where its vertices landed rather than from the contour,
     /// this is the figure it would show on.
-    pub fn sprite_outline_color_snapshot() -> LayerCollection {
+    pub fn sprite_outline_color_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(UMBRELLA);
         tunnel.draw_mode = DrawMode::Outline;
         tunnel.col_width = UnipolarFloat::ONE.into();
@@ -3322,7 +3347,7 @@ pub mod fixture {
     }
 
     /// A figure's contours stroked instead of its interior filled.
-    pub fn sprite_outline_snapshot() -> LayerCollection {
+    pub fn sprite_outline_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(SNOWFLAKE);
         tunnel.draw_mode = DrawMode::Outline;
         tunnel.thickness = UnipolarFloat::new(0.05).into();
@@ -3337,7 +3362,7 @@ pub mod fixture {
     /// line of even weight. `n_periods` chooses how many times that runs
     /// around, and is the whole of what distinguishes one of these from
     /// another.
-    pub fn sprite_thickness_animation_snapshot(n_periods: u16) -> LayerCollection {
+    pub fn sprite_thickness_animation_snapshot(n_periods: u16) -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(BULLSEYE);
         tunnel.draw_mode = DrawMode::Outline;
         tunnel.thickness = UnipolarFloat::new(0.15).into();
@@ -3410,24 +3435,24 @@ pub mod fixture {
 
     /// A generated figure in one colour, which is the path that skips the ramp
     /// entirely and draws the tessellator's own triangles.
-    pub fn generated_flat_snapshot() -> LayerCollection {
+    pub fn generated_flat_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&generated_tunnel(generated_star())))
     }
 
     /// A figure whose contours cancel where they cross.
-    pub fn generated_even_odd_snapshot() -> LayerCollection {
+    pub fn generated_even_odd_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&generated_tunnel(generated_moire())))
     }
 
     /// A figure that reaches well outside the frame it was built in, which
     /// the viewport ends rather than any clip in the geometry.
-    pub fn generated_field_snapshot() -> LayerCollection {
+    pub fn generated_field_snapshot() -> LayerCollection<'static> {
         snapshot(render_default(&generated_tunnel(generated_lattice())))
     }
 
     /// A generated figure with a colour sweep along its angle, which is the
     /// meshed and ramped path a baked figure takes.
-    pub fn generated_color_snapshot() -> LayerCollection {
+    pub fn generated_color_snapshot() -> LayerCollection<'static> {
         let mut tunnel = generated_tunnel(generated_star());
         tunnel.col_width = UnipolarFloat::ONE.into();
         tunnel.col_spread = UnipolarFloat::new(3.0 / COLOR_SPREAD_SCALE);
@@ -3435,7 +3460,7 @@ pub mod fixture {
     }
 
     /// A generated figure's contours stroked instead of its interior filled.
-    pub fn generated_outline_snapshot() -> LayerCollection {
+    pub fn generated_outline_snapshot() -> LayerCollection<'static> {
         let mut tunnel = generated_tunnel(generated_star());
         tunnel.draw_mode = DrawMode::Outline;
         tunnel.thickness = UnipolarFloat::new(0.05).into();
@@ -3443,13 +3468,24 @@ pub mod fixture {
     }
 
     /// A tunnel drawn in a mode imposed on it rather than its own.
-    fn render_in(tunnel: &Tunnel, mode: PaintMode) -> Layer {
+    fn render_in(tunnel: &Tunnel, mode: PaintMode) -> Layer<'static> {
         render_in_at(tunnel, mode, UnipolarFloat::ONE)
     }
 
     /// A tunnel drawn in an imposed mode, at a level short of the top, at rest
     /// in the state it was configured to.
-    fn render_in_at(tunnel: &Tunnel, mode: PaintMode, level: UnipolarFloat) -> Layer {
+    fn render_in_at(tunnel: &Tunnel, mode: PaintMode, level: UnipolarFloat) -> Layer<'static> {
+        render_against(tunnel, mode, level, &SpectrumTables::SILENT)
+    }
+
+    /// A tunnel drawn at rest in the state it was configured to, against a
+    /// spectrum.
+    fn render_against(
+        tunnel: &Tunnel,
+        mode: PaintMode,
+        level: UnipolarFloat,
+        spectrum: &'static SpectrumTables,
+    ) -> Layer<'static> {
         let mut tunnel = tunnel.clone();
         tunnel.settle_controls();
         tunnel.render(
@@ -3460,7 +3496,77 @@ pub mod fixture {
                 palette: &ColorPalette::default(),
                 positions: &PositionBank::default(),
                 audio: &AudioState::default(),
+                spectrum,
             },
         )
+    }
+
+    /// Band levels shaped like a frame of music: a heavy low end, a hump
+    /// through the middle and a bright top, uneven from band to band so that
+    /// a stepped reading and a smooth one part visibly.
+    const PETAL_LEVELS: [f32; SPECTRUM_BANDS] = [
+        0.92, 0.85, 0.55, 0.62, 0.40, 0.28, 0.35, 0.18, 0.30, 0.52, 0.66, 0.58, 0.71, 0.49, 0.37,
+        0.44, 0.26, 0.15, 0.22, 0.10, 0.31, 0.47, 0.39, 0.56, 0.68, 0.80,
+    ];
+
+    /// The spectrum the spectrum fixtures are drawn against.
+    fn petal_spectrum() -> &'static SpectrumTables {
+        static TABLES: LazyLock<SpectrumTables> = LazyLock::new(|| {
+            SpectrumTables::new(&AudioFrame::new(
+                Default::default(),
+                PETAL_LEVELS.map(UnipolarF32::new),
+            ))
+        });
+        &TABLES
+    }
+
+    /// Spend a tunnel's first animation on the spectrum, driving its size.
+    fn spectrum_on_size(tunnel: &mut Tunnel, size: f64, n_periods: u16, smoothing: f64) {
+        tunnel.anims[0].target = AnimationTarget::Size;
+        for sc in [
+            AnimStateChange::Waveform(Waveform::Spectrum),
+            AnimStateChange::Size(UnipolarFloat::new(size)),
+            AnimStateChange::NPeriods(n_periods),
+            AnimStateChange::Smoothing(UnipolarFloat::new(smoothing)),
+        ] {
+            tunnel.anims[0]
+                .animation
+                .control(AnimControlMessage::Set(sc), &mut NoopEmitter);
+        }
+    }
+
+    /// A closed ring of segments whose radius follows a fixed spectrum, out
+    /// and back twice around the ring, at a smoothing.
+    pub fn spectrum_ring_snapshot(smoothing: f64) -> LayerCollection<'static> {
+        let mut tunnel = Tunnel::default();
+        set_segments(&mut tunnel, 128);
+        tunnel.handle_state_change(StateChange::Blacking(KNOB_CENTRE), &mut NoopEmitter);
+        tunnel.handle_state_change(StateChange::Size(UnipolarFloat::new(0.3)), &mut NoopEmitter);
+        tunnel.handle_state_change(
+            StateChange::Thickness(UnipolarFloat::new(0.05)),
+            &mut NoopEmitter,
+        );
+        spectrum_on_size(&mut tunnel, 0.3, 2, smoothing);
+        snapshot(render_against(
+            &tunnel,
+            PaintMode::Normal,
+            UnipolarFloat::ONE,
+            petal_spectrum(),
+        ))
+    }
+
+    /// A figure deformed along its angle by a fixed spectrum, out and back
+    /// twice around it, at a smoothing.
+    pub fn spectrum_figure_snapshot(smoothing: f64) -> LayerCollection<'static> {
+        let mut tunnel = sprite_tunnel(BULLSEYE);
+        tunnel.size = UnipolarFloat::new(0.3).into();
+        tunnel.phase_axis = PhaseAxis::Angle;
+        spectrum_on_size(&mut tunnel, 0.4, 2, smoothing);
+        snapshot(render_against(
+            &tunnel,
+            PaintMode::Normal,
+            UnipolarFloat::ONE,
+            petal_spectrum(),
+        ))
     }
 }
