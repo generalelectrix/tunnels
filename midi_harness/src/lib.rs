@@ -9,10 +9,7 @@ pub use device_change::{
     DeviceChange, DeviceId, DeviceKind, HandleDeviceChange, install_midi_device_change_handler,
 };
 use log::{debug, error, info};
-use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
-
-/// The error a MIDI send fails with, named by [`Output`].
-pub use midir::SendError;
+use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection, SendError};
 
 use crate::event::{Event, EventType};
 

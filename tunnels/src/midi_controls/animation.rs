@@ -24,14 +24,6 @@ const TRI_SAW: Mapping = note_on_ch0(25);
 const NOISE: Mapping = note_on_ch0(26);
 const CONSTANT: Mapping = note_on_ch0(27);
 
-/// The notes a controller can be holding a waveform lamp on that no waveform
-/// is bound to.
-///
-/// A radio group only ever addresses the notes it holds, so one outside it
-/// keeps whatever lamp state it was last given and nothing on the selector can
-/// take it back.
-const UNBOUND_WAVEFORMS: [Mapping; 2] = [note_on_ch0(28), note_on_ch0(29)];
-
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
 const INVERT: Mapping = note_on_ch1(1);
@@ -59,17 +51,6 @@ lazy_static! {
         off: 0,
         on: 1,
     };
-}
-
-/// Put out the waveform lamps no waveform is bound to.
-///
-/// A pad left lit among them offers a waveform that cannot be selected, on a
-/// surface read at a glance during a show.
-pub fn clear_unbound_waveform_lamps(out: &mut dyn midi_harness::Output) -> anyhow::Result<()> {
-    for mapping in UNBOUND_WAVEFORMS {
-        out.send(Event { mapping, value: 0 })?;
-    }
-    Ok(())
 }
 
 pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {

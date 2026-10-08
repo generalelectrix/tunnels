@@ -43,12 +43,9 @@ impl InitMidiDevice for Device {
     /// Perform device-specific midi initialization.
     fn init_midi(&self, out: &mut dyn Output) -> Result<()> {
         match *self {
-            Self::AkaiApc40 => {
-                init_apc_40(out)?;
-                super::animation::clear_unbound_waveform_lamps(out)
-            }
+            Self::AkaiApc40 => init_apc_40(out),
             Self::AkaiApc20 => init_apc_20(out),
-            Self::TouchOsc => super::animation::clear_unbound_waveform_lamps(out),
+            Self::TouchOsc => Ok(()),
             Self::BehringerCmdMM1 { .. } => Ok(()),
         }
     }
@@ -165,65 +162,4 @@ pub fn init_apc_20(out: &mut dyn Output) -> Result<()> {
         0xF0, 0x47, 0x7F, 0x7B, 0x60, 0x00, 0x04, 0x42, 0x08, 0x02, 0x01, 0xF7,
     ])?;
     Ok(())
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::midi::note_on_ch0;
-
-    /// A MIDI output that keeps what it was sent.
-    #[derive(Default)]
-    struct RecordingOutput {
-        events: Vec<Event>,
-    }
-
-    impl Output for RecordingOutput {
-        fn send(&mut self, event: Event) -> std::result::Result<(), midi_harness::SendError> {
-            self.events.push(event);
-            Ok(())
-        }
-
-        fn send_raw(&mut self, _: &[u8]) -> std::result::Result<(), midi_harness::SendError> {
-            Ok(())
-        }
-
-        fn name(&self) -> &str {
-            "recording"
-        }
-    }
-
-    /// Every device carrying the waveform selector puts out the notes in its
-    /// range that no waveform is bound to.
-    ///
-    /// A radio group only ever addresses the notes it holds, so a note outside
-    /// it keeps whatever lamp state it was last given and nothing on the
-    /// selector can take it back. A pad left lit there offers a waveform that
-    /// cannot be selected, on a surface read at a glance during a show.
-    #[test]
-    fn a_device_with_a_waveform_selector_puts_out_its_unbound_notes() {
-        for device in [Device::AkaiApc40, Device::TouchOsc] {
-            let mut out = RecordingOutput::default();
-            device.init_midi(&mut out).unwrap();
-            for note in [28, 29] {
-                let mapping = note_on_ch0(note);
-                let sent = out
-                    .events
-                    .iter()
-                    .find(|e| e.mapping == mapping)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "{device} never addressed note {note}, which no waveform \
-                             is bound to and nothing else can put out"
-                        )
-                    });
-                assert_eq!(
-                    sent.value, 0,
-                    "{device} set note {note} to {}, lighting a pad no waveform \
-                     is bound to",
-                    sent.value
-                );
-            }
-        }
-    }
 }
