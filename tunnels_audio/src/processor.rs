@@ -5,21 +5,26 @@
 //!   Lowpass: per-channel lowpass → Hilbert |z(t)| → fast envelope → slow envelope
 //!   Wavelet: mono D4 decomposition → per-band Hilbert → fast → slow envelope
 //!
+//! Each band's slow envelope then passes through the output smoother and an
+//! adaptive normalizer, once per buffer.
+//!
 //! Output: 8 normalized bands (1 lowpass + 7 wavelet), selectable via `active_band`.
 use audio_processor_analysis::envelope_follower_processor::EnvelopeFollowerProcessor;
 use audio_processor_traits::AudioProcessorSettings;
 use audio_processor_traits::{AtomicF32, AudioContext, simple_processor::MonoAudioProcessor};
 use augmented_dsp_filters::rbj::{FilterProcessor, FilterType};
 use log::debug;
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
+use tunnels_lib::audio::UnipolarF32;
 use tunnels_lib::transient_indicator::TransientIndicator;
 
 use crate::hilbert::HilbertTransform;
 use crate::input_meter::InputMeter;
 use crate::ring_buffer::EnvelopeProducer;
+use crate::time::{AtomicDuration, AtomicHalfLife, HalfLife};
 use crate::wavelet::{NUM_BANDS, NUM_LEVELS, WaveletDecomposition, WaveletType};
 
 /// Fast envelope follower: catches every peak within a cycle.
@@ -36,7 +41,7 @@ pub const ENVELOPE_HISTORY_CAPACITY: usize = 16384;
 pub use crate::wavelet::BAND_LABELS as OUTPUT_BAND_LABELS;
 
 /// Audio callback rate in Hz (sample_rate / frames_per_buffer).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UpdateRate(f32);
 
 impl UpdateRate {
@@ -56,18 +61,20 @@ impl UpdateRate {
 pub struct ProcessorSettingsInner {
     /// Current envelope value for the show loop (from active_band).
     pub envelope: AtomicF32,
-    pub filter_cutoff: AtomicF32,    // Hz
-    pub envelope_attack: AtomicF32,  // sec (slow stage)
-    pub envelope_release: AtomicF32, // sec (slow stage)
-    /// Symmetric output smoothing time constant (seconds). 0 = disabled.
-    pub output_smoothing: AtomicF32,
+    pub filter_cutoff: AtomicF32, // Hz
+    /// The slow envelope stage's attack and release.
+    pub envelope_attack: AtomicDuration,
+    pub envelope_release: AtomicDuration,
+    /// Symmetric output smoothing time constant. Zero disables smoothing.
+    pub output_smoothing: AtomicDuration,
 
-    /// Floor tracking half-life in seconds (slow — adapts to ambient level).
-    pub norm_floor_halflife: AtomicF32,
-    /// Ceiling tracking half-life in seconds (moderate — tracks recent peaks).
-    pub norm_ceiling_halflife: AtomicF32,
-    pub norm_floor_mode: AtomicTrackingMode,
-    pub norm_ceiling_mode: AtomicTrackingMode,
+    /// Floor tracking half-life (slow — adapts to ambient level).
+    pub norm_floor_halflife: AtomicHalfLife,
+    /// Ceiling tracking half-life, as a span of music at
+    /// `REFERENCE_MOTION_RATE`. The ceiling's memory is really a quantity of
+    /// envelope motion, so quiet or still material stretches this span and a
+    /// silent band holds the ceiling indefinitely.
+    pub norm_ceiling_halflife: AtomicHalfLife,
 
     /// Which band feeds `envelope`: 0 = lowpass, 1-7 = wavelet bands.
     pub active_band: AtomicU32,
@@ -75,10 +82,18 @@ pub struct ProcessorSettingsInner {
 
 impl ProcessorSettingsInner {
     const DEFAULT_FILTER_CUTOFF: f32 = 187.;
-    const DEFAULT_ENVELOPE_ATTACK: f32 = 0.010;
-    const DEFAULT_ENVELOPE_RELEASE: f32 = 0.050;
+    const DEFAULT_ENVELOPE_ATTACK: Duration = Duration::from_millis(10);
+    const DEFAULT_ENVELOPE_RELEASE: Duration = Duration::from_millis(50);
     /// Default output smoothing: 8ms (~2 render frames at 240fps).
-    const DEFAULT_OUTPUT_SMOOTHING: f32 = 0.008;
+    const DEFAULT_OUTPUT_SMOOTHING: Duration = Duration::from_millis(8);
+    /// Floor half-life: slow enough that a bass line is above its own bed,
+    /// fast enough that a held tone stops being news within a phrase or two.
+    pub const DEFAULT_FLOOR_HALFLIFE: HalfLife =
+        HalfLife::from_millis(NonZeroU64::new(10_000).expect("non-zero"));
+    /// Ceiling half-life of about a phrase: each band is measured against
+    /// the loudest thing in the phrase it is part of.
+    pub const DEFAULT_CEILING_HALFLIFE: HalfLife =
+        HalfLife::from_millis(NonZeroU64::new(8_000).expect("non-zero"));
 
     pub fn reset_defaults(&self) {
         self.filter_cutoff.set(Self::DEFAULT_FILTER_CUTOFF);
@@ -86,12 +101,9 @@ impl ProcessorSettingsInner {
         self.envelope_release.set(Self::DEFAULT_ENVELOPE_RELEASE);
         self.output_smoothing.set(Self::DEFAULT_OUTPUT_SMOOTHING);
         self.active_band.store(0, Ordering::Relaxed);
-        self.norm_floor_halflife.set(10.0);
-        self.norm_ceiling_halflife.set(5.0);
-        self.norm_floor_mode
-            .store(TrackingMode::Average, Ordering::Relaxed);
-        self.norm_ceiling_mode
-            .store(TrackingMode::Limit, Ordering::Relaxed);
+        self.norm_floor_halflife.set(Self::DEFAULT_FLOOR_HALFLIFE);
+        self.norm_ceiling_halflife
+            .set(Self::DEFAULT_CEILING_HALFLIFE);
     }
 }
 
@@ -100,13 +112,11 @@ impl Default for ProcessorSettingsInner {
         Self {
             envelope: AtomicF32::new(0.0),
             filter_cutoff: AtomicF32::new(Self::DEFAULT_FILTER_CUTOFF),
-            envelope_attack: AtomicF32::new(Self::DEFAULT_ENVELOPE_ATTACK),
-            envelope_release: AtomicF32::new(Self::DEFAULT_ENVELOPE_RELEASE),
-            output_smoothing: AtomicF32::new(Self::DEFAULT_OUTPUT_SMOOTHING),
-            norm_floor_halflife: AtomicF32::new(10.0),
-            norm_ceiling_halflife: AtomicF32::new(5.0),
-            norm_floor_mode: AtomicTrackingMode::new(TrackingMode::Average),
-            norm_ceiling_mode: AtomicTrackingMode::new(TrackingMode::Limit),
+            envelope_attack: AtomicDuration::new(Self::DEFAULT_ENVELOPE_ATTACK),
+            envelope_release: AtomicDuration::new(Self::DEFAULT_ENVELOPE_RELEASE),
+            output_smoothing: AtomicDuration::new(Self::DEFAULT_OUTPUT_SMOOTHING),
+            norm_floor_halflife: AtomicHalfLife::new(Self::DEFAULT_FLOOR_HALFLIFE),
+            norm_ceiling_halflife: AtomicHalfLife::new(Self::DEFAULT_CEILING_HALFLIFE),
             active_band: AtomicU32::new(0),
         }
     }
@@ -115,15 +125,18 @@ impl Default for ProcessorSettingsInner {
 pub type ProcessorSettings = Arc<ProcessorSettingsInner>;
 
 /// A slow automatic gain that brings the input's peaks toward a fixed target,
-/// within limits, so the level the interface is set to does not decide the
-/// level every band works from. It holds still on silence.
+/// within limits, so the level the interface is set to does not decide what
+/// sits above the noise gate. It holds still on silence.
 struct AutoTrim {
     /// Tracked input peak: instant attack, slow decay.
     peak: f32,
     gain_db: f32,
     /// `gain_db` as a multiplier.
     gain: f32,
-    update_rate: f32,
+    /// The update rate the coefficients were derived for, if they have been.
+    update_rate: Option<UpdateRate>,
+    /// Per-update coefficients in [0, 1): the fraction of the previous peak
+    /// and gain kept each update.
     peak_fall_coeff: f32,
     gain_coeff: f32,
 }
@@ -131,10 +144,10 @@ struct AutoTrim {
 impl AutoTrim {
     /// Peak level the trim aims for. Unity: downstream is floating point
     /// and a momentary overshoot costs nothing.
-    const TARGET: f32 = 1.0;
+    const TARGET: UnipolarF32 = UnipolarF32::ONE;
     /// How far the trim may go. The boost reaches a feed run well below a
-    /// mastered level; past that it would mostly be lifting the interface's
-    /// own noise.
+    /// mastered level; past that it would be lifting the interface's own
+    /// noise toward the gate.
     const MIN_GAIN_DB: f32 = -10.0;
     const MAX_GAIN_DB: f32 = 20.0;
     /// Peak tracker fall half-life.
@@ -144,14 +157,14 @@ impl AutoTrim {
     const GAIN_HALFLIFE: Duration = Duration::from_secs(5);
     /// Input peak below which the trim holds still, so silence and idle
     /// noise are never boosted toward the target.
-    const SILENCE: f32 = 0.01;
+    const SILENCE: UnipolarF32 = UnipolarF32::new(0.01);
 
     fn new() -> Self {
         Self {
             peak: 0.0,
             gain_db: 0.0,
             gain: 1.0,
-            update_rate: 0.0,
+            update_rate: None,
             peak_fall_coeff: 0.0,
             gain_coeff: 0.0,
         }
@@ -167,18 +180,18 @@ impl AutoTrim {
 
     /// Refresh the cached coefficients for the update rate. Safe to call
     /// every buffer.
-    fn set_params(&mut self, update_rate: f32) {
-        if update_rate == self.update_rate {
+    fn set_params(&mut self, update_rate: UpdateRate) {
+        if self.update_rate == Some(update_rate) {
             return;
         }
-        self.update_rate = update_rate;
+        self.update_rate = Some(update_rate);
         self.peak_fall_coeff = halflife_to_coeff(Self::PEAK_FALL_HALFLIFE, update_rate);
         self.gain_coeff = halflife_to_coeff(Self::GAIN_HALFLIFE, update_rate);
     }
 
     /// Update the trim from the peak level of one buffer of input.
     fn update(&mut self, buffer_peak: f32) {
-        if buffer_peak < Self::SILENCE {
+        if buffer_peak < Self::SILENCE.val() {
             return;
         }
 
@@ -188,7 +201,7 @@ impl AutoTrim {
             self.peak_fall_coeff * self.peak + (1.0 - self.peak_fall_coeff) * buffer_peak
         };
 
-        let desired_db = Self::linear_to_db(Self::TARGET / self.peak)
+        let desired_db = Self::linear_to_db(Self::TARGET.val() / self.peak)
             .clamp(Self::MIN_GAIN_DB, Self::MAX_GAIN_DB);
         self.gain_db = self.gain_coeff * self.gain_db + (1.0 - self.gain_coeff) * desired_db;
         self.gain = Self::db_to_linear(self.gain_db);
@@ -196,7 +209,7 @@ impl AutoTrim {
 }
 
 /// Level at or beyond which an input sample is at the converter's ceiling.
-const CLIP_LEVEL: f32 = 0.999;
+const CLIP_LEVEL: UnipolarF32 = UnipolarF32::new(0.999);
 
 /// Consecutive samples on one channel at that level before it counts as
 /// clipping rather than a signal that happens to touch full scale.
@@ -217,7 +230,7 @@ fn buffer_clips(interleaved_buffer: &[f32], channel_count: NonZeroUsize) -> bool
             .skip(channel)
             .step_by(channel_count)
             .any(|sample| {
-                if sample.abs() >= CLIP_LEVEL {
+                if sample.abs() >= CLIP_LEVEL.val() {
                     run += 1;
                 } else {
                     run = 0;
@@ -227,11 +240,20 @@ fn buffer_clips(interleaved_buffer: &[f32], channel_count: NonZeroUsize) -> bool
     })
 }
 
+/// Nepers per second a band's log envelope is taken to move on music. The
+/// ceiling's memory is a quantity of envelope motion, and this rate converts
+/// it to a half-life in seconds.
+///
+/// Motion accrues once per buffer, so a longer buffer misses ripple finer
+/// than its period and forgets a little more slowly than the half-life says.
+pub const REFERENCE_MOTION_RATE: f32 = 4.2;
+
 /// One-pole EMA coefficient that halves the distance to the target every
-/// `halflife` at `update_rate` updates per second. A zero half-life means no
-/// smoothing.
-pub(crate) fn halflife_to_coeff(halflife: Duration, update_rate: f32) -> f32 {
+/// `halflife` at `update_rate`: the fraction of the previous value kept each
+/// update, in [0, 1). A zero half-life means no smoothing.
+pub(crate) fn halflife_to_coeff(halflife: Duration, update_rate: UpdateRate) -> f32 {
     let halflife_secs = halflife.as_secs_f32();
+    let update_rate = update_rate.as_hz();
     if halflife_secs <= 0.0 || update_rate <= 0.0 {
         return 0.0;
     }
@@ -244,122 +266,155 @@ fn secs_to_duration(secs: f32) -> Duration {
     Duration::try_from_secs_f32(secs).unwrap_or(Duration::ZERO)
 }
 
-/// Tracking mode for floor/ceiling.
-/// - Average: asymmetric EMA tracking the general level
-/// - Limit: tracks the instantaneous min (floor) or max (ceiling) with slow decay
-#[derive(PartialEq, Eq)]
-#[atomic_enum::atomic_enum]
-pub enum TrackingMode {
-    Average = 0,
-    Limit = 1,
+/// The normalizer's fixed constants: what it treats as silence and how
+/// little range it will stretch to full scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalizerTuning {
+    /// Minimum normalization range as a fraction of the ceiling. Once the
+    /// floor has climbed to within this fraction of the ceiling the output
+    /// fades instead of being stretched back to full scale, and a band's
+    /// reach to full scale never depends on its absolute level.
+    pub rel_min_range: UnipolarF32,
+    /// The lowest level the floor may sit at, so a band whose content is
+    /// at or below it outputs zero rather than normalizing idle noise up to
+    /// full scale.
+    pub noise_gate: UnipolarF32,
 }
 
-impl From<u32> for TrackingMode {
-    fn from(v: u32) -> Self {
-        if v == 1 { Self::Limit } else { Self::Average }
+impl NormalizerTuning {
+    pub const DEFAULT: Self = Self {
+        rel_min_range: UnipolarF32::new(0.25),
+        noise_gate: UnipolarF32::new(0.01),
+    };
+}
+
+impl Default for NormalizerTuning {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }
 
-impl From<TrackingMode> for u32 {
-    fn from(m: TrackingMode) -> Self {
-        m as u32
+/// The normalizer coefficients every band shares, derived from the settings
+/// and the buffer update rate. The expensive `exp()`s are recomputed only
+/// when a half-life or the update rate changes.
+pub(crate) struct NormalizerParams {
+    tuning: NormalizerTuning,
+    /// Nepers the ceiling decays per neper of log-envelope motion: zero
+    /// until derived, positive after.
+    ceiling_forget: f32,
+    /// The half-life the forgetting rate was derived from, if it has been.
+    ceiling_halflife: Option<HalfLife>,
+    /// Floor follower coefficients, each in [0, 1): the floor rises at the
+    /// floor half-life and falls at a fifth of it.
+    floor_rise_coeff: f32,
+    floor_fall_coeff: f32,
+    /// The inputs the floor coefficients were derived from, if they have
+    /// been.
+    floor_halflife: Option<HalfLife>,
+    update_rate: Option<UpdateRate>,
+}
+
+impl NormalizerParams {
+    /// The floor's fall half-life as a fraction of its rise half-life.
+    const FLOOR_FALL_RATIO: UnipolarF32 = UnipolarF32::new(0.2);
+
+    fn new(tuning: NormalizerTuning) -> Self {
+        Self {
+            tuning,
+            ceiling_forget: 0.0,
+            ceiling_halflife: None,
+            floor_rise_coeff: 0.0,
+            floor_fall_coeff: 0.0,
+            floor_halflife: None,
+            update_rate: None,
+        }
+    }
+
+    /// Refresh from the settings for the given update rate. Safe to call
+    /// every buffer.
+    fn refresh(&mut self, settings: &ProcessorSettingsInner, update_rate: UpdateRate) {
+        let ceiling_halflife = settings.norm_ceiling_halflife.get();
+        if self.ceiling_halflife != Some(ceiling_halflife) {
+            self.ceiling_halflife = Some(ceiling_halflife);
+            self.ceiling_forget = std::f32::consts::LN_2
+                / (REFERENCE_MOTION_RATE * ceiling_halflife.get().as_secs_f32());
+        }
+        let floor_halflife = settings.norm_floor_halflife.get();
+        if self.floor_halflife == Some(floor_halflife) && self.update_rate == Some(update_rate) {
+            return;
+        }
+        self.floor_halflife = Some(floor_halflife);
+        self.update_rate = Some(update_rate);
+        let floor_halflife = floor_halflife.get();
+        let fall_halflife =
+            secs_to_duration(floor_halflife.as_secs_f32() * Self::FLOOR_FALL_RATIO.val());
+        self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
+        self.floor_fall_coeff = halflife_to_coeff(fall_halflife, update_rate);
     }
 }
 
 /// Adaptive envelope normalizer: tracks a floor and ceiling,
 /// outputs `(envelope - floor) / (ceiling - floor)` clamped to [0, 1].
-struct AdaptiveNormalizer {
-    floor: f32,
+///
+/// The ceiling is a peak follower whose decay is clocked by the envelope's
+/// own motion rather than by time: it rises to any envelope above it at once
+/// and forgets a fixed number of nepers for every neper the log envelope
+/// moves, up or down, set by the ceiling half-life. A hit therefore costs the ceiling the same whether
+/// the music is fast or slow, a level drop is forgotten within a few hits
+/// at any tempo, and a pause or a held tone — no motion — leaves the
+/// ceiling where it was.
+pub(crate) struct AdaptiveNormalizer {
+    /// Follows the envelope slowly upward and faster downward: the bed the
+    /// output is measured from.
+    floor: AsymmetricOnePole,
+    /// The tracked peak, on the envelope's scale: non-negative, and never
+    /// below the latest envelope.
     ceiling: f32,
-    /// EMA coefficients for average-mode floor tracking.
-    floor_rise_coeff: f32,
-    floor_fall_coeff: f32,
-    /// EMA coefficient for limit-mode floor (slow rise from minimum).
-    floor_limit_rise_coeff: f32,
-    /// EMA coefficient for ceiling decay.
-    ceiling_fall_coeff: f32,
+    /// Log envelope on the previous update, clamped at the noise gate.
+    prev_log_envelope: f32,
 }
 
 impl AdaptiveNormalizer {
-    /// Minimum range between floor and ceiling. This caps the maximum gain
-    /// at 1/MIN_RANGE. With normalized input (~unity), 0.333 = max 3x gain.
-    const MIN_RANGE: f32 = 0.333;
+    /// The ceiling a normalizer starts from, before it has heard anything:
+    /// half a full-scale tone's envelope on the lowpass band. Starting high
+    /// under-reports until the real level is learnt, rather than calling the
+    /// first sound full scale; louder material costs one hit's worth of
+    /// clipping.
+    const INITIAL_CEILING: UnipolarF32 = UnipolarF32::new(0.5);
 
-    fn new() -> Self {
+    pub(crate) fn new(tuning: &NormalizerTuning) -> Self {
         Self {
-            floor: 0.0,
-            ceiling: 0.001,
-            floor_rise_coeff: 0.999,
-            floor_fall_coeff: 0.99,
-            floor_limit_rise_coeff: 0.999,
-            ceiling_fall_coeff: 0.999,
+            floor: AsymmetricOnePole::default(),
+            ceiling: Self::INITIAL_CEILING.val(),
+            prev_log_envelope: tuning.noise_gate.val().ln(),
         }
-    }
-
-    fn set_params(
-        &mut self,
-        floor_halflife: Duration,
-        ceiling_halflife: Duration,
-        update_rate: f32,
-    ) {
-        if update_rate <= 0.0 {
-            return;
-        }
-        // Average mode: slow rise, faster fall.
-        self.floor_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
-        self.floor_fall_coeff = halflife_to_coeff(floor_halflife.mul_f32(0.2), update_rate);
-        // Limit mode: instant drop to min, slow rise back.
-        self.floor_limit_rise_coeff = halflife_to_coeff(floor_halflife, update_rate);
-        // Ceiling: instant attack, decays at ceiling halflife.
-        self.ceiling_fall_coeff = halflife_to_coeff(ceiling_halflife, update_rate);
     }
 
     #[inline]
-    fn process(
-        &mut self,
-        envelope: f32,
-        floor_mode: TrackingMode,
-        ceiling_mode: TrackingMode,
-    ) -> f32 {
-        // Update floor.
-        match floor_mode {
-            TrackingMode::Average => {
-                let coeff = if envelope > self.floor {
-                    self.floor_rise_coeff
-                } else {
-                    self.floor_fall_coeff
-                };
-                self.floor = coeff * self.floor + (1.0 - coeff) * envelope;
-            }
-            TrackingMode::Limit => {
-                if envelope < self.floor {
-                    self.floor = envelope; // instant drop to minimum
-                } else {
-                    self.floor = self.floor_limit_rise_coeff * self.floor
-                        + (1.0 - self.floor_limit_rise_coeff) * envelope;
-                }
-            }
-        }
+    pub(crate) fn process(&mut self, envelope: f32, p: &NormalizerParams) -> f32 {
+        let noise_gate = p.tuning.noise_gate.val();
+        let rel_min_range = p.tuning.rel_min_range.val();
+        // Update ceiling: instant attack, decay per unit of envelope motion.
+        let log_envelope = envelope.max(noise_gate).ln();
+        let motion = (log_envelope - self.prev_log_envelope).abs();
+        self.prev_log_envelope = log_envelope;
+        self.ceiling = envelope.max(self.ceiling * (-p.ceiling_forget * motion).exp());
 
-        // Update ceiling.
-        match ceiling_mode {
-            TrackingMode::Average => {
-                // Symmetric EMA — same speed up and down.
-                self.ceiling = self.ceiling_fall_coeff * self.ceiling
-                    + (1.0 - self.ceiling_fall_coeff) * envelope;
-            }
-            TrackingMode::Limit => {
-                if envelope > self.ceiling {
-                    self.ceiling = envelope; // instant rise to maximum
-                } else {
-                    self.ceiling = self.ceiling_fall_coeff * self.ceiling
-                        + (1.0 - self.ceiling_fall_coeff) * envelope;
-                }
-            }
-        }
+        // Update floor. It never exceeds the ceiling.
+        self.floor.rise = p.floor_rise_coeff;
+        self.floor.fall = p.floor_fall_coeff;
+        let floor = self.floor.step(envelope.min(self.ceiling));
 
-        let range = (self.ceiling - self.floor).max(Self::MIN_RANGE);
-        ((envelope - self.floor) / range).clamp(0.0, 1.0)
+        // The gate is the lowest level the floor can sit at, so the output
+        // reaches zero by arriving there rather than by being cut off.
+        let floor = floor.max(noise_gate);
+        // The range is never narrower than the gate either, so a band only
+        // reaches full scale once its ceiling stands clear of the noise it
+        // would otherwise be stretching.
+        let range = (self.ceiling - floor)
+            .max(rel_min_range * self.ceiling)
+            .max(noise_gate);
+        ((envelope - floor) / range).clamp(0.0, 1.0)
     }
 }
 
@@ -407,23 +462,59 @@ impl OnePoleSmoother {
     }
 }
 
+/// One-pole follower with separate coefficients for rising and falling
+/// input: `y[n] = c * y[n-1] + (1 - c) * x[n]` with `c` the rise coefficient
+/// while `x[n] > y[n-1]` and the fall coefficient otherwise.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct AsymmetricOnePole {
+    /// The coefficient while the input is above the state: dimensionless, in
+    /// [0, 1), the fraction of the previous state kept each update. Zero
+    /// follows a rising input at once.
+    pub(crate) rise: f32,
+    /// The coefficient while the input is at or below the state, in the same
+    /// terms. Zero follows a falling input at once.
+    pub(crate) fall: f32,
+    /// The latest output, on the input's scale.
+    state: f32,
+}
+
+impl AsymmetricOnePole {
+    #[inline]
+    pub(crate) fn step(&mut self, input: f32) -> f32 {
+        let c = if input > self.state {
+            self.rise
+        } else {
+            self.fall
+        };
+        self.state = c * self.state + (1.0 - c) * input;
+        self.state
+    }
+}
+
 /// A one-pole smoother coefficient derived from a time constant and the audio
-/// buffer update rate. Recomputes the expensive `exp()` only when the time
-/// constant changes.
+/// buffer update rate. Recomputes the expensive `exp()` only when either
+/// changes.
 #[derive(Default)]
 struct SmootherCoeff {
-    time_secs: f32,
+    /// The inputs the coefficient was derived from, if it has been.
+    time_constant: Duration,
+    update_rate: Option<UpdateRate>,
+    /// Dimensionless, in [0, 1): the fraction of the previous output kept
+    /// each update. Zero passes the input through.
     coeff: f32,
 }
 
 impl SmootherCoeff {
     /// Refresh the cached coefficient from the current time constant and
     /// update rate. Safe to call every tick.
-    fn refresh(&mut self, time_secs: f32, update_rate: f32) {
-        if time_secs == self.time_secs {
+    fn refresh(&mut self, time_constant: Duration, update_rate: UpdateRate) {
+        if time_constant == self.time_constant && self.update_rate == Some(update_rate) {
             return;
         }
-        self.time_secs = time_secs;
+        self.time_constant = time_constant;
+        self.update_rate = Some(update_rate);
+        let time_secs = time_constant.as_secs_f32();
+        let update_rate = update_rate.as_hz();
         self.coeff = if time_secs <= 0.0 || update_rate <= 0.0 {
             0.0
         } else {
@@ -491,8 +582,8 @@ impl WaveletBand {
 pub struct Processor {
     settings: ProcessorSettings,
     filter_cutoff: f32,
-    envelope_attack: f32,
-    envelope_release: f32,
+    envelope_attack: Duration,
+    envelope_release: Duration,
     /// Interleaved channels per frame.
     channel_count: NonZeroUsize,
     context: AudioContext,
@@ -520,6 +611,8 @@ pub struct Processor {
     /// Cached smoother coefficient shared across the lowpass smoother and
     /// every wavelet-band smoother.
     smooth_coeff: SmootherCoeff,
+    /// Normalizer coefficients shared across every band's normalizer.
+    norm_params: NormalizerParams,
 
     /// Wavelet decomposition (D4) + per-band envelope extraction.
     wavelet: WaveletDecomposition,
@@ -556,8 +649,7 @@ impl Processor {
         let filter_cutoff = handle.filter_cutoff.get();
         let envelope_attack = handle.envelope_attack.get();
         let envelope_release = handle.envelope_release.get();
-        let slow_attack = Duration::from_secs_f32(envelope_attack);
-        let slow_release = Duration::from_secs_f32(envelope_release);
+        let tuning = NormalizerTuning::DEFAULT;
 
         let lowpass = (0..n)
             .map(|_| {
@@ -568,7 +660,7 @@ impl Processor {
                     filter,
                     hilbert: HilbertTransform::new(),
                     fast_envelope: make_envelope(&mut context, FAST_ATTACK, FAST_RELEASE),
-                    slow_envelope: make_envelope(&mut context, slow_attack, slow_release),
+                    slow_envelope: make_envelope(&mut context, envelope_attack, envelope_release),
                 }
             })
             .collect();
@@ -593,9 +685,9 @@ impl Processor {
             WaveletBand {
                 hilbert: HilbertTransform::new(),
                 fast_envelope: make_envelope(&mut band_ctx, FAST_ATTACK, FAST_RELEASE),
-                slow_envelope: make_envelope(&mut band_ctx, slow_attack, slow_release),
+                slow_envelope: make_envelope(&mut band_ctx, envelope_attack, envelope_release),
                 smoother: OnePoleSmoother::default(),
-                normalizer: AdaptiveNormalizer::new(),
+                normalizer: AdaptiveNormalizer::new(&tuning),
                 context: band_ctx,
             }
         });
@@ -614,8 +706,9 @@ impl Processor {
             dc_blockers: (0..n).map(|_| DcBlocker::new(base_sr)).collect(),
             lowpass,
             lowpass_smoother: OnePoleSmoother::default(),
-            lowpass_normalizer: AdaptiveNormalizer::new(),
+            lowpass_normalizer: AdaptiveNormalizer::new(&tuning),
             smooth_coeff: SmootherCoeff::default(),
+            norm_params: NormalizerParams::new(tuning),
             wavelet: WaveletDecomposition::new(WaveletType::Daubechies4),
             wavelet_bands,
         }
@@ -629,7 +722,7 @@ impl Processor {
         Arc::downgrade(&self.input_meter)
     }
 
-    fn maybe_update_parameters(&mut self, update_rate: f32) {
+    fn maybe_update_parameters(&mut self, update_rate: UpdateRate) {
         let new_filter_cutoff = self.settings.filter_cutoff.get();
         if new_filter_cutoff != self.filter_cutoff {
             debug!("Updating filter cutoff to {new_filter_cutoff}");
@@ -642,23 +735,22 @@ impl Processor {
         let new_attack = self.settings.envelope_attack.get();
         let new_release = self.settings.envelope_release.get();
         if new_attack != self.envelope_attack || new_release != self.envelope_release {
-            debug!("Updating envelope parameters to {new_attack}, {new_release}");
+            debug!("Updating envelope parameters to {new_attack:?}, {new_release:?}");
             self.envelope_attack = new_attack;
             self.envelope_release = new_release;
-            let attack = Duration::from_secs_f32(new_attack);
-            let release = Duration::from_secs_f32(new_release);
             for chan in &mut self.lowpass {
-                chan.slow_envelope.handle().set_attack(attack);
-                chan.slow_envelope.handle().set_release(release);
+                chan.slow_envelope.handle().set_attack(new_attack);
+                chan.slow_envelope.handle().set_release(new_release);
             }
             for band in &mut self.wavelet_bands {
-                band.slow_envelope.handle().set_attack(attack);
-                band.slow_envelope.handle().set_release(release);
+                band.slow_envelope.handle().set_attack(new_attack);
+                band.slow_envelope.handle().set_release(new_release);
             }
         }
 
         self.smooth_coeff
             .refresh(self.settings.output_smoothing.get(), update_rate);
+        self.norm_params.refresh(&self.settings, update_rate);
     }
 
     /// Process a buffer of interleaved audio data.
@@ -676,7 +768,7 @@ impl Processor {
             return;
         }
         let sample_rate = self.context.settings.sample_rate;
-        let update_rate = sample_rate / frames as f32;
+        let update_rate = UpdateRate::new(sample_rate as u32, frames as u32);
 
         self.maybe_update_parameters(update_rate);
 
@@ -740,18 +832,9 @@ impl Processor {
 
         let coeff = self.smooth_coeff.get();
         let smoothed_lowpass = self.lowpass_smoother.update(coeff, envelope);
-
-        // Normalization params (shared between lowpass and wavelet normalizers).
-        let floor_hl = secs_to_duration(self.settings.norm_floor_halflife.get());
-        let ceil_hl = secs_to_duration(self.settings.norm_ceiling_halflife.get());
-        let floor_mode = self.settings.norm_floor_mode.load(Ordering::Relaxed);
-        let ceil_mode = self.settings.norm_ceiling_mode.load(Ordering::Relaxed);
-
-        self.lowpass_normalizer
-            .set_params(floor_hl, ceil_hl, update_rate);
         let lowpass_norm = self
             .lowpass_normalizer
-            .process(smoothed_lowpass, floor_mode, ceil_mode);
+            .process(smoothed_lowpass, &self.norm_params);
 
         // Wavelet band smoothing + normalization.
         // Build the output array: [lowpass_norm, wavelet_band_6_norm, ..., wavelet_band_0_norm]
@@ -759,9 +842,8 @@ impl Processor {
         output_bands[0] = lowpass_norm;
 
         for (i, band) in self.wavelet_bands.iter_mut().enumerate() {
-            band.normalizer.set_params(floor_hl, ceil_hl, update_rate);
             let smoothed = band.smoothed_envelope(coeff);
-            let normalized = band.normalizer.process(smoothed, floor_mode, ceil_mode);
+            let normalized = band.normalizer.process(smoothed, &self.norm_params);
             // Map wavelet bands 0-6 to output indices 7-1.
             // output_index = NUM_LEVELS - wavelet_band_index (for bands 0..NUM_LEVELS).
             if i < NUM_LEVELS {
@@ -828,13 +910,40 @@ mod tests {
         );
     }
 
+    /// A processor that has heard nothing has no idea how loud the music
+    /// is, so it starts quiet and works its way up rather than reporting
+    /// full scale from the first sample it sees.
+    #[test]
+    fn a_new_processor_does_not_start_at_full_scale() {
+        let settings = ProcessorSettings::default();
+        let sample_rate = 48000_u32;
+        let mut processor =
+            Processor::new(settings.clone(), sample_rate, channels(1), test_producers());
+        // A third of full scale, so full scale is unambiguously wrong.
+        let mut peak = 0.0_f32;
+        for buffer in 0..80 {
+            let samples: Vec<f32> = (0..64)
+                .map(|i| {
+                    let t = (buffer * 64 + i) as f32 / sample_rate as f32;
+                    0.3 * (2.0 * std::f32::consts::PI * 60.0 * t).sin()
+                })
+                .collect();
+            processor.process(&samples);
+            peak = peak.max(settings.envelope.get());
+        }
+        assert!(
+            peak < 0.9,
+            "the first 107 ms of a quiet tone should not read as full scale, got {peak:.3}"
+        );
+    }
+
     /// The trim follows the input's level, stops at its limits, and treats
     /// silence as nothing to act on.
     #[test]
     fn auto_trim_follows_level_and_holds_on_silence() {
         fn trim_at_1khz() -> AutoTrim {
             let mut trim = AutoTrim::new();
-            trim.set_params(1000.0);
+            trim.set_params(UpdateRate::new(48_000, 48));
             trim
         }
         fn feed(trim: &mut AutoTrim, peak: f32, updates: usize) {
@@ -845,7 +954,7 @@ mod tests {
 
         // Right at target: stays put, and silence afterwards leaves it there.
         let mut trim = trim_at_1khz();
-        feed(&mut trim, AutoTrim::TARGET, 5000);
+        feed(&mut trim, AutoTrim::TARGET.val(), 5000);
         assert!(
             (trim.gain - 1.0).abs() < 0.05,
             "at target the trim should hold near 1.0, got {:.3}",

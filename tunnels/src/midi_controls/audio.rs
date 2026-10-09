@@ -37,8 +37,6 @@ pub(crate) fn update_audio_control(sc: StateChange, manager: &mut impl MidiOutpu
         | OutputSmoothing(_)
         | ActiveBand(_)
         | NormFloorHalflife(_)
-        | NormCeilingHalflife(_)
-        | NormFloorMode(_)
-        | NormCeilingMode(_) => {}
+        | NormCeilingHalflife(_) => {}
     }
 }

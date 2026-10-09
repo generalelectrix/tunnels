@@ -2,7 +2,8 @@ use eframe::egui::{self, Color32};
 use std::sync::Weak;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
-use tunnels_audio::processor::{OUTPUT_BAND_LABELS, TrackingMode};
+use tunnels_audio::processor::OUTPUT_BAND_LABELS;
+use tunnels_audio::time::HalfLife;
 use tunnels_audio::{InputMeter, OFFLINE_DEVICE_NAME};
 
 use crate::STATUS_COLORS;
@@ -24,10 +25,8 @@ pub trait AudioCommands {
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
     fn set_active_band(&mut self, band: u32);
-    fn set_norm_floor_halflife(&mut self, halflife: Duration);
-    fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
-    fn set_norm_floor_mode(&mut self, mode: TrackingMode);
-    fn set_norm_ceiling_mode(&mut self, mode: TrackingMode);
+    fn set_norm_floor_halflife(&mut self, halflife: HalfLife);
+    fn set_norm_ceiling_halflife(&mut self, halflife: HalfLife);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
 }
@@ -237,72 +236,35 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
             }
             ui.end_row();
 
-            // Auto peak level: slider + mode on one line.
-            ui.label("Auto Peak Level:");
-            ui.horizontal(|ui| {
-                let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
-                if ui
-                    .add(
-                        egui::Slider::new(&mut ceil_hl_s, 0.5..=15.0)
-                            .suffix(" s")
-                            .logarithmic(true),
-                    )
-                    .changed()
-                {
-                    self.commands
-                        .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
-                }
-                let mut mode = self.snapshot.norm_ceiling_mode;
-                if ui
-                    .selectable_label(mode == TrackingMode::Average, "Avg")
-                    .clicked()
-                {
-                    mode = TrackingMode::Average;
-                }
-                if ui
-                    .selectable_label(mode == TrackingMode::Limit, "Max")
-                    .clicked()
-                {
-                    mode = TrackingMode::Limit;
-                }
-                if mode != self.snapshot.norm_ceiling_mode {
-                    self.commands.set_norm_ceiling_mode(mode);
-                }
-            });
+            // The normalizer's two memories, both half-lives in seconds.
+            ui.label("Floor Memory:");
+            let mut floor_hl_s = self.snapshot.norm_floor_halflife.get().as_secs_f32();
+            if ui
+                .add(
+                    egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+                && let Some(halflife) = HalfLife::try_from_secs_f32(floor_hl_s)
+            {
+                self.commands.set_norm_floor_halflife(halflife);
+            }
             ui.end_row();
 
-            // Auto floor level: slider + mode on one line.
-            ui.label("Auto Floor Level:");
-            ui.horizontal(|ui| {
-                let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
-                if ui
-                    .add(
-                        egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
-                            .suffix(" s")
-                            .logarithmic(true),
-                    )
-                    .changed()
-                {
-                    self.commands
-                        .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
-                }
-                let mut mode = self.snapshot.norm_floor_mode;
-                if ui
-                    .selectable_label(mode == TrackingMode::Average, "Avg")
-                    .clicked()
-                {
-                    mode = TrackingMode::Average;
-                }
-                if ui
-                    .selectable_label(mode == TrackingMode::Limit, "Min")
-                    .clicked()
-                {
-                    mode = TrackingMode::Limit;
-                }
-                if mode != self.snapshot.norm_floor_mode {
-                    self.commands.set_norm_floor_mode(mode);
-                }
-            });
+            ui.label("Peak Memory:");
+            let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.get().as_secs_f32();
+            if ui
+                .add(
+                    egui::Slider::new(&mut ceil_hl_s, 0.5..=60.0)
+                        .suffix(" s")
+                        .logarithmic(true),
+                )
+                .changed()
+                && let Some(halflife) = HalfLife::try_from_secs_f32(ceil_hl_s)
+            {
+                self.commands.set_norm_ceiling_halflife(halflife);
+            }
             ui.end_row();
         });
     }
@@ -374,10 +336,8 @@ mod tests {
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
         fn set_active_band(&mut self, _band: u32) {}
-        fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
-        fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
-        fn set_norm_floor_mode(&mut self, _mode: TrackingMode) {}
-        fn set_norm_ceiling_mode(&mut self, _mode: TrackingMode) {}
+        fn set_norm_floor_halflife(&mut self, _halflife: HalfLife) {}
+        fn set_norm_ceiling_halflife(&mut self, _halflife: HalfLife) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {
             self.devices.clone()

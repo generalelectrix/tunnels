@@ -12,3 +12,6 @@ ordered-float = "5"
 number = { git = "https://github.com/generalelectrix/number", branch = "main" }
 anyhow = "1"
 arc-swap = "1"
+
+[dev-dependencies]
+postcard.workspace = true

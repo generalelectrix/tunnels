@@ -5,7 +5,7 @@ use gui_common::audio_panel::{
     AudioCommands, AudioPanel as SharedAudioPanel, AudioPanelState as SharedAudioPanelState,
     AudioSnapshot,
 };
-use tunnels::audio::processor::TrackingMode;
+use tunnels::audio::time::HalfLife;
 use tunnels::audio::{AudioInput, ControlMessage, StateChange};
 use tunnels::control::MetaCommand;
 
@@ -63,7 +63,7 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_norm_floor_halflife(&mut self, halflife: Duration) {
+    fn set_norm_floor_halflife(&mut self, halflife: HalfLife) {
         let _ = self
             .ctx
             .send_command(MetaCommand::AudioControl(ControlMessage::Set(
@@ -71,27 +71,11 @@ impl AudioCommands for ConsoleAudioCommands<'_> {
             )));
     }
 
-    fn set_norm_ceiling_halflife(&mut self, halflife: Duration) {
+    fn set_norm_ceiling_halflife(&mut self, halflife: HalfLife) {
         let _ = self
             .ctx
             .send_command(MetaCommand::AudioControl(ControlMessage::Set(
                 StateChange::NormCeilingHalflife(halflife),
-            )));
-    }
-
-    fn set_norm_floor_mode(&mut self, mode: TrackingMode) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::NormFloorMode(mode),
-            )));
-    }
-
-    fn set_norm_ceiling_mode(&mut self, mode: TrackingMode) {
-        let _ = self
-            .ctx
-            .send_command(MetaCommand::AudioControl(ControlMessage::Set(
-                StateChange::NormCeilingMode(mode),
             )));
     }
 
