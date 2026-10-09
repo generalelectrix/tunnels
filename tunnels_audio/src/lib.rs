@@ -5,6 +5,7 @@ pub mod log_scale;
 pub mod processor;
 pub mod reconnect;
 pub mod ring_buffer;
+pub mod time;
 pub mod wavelet;
 
 use anyhow::{Result, bail};
@@ -22,6 +23,7 @@ pub use self::processor::UpdateRate;
 use self::processor::{NUM_OUTPUT_BANDS, ProcessorSettings, ProcessorSettingsInner};
 use self::reconnect::ReconnectingInput;
 pub use self::ring_buffer::EnvelopeStream;
+use self::time::HalfLife;
 
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
@@ -45,8 +47,8 @@ pub struct AudioSnapshot {
     pub envelope_release: Duration,
     pub output_smoothing: Duration,
     pub active_band: u32,
-    pub norm_floor_halflife: Duration,
-    pub norm_ceiling_halflife: Duration,
+    pub norm_floor_halflife: HalfLife,
+    pub norm_ceiling_halflife: HalfLife,
 }
 
 impl AudioSnapshot {
@@ -55,12 +57,12 @@ impl AudioSnapshot {
         Self {
             device_name: device_name.to_string(),
             filter_cutoff_hz: ps.filter_cutoff.get(),
-            envelope_attack: Duration::from_secs_f32(ps.envelope_attack.get()),
-            envelope_release: Duration::from_secs_f32(ps.envelope_release.get()),
-            output_smoothing: Duration::from_secs_f32(ps.output_smoothing.get()),
+            envelope_attack: ps.envelope_attack.get(),
+            envelope_release: ps.envelope_release.get(),
+            output_smoothing: ps.output_smoothing.get(),
             active_band: ps.active_band.load(Ordering::Relaxed),
-            norm_floor_halflife: Duration::from_secs_f32(ps.norm_floor_halflife.get()),
-            norm_ceiling_halflife: Duration::from_secs_f32(ps.norm_ceiling_halflife.get()),
+            norm_floor_halflife: ps.norm_floor_halflife.get(),
+            norm_ceiling_halflife: ps.norm_ceiling_halflife.get(),
         }
     }
 }
@@ -163,24 +165,24 @@ impl AudioInput {
         emitter.emit_audio_state_change(EnvelopeValue(self.envelope_value));
         emitter.emit_audio_state_change(Monitor(self.monitor));
         emitter.emit_audio_state_change(FilterCutoff(self.processor_settings.filter_cutoff.get()));
-        emitter.emit_audio_state_change(EnvelopeAttack(Duration::from_secs_f32(
+        emitter.emit_audio_state_change(EnvelopeAttack(
             self.processor_settings.envelope_attack.get(),
-        )));
-        emitter.emit_audio_state_change(EnvelopeRelease(Duration::from_secs_f32(
+        ));
+        emitter.emit_audio_state_change(EnvelopeRelease(
             self.processor_settings.envelope_release.get(),
-        )));
-        emitter.emit_audio_state_change(OutputSmoothing(Duration::from_secs_f32(
+        ));
+        emitter.emit_audio_state_change(OutputSmoothing(
             self.processor_settings.output_smoothing.get(),
-        )));
+        ));
         emitter.emit_audio_state_change(ActiveBand(
             self.processor_settings.active_band.load(Ordering::Relaxed),
         ));
-        emitter.emit_audio_state_change(NormFloorHalflife(Duration::from_secs_f32(
+        emitter.emit_audio_state_change(NormFloorHalflife(
             self.processor_settings.norm_floor_halflife.get(),
-        )));
-        emitter.emit_audio_state_change(NormCeilingHalflife(Duration::from_secs_f32(
+        ));
+        emitter.emit_audio_state_change(NormCeilingHalflife(
             self.processor_settings.norm_ceiling_halflife.get(),
-        )));
+        ));
     }
 
     /// Handle a control event.
@@ -215,31 +217,17 @@ impl AudioInput {
                 }
                 self.processor_settings.filter_cutoff.set(v);
             }
-            EnvelopeAttack(v) => self.processor_settings.envelope_attack.set(v.as_secs_f32()),
-            EnvelopeRelease(v) => self
-                .processor_settings
-                .envelope_release
-                .set(v.as_secs_f32()),
-            OutputSmoothing(v) => self
-                .processor_settings
-                .output_smoothing
-                .set(v.as_secs_f32()),
+            EnvelopeAttack(v) => self.processor_settings.envelope_attack.set(v),
+            EnvelopeRelease(v) => self.processor_settings.envelope_release.set(v),
+            OutputSmoothing(v) => self.processor_settings.output_smoothing.set(v),
             ActiveBand(v) => {
                 let clamped = v.min((NUM_OUTPUT_BANDS - 1) as u32);
                 self.processor_settings
                     .active_band
                     .store(clamped, Ordering::Relaxed);
             }
-            NormFloorHalflife(v) => {
-                self.processor_settings
-                    .norm_floor_halflife
-                    .set(v.as_secs_f32());
-            }
-            NormCeilingHalflife(v) => {
-                self.processor_settings
-                    .norm_ceiling_halflife
-                    .set(v.as_secs_f32());
-            }
+            NormFloorHalflife(v) => self.processor_settings.norm_floor_halflife.set(v),
+            NormCeilingHalflife(v) => self.processor_settings.norm_ceiling_halflife.set(v),
         };
         emitter.emit_audio_state_change(sc);
     }
@@ -269,9 +257,9 @@ pub enum StateChange {
     EnvelopeRelease(Duration),
     OutputSmoothing(Duration),
     ActiveBand(u32),
-    NormFloorHalflife(Duration),
-    /// Ceiling half-life, in seconds of music at the reference motion rate.
-    NormCeilingHalflife(Duration),
+    NormFloorHalflife(HalfLife),
+    /// Ceiling half-life, as a span of music at the reference motion rate.
+    NormCeilingHalflife(HalfLife),
 }
 
 #[derive(Debug, Clone)]

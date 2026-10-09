@@ -6041,6 +6041,7 @@ dependencies = [
  "arc-swap",
  "number",
  "ordered-float",
+ "postcard",
  "serde",
 ]
 

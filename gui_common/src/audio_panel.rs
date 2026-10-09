@@ -3,6 +3,7 @@ use std::sync::Weak;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
 use tunnels_audio::processor::OUTPUT_BAND_LABELS;
+use tunnels_audio::time::HalfLife;
 use tunnels_audio::{InputMeter, OFFLINE_DEVICE_NAME};
 
 use crate::STATUS_COLORS;
@@ -24,8 +25,8 @@ pub trait AudioCommands {
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
     fn set_active_band(&mut self, band: u32);
-    fn set_norm_floor_halflife(&mut self, halflife: Duration);
-    fn set_norm_ceiling_halflife(&mut self, halflife: Duration);
+    fn set_norm_floor_halflife(&mut self, halflife: HalfLife);
+    fn set_norm_ceiling_halflife(&mut self, halflife: HalfLife);
     fn reset_parameters(&mut self);
     fn list_devices(&mut self) -> Vec<String>;
 }
@@ -237,7 +238,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
 
             // The normalizer's two memories, both half-lives in seconds.
             ui.label("Floor Memory:");
-            let mut floor_hl_s = self.snapshot.norm_floor_halflife.as_secs_f32();
+            let mut floor_hl_s = self.snapshot.norm_floor_halflife.get().as_secs_f32();
             if ui
                 .add(
                     egui::Slider::new(&mut floor_hl_s, 0.5..=30.0)
@@ -245,14 +246,14 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
                         .logarithmic(true),
                 )
                 .changed()
+                && let Some(halflife) = HalfLife::try_from_secs_f32(floor_hl_s)
             {
-                self.commands
-                    .set_norm_floor_halflife(Duration::from_secs_f32(floor_hl_s));
+                self.commands.set_norm_floor_halflife(halflife);
             }
             ui.end_row();
 
             ui.label("Peak Memory:");
-            let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.as_secs_f32();
+            let mut ceil_hl_s = self.snapshot.norm_ceiling_halflife.get().as_secs_f32();
             if ui
                 .add(
                     egui::Slider::new(&mut ceil_hl_s, 0.5..=60.0)
@@ -260,9 +261,9 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
                         .logarithmic(true),
                 )
                 .changed()
+                && let Some(halflife) = HalfLife::try_from_secs_f32(ceil_hl_s)
             {
-                self.commands
-                    .set_norm_ceiling_halflife(Duration::from_secs_f32(ceil_hl_s));
+                self.commands.set_norm_ceiling_halflife(halflife);
             }
             ui.end_row();
         });
@@ -335,8 +336,8 @@ mod tests {
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
         fn set_active_band(&mut self, _band: u32) {}
-        fn set_norm_floor_halflife(&mut self, _halflife: Duration) {}
-        fn set_norm_ceiling_halflife(&mut self, _halflife: Duration) {}
+        fn set_norm_floor_halflife(&mut self, _halflife: HalfLife) {}
+        fn set_norm_ceiling_halflife(&mut self, _halflife: HalfLife) {}
         fn reset_parameters(&mut self) {}
         fn list_devices(&mut self) -> Vec<String> {
             self.devices.clone()
