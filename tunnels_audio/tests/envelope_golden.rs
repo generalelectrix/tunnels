@@ -1,0 +1,177 @@
+//! Pinned envelope responses. Each case runs a signal through the processor
+//! and compares every role's output against a checked-in golden. A behaviour
+//! change shows up as a per-role report of how far, where, and how often the
+//! output moved, and the actual output is written beside the golden.
+//!
+//! `UPDATE_GOLDENS=1 cargo test -p tunnels_audio --test envelope_golden`
+//! rewrites the goldens from the current output.
+
+mod common;
+
+use common::{clip, offline, signals};
+use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use tunnels_audio::processor::ProcessorSettings;
+use tunnels_audio::roles::{NUM_ROLES, Role};
+
+const FRAMES_PER_BUFFER: usize = 64;
+/// Every `STRIDE`th buffer is kept: 187 Hz against an 8 ms output smoother.
+const STRIDE: usize = 4;
+/// Largest step allowed between golden and actual, in 8-bit envelope units.
+/// Two steps is 0.8 % of full scale: room for libm differences between
+/// platforms, far below any behavioural change.
+const TOLERANCE: u8 = 2;
+/// Loops of the music clip; startup and the converged state both count.
+const MUSIC_LOOPS: usize = 3;
+
+/// One case's role outputs, quantized to 8 bits, one row per
+/// `STRIDE` buffers.
+#[derive(Serialize, Deserialize)]
+struct Golden {
+    update_rate: f32,
+    stride: usize,
+    /// `roles[role][row]`, in `Role::ALL` order.
+    roles: Vec<Vec<u8>>,
+}
+
+fn quantize(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn run(signal: &[[f32; 2]]) -> Golden {
+    let mut roles = vec![Vec::new(); NUM_ROLES];
+    offline::run_stereo(
+        signals::SAMPLE_RATE,
+        FRAMES_PER_BUFFER,
+        ProcessorSettings::default(),
+        signal,
+        |i, _, outputs| {
+            if i % STRIDE == 0 {
+                for (role, &v) in roles.iter_mut().zip(outputs) {
+                    role.push(quantize(v));
+                }
+            }
+        },
+    );
+    Golden {
+        update_rate: signals::SAMPLE_RATE as f32 / FRAMES_PER_BUFFER as f32,
+        stride: STRIDE,
+        roles,
+    }
+}
+
+fn golden_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/golden")
+}
+
+/// Compare one case against its golden, returning a report if it differs
+/// beyond tolerance. Writes the actual output beside the golden when it does.
+fn check(name: &str, actual: &Golden) -> Option<String> {
+    let path = golden_dir().join(format!("{name}.env"));
+    if std::env::var_os("UPDATE_GOLDENS").is_some() {
+        std::fs::write(&path, postcard::to_allocvec(actual).expect("serialize"))
+            .expect("write golden");
+        return None;
+    }
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing golden {}: {e}; run with UPDATE_GOLDENS=1",
+            path.display()
+        )
+    });
+    let golden: Golden = postcard::from_bytes(&bytes).expect("decode golden");
+    assert_eq!(golden.stride, actual.stride, "{name}: stride changed");
+    assert_eq!(
+        golden.update_rate, actual.update_rate,
+        "{name}: update rate changed"
+    );
+
+    assert_eq!(
+        golden.roles.len(),
+        actual.roles.len(),
+        "{name}: the number of roles changed"
+    );
+
+    let secs_per_row = actual.stride as f32 / actual.update_rate;
+    let mut report = String::new();
+    for ((g, a), role) in golden.roles.iter().zip(&actual.roles).zip(Role::ALL) {
+        let role = role.label();
+        if g.len() != a.len() {
+            let _ = writeln!(
+                report,
+                "  {role}: {} rows in golden, {} actual",
+                g.len(),
+                a.len()
+            );
+            continue;
+        }
+        let mut worst = 0u8;
+        let mut worst_at = 0usize;
+        let mut over = 0usize;
+        for (i, (x, y)) in g.iter().zip(a).enumerate() {
+            let d = x.abs_diff(*y);
+            if d > worst {
+                worst = d;
+                worst_at = i;
+            }
+            if d > TOLERANCE {
+                over += 1;
+            }
+        }
+        if over > 0 {
+            let _ = writeln!(
+                report,
+                "  {role}: {over} of {} rows differ by more than {TOLERANCE}/255; worst {worst}/255 at {:.2}s (golden {}, actual {})",
+                g.len(),
+                worst_at as f32 * secs_per_row,
+                g[worst_at],
+                a[worst_at]
+            );
+        }
+    }
+    if report.is_empty() {
+        return None;
+    }
+    let actual_path = golden_dir().join(format!("{name}.actual.env"));
+    std::fs::write(
+        &actual_path,
+        postcard::to_allocvec(actual).expect("serialize"),
+    )
+    .expect("write actual");
+    Some(format!(
+        "{name} (actual written to {}):\n{report}",
+        actual_path.display()
+    ))
+}
+
+#[test]
+fn envelope_goldens() {
+    let mut failures = Vec::new();
+
+    for name in signals::GOLDEN_CASES {
+        let case = signals::golden_case(name).expect("known case");
+        if let Some(report) = check(name, &run(&case.signal)) {
+            failures.push(report);
+        }
+    }
+
+    let clip_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/its_not_a_toy_8bars.clip");
+    let clip = clip::decode(&std::fs::read(clip_path).expect("read clip")).expect("decode clip");
+    assert_eq!(clip.sample_rate, signals::SAMPLE_RATE);
+    let one_loop = clip.stereo_frames();
+    let mut signal = Vec::with_capacity(one_loop.len() * MUSIC_LOOPS);
+    for _ in 0..MUSIC_LOOPS {
+        signal.extend_from_slice(&one_loop);
+    }
+    if let Some(report) = check("its_not_a_toy_8bars_x3", &run(&signal)) {
+        failures.push(report);
+    }
+
+    assert!(
+        failures.is_empty(),
+        "envelope goldens differ:\n{}",
+        failures.join("\n")
+    );
+}

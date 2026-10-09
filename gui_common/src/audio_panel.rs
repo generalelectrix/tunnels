@@ -2,7 +2,7 @@ use eframe::egui::{self, Color32};
 use std::sync::Weak;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
-use tunnels_audio::processor::OUTPUT_BAND_LABELS;
+use tunnels_audio::roles::Role;
 use tunnels_audio::time::HalfLife;
 use tunnels_audio::{InputMeter, OFFLINE_DEVICE_NAME};
 
@@ -20,11 +20,10 @@ const CLIP_LED_DARK: Color32 = Color32::from_gray(48);
 /// Abstraction over project-specific command dispatch for audio panels.
 pub trait AudioCommands {
     fn set_device(&mut self, device: Option<String>);
-    fn set_filter_cutoff(&mut self, hz: f32);
     fn set_envelope_attack(&mut self, duration: Duration);
     fn set_envelope_release(&mut self, duration: Duration);
     fn set_output_smoothing(&mut self, duration: Duration);
-    fn set_active_band(&mut self, band: u32);
+    fn set_active_role(&mut self, role: Role);
     fn set_norm_floor_halflife(&mut self, halflife: HalfLife);
     fn set_norm_ceiling_halflife(&mut self, halflife: HalfLife);
     fn reset_parameters(&mut self);
@@ -142,37 +141,10 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         ui.add_space(4.0);
 
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
-            // Lowpass cutoff.
-            ui.label("Lowpass:");
-            let mut cutoff = self.snapshot.filter_cutoff_hz;
-            if ui
-                .add(
-                    egui::Slider::new(&mut cutoff, 40.0..=240.0)
-                        .suffix(" Hz")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                self.commands.set_filter_cutoff(cutoff);
-            }
-            ui.end_row();
-
-            // Band selector.
-            ui.label("Active band:");
-            let mut band = self.snapshot.active_band;
-            let selected_text = OUTPUT_BAND_LABELS
-                .get(band as usize)
-                .copied()
-                .unwrap_or("Lowpass");
-            egui::ComboBox::from_id_salt("active_band")
-                .selected_text(selected_text)
-                .show_ui(ui, |ui| {
-                    for (i, label) in OUTPUT_BAND_LABELS.iter().enumerate() {
-                        ui.selectable_value(&mut band, i as u32, *label);
-                    }
-                });
-            if band != self.snapshot.active_band {
-                self.commands.set_active_band(band);
+            // The envelope the show follows.
+            ui.label("Follow:");
+            if let Some(role) = follow_selector(ui, self.snapshot.active_role) {
+                self.commands.set_active_role(role);
             }
             ui.end_row();
 
@@ -188,7 +160,9 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
     }
 
     fn envelope_controls(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Envelope");
+        ui.heading("Envelope").on_hover_text(
+            "Shapes the level roles, Bass and Shimmer. Kick and Hats are hits, with timing of their own.",
+        );
         ui.add_space(4.0);
 
         egui::Grid::new("envelope_controls_grid").show(ui, |ui| {
@@ -282,6 +256,22 @@ fn displayed_trim_db(trim_db: f32) -> f32 {
     (trim_db / TRIM_DISPLAY_STEP_DB).round() * TRIM_DISPLAY_STEP_DB + 0.0
 }
 
+/// Render a selector for the audio role to follow, showing `active_role`.
+///
+/// Returns the role chosen this frame, if it differs from `active_role`. The
+/// caller labels the selector to suit its layout.
+pub fn follow_selector(ui: &mut egui::Ui, active_role: Role) -> Option<Role> {
+    let mut role = active_role;
+    egui::ComboBox::from_id_salt("active_role")
+        .selected_text(role.label())
+        .show_ui(ui, |ui| {
+            for r in Role::ALL {
+                ui.selectable_value(&mut role, r, r.label());
+            }
+        });
+    (role != active_role).then_some(role)
+}
+
 /// Render the tab that holds the audio panel in a tab bar, labelled `label`,
 /// returning `true` if it was clicked this frame. With `clip` present, a round
 /// input-clipping LED sits inside the tab to the right of its label: red while
@@ -331,11 +321,10 @@ mod tests {
 
     impl AudioCommands for MockAudioCommands {
         fn set_device(&mut self, _device: Option<String>) {}
-        fn set_filter_cutoff(&mut self, _hz: f32) {}
         fn set_envelope_attack(&mut self, _duration: Duration) {}
         fn set_envelope_release(&mut self, _duration: Duration) {}
         fn set_output_smoothing(&mut self, _duration: Duration) {}
-        fn set_active_band(&mut self, _band: u32) {}
+        fn set_active_role(&mut self, _role: Role) {}
         fn set_norm_floor_halflife(&mut self, _halflife: HalfLife) {}
         fn set_norm_ceiling_halflife(&mut self, _halflife: HalfLife) {}
         fn reset_parameters(&mut self) {}

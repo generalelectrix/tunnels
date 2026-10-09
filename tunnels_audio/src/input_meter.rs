@@ -2,7 +2,7 @@
 //! it and any thread that displays it.
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use audio_processor_traits::AtomicF32;
+use crate::processor::AtomicF32;
 
 /// The automatic trim's current gain and whether the clip indicator is lit.
 ///
