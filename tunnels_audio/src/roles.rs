@@ -12,6 +12,8 @@
 
 use std::time::Duration;
 
+use tunnels_lib::audio::UnipolarF32;
+
 use crate::bank::{NUM_BANDS, ResonatorBank};
 use crate::processor::{
     AdaptiveNormalizer, AsymmetricOnePole, BandStages, NormalizerParams, NormalizerTuning,
@@ -76,9 +78,12 @@ const HIGH_BANDS: &[usize] = &[20, 21, 22, 23, 24, 25];
 /// stand out to count as one in the highs.
 const PRESENCE_BANDS: &[usize] = &[16, 17, 18, 19];
 
-/// Coefficient of a one-pole follower with time constant `secs` at `rate`
-/// updates per second; zero follows at once.
-fn tc_coeff(secs: f32, rate: f32) -> f32 {
+/// Coefficient of a one-pole follower with time constant `time_constant` at
+/// `rate`: the fraction of the previous value kept each update, in [0, 1).
+/// Zero follows at once.
+fn tc_coeff(time_constant: Duration, rate: UpdateRate) -> f32 {
+    let secs = time_constant.as_secs_f32();
+    let rate = rate.as_hz();
     if secs <= 0.0 || rate <= 0.0 {
         0.0
     } else {
@@ -86,9 +91,10 @@ fn tc_coeff(secs: f32, rate: f32) -> f32 {
     }
 }
 
-/// A follower that jumps to any rise and falls with time constant `secs`.
-fn peak_follower(secs: f32, rate: f32) -> AsymmetricOnePole {
-    AsymmetricOnePole::new(0.0, tc_coeff(secs, rate))
+/// A follower that jumps to any rise and falls with time constant
+/// `time_constant`.
+fn peak_follower(time_constant: Duration, rate: UpdateRate) -> AsymmetricOnePole {
+    AsymmetricOnePole::new(0.0, tc_coeff(time_constant, rate))
 }
 
 /// Hits in one band: how far its envelope stands above where it has just
@@ -118,34 +124,34 @@ struct KickRole {
 impl KickRole {
     /// A rise below this fraction of the recent peak is the band's own
     /// wobble (two low notes beating, say) rather than a hit.
-    const KNEE: f32 = 0.25;
+    const KNEE: UnipolarF32 = UnipolarF32::new(0.25);
     /// A rise of this fraction of the recent peak or more is a full hit.
-    const FULL: f32 = 0.5;
+    const FULL: UnipolarF32 = UnipolarF32::new(0.5);
     /// Hits are ignored this far below the phrase's peak.
-    const RELATIVE_GATE: f32 = 0.01;
+    const RELATIVE_GATE: UnipolarF32 = UnipolarF32::new(0.01);
     /// And below this absolute level, where there is nothing but noise.
-    const ABSOLUTE_GATE: f32 = 0.001;
+    const ABSOLUTE_GATE: UnipolarF32 = UnipolarF32::new(0.001);
 
     /// Time constant of the output's fall after a hit.
-    const RELEASE_SECS: f32 = 0.080;
+    const RELEASE: Duration = Duration::from_millis(80);
 
-    fn new(sample_rate: f32) -> Self {
+    fn new(sample_rate: UpdateRate) -> Self {
         Self {
-            envelope: peak_follower(0.004, sample_rate),
+            envelope: peak_follower(Duration::from_millis(4), sample_rate),
             baseline: AsymmetricOnePole::new(
-                tc_coeff(0.030, sample_rate),
-                tc_coeff(0.005, sample_rate),
+                tc_coeff(Duration::from_millis(30), sample_rate),
+                tc_coeff(Duration::from_millis(5), sample_rate),
             ),
-            recent_peak: peak_follower(3.0, sample_rate),
-            phrase_peak: peak_follower(20.0, sample_rate),
+            recent_peak: peak_follower(Duration::from_secs(3), sample_rate),
+            phrase_peak: peak_follower(Duration::from_secs(20), sample_rate),
             buffer_hit: 0.0,
-            release: peak_follower(Self::RELEASE_SECS, 0.0),
+            release: AsymmetricOnePole::default(),
         }
     }
 
     /// Set the buffer rate the output's release runs at.
     fn set_buffer_rate(&mut self, rate: UpdateRate) {
-        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate.as_hz());
+        self.release.fall = tc_coeff(Self::RELEASE, rate);
     }
 
     /// Follow the band's envelope at one sample.
@@ -155,9 +161,10 @@ impl KickRole {
         let baseline = self.baseline.step(level);
         let recent = self.recent_peak.step(level);
         let phrase = self.phrase_peak.step(level);
-        if level > phrase * Self::RELATIVE_GATE && level > Self::ABSOLUTE_GATE {
+        if level > phrase * Self::RELATIVE_GATE.val() && level > Self::ABSOLUTE_GATE.val() {
             let rise = (level - baseline).max(0.0) / recent.max(1e-9);
-            let hit = ((rise - Self::KNEE) / (Self::FULL - Self::KNEE)).clamp(0.0, 1.0);
+            let (knee, full) = (Self::KNEE.val(), Self::FULL.val());
+            let hit = ((rise - knee) / (full - knee)).clamp(0.0, 1.0);
             self.buffer_hit = self.buffer_hit.max(hit);
         }
     }
@@ -250,17 +257,19 @@ struct RiseRegion {
 
 impl RiseRegion {
     /// The look-back a rise is measured from: from this long ago...
-    const FROM_SECS: f32 = 0.0133;
+    const FROM: Duration = Duration::from_micros(13_300);
     /// ...to this long ago.
-    const TO_SECS: f32 = 0.0053;
+    const TO: Duration = Duration::from_micros(5_300);
 
-    fn new(bands: &[usize], live: impl Fn(usize) -> bool, sample_rate: f32) -> Self {
-        let from = (Self::FROM_SECS * sample_rate).round() as usize;
-        let to = (Self::TO_SECS * sample_rate).round() as usize;
+    fn new(bands: &[usize], live: impl Fn(usize) -> bool, sample_rate: UpdateRate) -> Self {
+        let samples_ago =
+            |ago: Duration| (ago.as_secs_f32() * sample_rate.as_hz()).round() as usize;
+        let from = samples_ago(Self::FROM);
+        let to = samples_ago(Self::TO);
         let mut region = Self {
             bands: [0; MAX_REGION],
             len: 0,
-            envelopes: [peak_follower(0.004, sample_rate); MAX_REGION],
+            envelopes: [peak_follower(Duration::from_millis(4), sample_rate); MAX_REGION],
             earlier: std::array::from_fn(|_| LaggedMax::new(from, to)),
         };
         for &band in bands.iter().filter(|&&b| live(b)).take(MAX_REGION) {
@@ -329,22 +338,22 @@ struct HatsRole {
 impl HatsRole {
     /// A rise this many dB across the high bands is a full hit.
     const FULL_DB: f32 = 6.0;
-    const RELEASE_SECS: f32 = 0.080;
+    const RELEASE: Duration = Duration::from_millis(80);
 
-    fn new(live: impl Fn(usize) -> bool + Copy, sample_rate: f32) -> Self {
+    fn new(live: impl Fn(usize) -> bool + Copy, sample_rate: UpdateRate) -> Self {
         Self {
             high: RiseRegion::new(HIGH_BANDS, live, sample_rate),
             presence: RiseRegion::new(PRESENCE_BANDS, live, sample_rate),
-            level: peak_follower(0.004, sample_rate),
-            phrase_peak: peak_follower(20.0, sample_rate),
+            level: peak_follower(Duration::from_millis(4), sample_rate),
+            phrase_peak: peak_follower(Duration::from_secs(20), sample_rate),
             buffer_hit: 0.0,
-            release: peak_follower(Self::RELEASE_SECS, 0.0),
+            release: AsymmetricOnePole::default(),
         }
     }
 
     /// Set the buffer rate the output's release runs at.
     fn set_buffer_rate(&mut self, rate: UpdateRate) {
-        self.release.fall = tc_coeff(Self::RELEASE_SECS, rate.as_hz());
+        self.release.fall = tc_coeff(Self::RELEASE, rate);
     }
 
     /// Follow the high end at one sample.
@@ -363,7 +372,7 @@ impl HatsRole {
         let Some(high) = self.high.push(bank) else {
             return;
         };
-        if level > phrase * KickRole::RELATIVE_GATE && level > KickRole::ABSOLUTE_GATE {
+        if level > phrase * KickRole::RELATIVE_GATE.val() && level > KickRole::ABSOLUTE_GATE.val() {
             let high = high / Self::FULL_DB;
             let hit = (high * (high - presence + 0.5).clamp(0.0, 1.0)).clamp(0.0, 1.0);
             self.buffer_hit = self.buffer_hit.max(hit);
@@ -437,7 +446,8 @@ pub(crate) struct Roles {
     hats: HatsRole,
     mid: LevelRole,
     shimmer: LevelRole,
-    sample_rate: f32,
+    /// The rate the per-sample followers update at.
+    sample_rate: UpdateRate,
     /// The buffer rate the hit roles' release was last set for.
     buffer_rate: Option<UpdateRate>,
 }
@@ -446,7 +456,7 @@ impl Roles {
     pub(crate) fn new(
         live: [bool; NUM_BANDS],
         tuning: &NormalizerTuning,
-        sample_rate: f32,
+        sample_rate: UpdateRate,
     ) -> Self {
         Self {
             kick: KickRole::new(sample_rate),
@@ -467,10 +477,9 @@ impl Roles {
         release: Duration,
         buffer_rate: UpdateRate,
     ) {
-        let sample_rate = UpdateRate::new(self.sample_rate as u32, 1);
         for level in [&mut self.bass, &mut self.mid, &mut self.shimmer] {
-            level.envelope.rise = halflife_to_coeff(attack, sample_rate);
-            level.envelope.fall = halflife_to_coeff(release, sample_rate);
+            level.envelope.rise = halflife_to_coeff(attack, self.sample_rate);
+            level.envelope.fall = halflife_to_coeff(release, self.sample_rate);
         }
         if self.buffer_rate != Some(buffer_rate) {
             self.buffer_rate = Some(buffer_rate);

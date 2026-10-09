@@ -616,13 +616,14 @@ impl Processor {
         channel_count: NonZeroUsize,
         envelope_producers: [EnvelopeProducer; NUM_ROLES],
     ) -> Self {
+        let per_sample = UpdateRate::new(sample_rate, 1);
         let sample_rate = sample_rate as f32;
         let tuning = NormalizerTuning::DEFAULT;
         let bank = ResonatorBank::new(sample_rate);
         let roles = Roles::new(
             std::array::from_fn(|b| bank.is_live(b)),
             &tuning,
-            sample_rate,
+            per_sample,
         );
         Self {
             envelope_attack: None,
