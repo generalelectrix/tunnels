@@ -69,11 +69,11 @@ pub fn envelope_ring_buffers() -> EnvelopeRingBuffers {
 pub struct UpdateRate(f32);
 
 impl UpdateRate {
-    pub fn new(sample_rate: u32, frames_per_buffer: u32) -> Self {
+    pub const fn new(sample_rate: u32, frames_per_buffer: u32) -> Self {
         Self(sample_rate as f32 / frames_per_buffer as f32)
     }
 
-    pub fn as_hz(self) -> f32 {
+    pub const fn as_hz(self) -> f32 {
         self.0
     }
 
@@ -383,7 +383,9 @@ impl NormalizerParams {
 /// ceiling down.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MotionCeiling {
+    /// The current level: non-negative, and never below the latest envelope.
     ceiling: f32,
+    /// The level below which motion is not counted.
     gate: f32,
     /// Log envelope on the previous update, clamped at the gate.
     prev_log_envelope: f32,
@@ -391,9 +393,10 @@ pub(crate) struct MotionCeiling {
 
 impl MotionCeiling {
     /// A ceiling starting at `initial`, which counts no motion below `gate`.
-    pub(crate) fn new(initial: f32, gate: f32) -> Self {
+    pub(crate) fn new(initial: UnipolarF32, gate: UnipolarF32) -> Self {
+        let gate = gate.val();
         Self {
-            ceiling: initial,
+            ceiling: initial.val(),
             gate,
             prev_log_envelope: gate.ln(),
         }
@@ -438,7 +441,7 @@ impl AdaptiveNormalizer {
     pub(crate) fn new(tuning: &NormalizerTuning) -> Self {
         Self {
             floor: AsymmetricOnePole::default(),
-            ceiling: MotionCeiling::new(Self::INITIAL_CEILING.val(), tuning.noise_gate.val()),
+            ceiling: MotionCeiling::new(Self::INITIAL_CEILING, tuning.noise_gate),
         }
     }
 
@@ -654,7 +657,7 @@ impl Processor {
         let bank = ResonatorBank::new(sample_rate);
         let live = std::array::from_fn(|b| bank.is_live(b));
         let roles = Roles::new(live, &tuning, per_sample);
-        let spectrum = Spectrum::new(live, sample_rate);
+        let spectrum = Spectrum::new(live, per_sample);
         Self {
             envelope_attack: None,
             envelope_release: None,
@@ -773,7 +776,7 @@ impl Processor {
             .map(UnipolarF32::new);
         let spectrum = self
             .spectrum
-            .finish(buffer_rate.as_hz(), self.norm_params.ceiling_forget());
+            .finish(buffer_rate, self.norm_params.ceiling_forget());
 
         for (producer, &value) in self.envelope_producers.iter_mut().zip(&roles) {
             producer.push(value);

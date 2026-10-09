@@ -48,7 +48,8 @@ pub(crate) struct Spectrum {
     live: [bool; NUM_BANDS],
     /// Each band's envelope at the latest sample.
     envelopes: [f32; NUM_BANDS],
-    /// The envelopes' per-sample release coefficient.
+    /// The envelopes' release coefficient, in [0, 1): the fraction of an
+    /// envelope kept each sample while its band is falling.
     release: f32,
     /// Each band's width, as dB per octave.
     width_db: [f32; NUM_BANDS],
@@ -63,10 +64,11 @@ pub(crate) struct Spectrum {
     levels_db: [f32; NUM_BANDS],
     /// Each band's slow average deviation from the corpus, in dB.
     deviation: [f32; NUM_BANDS],
-    /// The deviation average's per-buffer coefficient, and the buffer rate it
-    /// was derived for.
+    /// The deviation average's coefficient, in [0, 1]: the fraction of the
+    /// average kept each buffer.
     tilt_coeff: f32,
-    buffer_rate: f32,
+    /// The buffer rate `tilt_coeff` was derived for, if it has been.
+    buffer_rate: Option<UpdateRate>,
     /// Follows the loudest whitened band, as a linear level.
     ceiling: MotionCeiling,
 }
@@ -74,23 +76,23 @@ pub(crate) struct Spectrum {
 impl Spectrum {
     /// Half-life of each band's envelope release.
     const RELEASE_HALFLIFE: Duration = Duration::from_millis(50);
-    /// Time constant of the average the tilt is measured from, in seconds.
-    const TILT_TIME_CONSTANT: f32 = 30.0;
+    /// Time constant of the average the tilt is measured from.
+    const TILT_TIME_CONSTANT: Duration = Duration::from_secs(30);
     /// The largest tilt taken off, in dB per octave either way.
     const TILT_LIMIT: f32 = 3.0;
     /// The range of levels under the ceiling that reads from 0 to 1, in dB.
     const WINDOW_DB: f32 = 30.0;
     /// The ceiling before anything has been heard, as a linear level relative
     /// to the corpus.
-    const INITIAL_CEILING: f32 = 0.5;
+    const INITIAL_CEILING: UnipolarF32 = UnipolarF32::new(0.5);
     /// The lowest level, relative to the corpus, whose motion wears the
     /// ceiling down.
-    const CEILING_GATE: f32 = 0.01;
+    const CEILING_GATE: UnipolarF32 = UnipolarF32::new(0.01);
     /// The smallest envelope a level is taken from, so silence reads as a
     /// finite level.
     const MIN_ENVELOPE: f32 = 1e-9;
 
-    pub(crate) fn new(live: [bool; NUM_BANDS], sample_rate: f32) -> Self {
+    pub(crate) fn new(live: [bool; NUM_BANDS], sample_rate: UpdateRate) -> Self {
         let octave: [f32; NUM_BANDS] = std::array::from_fn(|b| (bank::centre(b) / 1000.0).log2());
         let live_count = live.iter().filter(|&&l| l).count().max(1) as f32;
         let mean_octave = (0..NUM_BANDS)
@@ -108,10 +110,7 @@ impl Spectrum {
         Self {
             live,
             envelopes: [0.0; NUM_BANDS],
-            release: halflife_to_coeff(
-                Self::RELEASE_HALFLIFE,
-                UpdateRate::new(sample_rate as u32, 1),
-            ),
+            release: halflife_to_coeff(Self::RELEASE_HALFLIFE, sample_rate),
             width_db: std::array::from_fn(|b| 10.0 * bank::width_octaves(b).log10()),
             octave,
             octave_centred,
@@ -119,7 +118,7 @@ impl Spectrum {
             levels_db: [20.0 * Self::MIN_ENVELOPE.log10(); NUM_BANDS],
             deviation: [0.0; NUM_BANDS],
             tilt_coeff: 0.0,
-            buffer_rate: 0.0,
+            buffer_rate: None,
             ceiling: MotionCeiling::new(Self::INITIAL_CEILING, Self::CEILING_GATE),
         }
     }
@@ -148,11 +147,16 @@ impl Spectrum {
 
     /// Every band's output for the buffer just ended, given the buffer rate
     /// and the ceiling's forgetting rate in nepers per neper of motion.
-    pub(crate) fn finish(&mut self, buffer_rate: f32, forget: f32) -> [UnipolarF32; NUM_BANDS] {
-        if buffer_rate != self.buffer_rate {
-            self.buffer_rate = buffer_rate;
+    pub(crate) fn finish(
+        &mut self,
+        buffer_rate: UpdateRate,
+        forget: f32,
+    ) -> [UnipolarF32; NUM_BANDS] {
+        if self.buffer_rate != Some(buffer_rate) {
+            self.buffer_rate = Some(buffer_rate);
+            let buffer_rate = buffer_rate.as_hz();
             self.tilt_coeff = if buffer_rate > 0.0 {
-                (-1.0 / (Self::TILT_TIME_CONSTANT * buffer_rate)).exp()
+                (-1.0 / (Self::TILT_TIME_CONSTANT.as_secs_f32() * buffer_rate)).exp()
             } else {
                 1.0
             };
@@ -221,8 +225,8 @@ impl Spectrum {
 mod tests {
     use super::*;
 
-    const SAMPLE_RATE: f32 = 48_000.0;
-    const BUFFER_RATE: f32 = 750.0;
+    const SAMPLE_RATE: UpdateRate = UpdateRate::new(48_000, 1);
+    const BUFFER_RATE: UpdateRate = UpdateRate::new(48_000, 64);
     /// The ceiling's forgetting rate at the default eight-second Peak Memory.
     const FORGET: f32 = std::f32::consts::LN_2 / (4.2 * 8.0);
 
@@ -239,7 +243,7 @@ mod tests {
             10f32.powf((level_db(b) + 10.0 * bank::width_octaves(b).log10()) / 20.0)
         });
         let mut out = [UnipolarF32::ZERO; NUM_BANDS];
-        for _ in 0..(secs * BUFFER_RATE) as usize {
+        for _ in 0..(secs * BUFFER_RATE.as_hz()) as usize {
             for _ in 0..samples {
                 spectrum.push(|b| magnitudes[b]);
             }
@@ -283,7 +287,7 @@ mod tests {
 
         for slope in [2.0, -2.0, 5.0, -5.0] {
             let mut spectrum = Spectrum::new([true; NUM_BANDS], SAMPLE_RATE);
-            let first = hold(&mut spectrum, tilted(slope), 1.0 / BUFFER_RATE, 1);
+            let first = hold(&mut spectrum, tilted(slope), 1.0 / BUFFER_RATE.as_hz(), 1);
             // A steeper tilt spans more than the window, and the bands below
             // it read zero.
             if slope.abs() < Spectrum::TILT_LIMIT {
