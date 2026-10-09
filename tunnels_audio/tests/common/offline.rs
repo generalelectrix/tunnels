@@ -2,7 +2,9 @@
 //! fixed-size buffers, ring buffers drained after each.
 
 use std::num::NonZeroUsize;
-use tunnels_audio::processor::{Processor, ProcessorSettings, envelope_ring_buffers};
+use tunnels_audio::processor::{
+    NormalizerTuning, Processor, ProcessorSettings, envelope_ring_buffers,
+};
 use tunnels_audio::roles::NUM_ROLES;
 
 /// Run a stereo signal through a fresh processor in buffers of
@@ -12,6 +14,25 @@ pub fn run_stereo(
     sample_rate: u32,
     frames_per_buffer: usize,
     settings: ProcessorSettings,
+    signal: &[[f32; 2]],
+    per_buffer: impl FnMut(usize, &Processor, &[f32; NUM_ROLES]),
+) {
+    run_stereo_tuned(
+        sample_rate,
+        frames_per_buffer,
+        settings,
+        NormalizerTuning::DEFAULT,
+        signal,
+        per_buffer,
+    );
+}
+
+/// `run_stereo` with the processor's normalizer tuning replaced.
+pub fn run_stereo_tuned(
+    sample_rate: u32,
+    frames_per_buffer: usize,
+    settings: ProcessorSettings,
+    tuning: NormalizerTuning,
     signal: &[[f32; 2]],
     mut per_buffer: impl FnMut(usize, &Processor, &[f32; NUM_ROLES]),
 ) {
@@ -23,6 +44,7 @@ pub fn run_stereo(
         NonZeroUsize::new(2).expect("two channels"),
         buffers.producers,
     );
+    processor.set_normalizer_tuning(tuning);
     let mut interleaved = Vec::with_capacity(frames_per_buffer * 2);
     let mut drained = Vec::new();
     for (i, chunk) in signal.chunks(frames_per_buffer).enumerate() {

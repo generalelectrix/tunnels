@@ -469,6 +469,13 @@ impl Roles {
         }
     }
 
+    /// Restart the level roles' normalizers with a new tuning.
+    pub(crate) fn set_normalizer_tuning(&mut self, tuning: &NormalizerTuning) {
+        self.bass.normalizer = AdaptiveNormalizer::new(tuning);
+        self.mid.normalizer = AdaptiveNormalizer::new(tuning);
+        self.shimmer.normalizer = AdaptiveNormalizer::new(tuning);
+    }
+
     /// Set the level roles' envelope attack and release half-lives, and the
     /// buffer rate the hit roles' release runs at.
     pub(crate) fn set_timing(

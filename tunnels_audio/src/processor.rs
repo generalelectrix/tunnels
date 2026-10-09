@@ -644,6 +644,13 @@ impl Processor {
         }
     }
 
+    /// Replace the normalizer tuning and restart the level roles' normalizers
+    /// from their initial state.
+    pub fn set_normalizer_tuning(&mut self, tuning: NormalizerTuning) {
+        self.norm_params = NormalizerParams::new(tuning);
+        self.roles.set_normalizer_tuning(&tuning);
+    }
+
     /// The meter this processor publishes its trim and clip indicator to.
     ///
     /// The processor holds the meter's only strong reference, so the handle

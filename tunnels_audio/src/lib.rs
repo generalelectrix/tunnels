@@ -3,7 +3,10 @@
 //!
 //! The chain's behaviour is pinned by `tests/envelope_golden.rs` (response
 //! shapes), `tests/music_convergence.rs` (long-term stability) and
-//! `tests/alignment.rs` (independence from the buffer grid).
+//! `tests/alignment.rs` (independence from the buffer grid). The harness
+//! `examples/envelope_suite.rs` records every role and the level roles'
+//! stages per buffer for a suite of synthetic waveforms, or for a looped
+//! music clip, and prints their metrics.
 
 pub mod bank;
 pub mod denormals;
