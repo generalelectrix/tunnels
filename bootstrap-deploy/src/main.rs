@@ -11,6 +11,14 @@ const REMOTE_DIR: &str = "tunnels";
 const REMOTE_BINARY: &str = "tunnels/tunnel-bootstrap";
 const PLIST_FILENAME: &str = "local.tunnelbootstrap.plist";
 
+/// The LaunchAgent that keeps the bootstrapper running.
+///
+/// The job is spawned as an application (`POSIXSpawnType` `App`), and every
+/// process it starts inherits that, so a render client it launches schedules
+/// its drawing as an application's user-interactive work. Spawned as an agent,
+/// the job and everything it starts would run no higher than an ordinary
+/// daemon. `POSIXSpawnType` is undocumented; the documented `ProcessType` has
+/// no value for an application.
 const PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -18,6 +26,8 @@ const PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <dict>
     <key>Label</key>
     <string>local.tunnelbootstrap</string>
+    <key>POSIXSpawnType</key>
+    <string>App</string>
     <key>ProgramArguments</key>
     <array>
         <string>__HOME__/tunnels/tunnel-bootstrap</string>
