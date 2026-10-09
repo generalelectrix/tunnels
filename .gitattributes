@@ -1,2 +1,6 @@
 # Insta snapshots are generated; collapse them in review by default.
 *.snap linguist-generated=true
+
+# Packed test audio and envelope goldens are binary: never diff or merge them as text.
+*.clip binary
+*.env binary
