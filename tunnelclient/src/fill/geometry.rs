@@ -61,8 +61,8 @@ const STROKE_SEGMENT: f32 = 0.025;
 ///
 /// Set at the generous end of what the knobs can ask for, because the choice
 /// is nearly free: what a stroke costs is set by how finely the contour is
-/// sampled and not by how wide it is, so the whole library measures 71.1 MB
-/// stroked at 0.02 and 80.5 MB stroked at 1.0 — a 13% spread across a
+/// sampled and not by how wide it is, so the whole library measures 64.3 MB
+/// stroked at 0.02 and 71.1 MB stroked at 1.0 — an 11% spread across a
 /// fiftyfold range of widths. The only thing a narrow reference would buy is a clamp,
 /// where a beam asks to be wider than its outline was cut.
 pub const REFERENCE_WIDTH: f32 = 1.0;
@@ -135,10 +135,10 @@ impl FillGeometry {
 /// so a count of outlines says almost nothing about what they weigh — and once
 /// vertices are shared, a count of them does not either, since how many
 /// triangles each one serves varies with the figure. Sixty-four megabytes is
-/// 480 figures at the mean of 140 kB, or 42 at the largest, and either way it
+/// 543 figures at the mean of 123 kB, or 47 at the largest, and either way it
 /// is sixty-four megabytes.
 ///
-/// The whole library at once is 80.5 MB, against the 17.5 MB its interiors
+/// The whole library at once is 71.1 MB, against the 17.5 MB its interiors
 /// come to. Outlines outweigh the interiors they follow because what a stroke
 /// costs is set by how finely the contour is sampled — [`STROKE_SEGMENT`] puts
 /// a join every 0.025 units along it — and hardly at all by how wide it is.
@@ -250,22 +250,25 @@ pub struct StrokeVertexPair {
     pub on_path: Point,
 }
 
-/// A stroked outline, as shared vertices carrying their contour points and the
-/// triangles that index them.
+/// A stroked outline: its contour points, the vertices offset from each, and
+/// the triangles that index them.
 ///
 /// A ribbon takes its colour from where it sits **on the contour**, not from
 /// where each offset vertex happens to land. That is what a stroke is: one
 /// segment at one place on the figure, so its colour is constant across its
 /// width by definition.
 ///
-/// **Vertices are shared rather than repeated per corner, which decides what a
-/// vertex *is* and not only what it costs.** A stroked vertex serves about
-/// three triangles, so repeating it triples the store — and it also gives the
-/// same point three identities. Everything resolved per vertex then answers
-/// three times for one place: three transcendentals where one would do, and,
-/// for the one waveform that reads a vertex's index rather than only its
-/// position, three different displacements that pull a triangle apart at a
-/// corner its neighbours share.
+/// **Vertices are grouped by the contour point they were offset from, which
+/// decides what is resolved once and what per vertex.** Everything that
+/// varies around a figure — its phase, every animation, the width a taper
+/// asks for — is a property of the contour point, so it is answered once per
+/// point and shared by the two edges of the ribbon and any join rim there. A
+/// warp therefore moves the ribbon as a unit, and a waveform that reads an
+/// index reads the contour point's.
+///
+/// Vertices are shared rather than repeated per corner for the same reason: a
+/// stroked vertex serves about three triangles, and three copies of one place
+/// would be three identities for it.
 ///
 /// It is also why a stroke needs no refinement. Refinement exists so that
 /// phase varies little enough across a triangle for the ramp lookup to
@@ -273,9 +276,26 @@ pub struct StrokeVertexPair {
 /// there is nothing for a finer mesh to resolve.
 #[derive(Default)]
 pub struct StrokeMesh {
+    /// Each contour point, in the order the tessellator first reached it.
+    points: Vec<StoredPoint>,
+    /// How many vertices are offset from each contour point, in the same order.
+    runs: Vec<u16>,
+    /// The vertices, a run for each contour point in turn.
     positions: Vec<StoredPoint>,
-    on_path: Vec<StoredPoint>,
     indices: Indices,
+}
+
+/// One contour point and the vertices offset from it.
+pub struct ContourRun<'a> {
+    pub point: Point,
+    vertices: &'a [StoredPoint],
+}
+
+impl ContourRun<'_> {
+    /// The vertices offset from this contour point.
+    pub fn vertices(&self) -> impl Iterator<Item = Point> + '_ {
+        self.vertices.iter().map(|vertex| vertex.widen())
+    }
 }
 
 /// A stroked outline as the tessellator produced it, before anything is
@@ -332,7 +352,11 @@ impl TessellatedStroke {
 
 impl StrokeMesh {
     /// Keep a tessellated stroke, snapped to the grid stored vertices sit on,
-    /// with each place held once.
+    /// grouped by contour point, with each place held once.
+    ///
+    /// Contour points are numbered in the order the tessellator first reached
+    /// them, which runs along the contour, and each one's vertices are kept in
+    /// the order they were emitted.
     ///
     /// Lyon builds a round join's rim at every point where the contour turns,
     /// including the points where splitting a straight edge only pretends it
@@ -340,27 +364,64 @@ impl StrokeMesh {
     /// in one cell, offset from one contour point, are the same vertex at
     /// every width, so they are kept as one; a triangle left naming one vertex
     /// twice has no area at any width, and is dropped.
-    ///
-    /// Kept vertices are numbered in the order their first copies were
-    /// emitted, and a vertex's copies, being one vertex, move as one.
     fn of(stroke: TessellatedStroke) -> Self {
-        let mut mesh = Self::default();
-        let mut held: FxHashMap<(StoredPoint, StoredPoint), u32> =
-            FxHashMap::with_capacity_and_hasher(stroke.positions.len(), Default::default());
-        let welded: Vec<u32> = stroke
-            .positions
+        // Number the contour points, and note the one each vertex came from.
+        let mut numbered: FxHashMap<StoredPoint, u32> =
+            FxHashMap::with_capacity_and_hasher(stroke.on_path.len(), Default::default());
+        let mut points = Vec::new();
+        let point_of: Vec<u32> = stroke
+            .on_path
             .iter()
-            .zip(&stroke.on_path)
-            .map(|(&position, &on_path)| {
-                let place = (StoredPoint::of(position), StoredPoint::of(on_path));
-                *held.entry(place).or_insert_with(|| {
-                    let kept = u32::try_from(mesh.positions.len()).unwrap_or(u32::MAX);
-                    mesh.positions.push(place.0);
-                    mesh.on_path.push(place.1);
-                    kept
+            .map(|&on_path| {
+                let cell = StoredPoint::of(on_path);
+                *numbered.entry(cell).or_insert_with(|| {
+                    points.push(cell);
+                    u32::try_from(points.len() - 1).unwrap_or(u32::MAX)
                 })
             })
             .collect();
+
+        // Each contour point's vertices, in the order they were emitted.
+        let mut starts = vec![0usize; points.len() + 1];
+        for &point in &point_of {
+            starts[point as usize + 1] += 1;
+        }
+        for i in 1..starts.len() {
+            starts[i] += starts[i - 1];
+        }
+        let mut emitted = vec![0u32; point_of.len()];
+        let mut cursor = starts.clone();
+        for (vertex, &point) in point_of.iter().enumerate() {
+            emitted[cursor[point as usize]] = u32::try_from(vertex).unwrap_or(u32::MAX);
+            cursor[point as usize] += 1;
+        }
+
+        let mut mesh = Self::default();
+        let mut welded = vec![0u32; point_of.len()];
+        for (point, run) in points.iter().zip(starts.windows(2)) {
+            mesh.points.push(*point);
+            let mut first = mesh.positions.len();
+            for &vertex in &emitted[run[0]..run[1]] {
+                let cell = StoredPoint::of(stroke.positions[vertex as usize]);
+                let kept = match mesh.positions[first..].iter().position(|&c| c == cell) {
+                    Some(at) => first + at,
+                    None => {
+                        // A run counts its vertices in a u16; a contour
+                        // point with more carries on in a run of its own.
+                        if mesh.positions.len() - first == usize::from(u16::MAX) {
+                            mesh.runs.push(u16::MAX);
+                            mesh.points.push(*point);
+                            first = mesh.positions.len();
+                        }
+                        mesh.positions.push(cell);
+                        mesh.positions.len() - 1
+                    }
+                };
+                welded[vertex as usize] = u32::try_from(kept).unwrap_or(u32::MAX);
+            }
+            mesh.runs
+                .push(u16::try_from(mesh.positions.len() - first).unwrap_or(u16::MAX));
+        }
 
         let mut flat = Vec::with_capacity(stroke.indices.len());
         for triangle in stroke.indices.as_chunks::<3>().0 {
@@ -377,8 +438,9 @@ impl StrokeMesh {
         // Sized for every triangle the tessellator emitted, and fewer are kept.
         flat.shrink_to_fit();
         mesh.indices = Indices::of(flat, mesh.positions.len());
+        mesh.points.shrink_to_fit();
+        mesh.runs.shrink_to_fit();
         mesh.positions.shrink_to_fit();
-        mesh.on_path.shrink_to_fit();
         mesh
     }
 
@@ -394,24 +456,38 @@ impl StrokeMesh {
     /// What this outline weighs, counting what is allocated rather than what
     /// is used, since the difference is memory either way.
     fn bytes(&self) -> usize {
-        (self.positions.capacity() + self.on_path.capacity()) * size_of::<StoredPoint>()
+        (self.points.capacity() + self.positions.capacity()) * size_of::<StoredPoint>()
+            + self.runs.capacity() * size_of::<u16>()
             + self.indices.bytes()
     }
 
-    /// Each vertex, paired with the contour point it was offset from.
-    ///
-    /// Stored as parallel runs because that is how they are written, and
-    /// paired back up here because the two points mean opposite things and a
-    /// caller that takes them the wrong way round silently colours a ribbon by
-    /// where it landed and narrows it toward the wrong place.
-    pub fn vertices(&self) -> impl Iterator<Item = StrokeVertexPair> + '_ {
-        self.positions
+    /// Each contour point with the vertices offset from it, in the order the
+    /// triangles number those vertices.
+    pub fn runs(&self) -> impl Iterator<Item = ContourRun<'_>> + '_ {
+        self.points
             .iter()
-            .zip(self.on_path.iter())
-            .map(|(&position, &on_path)| StrokeVertexPair {
-                position: position.widen(),
-                on_path: on_path.widen(),
+            .zip(&self.runs)
+            .scan(0, move |start: &mut usize, (&point, &len)| {
+                let run = *start..*start + usize::from(len);
+                *start = run.end;
+                Some(ContourRun {
+                    point: point.widen(),
+                    vertices: self.positions.get(run).unwrap_or(&[]),
+                })
             })
+    }
+
+    /// Each vertex, paired with the contour point it was offset from, in the
+    /// order the triangles number them.
+    #[cfg(test)]
+    pub fn vertices(&self) -> impl Iterator<Item = StrokeVertexPair> + '_ {
+        self.runs().flat_map(|run| {
+            let on_path = run.point;
+            run.vertices.iter().map(move |vertex| StrokeVertexPair {
+                position: vertex.widen(),
+                on_path,
+            })
+        })
     }
 }
 
