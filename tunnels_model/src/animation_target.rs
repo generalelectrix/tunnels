@@ -66,15 +66,14 @@ impl AnimationTarget {
         }
     }
 
-    /// Whether what reaches a figure's points is this target's deviation from
-    /// the placement rather than its whole value.
+    /// Whether a value that is the same everywhere on a figure moves the
+    /// figure as a whole rather than each of its points.
     ///
-    /// Position is the one it is. A figure is placed before it is drawn, in the
-    /// units a position is measured in rather than in the figure's own, so the
-    /// whole value is spent putting it there and what is left for the points is
-    /// how far each of them departs from that — which is nothing at all where
-    /// the value is the same everywhere.
-    pub fn deviates_from_the_placement(self) -> bool {
+    /// Position is the one that does. Moving every point by one value is
+    /// moving the figure, and the placement does that without displacing a
+    /// point; a value that varies across the figure moves each point by its
+    /// own share instead.
+    pub fn moves_the_figure_when_uniform(self) -> bool {
         match self {
             Self::PositionX | Self::PositionY => true,
             Self::Rotation

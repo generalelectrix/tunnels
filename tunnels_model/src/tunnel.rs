@@ -477,9 +477,10 @@ impl Tunnel {
     /// the same thing everywhere on it — rotation, thickness — is resolved here
     /// into a single number. What is left is the targets that vary from point
     /// to point, which travel with the layer to wherever the figure's own
-    /// geometry is. Position is resolved in both places: the placement takes
-    /// its whole value, in the units a position is measured in, and the points
-    /// take how far each departs from that.
+    /// geometry is. Position is resolved in one place or the other: a position
+    /// animation that is one value everywhere moves the placement, and one
+    /// that varies moves each point by its own value, the way it moves each
+    /// segment of a run.
     fn render_fill<'f>(
         &self,
         figure: FigureId,
@@ -500,13 +501,20 @@ impl Tunnel {
                 .sum()
         };
 
+        // A position animation that varies across the figure reaches the
+        // points instead, each by its own value, so the figure as a whole moves
+        // only as far as they happen to agree.
+        let moved = |target: AnimationTarget| -> f64 {
+            anims
+                .iter()
+                .filter(|a| a.target == target && !a.animation.varies_in_space())
+                .map(|a| a.animation.value(Phase::ZERO, 0))
+                .sum()
+        };
+
         let placement = Placement {
-            // The whole of a position animation, and not only the part no
-            // point deviates from: a placement is in the units a position knob
-            // is in and a point is in the figure's own, so the two cannot
-            // stand in for each other and neither can be netted off.
-            x: offset.x + uniform(AnimationTarget::PositionX),
-            y: offset.y + uniform(AnimationTarget::PositionY),
+            x: offset.x + moved(AnimationTarget::PositionX),
+            y: offset.y + moved(AnimationTarget::PositionY),
             // The tunnel's ellipse formula, onto the figure's two half-extents.
             // A size animation is not folded in here: on a figure it deforms
             // the outline point by point rather than scaling the whole of it.
@@ -874,12 +882,11 @@ fn fill_animations<'f>(
     anims
         .iter()
         .filter(|a| a.animation.is_active() && a.target.varies_across_figure() && keep(a.target))
-        // A target the placement has already answered reaches the points as
-        // what deviates from it, so one that is the same everywhere reaches
-        // them with nothing to say. Dropping it is what leaves the figure
-        // undisplaced, and an undisplaced figure is drawn a way a displaced one
-        // cannot be.
-        .filter(|a| !a.target.deviates_from_the_placement() || a.animation.varies_in_space())
+        // A target that is one value everywhere moves the whole figure through
+        // its placement, so it has nothing left to say to the points. Dropping
+        // it is what leaves the figure undisplaced, and an undisplaced figure
+        // is drawn a way a displaced one cannot be.
+        .filter(|a| !a.target.moves_the_figure_when_uniform() || a.animation.varies_in_space())
         .cloned()
         .collect()
 }
@@ -1973,17 +1980,19 @@ mod test {
         }
     }
 
-    /// A position animation is answered at the placement, and where it varies
-    /// across the figure at the points as well.
+    /// A position animation that is one value everywhere moves the figure; one
+    /// that varies across it moves each point by its own value, and never the
+    /// figure as a whole.
     ///
-    /// The two answers are in different units — a placement is in the units a
-    /// position knob is in, a point is in the figure's own — so the placement
-    /// carries the whole value however the animation is set, and the points
-    /// can only be given what deviates from it. An animation that is one value
-    /// everywhere deviates by nothing and must not reach them at all: a figure
-    /// nothing displaces is drawn a way a displaced one cannot be.
+    /// That is how a run of segments takes the same animation: each segment
+    /// moves by the value at its own place, so the run moves as one only when
+    /// nothing tells its segments apart. A figure moved by the value at the
+    /// start of its cycle as well would sway with whatever that one place
+    /// happened to read. An animation that is one value everywhere must not
+    /// reach the points at all: a figure nothing displaces is drawn a way a
+    /// displaced one cannot be.
     #[test]
-    fn a_position_animation_reaches_the_points_only_where_it_varies() {
+    fn a_position_animation_moves_the_figure_only_where_it_is_one_value() {
         let fill = |waveform, n_periods: u16| {
             let mut tunnel = Tunnel {
                 shape_mode: ShapeMode::Sprite,
@@ -1995,8 +2004,9 @@ mod test {
                 AnimStateChange::NPeriods(n_periods),
                 AnimStateChange::Size(UnipolarFloat::ONE),
                 // A square is at one end of its travel at the start of its
-                // cycle, which is where the placement reads it; unsmoothed, so
-                // it is there exactly rather than partway up a ramp.
+                // cycle, so a placement that read it there would show it;
+                // unsmoothed, so it is there exactly rather than partway up a
+                // ramp.
                 AnimStateChange::Smoothing(UnipolarFloat::ZERO),
             ] {
                 tunnel.anims[0]
@@ -2019,11 +2029,15 @@ mod test {
 
         assert_ne!(
             placed.placement.x, 0.0,
-            "a position animation did not move the placement"
+            "a position animation that is one value everywhere did not move the placement"
+        );
+        assert_ne!(
+            flat.placement.x, 0.0,
+            "a waveform that is one value everywhere did not move the placement"
         );
         assert_eq!(
-            warped.placement.x, placed.placement.x,
-            "the placement stopped carrying the whole value once the animation varied"
+            warped.placement.x, 0.0,
+            "a position animation that varies across the figure moved the whole of it"
         );
 
         assert!(
@@ -3150,7 +3164,9 @@ pub mod fixture {
         for sc in [
             AnimStateChange::Waveform(Waveform::SineSquare),
             AnimStateChange::NPeriods(2),
-            AnimStateChange::Size(UnipolarFloat::new(0.4)),
+            // In position units, where one is the width of the screen, so a
+            // shear this deep stays inside the frame too.
+            AnimStateChange::Size(UnipolarFloat::new(0.12)),
         ] {
             tunnel.anims[0]
                 .animation
@@ -3190,7 +3206,8 @@ pub mod fixture {
         for sc in [
             AnimStateChange::Waveform(Waveform::Noise),
             AnimStateChange::NPeriods(2),
-            AnimStateChange::Size(UnipolarFloat::new(0.4)),
+            // In position units, so the warp stays inside the frame.
+            AnimStateChange::Size(UnipolarFloat::new(0.12)),
             AnimStateChange::Smoothing(UnipolarFloat::ZERO),
         ] {
             tunnel.anims[0]
