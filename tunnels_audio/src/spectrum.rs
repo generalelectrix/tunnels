@@ -2,7 +2,7 @@
 //! whitened so that typical music reads roughly even across the bands.
 //!
 //! Each band's envelope is followed sample by sample, with an instant attack,
-//! a 50 ms hold at each peak and then a 50 ms release, so a band's level does
+//! a 32 ms hold at each peak and then a 50 ms release, so a band's level does
 //! not depend on where the music falls against the buffers. At the end of each
 //! buffer:
 //!
@@ -196,7 +196,7 @@ pub(crate) struct BandFollowers {
 
 impl BandFollowers {
     /// How long each envelope holds a peak before it releases.
-    const HOLD: Duration = Duration::from_millis(50);
+    const HOLD: Duration = Duration::from_millis(32);
     /// Half-life of each envelope's release.
     const RELEASE_HALFLIFE: Duration = Duration::from_millis(50);
     /// The smallest envelope a level is taken from, so silence reads as a
@@ -519,8 +519,10 @@ mod tests {
     fn a_peak_holds_then_releases() {
         let mut followers = BandFollowers::new(SAMPLE_RATE);
         let hold = (BandFollowers::HOLD.as_secs_f32() * SAMPLE_RATE.as_hz()).round() as usize;
-        assert_eq!(hold, 2400, "50 ms at 48 kHz");
+        assert_eq!(hold, 1536, "32 ms at 48 kHz");
         let release = halflife_to_coeff(BandFollowers::RELEASE_HALFLIFE, SAMPLE_RATE);
+        let half_life =
+            (BandFollowers::RELEASE_HALFLIFE.as_secs_f32() * SAMPLE_RATE.as_hz()).round() as usize;
 
         // One sample at 1, then silence; band 1 stays silent throughout.
         let push = |followers: &mut BandFollowers, m: f32| {
@@ -532,7 +534,7 @@ mod tests {
             assert_eq!(followers.envelopes[0], 1.0, "sample {i} of the hold");
         }
         let mut expected = 1.0;
-        for i in 0..hold {
+        for i in 0..half_life {
             push(&mut followers, 0.0);
             expected *= release;
             assert!(
