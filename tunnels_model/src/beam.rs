@@ -29,12 +29,12 @@ impl Beam {
     ///
     /// A tunnel contributes one layer; a look contributes one per subchannel,
     /// and its subchannels may themselves hold looks.
-    pub fn render(
+    pub fn render<'f>(
         &self,
         level: UnipolarFloat,
         mode: PaintMode,
-        ctx: RenderContext,
-        out: &mut Vec<Layer>,
+        ctx: RenderContext<'_, 'f>,
+        out: &mut Vec<Layer<'f>>,
     ) {
         match self {
             Self::Tunnel(t) => out.push(t.render(level, mode, ctx)),

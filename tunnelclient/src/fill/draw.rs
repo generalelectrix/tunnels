@@ -184,9 +184,9 @@ pub struct VertexWork<'a> {
     /// The beam's spin knob.
     pub spin_speed: f32,
     /// Animations displacing geometry.
-    pub warps: &'a [TargetedAnimation<PreparedAnimation>],
+    pub warps: &'a [TargetedAnimation<PreparedAnimation<'a>>],
     /// Animations scaling an outline's width along the contour.
-    pub taper: &'a [TargetedAnimation<PreparedAnimation>],
+    pub taper: &'a [TargetedAnimation<PreparedAnimation<'a>>],
     /// The width an outline is drawn at where nothing tapers it, as a fraction
     /// of the width it was stroked at.
     pub stroke_width: f32,
@@ -504,12 +504,17 @@ mod test {
     use tunnels_lib::number::UnipolarFloat;
     use tunnels_model::animation::Animation;
     use tunnels_model::clock_bank::ClockBank;
+    use tunnels_model::spectrum::SpectrumTables;
 
     /// An animation aimed at `target`. Its value is never asked for here; only
     /// what it is aimed at decides which coordinates a layer pays for.
-    fn warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation> {
+    fn warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation<'static>> {
         TargetedAnimation {
-            animation: Animation::default().prepare(&ClockBank::default(), &AudioState::default()),
+            animation: Animation::default().prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            ),
             target,
         }
     }
@@ -559,7 +564,7 @@ mod test {
 
     /// An animation aimed at `target`, shaped so that its value runs across the
     /// figure rather than standing at one number.
-    fn varying_warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation> {
+    fn varying_warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation<'static>> {
         use std::time::Duration;
         use tunnels_model::animation::{ControlMessage, StateChange, Waveform};
 
@@ -583,7 +588,11 @@ mod test {
         // no speed, so nothing else moves while it gets there.
         animation.update_state(Duration::from_secs(1), &AudioState::default());
         TargetedAnimation {
-            animation: animation.prepare(&ClockBank::default(), &AudioState::default()),
+            animation: animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            ),
             target,
         }
     }

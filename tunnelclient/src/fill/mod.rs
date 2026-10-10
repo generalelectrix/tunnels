@@ -719,7 +719,7 @@ mod test {
     }
 
     /// A figure whose colour is decided by `center` and nothing else.
-    fn fill(center: f64) -> FillLayer {
+    fn fill(center: f64) -> FillLayer<'static> {
         FillLayer {
             figure: FigureId::Baked(SpriteId(0)),
             placement: Placement {

@@ -397,7 +397,7 @@ pub struct Hsva {
 /// is where the name becomes contours, so what travels is where to put it and
 /// how to colour it.
 #[derive(Debug, Clone)]
-pub struct FillLayer {
+pub struct FillLayer<'f> {
     pub figure: FigureId,
     pub placement: Placement,
     /// How far the figure is turned within its own unit box, in turns.
@@ -415,19 +415,19 @@ pub struct FillLayer {
     pub mode: PaintMode,
     pub color: ColorField,
     /// Animations resolved when the colour ramp is built, once per texel.
-    pub color_anims: Vec<TargetedAnimation<PreparedAnimation>>,
+    pub color_anims: Vec<TargetedAnimation<PreparedAnimation<'f>>>,
     /// Animations resolved per point of the figure, displacing it.
-    pub warps: Vec<TargetedAnimation<PreparedAnimation>>,
+    pub warps: Vec<TargetedAnimation<PreparedAnimation<'f>>>,
     /// Animations resolved per point of an outline, scaling its width there.
     ///
     /// Kept apart from the warps because they answer different questions about
     /// the same point: a warp says where it goes, and these say how far the
     /// ribbon reaches either side of it. Only an outline has the second, so a
     /// figure that is filled and not stroked ignores these entirely.
-    pub taper: Vec<TargetedAnimation<PreparedAnimation>>,
+    pub taper: Vec<TargetedAnimation<PreparedAnimation<'f>>>,
 }
 
-impl FillLayer {
+impl FillLayer<'_> {
     /// Whether anything displaces the figure's points.
     ///
     /// A figure nothing displaces is drawn from the tessellator's own
@@ -441,14 +441,14 @@ impl FillLayer {
 
 /// What a beam expands into for one frame.
 #[derive(Debug, Clone)]
-pub enum Layer {
+pub enum Layer<'f> {
     /// A run of segments along a path.
     Segments(SegmentLayer),
     /// A filled figure.
-    Fill(FillLayer),
+    Fill(FillLayer<'f>),
 }
 
-impl Layer {
+impl Layer<'_> {
     /// What this layer's shapes do to the frame they are drawn into.
     pub fn mode(&self) -> PaintMode {
         match self {
@@ -494,7 +494,7 @@ impl Layer {
     }
 }
 
-pub type LayerCollection = Vec<Layer>;
+pub type LayerCollection<'f> = Vec<Layer<'f>>;
 
 #[cfg(test)]
 mod test {

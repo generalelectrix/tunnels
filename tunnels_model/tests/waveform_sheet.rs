@@ -2,7 +2,7 @@
 //!
 //! One sheet per waveform, laid out so that every parameter that changes the
 //! shape of one period is on it at once, and identically across the sheets so
-//! that three of them can be read side by side.
+//! that they can be read side by side.
 //!
 //! Smoothing increases down the rows: 0, 1/4, 1/2, 3/4, 1. Each row runs
 //! across six columns — duty cycle 1, 1/2 and 1/4 unpulsed, then the same
@@ -17,6 +17,18 @@
 //! are one curve, and at smoothing 0 four unrelated ones. That spread closing
 //! down the rows is what the sheet is for.
 //!
+//! The spectrum sheet draws one period of the fixed band levels in
+//! `SHEET_LEVELS`, out from band 0 at a cell's left edge to band 25 at its
+//! middle and back. The spectrum is unipolar, so it sits in the top half of
+//! each cell, and pulse does not reach it, so the three pulsed columns repeat
+//! the three unpulsed ones. A duty cycle compresses the whole period into the
+//! front of the cell and leaves the rest at zero. At smoothing 0 each band is
+//! a flat step, fifty to a period, with band 0 and band 25 each one step
+//! straddling its turn; down the rows the steps blend into the smooth curve
+//! through the band levels, which is all that is left at smoothing 1 and is
+//! held to the range, so its overshoot either side of the full-scale pair is
+//! cut flat at 1 and at 0.
+//!
 //! Nothing is labelled and nothing is antialiased: a label needs a font and a
 //! blend needs a rounding, and either one puts differences into a golden that
 //! are not differences in a waveform. The layout is documented here instead of
@@ -27,12 +39,13 @@ use std::time::Duration;
 
 use golden_image::{Goldens, Tolerance};
 use image::{Rgba, RgbaImage};
-use tunnels_lib::audio::AudioState;
+use tunnels_lib::audio::{AudioFrame, AudioState, SPECTRUM_BANDS, UnipolarF32};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 use tunnels_model::animation::{
     Animation, ControlMessage, EmitStateChange, PreparedAnimation, StateChange, Waveform,
 };
 use tunnels_model::clock_bank::ClockBank;
+use tunnels_model::spectrum::SpectrumTables;
 use tunnels_model::waveforms::{WaveformArgs, sine_square, tri_saw};
 
 /// A waveform as a sheet samples it: one number for one phase.
@@ -185,20 +198,35 @@ impl EmitStateChange for Discard {
     fn emit_animation_state_change(&mut self, _: StateChange) {}
 }
 
-/// An animation driving noise at the given settings, resolved for a frame.
+/// The settings one cell of an animation-driven sheet is drawn at.
+#[derive(Copy, Clone)]
+struct Cell {
+    smoothing: f64,
+    duty_cycle: f64,
+    pulse: bool,
+}
+
+/// An animation driving `waveform` over `n_periods` at a cell's settings,
+/// resolved for a frame against `spectrum`.
 ///
 /// Smoothing is reached over time rather than set, so it is sent and then
 /// allowed to arrive. An animation at no size holds its clock still while that
 /// happens, and the size it needs to run is given afterwards, which leaves the
-/// animation's own elapsed time at zero and the field it reads fixed.
-fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnimation {
+/// animation's own elapsed time at zero and the clock's phase at the start of
+/// its cycle.
+fn settled_animation(
+    waveform: Waveform,
+    n_periods: u16,
+    cell: Cell,
+    spectrum: &SpectrumTables,
+) -> PreparedAnimation<'_> {
     let mut animation = Animation::default();
     for change in [
-        StateChange::Waveform(Waveform::Noise),
-        StateChange::NPeriods(NOISE_PERIODS),
-        StateChange::DutyCycle(UnipolarFloat::new(duty_cycle)),
-        StateChange::Pulse(pulse),
-        StateChange::Smoothing(UnipolarFloat::new(smoothing)),
+        StateChange::Waveform(waveform),
+        StateChange::NPeriods(n_periods),
+        StateChange::DutyCycle(UnipolarFloat::new(cell.duty_cycle)),
+        StateChange::Pulse(cell.pulse),
+        StateChange::Smoothing(UnipolarFloat::new(cell.smoothing)),
     ] {
         animation.control(ControlMessage::Set(change), &mut Discard);
     }
@@ -208,7 +236,21 @@ fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnim
         ControlMessage::Set(StateChange::Size(UnipolarFloat::ONE)),
         &mut Discard,
     );
-    animation.prepare(&ClockBank::default(), &AudioState::default())
+    animation.prepare(&ClockBank::default(), &AudioState::default(), spectrum)
+}
+
+/// An animation driving noise at the given settings, resolved for a frame.
+fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnimation<'static> {
+    settled_animation(
+        Waveform::Noise,
+        NOISE_PERIODS,
+        Cell {
+            smoothing,
+            duty_cycle,
+            pulse,
+        },
+        &SpectrumTables::SILENT,
+    )
 }
 
 /// The rows each noise offset traces in one cell, offset 0 first.
@@ -234,6 +276,43 @@ fn noise_sheet() -> RgbaImage {
     })
 }
 
+/// The band levels the spectrum sheet is drawn from, band 0 first.
+///
+/// - band 0 at 0.6, so the seam at either edge of a cell is off the floor;
+/// - band 4 alone at 0.9 between bands at 0.1, a single-band peak;
+/// - bands 8 and 9 at full scale with bands 7 and 10 empty, where the smooth
+///   curve overshoots both ends of the range and is cut flat at them;
+/// - bands 13 to 17 level at 0.7, a plateau;
+/// - bands 19 to 24 climbing from 0.1 to 0.6 a tenth at a time, a gentle ramp;
+/// - band 25 at 0.8, so the turn at the middle of a cell is off the floor.
+const SHEET_LEVELS: [f32; SPECTRUM_BANDS] = [
+    0.6, 0.3, 0.1, 0.1, 0.9, 0.1, 0.1, 0.0, 1.0, 1.0, 0.0, 0.0, 0.2, 0.7, 0.7, 0.7, 0.7, 0.7, 0.3,
+    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8,
+];
+
+/// A sheet of the spectrum of `SHEET_LEVELS` at every smoothing, duty cycle
+/// and pulse setting, one period to a cell.
+fn spectrum_sheet() -> RgbaImage {
+    let spectrum = SpectrumTables::new(&AudioFrame::new(
+        Default::default(),
+        SHEET_LEVELS.map(UnipolarF32::new),
+    ));
+    sheet_of(|sheet, origin, smoothing, duty_cycle, pulse| {
+        let animation = settled_animation(
+            Waveform::Spectrum,
+            1,
+            Cell {
+                smoothing,
+                duty_cycle,
+                pulse,
+            },
+            &spectrum,
+        );
+        let rows = trace_rows(|phase| animation.unit_value(phase, 0));
+        draw_trace(sheet, origin, TRACE, &rows);
+    })
+}
+
 /// This suite's goldens. A sheet is drawn by integer arithmetic over a fixed
 /// set of parameters, so any difference at all is a difference in a waveform.
 fn goldens() -> Goldens {
@@ -254,6 +333,7 @@ fn waveforms_draw_their_sheets() {
         goldens.compare(&waveform_sheet(waveform), name);
     }
     goldens.compare(&noise_sheet(), "noise.png");
+    goldens.compare(&spectrum_sheet(), "spectrum.png");
 }
 
 /// Smoothing is what decides how far apart noise holds the offsets it is read

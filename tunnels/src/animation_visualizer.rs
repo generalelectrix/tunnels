@@ -1,6 +1,7 @@
 use eframe::egui::{self, Color32};
 use egui_plot::{Line, Plot, PlotPoint, PlotPoints, Points};
 use tunnels_lib::number::Phase;
+use tunnels_model::spectrum::SpectrumTables;
 
 use crate::animation::Animation;
 use crate::clock_server::SharedClockData;
@@ -48,9 +49,11 @@ impl VisualizerPanelState {
         // its frame-constant state once rather than a thousand times. The unit
         // waveform ignores the amplitude, so one preparation serves all three
         // plots.
-        let anim = state
-            .animation
-            .prepare(&state.clocks.clock_bank, &state.clocks.audio);
+        let spectrum = SpectrumTables::new(&state.clocks.audio.frame);
+        let anim =
+            state
+                .animation
+                .prepare(&state.clocks.clock_bank, &state.clocks.audio, &spectrum);
 
         // Unit waveform (amplitude always 1).
         self.preview.clear();

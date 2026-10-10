@@ -3,6 +3,7 @@ use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock::Ticks;
 use crate::clock_bank::ClockStore;
+use crate::spectrum::SpectrumTables;
 use crate::waveforms::WaveformArgs;
 use crate::{clock_bank::ClockIdx, waveforms};
 use noise::NoiseFn;
@@ -20,6 +21,11 @@ pub enum Waveform {
     SineSquare,
     TriSaw,
     Noise,
+    /// The audio spectrum's band levels, folded out and back across a period.
+    ///
+    /// Always unipolar, and always carried by the clock: pulse and standing do
+    /// not reach it.
+    Spectrum,
     Constant,
 }
 
@@ -30,7 +36,7 @@ impl Waveform {
     /// otherwise resolve it across a coordinate can resolve it once.
     pub fn varies_with_phase(self) -> bool {
         match self {
-            Self::SineSquare | Self::TriSaw | Self::Noise => true,
+            Self::SineSquare | Self::TriSaw | Self::Noise | Self::Spectrum => true,
             Self::Constant => false,
         }
     }
@@ -77,13 +83,14 @@ pub struct TargetedAnimation<A = Animation> {
 
 impl TargetedAnimation {
     /// Resolve everything that is fixed for a frame, keeping the target.
-    pub fn prepare(
+    pub fn prepare<'f>(
         &self,
         external_clocks: &impl ClockStore,
         audio: &AudioState,
-    ) -> TargetedAnimation<PreparedAnimation> {
+        spectrum: &'f SpectrumTables,
+    ) -> TargetedAnimation<PreparedAnimation<'f>> {
         TargetedAnimation {
-            animation: self.animation.prepare(external_clocks, audio),
+            animation: self.animation.prepare(external_clocks, audio, spectrum),
             target: self.target,
         }
     }
@@ -203,11 +210,12 @@ impl Animation {
     /// what phase it is at, where the smoother has got to, and the amplitude
     /// the size, submaster and audio envelope multiply out to. None of it
     /// depends on where in the figure the question is being asked.
-    pub fn prepare(
+    pub fn prepare<'f>(
         &self,
         external_clocks: &impl ClockStore,
         audio: &AudioState,
-    ) -> PreparedAnimation {
+        spectrum: &'f SpectrumTables,
+    ) -> PreparedAnimation<'f> {
         PreparedAnimation {
             static_params: self.static_params,
             phase_temporal: self.phase(external_clocks),
@@ -216,6 +224,7 @@ impl Animation {
             ticks: self.ticks(external_clocks),
             scale: self.scale_value(external_clocks, audio, 1.0),
             simplex_gen: self.simplex_gen,
+            spectrum,
             active: self.active(),
         }
     }
@@ -358,9 +367,10 @@ pub trait EmitStateChange {
 /// An animation with everything that is constant for a frame already resolved.
 ///
 /// Holds no reference to the animation it came from, so a render can prepare
-/// its animations once and then walk a figure without borrowing anything.
+/// its animations once and then walk a figure. The one thing it borrows is
+/// the frame's spectrum.
 #[derive(Clone, Copy, Debug)]
-pub struct PreparedAnimation {
+pub struct PreparedAnimation<'f> {
     static_params: StaticParams,
     /// Where the driving clock has got to.
     phase_temporal: Phase,
@@ -373,11 +383,13 @@ pub struct PreparedAnimation {
     /// Size, clock submaster and audio envelope, multiplied out.
     scale: f64,
     simplex_gen: &'static Simplex,
+    /// The frame's spectrum, as the spectrum waveform reads it.
+    spectrum: &'f SpectrumTables,
     /// A zero-size animation contributes nothing and skips the waveform.
     active: bool,
 }
 
-impl PreparedAnimation {
+impl PreparedAnimation<'_> {
     /// Whether this animation contributes anything.
     ///
     /// A zero-size animation answers zero everywhere, so a caller that would
@@ -463,6 +475,9 @@ impl PreparedAnimation {
                     val
                 }
             }
+            Waveform::Spectrum => {
+                waveforms::spectrum(&self.waveform_args(spatial_phase_offset), self.spectrum)
+            }
             Waveform::Constant => 1.0,
         };
 
@@ -523,6 +538,7 @@ fn gate_noise(v: f64) -> f64 {
 mod test {
     use super::*;
     use crate::clock_bank::ClockBank;
+    use tunnels_lib::audio::{AudioFrame, UnipolarF32};
 
     /// A gated noise pulse rests at each end of the unipolar range rather than
     /// only approaching it, so the two knees are where it arrives, and outside
@@ -619,7 +635,9 @@ mod test {
             // Longer than the control takes to be reached.
             animation.update_state(Duration::from_millis(500), &AudioState::default());
 
-            let reached = animation.prepare(&clocks, &AudioState::default()).smoothing;
+            let reached = animation
+                .prepare(&clocks, &AudioState::default(), &SpectrumTables::SILENT)
+                .smoothing;
             assert_eq!(
                 reached,
                 animation.smoothing(),
@@ -675,7 +693,9 @@ mod test {
         } in controls
         {
             let mut animation = Animation::default();
-            let prepared = |a: &Animation| rendered(&a.prepare(&clocks, &AudioState::default()));
+            let prepared = |a: &Animation| {
+                rendered(&a.prepare(&clocks, &AudioState::default(), &SpectrumTables::SILENT))
+            };
             let before = prepared(&animation);
             animation.control(ControlMessage::Set(control()), &mut Recorder::default());
             assert_eq!(before, prepared(&animation), "{:?} jumped", control());
@@ -726,7 +746,11 @@ mod test {
                 &mut Noop,
             );
             animation.settle_controls();
-            animation.prepare(&ClockBank::default(), &AudioState::default())
+            animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            )
         };
 
         assert!(prepare(Waveform::SineSquare, 1, 1.0).varies_in_space());
@@ -742,5 +766,115 @@ mod test {
             !prepare(Waveform::Constant, 1, 1.0).varies_in_space(),
             "a constant ignores the phase it is asked at, however many periods it is given"
         );
+        assert!(prepare(Waveform::Spectrum, 1, 1.0).varies_in_space());
+    }
+
+    /// The spectrum reads its band levels as they are, whatever pulse and
+    /// standing are set to, with the clock carrying it round. Invert negates
+    /// it, a duty cycle compresses the whole period into the front of its
+    /// window, and with no periodicity every point reads the one place the
+    /// clock is at.
+    #[test]
+    fn a_spectrum_reads_its_levels_carried_by_the_clock() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let tables = SpectrumTables::new(&AudioFrame::new(
+            Default::default(),
+            std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0)),
+        ));
+        let smoothing = UnipolarFloat::new(0.4);
+
+        let mut running = Animation::default();
+        for sc in [
+            StateChange::Waveform(Waveform::Spectrum),
+            StateChange::Size(UnipolarFloat::ONE),
+            StateChange::Smoothing(smoothing),
+            StateChange::Speed(BipolarFloat::new(0.3)),
+        ] {
+            running.control(ControlMessage::Set(sc), &mut Noop);
+        }
+        running.settle_controls();
+        // Off the top of its cycle, where a standing wave would be at full
+        // amplitude and so indistinguishable from a travelling one.
+        running.update_state(Duration::from_millis(700), &AudioState::default());
+
+        let prepare = |changes: &[StateChange]| {
+            let mut animation = running.clone();
+            for sc in changes {
+                animation.control(ControlMessage::Set(sc.clone()), &mut Noop);
+            }
+            animation.settle_controls();
+            animation.prepare(&ClockBank::default(), &AudioState::default(), &tables)
+        };
+        let plain = prepare(&[]);
+        let clock = plain.phase_temporal;
+        assert!(
+            (std::f64::consts::TAU * clock.val()).cos() < 0.5,
+            "the clock sat at {clock:?}, too near a cycle's top for standing to show"
+        );
+
+        let points = (0..400).map(|i| Phase::new(i as f64 / 400.0));
+        for x in points.clone() {
+            let read = plain.unit_value(x, 0);
+            assert_eq!(read, tables.value(x + clock, smoothing), "at {x:?}");
+            assert!(
+                (0.0..=1.0).contains(&read),
+                "{read} at {x:?} is not unipolar"
+            );
+        }
+
+        for (flags, changes) in [
+            ("pulse", vec![StateChange::Pulse(true)]),
+            ("standing", vec![StateChange::Standing(true)]),
+            (
+                "pulse and standing",
+                vec![StateChange::Pulse(true), StateChange::Standing(true)],
+            ),
+        ] {
+            let flagged = prepare(&changes);
+            for x in points.clone() {
+                assert_eq!(
+                    flagged.unit_value(x, 0),
+                    plain.unit_value(x, 0),
+                    "{flags} changed the spectrum at {x:?}"
+                );
+            }
+        }
+
+        let inverted = prepare(&[StateChange::Invert(true)]);
+        for x in points.clone() {
+            assert_eq!(
+                inverted.unit_value(x, 0),
+                -plain.unit_value(x, 0),
+                "at {x:?}"
+            );
+        }
+
+        let duty = UnipolarFloat::new(0.5);
+        let compressed = prepare(&[StateChange::DutyCycle(duty)]);
+        for x in points.clone() {
+            let p = x + clock;
+            let expected = if p >= duty {
+                0.0
+            } else {
+                tables.value(p / duty, smoothing)
+            };
+            assert_eq!(
+                compressed.unit_value(x, 0),
+                expected,
+                "at {x:?}, {p:?} along"
+            );
+        }
+
+        let still = prepare(&[StateChange::NPeriods(0)]);
+        for x in points {
+            assert_eq!(
+                still.unit_value(x, 0),
+                tables.value(clock, smoothing),
+                "no periodicity read a different place at {x:?}"
+            );
+        }
     }
 }

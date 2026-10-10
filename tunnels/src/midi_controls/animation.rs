@@ -18,11 +18,12 @@ const DUTY_CYCLE: Mapping = cc_ch0(50);
 const SMOOTHING: Mapping = cc_ch0(51);
 
 // Waveform type buttons, run together from the bottom of the block so that
-// what is free is contiguous: a waveform added to the set goes on note 28.
+// what is free is contiguous: a waveform added to the set goes on note 29.
 const SINE_SQUARE: Mapping = note_on_ch0(24);
 const TRI_SAW: Mapping = note_on_ch0(25);
 const NOISE: Mapping = note_on_ch0(26);
-const CONSTANT: Mapping = note_on_ch0(27);
+const SPECTRUM: Mapping = note_on_ch0(27);
+const CONSTANT: Mapping = note_on_ch0(28);
 
 // These buttons are on channel 1 instead of 0 as we ran out of space on channel 1.
 const PULSE: Mapping = note_on_ch1(0);
@@ -35,7 +36,7 @@ const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
 
 lazy_static! {
     static ref WAVEFORM_SELECT_BUTTONS: RadioButtons = RadioButtons {
-        mappings: vec!(SINE_SQUARE, TRI_SAW, NOISE, CONSTANT), off: 0, on: 1,
+        mappings: vec!(SINE_SQUARE, TRI_SAW, NOISE, SPECTRUM, CONSTANT), off: 0, on: 1,
     };
     static ref N_PERIODS_SELECT_BUTTONS: RadioButtons = RadioButtons {
         mappings: (0..15).map(note_on_ch0).collect(), off: 0, on: 1,
@@ -66,6 +67,7 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         SINE_SQUARE => Animation(Set(Waveform(SineSquare))),
         TRI_SAW => Animation(Set(Waveform(TriSaw))),
         NOISE => Animation(Set(Waveform(Noise))),
+        SPECTRUM => Animation(Set(Waveform(Spectrum))),
         CONSTANT => Animation(Set(Waveform(Constant))),
         PULSE => Animation(TogglePulse),
         INVERT => Animation(ToggleInvert),
@@ -112,6 +114,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut impl MidiOutput) 
                     SineSquare => SINE_SQUARE,
                     TriSaw => TRI_SAW,
                     Noise => NOISE,
+                    Spectrum => SPECTRUM,
                     Constant => CONSTANT,
                 },
                 send,

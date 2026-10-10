@@ -98,17 +98,22 @@ fn goldens(tolerance: Tolerance) -> Goldens {
 
 /// Wrap shapes in a layer drawn with the default render mode and path shape,
 /// every segment spanning `span` turns.
-fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
+fn default_layer(span: f64, shapes: Vec<ShapeGeometry>) -> Layer<'static> {
     layer_in_mode(PaintMode::Normal, span, shapes)
 }
 
 /// A default-shaped layer that paints in the given mode, at full level.
-fn layer_in_mode(mode: PaintMode, span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
+fn layer_in_mode(mode: PaintMode, span: f64, shapes: Vec<ShapeGeometry>) -> Layer<'static> {
     layer_in_mode_at(mode, 1.0, span, shapes)
 }
 
 /// A default-shaped layer that paints in the given mode at the given level.
-fn layer_in_mode_at(mode: PaintMode, level: f64, span: f64, shapes: Vec<ShapeGeometry>) -> Layer {
+fn layer_in_mode_at(
+    mode: PaintMode,
+    level: f64,
+    span: f64,
+    shapes: Vec<ShapeGeometry>,
+) -> Layer<'static> {
     Layer::Segments(SegmentLayer {
         render_mode: RenderMode::default(),
         segment_path: SegmentPath::Ellipse,
@@ -414,7 +419,7 @@ fn test_line_shape(start: f64) -> ShapeGeometry {
 fn snapshot_from_groups(
     render_mode: RenderMode,
     groups: Vec<(f64, Vec<ShapeGeometry>)>,
-) -> LayerCollection {
+) -> LayerCollection<'static> {
     groups
         .into_iter()
         .map(|(span, shapes)| {
@@ -920,6 +925,42 @@ fn periodicity_varies_a_thickness_animation_around_the_figure() {
         once != thrice,
         "one period and three drew the same outline, so periodicity reached nothing"
     );
+}
+
+/// The spectrum waveform on a ring of segments and around a figure's angle,
+/// at no smoothing, half and full. Each smoothing draws a picture of its own,
+/// so the blend from stepped to smooth reaches the render.
+#[test]
+fn spectrum_petals() {
+    let cfg = test_config();
+    for (render, goldens, shape) in [
+        (
+            fixture::spectrum_ring_snapshot as fn(f64) -> LayerCollection<'static>,
+            &*GOLDENS,
+            "ring",
+        ),
+        (
+            fixture::spectrum_figure_snapshot,
+            &*FIGURE_GOLDENS,
+            "figure",
+        ),
+    ] {
+        let images: Vec<image::RgbaImage> = [0.0, 0.5, 1.0]
+            .into_iter()
+            .map(|smoothing| render_snapshot(&render(smoothing), &cfg))
+            .collect();
+        for (image, tag) in images.iter().zip(["0", "05", "1"]) {
+            assert!(
+                lit_pixels(image) > 0,
+                "the {shape} at smoothing {tag} drew nothing"
+            );
+            goldens.compare(image, &format!("spectrum_{shape}_smoothing_{tag}.png"));
+        }
+        assert!(
+            images[0] != images[1] && images[1] != images[2] && images[0] != images[2],
+            "two smoothings drew the same {shape}"
+        );
+    }
 }
 
 /// How many pixels a render leaves lit against its black ground.
