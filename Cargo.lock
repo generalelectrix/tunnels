@@ -5787,6 +5787,7 @@ dependencies = [
  "pistoncore-sdl2_window",
  "postcard",
  "rust_dmx",
+ "rustc-hash 2.1.1",
  "sdl2",
  "simplelog",
  "tunnels_lib",
