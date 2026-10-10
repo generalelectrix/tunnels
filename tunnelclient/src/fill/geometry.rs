@@ -263,8 +263,7 @@ pub struct StrokeVertexPair {
 /// varies around a figure — its phase, every animation, the width a taper
 /// asks for — is a property of the contour point, so it is answered once per
 /// point and shared by the two edges of the ribbon and any join rim there. A
-/// warp therefore moves the ribbon as a unit, and a waveform that reads an
-/// index reads the contour point's.
+/// warp therefore moves the ribbon as a unit.
 ///
 /// Vertices are shared rather than repeated per corner for the same reason: a
 /// stroked vertex serves about three triangles, and three copies of one place

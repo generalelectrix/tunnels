@@ -100,10 +100,10 @@ impl VertexBuffers {
         self.positions.clear();
         self.uvs.clear();
 
-        for (i, v) in mesh.points().enumerate() {
+        for v in mesh.points() {
             let polar = Polar::of(v, needs.angle, needs.radius);
             let along = polar.phase(v, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along, i);
+            let displacement = Displacement::of(&work, polar, along);
 
             let (x, y) = if needs.rotates {
                 // The figure's own points, moved in polar terms because a
@@ -133,9 +133,8 @@ impl VertexBuffers {
     ///
     /// The displacement is worked out from the contour point too, once for
     /// all the vertices offset from it, so a warp moves the ribbon as a unit
-    /// rather than shearing its two edges apart — a waveform that reads an
-    /// index is given the contour point's. It is then applied to each vertex
-    /// where it actually is — as a rotation and a scale about the origin,
+    /// rather than shearing its two edges apart. It is then applied to each
+    /// vertex where it actually is — as a rotation and a scale about the origin,
     /// which is the same transform the fill reaches through polar
     /// coordinates, without a second arctangent per vertex.
     ///
@@ -150,12 +149,12 @@ impl VertexBuffers {
         self.positions.clear();
         self.uvs.clear();
 
-        for (i, run) in mesh.runs().enumerate() {
+        for run in mesh.runs() {
             let on_path = run.point;
             let polar = Polar::of(on_path, needs.angle, needs.radius);
             let along = polar.phase(on_path, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along, i);
-            let reach = work.taper_at(along, i);
+            let displacement = Displacement::of(&work, polar, along);
+            let reach = work.taper_at(along);
             let (sin, cos) = if needs.rotates {
                 displacement.turn.sin_cos()
             } else {
@@ -217,11 +216,11 @@ impl VertexWork<'_> {
     /// waveform at full amplitude troughs at exactly minus one, which is a
     /// ribbon of no width and a beam that has gone out.
     #[inline]
-    fn taper_at(&self, along: f32, index: usize) -> f32 {
+    fn taper_at(&self, along: f32) -> f32 {
         // Summed the way a beam sums them, so a figure and a run of segments
         // answer a stack of thickness animations alike.
         let scale = self.taper.iter().fold(1.0, |acc, a| {
-            acc + a.animation.value(Phase::new(f64::from(along)), index) as f32
+            acc + a.animation.value_on_figure(Phase::new(f64::from(along))) as f32
         });
         (self.stroke_width * scale).clamp(0.0, 1.0)
     }
@@ -263,7 +262,7 @@ struct Displacement {
 }
 
 impl Displacement {
-    fn of(work: &VertexWork, polar: Polar, along: f32, index: usize) -> Self {
+    fn of(work: &VertexWork, polar: Polar, along: f32) -> Self {
         let mut out = Self {
             radial: 1.0,
             // A tunnel integrates this knob into an angle that grows without
@@ -281,7 +280,7 @@ impl Displacement {
         // axes, carried into the figure's coordinates once every warp is in.
         let (mut across, mut up) = (0.0, 0.0);
         for warp in work.warps {
-            let value = warp.animation.value(Phase::new(f64::from(along)), index) as f32;
+            let value = warp.animation.value_on_figure(Phase::new(f64::from(along))) as f32;
             // Where a target means something different on a figure than on a
             // run of segments, this is where it is reinterpreted. `Size` scales a
             // segment; here it scales each point's distance from the centre,
@@ -519,8 +518,9 @@ mod test {
 
     /// A noise warp aimed at `target`, uncorrelated from one index to the next.
     ///
-    /// Noise is the one waveform that reads the index it is given as well as
-    /// the phase, so it is the one that can tell apart vertices at one place.
+    /// Noise at no smoothing changes fastest along a figure, so it is the warp
+    /// most able to tell apart vertices at one place, if anything per vertex
+    /// reached it.
     fn noise_warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation<'static>> {
         struct Silent;
         impl EmitStateChange for Silent {
@@ -725,8 +725,10 @@ mod test {
             to_figure,
         };
         for along in [0.0, 0.25, 0.6] {
-            let moved = Displacement::of(&work, Polar::default(), along, 0);
-            let value = warps[0].animation.value(Phase::new(f64::from(along)), 0) as f32;
+            let moved = Displacement::of(&work, Polar::default(), along);
+            let value = warps[0]
+                .animation
+                .value_on_figure(Phase::new(f64::from(along))) as f32;
             let [[xx, xy], [yx, yy]] = to_figure;
             assert_eq!(
                 (moved.offset_x, moved.offset_y),
