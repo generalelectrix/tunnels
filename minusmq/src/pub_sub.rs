@@ -997,6 +997,40 @@ mod tests {
         publisher_with(test_config())
     }
 
+    /// Return once the publisher has taken `sub` up, with nothing published
+    /// before then left for it to receive.
+    ///
+    /// A publisher takes a subscription up from its accept loop, at a moment a
+    /// test cannot name, and a message published before then reaches nobody;
+    /// a receive waiting on one waits for ever. So one-byte primers are
+    /// published until one arrives, then a two-byte fence, and everything up
+    /// to the fence is drained. `publish` sends a message of the given length.
+    fn await_subscription(sub: &mut Subscriber, publish: impl Fn(usize) + Send + Sync + 'static) {
+        let publish = Arc::new(publish);
+        let priming = Arc::new(AtomicBool::new(true));
+        let primer = thread::spawn({
+            let (publish, priming) = (Arc::clone(&publish), Arc::clone(&priming));
+            move || {
+                while priming.load(Ordering::SeqCst) {
+                    publish(1);
+                    thread::sleep(Duration::from_millis(20));
+                }
+            }
+        });
+        let mut drain_to = |len: usize| loop {
+            match sub.recv().map(<[u8]>::len) {
+                Some(received) if received == len => break,
+                Some(_) => continue,
+                None => panic!("the subscription ended before it was taken up"),
+            }
+        };
+        drain_to(1);
+        priming.store(false, Ordering::SeqCst);
+        primer.join().unwrap();
+        publish(2);
+        drain_to(2);
+    }
+
     #[test]
     fn every_subscriber_receives_every_message() {
         let (publisher, port) = test_publisher();
@@ -1122,8 +1156,10 @@ mod tests {
 
         let mut sub = Subscriber::new("127.0.0.1", port, test_config());
         sub.connect();
-        // Let the publisher's accept thread take up the subscription.
-        thread::sleep(Duration::from_millis(200));
+        await_subscription(&mut sub, {
+            let requests = requests.clone();
+            move |len| requests.send(len).unwrap()
+        });
 
         let mut receive = |len: usize| -> usize {
             requests.send(len).unwrap();
@@ -1467,8 +1503,10 @@ mod tests {
 
         let mut sub = Subscriber::new("127.0.0.1", port, compressed_config());
         sub.connect();
-        // Let the publisher's accept thread take up the subscription.
-        thread::sleep(Duration::from_millis(200));
+        await_subscription(&mut sub, {
+            let requests = requests.clone();
+            move |len| requests.send(vec![0xFF; len]).unwrap()
+        });
 
         // Long, then short, then long again, so that each message expands into
         // a buffer both larger and smaller than the one it needs.
