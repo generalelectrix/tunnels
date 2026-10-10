@@ -3187,15 +3187,10 @@ pub mod fixture {
 
     /// An outline displaced by a noise warp.
     ///
-    /// The only waveform that reads a vertex's index rather than only its
-    /// position on the figure: noise offsets each sample into a second
-    /// dimension of the field, so what a vertex is displaced by depends on
-    /// which vertex it is. That makes this the case that says whether an
-    /// outline's vertices are addressed as the points they are or as the
-    /// corners they were written into.
-    ///
-    /// Smoothing at zero is what puts the samples a full interval apart,
-    /// which is where the difference is largest.
+    /// Noise on a figure is sampled along a line through its field that
+    /// smoothing turns and lengthens. At zero smoothing the line stands across
+    /// time and is at its longest, so the outline is at its roughest: sharp
+    /// and choppy, but still one connected ribbon.
     pub fn sprite_noise_warp_outline_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(BULLSEYE);
         tunnel.draw_mode = DrawMode::Outline;

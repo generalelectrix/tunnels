@@ -116,6 +116,25 @@ fn get_simplex_gen() -> &'static Simplex {
     &SIMPLEX_GEN
 }
 
+/// How much finer noise grows on a figure as its smoothing falls.
+///
+/// On a figure, smoothing turns the line noise is sampled along: at one the
+/// line runs with time, so a pattern travels round the figure, and at zero it
+/// stands across time, so the figure boils in place. The line also lengthens
+/// as it turns, to `periods × (1 + this × (1 − smoothing))`, so a rough setting
+/// is sharp and choppy rather than a slow wobble.
+pub const FIGURE_NOISE_ROUGHENING: f64 = 7.0;
+
+/// Where an animation is asked for its value, beyond its phase.
+#[derive(Clone, Copy)]
+enum Sample {
+    /// The given one of a run of discrete elements, such as a tunnel's
+    /// segments.
+    Element(usize),
+    /// A point on a continuous figure, placed by its phase alone.
+    Figure,
+}
+
 impl Default for Animation {
     fn default() -> Self {
         Self {
@@ -421,6 +440,19 @@ impl PreparedAnimation<'_> {
         self.unit_value(spatial_phase_offset, offset_index) * self.scale
     }
 
+    /// The animation's value at a point on a figure, with amplitude applied.
+    ///
+    /// A figure is continuous, so a point on it is placed by its phase alone
+    /// and has no index; noise there is sampled along a line through its field
+    /// that smoothing turns and lengthens (see [`FIGURE_NOISE_ROUGHENING`]).
+    /// Every other waveform answers as [`value`](Self::value) does.
+    pub fn value_on_figure(&self, along: Phase) -> f64 {
+        if !self.active {
+            return 0.;
+        }
+        self.unit_value_at(along, Sample::Figure) * self.scale
+    }
+
     /// Scale a value by the amplitude factors: size, clock submaster, and audio
     /// envelope.
     pub fn scale_value(&self, v: f64) -> f64 {
@@ -429,6 +461,11 @@ impl PreparedAnimation<'_> {
 
     /// The waveform's own value, before amplitude.
     pub fn unit_value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
+        self.unit_value_at(spatial_phase_offset, Sample::Element(offset_index))
+    }
+
+    /// The waveform's own value at one place, before amplitude.
+    fn unit_value_at(&self, spatial_phase_offset: Phase, sample: Sample) -> f64 {
         let result = match self.static_params.waveform {
             Waveform::SineSquare => {
                 waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
@@ -449,24 +486,40 @@ impl PreparedAnimation<'_> {
                     return 0.0;
                 }
 
-                let x_offset = self.ticks as f64 + spatial_phase + temporal_phase;
-
-                // Use smoothing parameter as a "cross-correlation" term;
-                // increased smoothing means a smaller Y-offset between
-                // samples. Smoothing of zero offsets each sample by a full
-                // interval, which should produce fairly uncorrelated noise
-                // for different offsets.
-                // Always use a Y-offset of 0 in periodicity of 0 to preserve
-                // the expected behavior.
-                //
-                // Because of the smooth 2D landscape, smoothing parameters
-                // modestly lower than 1 tend to look similar to an
-                // increase in periodicity.
-                let y_offset = if self.static_params.n_periods == 0 {
-                    0.0
-                } else {
-                    (1.0 - self.smoothing.val()) * offset_index as f64
+                let (spatial_x, y_offset) = match sample {
+                    // Use smoothing parameter as a "cross-correlation" term;
+                    // increased smoothing means a smaller Y-offset between
+                    // samples. Smoothing of zero offsets each sample by a full
+                    // interval, which should produce fairly uncorrelated noise
+                    // for different offsets.
+                    // Always use a Y-offset of 0 in periodicity of 0 to
+                    // preserve the expected behavior.
+                    //
+                    // Because of the smooth 2D landscape, smoothing parameters
+                    // modestly lower than 1 tend to look similar to an
+                    // increase in periodicity.
+                    Sample::Element(offset_index) => (
+                        spatial_phase,
+                        if self.static_params.n_periods == 0 {
+                            0.0
+                        } else {
+                            (1.0 - self.smoothing.val()) * offset_index as f64
+                        },
+                    ),
+                    // The point's phase places it on a line through the field,
+                    // turned from time's direction by roughness and lengthened
+                    // with it. No periodicity is a line of no length, one value
+                    // everywhere.
+                    Sample::Figure => {
+                        let rough = 1.0 - self.smoothing.val();
+                        let angle = rough * std::f64::consts::FRAC_PI_2;
+                        let length = self.static_params.n_periods as f64
+                            * (1.0 + FIGURE_NOISE_ROUGHENING * rough);
+                        let along = spatial_phase_offset.val() * length;
+                        (along * angle.cos(), along * angle.sin())
+                    }
                 };
+                let x_offset = self.ticks as f64 + spatial_x + temporal_phase;
 
                 let val = self.simplex_gen.get([x_offset, y_offset]);
 
@@ -768,6 +821,84 @@ mod test {
             "a constant ignores the phase it is asked at, however many periods it is given"
         );
         assert!(prepare(Waveform::Spectrum, 1, 1.0).varies_in_space());
+    }
+
+    /// Noise on a figure is sampled along a line that smoothing turns and
+    /// lengthens. At full smoothing it is the noise a run's first element
+    /// reads, travelling round the figure; with no periodicity it is one value
+    /// everywhere; and set rough it varies far more along the figure without
+    /// ever stepping from one point to the next.
+    #[test]
+    fn noise_on_a_figure_roughens_as_smoothing_falls() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let noise = |n_periods: u16, smoothing: f64| {
+            let mut animation = Animation::default();
+            for sc in [
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::NPeriods(n_periods),
+                StateChange::Size(UnipolarFloat::ONE),
+                StateChange::Smoothing(UnipolarFloat::new(smoothing)),
+                StateChange::Speed(BipolarFloat::new(0.3)),
+            ] {
+                animation.control(ControlMessage::Set(sc), &mut Noop);
+            }
+            animation.settle_controls();
+            animation.update_state(std::time::Duration::from_secs(1), &AudioState::default());
+            animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            )
+        };
+        let phases: Vec<Phase> = (0..1000)
+            .map(|i| Phase::new(f64::from(i) / 1000.0))
+            .collect();
+
+        let smooth = noise(2, 1.0);
+        for &phase in &phases {
+            assert_eq!(
+                smooth.value_on_figure(phase),
+                smooth.value(phase, 0),
+                "at full smoothing a figure read other noise than a run does at {phase:?}"
+            );
+        }
+
+        let flat = noise(0, 0.0);
+        let first = flat.value_on_figure(phases[0]);
+        assert!(
+            phases
+                .iter()
+                .all(|&phase| flat.value_on_figure(phase) == first),
+            "noise with no periodicity varied across a figure"
+        );
+
+        // How far the value travels across the figure, and its largest step
+        // between neighbouring points.
+        let walk = |animation: &PreparedAnimation| -> (f64, f64) {
+            let values: Vec<f64> = phases
+                .iter()
+                .map(|&p| animation.value_on_figure(p))
+                .collect();
+            values
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .fold((0.0, 0.0), |(total, largest), step| {
+                    (total + step, f64::max(largest, step))
+                })
+        };
+        let (calm, _) = walk(&smooth);
+        let (rough, largest) = walk(&noise(2, 0.0));
+        assert!(
+            rough > 2.0 * calm,
+            "rough noise travelled {rough} across the figure against {calm} smooth"
+        );
+        assert!(
+            largest < 0.1,
+            "rough noise stepped by {largest} between neighbouring points"
+        );
     }
 
     /// Pulsed, the spectrum reads its band levels as they are; unpulsed, it
