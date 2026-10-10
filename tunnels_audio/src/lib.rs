@@ -24,8 +24,8 @@ pub mod time;
 use anyhow::{Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::info;
-use std::sync::Weak;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tunnels_lib::number::UnipolarFloat;
 use tunnels_lib::prompt::{prompt_bool, prompt_indexed_value};
@@ -44,15 +44,20 @@ use self::time::HalfLife;
 /// Device name used when no audio device is connected.
 pub const OFFLINE_DEVICE_NAME: &str = "Offline";
 
-/// The live output of one open audio input, for display: its envelope
-/// streams, one per role in [`Role::ALL`] order, the rate they update at,
-/// and its input meter.
+/// The envelope streams of one open audio input, one per role in
+/// [`Role::ALL`] order, and the rate they update at.
 pub struct EnvelopeStreams {
     pub streams: [EnvelopeStream; NUM_ROLES],
     pub update_rate: UpdateRate,
+}
+
+/// The reading ends of one open audio input.
+pub struct InputReaders {
+    /// The input's frames of analysis.
+    pub frames: FrameReader,
     /// The input's trim and clip indicator, which upgrade only while the
     /// input is open.
-    pub input_meter: Weak<InputMeter>,
+    pub meter: Weak<InputMeter>,
 }
 
 /// A flat, read-only view of the audio input's current parameter state.
@@ -89,10 +94,10 @@ impl Default for AudioSnapshot {
 pub struct AudioInput {
     _input: Option<ReconnectingInput>,
     processor_settings: ProcessorSettings,
-    /// The reading end of the open device's frame buffer.
-    frames: Option<FrameReader>,
-    /// The frame buffer of each successful open, newest last.
-    new_frames: Option<Receiver<FrameReader>>,
+    /// The reading ends of the open device.
+    readers: Option<InputReaders>,
+    /// The reading ends of each successful open, newest last.
+    new_readers: Option<Receiver<InputReaders>>,
     /// The envelope last given to the monitor.
     monitored: UnipolarFloat,
     /// Should we send monitor updates?
@@ -118,8 +123,8 @@ impl AudioInput {
         Self {
             _input: None,
             processor_settings: ProcessorSettings::default(),
-            frames: None,
-            new_frames: None,
+            readers: None,
+            new_readers: None,
             monitored: UnipolarFloat::ZERO,
             monitor: false,
             monitor_update_age: Duration::ZERO,
@@ -127,10 +132,10 @@ impl AudioInput {
         }
     }
 
-    /// An input with no device, reading its frames from `frames`.
-    pub fn from_frames(frames: FrameReader) -> Self {
+    /// An input with no device, reading from `readers`.
+    pub fn from_readers(readers: InputReaders) -> Self {
         Self {
-            frames: Some(frames),
+            readers: Some(readers),
             ..Self::offline()
         }
     }
@@ -147,19 +152,19 @@ impl AudioInput {
         info!("Using audio input device {device_name}.");
 
         let processor_settings = ProcessorSettings::default();
-        let (frame_tx, frame_rx) = channel();
+        let (readers_tx, readers_rx) = channel();
         let input = ReconnectingInput::new(
             device_name.clone(),
             processor_settings.clone(),
             envelope_tx,
-            frame_tx,
+            readers_tx,
         )?;
 
         Ok(Self {
             _input: Some(input),
             processor_settings,
-            frames: None,
-            new_frames: Some(frame_rx),
+            readers: None,
+            new_readers: Some(readers_rx),
             monitored: UnipolarFloat::ZERO,
             monitor: false,
             monitor_update_age: Duration::ZERO,
@@ -183,15 +188,26 @@ impl AudioInput {
     /// The latest frame of analysis from the device, or an all-zero frame if
     /// none has been opened.
     pub fn frame(&mut self) -> AudioFrame {
-        if let Some(new_frames) = &self.new_frames {
-            while let Ok(reader) = new_frames.try_recv() {
-                self.frames = Some(reader);
+        self.receive_new_readers();
+        self.readers
+            .as_mut()
+            .map(|r| r.frames.latest())
+            .unwrap_or_default()
+    }
+
+    /// The meter of the device's live stream, or `None` while there is none.
+    pub fn input_meter(&mut self) -> Option<Arc<InputMeter>> {
+        self.receive_new_readers();
+        self.readers.as_ref().and_then(|r| r.meter.upgrade())
+    }
+
+    /// Switch to the reading ends of the newest successful open, if any.
+    fn receive_new_readers(&mut self) {
+        if let Some(new_readers) = &self.new_readers {
+            while let Ok(readers) = new_readers.try_recv() {
+                self.readers = Some(readers);
             }
         }
-        self.frames
-            .as_mut()
-            .map(FrameReader::latest)
-            .unwrap_or_default()
     }
 
     /// Update the state of audio control, with `monitored` the envelope the

@@ -11,11 +11,11 @@ use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::Duration;
 
-use crate::EnvelopeStreams;
-use crate::frame_buffer::{FrameReader, frame_buffer};
+use crate::frame_buffer::frame_buffer;
 use crate::processor::{
     EnvelopeRingBuffers, Processor, ProcessorSettings, UpdateRate, envelope_ring_buffers,
 };
+use crate::{EnvelopeStreams, InputReaders};
 
 pub struct ReconnectingInput {
     stop: Option<StopReconnect>,
@@ -29,14 +29,14 @@ impl ReconnectingInput {
     /// succeeds or fails.
     ///
     /// Every successful open — initial and each reconnect — sends a fresh
-    /// `EnvelopeStreams` bundle on `envelope_tx` and the reading end of a
-    /// fresh frame buffer on `frame_tx`. If a receiver is gone the send
+    /// `EnvelopeStreams` bundle on `envelope_tx` and the stream's
+    /// `InputReaders` on `readers_tx`. If a receiver is gone the send
     /// errors silently and the reconnect loop continues.
     pub fn new(
         device_name: String,
         processor_settings: ProcessorSettings,
         envelope_tx: Sender<crate::EnvelopeStreams>,
-        frame_tx: Sender<FrameReader>,
+        readers_tx: Sender<InputReaders>,
     ) -> Result<Self> {
         let (result_tx, result_rx) = channel::<Result<()>>();
         let stop = reconnect(
@@ -45,7 +45,7 @@ impl ReconnectingInput {
             result_tx,
             &result_rx,
             envelope_tx,
-            frame_tx,
+            readers_tx,
         )?;
         Ok(Self { stop: Some(stop) })
     }
@@ -77,7 +77,7 @@ fn reconnect(
     result_tx: Sender<Result<()>>,
     result_rx: &std::sync::mpsc::Receiver<Result<()>>,
     envelope_tx: Sender<crate::EnvelopeStreams>,
-    frame_tx: Sender<FrameReader>,
+    readers_tx: Sender<InputReaders>,
 ) -> Result<StopReconnect> {
     use Cmd::*;
 
@@ -109,7 +109,7 @@ fn reconnect(
                         Ok(AudioStream {
                             stream,
                             envelope_streams,
-                            frames,
+                            readers,
                         }) => {
                             if first_open {
                                 info!("Successfully opened audio input {device_name}.");
@@ -118,7 +118,7 @@ fn reconnect(
                             } else {
                                 info!("Successfully reopened audio input {device_name}.");
                             }
-                            let _ = frame_tx.send(frames);
+                            let _ = readers_tx.send(readers);
                             let _ = envelope_tx.send(envelope_streams);
                             _input_stream = Some(stream);
                         }
@@ -182,12 +182,12 @@ fn open_audio_device(name: &str) -> Result<Device> {
     bail!(err_msg);
 }
 
-/// An open input stream, the live output it sends for display, and the
-/// reading end of its frame buffer.
+/// An open input stream, the envelope streams it sends for display, and its
+/// reading ends.
 struct AudioStream {
     stream: Stream,
     envelope_streams: EnvelopeStreams,
-    frames: FrameReader,
+    readers: InputReaders,
 }
 
 fn build_input_stream(
@@ -270,9 +270,11 @@ fn build_input_stream(
         envelope_streams: EnvelopeStreams {
             streams: envelope_streams,
             update_rate,
-            input_meter,
         },
-        frames,
+        readers: InputReaders {
+            frames,
+            meter: input_meter,
+        },
     })
 }
 

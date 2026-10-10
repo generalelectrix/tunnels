@@ -15,7 +15,6 @@ use eframe::egui;
 
 use admin_panel::{AdminPanelState, AdminService};
 use audio_panel::AudioPanelState;
-use gui_common::audio_panel::METER_REFRESH;
 use gui_common::envelope_viewer::EnvelopeViewerState;
 use gui_common::log_status::{self, LogStatusPanel, LogStatusState};
 use gui_common::tracked::TrackedBool;
@@ -67,29 +66,10 @@ impl eframe::App for ConfigApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.close_handler.update("Quit Tunnels?", ctx);
 
-        let audio_state = self.gui_state.audio_state.load();
-        let audio_online = audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME;
-        if audio_online {
-            // Drain new envelope streams from the audio reconnect thread. If
-            // multiple have accumulated, the most recent wins —
-            // `set_envelope_streams` fully resets the viewer.
-            while let Ok(envelope_streams) = self.envelope_streams_rx.try_recv() {
-                self.audio_panel
-                    .set_input_meter(envelope_streams.input_meter.clone());
-                self.envelope_viewer.set_envelope_streams(envelope_streams);
-            }
-            // Keep the input meter live on every tab.
-            ctx.request_repaint_after(METER_REFRESH);
-        }
-
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.active_tab, Tab::Midi, "MIDI");
-                let clip = if audio_online {
-                    self.audio_panel.input_clipping()
-                } else {
-                    None
-                };
+                let clip = self.gui_state.input_clip_lit.load();
                 if audio_panel::audio_tab(ui, "Audio", self.active_tab == Tab::Audio, clip) {
                     self.active_tab = Tab::Audio;
                 }
@@ -177,6 +157,7 @@ impl eframe::App for ConfigApp {
                     }
                 }
                 Tab::Audio => {
+                    let audio_state = self.gui_state.audio_state.load();
                     audio_panel::render_audio_panel(
                         ui,
                         GuiContext {
@@ -186,9 +167,17 @@ impl eframe::App for ConfigApp {
                         &mut self.audio_panel,
                         &audio_state,
                         **self.gui_state.active_role.load(),
+                        self.gui_state.input_trim_db.load(),
                     );
 
-                    if audio_online {
+                    if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {
+                        // Drain new envelope streams from the audio reconnect
+                        // thread. If multiple have accumulated, the most recent
+                        // wins — `set_envelope_streams` fully resets the viewer.
+                        while let Ok(envelope_streams) = self.envelope_streams_rx.try_recv() {
+                            self.envelope_viewer.set_envelope_streams(envelope_streams);
+                        }
+
                         ui.add_space(8.0);
                         ui.separator();
 

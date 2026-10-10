@@ -8,11 +8,11 @@
 //! Three roles, two boundaries:
 //! - Producer (`CaptureLogger`) → drain thread: a bounded `std::sync::mpsc`
 //!   channel; `try_send` drops the record when full rather than blocking.
-//! - Drain thread → consumer: a `NotifiedAtomic<AlertCounts>` whose `store`
+//! - Drain thread → consumer: a `NotifiedAtomic<AlertTally>` whose `store`
 //!   fires the `RepaintSignal` with no per-update heap allocation.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 use chrono::{DateTime, Local};
 use eframe::egui::{self, RichText};
 use log::{Level, LevelFilter};
-use tunnels_lib::notified::{AtomicValue, NotifiedAtomic};
+use tunnels_lib::notified::{AtomicBits, NotifiedAtomic};
 use tunnels_lib::repaint::RepaintSignal;
 
 use crate::STATUS_COLORS;
@@ -42,44 +42,25 @@ pub struct AlertTally {
     pub warns: u32,
 }
 
-/// Atomic cell holding an `AlertTally` packed as `(errors << 32) | warns` in a
-/// single `AtomicU64`. The packing is private; callers see only `AlertTally`.
-///
-/// Packing both counts in one `u64` means a single atomic load returns errors
+/// Packed as `(errors << 32) | warns`, so a single atomic load returns errors
 /// and warns as a matched, tear-free pair.
-pub struct AlertCounts(AtomicU64);
-
-impl AtomicValue for AlertCounts {
-    type Value = AlertTally;
-
-    fn new(value: AlertTally) -> Self {
-        AlertCounts(AtomicU64::new(pack_tally(value)))
+impl AtomicBits for AlertTally {
+    fn to_bits(self) -> u64 {
+        ((self.errors as u64) << 32) | (self.warns as u64)
     }
 
-    fn load(&self) -> AlertTally {
-        unpack_tally(self.0.load(Ordering::Relaxed))
-    }
-
-    fn store(&self, value: AlertTally) {
-        self.0.store(pack_tally(value), Ordering::Relaxed);
-    }
-}
-
-fn pack_tally(tally: AlertTally) -> u64 {
-    ((tally.errors as u64) << 32) | (tally.warns as u64)
-}
-
-fn unpack_tally(bits: u64) -> AlertTally {
-    AlertTally {
-        errors: (bits >> 32) as u32,
-        warns: bits as u32,
+    fn from_bits(bits: u64) -> Self {
+        AlertTally {
+            errors: (bits >> 32) as u32,
+            warns: bits as u32,
+        }
     }
 }
 
 /// Shared alert surface: monotonic per-severity counts written by the drain
 /// thread. A store fires the `RepaintSignal`; reads do not.
 pub struct LogAlert {
-    counts: NotifiedAtomic<AlertCounts>,
+    counts: NotifiedAtomic<AlertTally>,
 }
 
 impl LogAlert {
@@ -625,8 +606,8 @@ mod tests {
     }
 
     #[test]
-    fn alert_counts_round_trips_alert_tally_across_u32_boundary() {
-        let cell: NotifiedAtomic<AlertCounts> =
+    fn alert_tally_round_trips_across_u32_boundary() {
+        let cell: NotifiedAtomic<AlertTally> =
             NotifiedAtomic::new(AlertTally::default(), noop_repaint());
 
         let cases = [

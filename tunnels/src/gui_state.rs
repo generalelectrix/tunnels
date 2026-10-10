@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
 use tunnels_audio::{AudioSnapshot, Role};
-use tunnels_lib::notified::{Notified, NotifiedAtomicBool};
+use tunnels_lib::notified::{Notified, NotifiedAtomic};
 use tunnels_lib::repaint::RepaintSignal;
 
 use crate::animation_visualizer::AnimationSnapshot;
@@ -20,16 +20,21 @@ bitflags::bitflags! {
     }
 }
 
-/// Shared state readable by the GUI. Writes that should wake an idle GUI use
-/// `Notified`; high-frequency streaming fields use raw `ArcSwap` because the
-/// consumer is already repainting continuously.
+/// Shared state readable by the GUI. A store to a `Notified` field wakes the
+/// GUI; `animation_state` is a raw `ArcSwap`, whose stores do not.
 pub struct GuiState {
     pub midi_slots: Notified<Vec<SlotStatus>>,
     pub audio_state: Notified<AudioSnapshot>,
     /// The role the show follows.
     pub active_role: Notified<Role>,
-    pub clock_service_running: NotifiedAtomicBool,
-    pub touchosc_server_running: NotifiedAtomicBool,
+    /// Whether the live audio input's clip indicator is lit, or `None` with no
+    /// live input.
+    pub input_clip_lit: NotifiedAtomic<Option<bool>>,
+    /// The live audio input's trim in dB, to the nearest
+    /// `TRIM_DISPLAY_STEP_DB`, or `None` with no live input.
+    pub input_trim_db: NotifiedAtomic<Option<f32>>,
+    pub clock_service_running: NotifiedAtomic<bool>,
+    pub touchosc_server_running: NotifiedAtomic<bool>,
     pub animation_state: ArcSwap<AnimationSnapshot>,
 }
 
@@ -41,8 +46,10 @@ impl GuiState {
             midi_slots: Notified::new(Vec::new(), repaint.clone()),
             audio_state: Notified::new(AudioSnapshot::default(), repaint.clone()),
             active_role: Notified::new(Role::default(), repaint.clone()),
-            clock_service_running: NotifiedAtomicBool::new(false, repaint.clone()),
-            touchosc_server_running: NotifiedAtomicBool::new(false, repaint),
+            input_clip_lit: NotifiedAtomic::new(None, repaint.clone()),
+            input_trim_db: NotifiedAtomic::new(None, repaint.clone()),
+            clock_service_running: NotifiedAtomic::new(false, repaint.clone()),
+            touchosc_server_running: NotifiedAtomic::new(false, repaint),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),
         }
     }

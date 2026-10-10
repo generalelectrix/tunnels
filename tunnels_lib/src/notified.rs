@@ -1,11 +1,12 @@
 //! Shared-state containers that wake the GUI on write.
 //!
-//! Wraps `ArcSwap<T>` / `AtomicBool` in a type whose `store` fires a
+//! Wraps `ArcSwap<T>` / `AtomicU64` in a type whose `store` fires a
 //! `RepaintSignal` atomically with the write. Writers cannot forget to wake
 //! the GUI because the signal is baked into the container.
 
+use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use arc_swap::{ArcSwap, Guard};
 
@@ -34,76 +35,98 @@ impl<T> Notified<T> {
     }
 }
 
-/// An atomic cell whose value loads and stores as a named `Value` type.
-/// Ordering is `Relaxed` internally and intentionally not exposed: each value is
-/// a self-contained payload, so no stronger ordering is load-bearing.
-pub trait AtomicValue {
-    type Value: Copy;
-    fn new(value: Self::Value) -> Self;
-    fn load(&self) -> Self::Value;
-    fn store(&self, value: Self::Value);
+/// A value that round-trips losslessly through a `u64`.
+pub trait AtomicBits: Copy {
+    fn to_bits(self) -> u64;
+    fn from_bits(bits: u64) -> Self;
 }
 
-impl AtomicValue for AtomicBool {
-    type Value = bool;
-    fn new(value: bool) -> Self {
-        AtomicBool::new(value)
+/// An [`AtomicBits`] value whose bits occupy only the low 32 bits of the
+/// `u64`.
+pub trait AtomicBits32: AtomicBits {}
+
+impl AtomicBits for bool {
+    fn to_bits(self) -> u64 {
+        self as u64
     }
-    fn load(&self) -> bool {
-        AtomicBool::load(self, Ordering::Relaxed)
+    fn from_bits(bits: u64) -> Self {
+        bits & 1 != 0
     }
-    fn store(&self, value: bool) {
-        AtomicBool::store(self, value, Ordering::Relaxed)
+}
+impl AtomicBits32 for bool {}
+
+impl AtomicBits for u32 {
+    fn to_bits(self) -> u64 {
+        self as u64
+    }
+    fn from_bits(bits: u64) -> Self {
+        bits as u32
+    }
+}
+impl AtomicBits32 for u32 {}
+
+impl AtomicBits for f32 {
+    fn to_bits(self) -> u64 {
+        f32::to_bits(self) as u64
+    }
+    fn from_bits(bits: u64) -> Self {
+        f32::from_bits(bits as u32)
+    }
+}
+impl AtomicBits32 for f32 {}
+
+/// Bit 32 flags `Some`, with the value in the low 32 bits; `None` is zero.
+impl<T: AtomicBits32> AtomicBits for Option<T> {
+    fn to_bits(self) -> u64 {
+        const SOME: u64 = 1 << 32;
+        self.map_or(0, |v| SOME | v.to_bits())
+    }
+    fn from_bits(bits: u64) -> Self {
+        ((bits >> 32) & 1 != 0).then(|| T::from_bits(bits & u64::from(u32::MAX)))
     }
 }
 
-/// Atomic sibling of `Notified<T>`: a store atomically writes the value and fires
-/// the `RepaintSignal`, with no heap allocation per update.
-pub struct NotifiedAtomic<A: AtomicValue> {
-    value: A,
+/// An atomic cell holding a `T`, whose stores fire the `RepaintSignal`, with
+/// no heap allocation per update. Ordering is `Relaxed`: each value is a
+/// self-contained payload.
+pub struct NotifiedAtomic<T: AtomicBits> {
+    bits: AtomicU64,
     repaint: RepaintSignal,
+    _value: PhantomData<T>,
 }
 
-impl<A: AtomicValue> NotifiedAtomic<A> {
-    pub fn new(initial: A::Value, repaint: RepaintSignal) -> Self {
+impl<T: AtomicBits> NotifiedAtomic<T> {
+    pub fn new(initial: T, repaint: RepaintSignal) -> Self {
         Self {
-            value: A::new(initial),
+            bits: AtomicU64::new(initial.to_bits()),
             repaint,
+            _value: PhantomData,
         }
     }
-    pub fn load(&self) -> A::Value {
-        self.value.load()
+
+    pub fn load(&self) -> T {
+        T::from_bits(self.bits.load(Ordering::Relaxed))
     }
-    pub fn store(&self, value: A::Value) {
-        self.value.store(value);
+
+    pub fn store(&self, value: T) {
+        self.bits.store(value.to_bits(), Ordering::Relaxed);
         (self.repaint)();
     }
-}
 
-/// A `NotifiedAtomic` over a `bool`.
-pub type NotifiedAtomicBool = NotifiedAtomic<AtomicBool>;
+    /// Store `value` if its bits differ from the current value's, firing the
+    /// `RepaintSignal`; otherwise neither store nor fire.
+    pub fn store_if_changed(&self, value: T) {
+        if self.bits.load(Ordering::Relaxed) != value.to_bits() {
+            self.store(value);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, AtomicUsize};
+    use std::sync::atomic::AtomicUsize;
     use std::thread;
-
-    // A non-bool `AtomicValue` impl proves the generic works over more than
-    // `AtomicBool`. It lives in the test module rather than the library because
-    // the real `AtomicU64` impl will be provided by a different crate.
-    impl AtomicValue for AtomicU64 {
-        type Value = u64;
-        fn new(value: u64) -> Self {
-            AtomicU64::new(value)
-        }
-        fn load(&self) -> u64 {
-            AtomicU64::load(self, Ordering::Relaxed)
-        }
-        fn store(&self, value: u64) {
-            AtomicU64::store(self, value, Ordering::Relaxed)
-        }
-    }
 
     fn counting_repaint() -> (RepaintSignal, Arc<AtomicUsize>) {
         let count = Arc::new(AtomicUsize::new(0));
@@ -151,33 +174,56 @@ mod tests {
     }
 
     #[test]
-    fn notified_atomic_bool_store_fires_repaint() {
-        let (signal, count) = counting_repaint();
-        let nab = NotifiedAtomicBool::new(false, signal);
-
-        assert!(!nab.load());
-        assert_eq!(count.load(Ordering::Relaxed), 0);
-
-        nab.store(true);
-        assert!(nab.load());
-        assert_eq!(count.load(Ordering::Relaxed), 1);
-
-        // Storing the same value still fires.
-        nab.store(true);
-        assert_eq!(count.load(Ordering::Relaxed), 2);
+    fn atomic_bits_round_trip() {
+        fn round_trip<T: AtomicBits>(value: T) -> T {
+            T::from_bits(value.to_bits())
+        }
+        for v in [false, true] {
+            assert_eq!(round_trip(v), v);
+        }
+        for v in [0u32, 1, u32::MAX] {
+            assert_eq!(round_trip(v), v);
+        }
+        for v in [0.0f32, -0.0, 3.5, f32::MAX, f32::NEG_INFINITY] {
+            assert_eq!(round_trip(v).to_bits(), v.to_bits());
+        }
+        for v in [None, Some(false), Some(true)] {
+            assert_eq!(round_trip(v), v);
+        }
+        for v in [None, Some(0u32), Some(u32::MAX)] {
+            assert_eq!(round_trip(v), v);
+        }
+        for v in [None, Some(0.0f32), Some(-0.0), Some(-10.0)] {
+            assert_eq!(round_trip(v).map(f32::to_bits), v.map(f32::to_bits));
+        }
+        assert!(round_trip(Some(f32::NAN)).is_some_and(f32::is_nan));
+        assert_ne!(None::<bool>.to_bits(), Some(false).to_bits());
+        assert_ne!(None::<f32>.to_bits(), Some(0.0f32).to_bits());
     }
 
     #[test]
-    fn notified_atomic_generic_over_non_bool() {
+    fn notified_atomic_fires_on_every_store_and_on_changed_bits_only() {
         let (signal, count) = counting_repaint();
-        let cell: NotifiedAtomic<AtomicU64> = NotifiedAtomic::new(7, signal);
+        let cell = NotifiedAtomic::new(None::<f32>, signal);
+        assert_eq!(cell.load(), None);
 
-        assert_eq!(cell.load(), 7);
-        assert_eq!(count.load(Ordering::Relaxed), 0);
+        cell.store(Some(1.0));
+        assert_eq!(cell.load(), Some(1.0));
+        cell.store(Some(1.0));
+        assert_eq!(count.load(Ordering::Relaxed), 2, "store always fires");
 
-        cell.store(42);
-        assert_eq!(cell.load(), 42);
-        assert_eq!(count.load(Ordering::Relaxed), 1);
+        cell.store_if_changed(Some(1.0));
+        assert_eq!(count.load(Ordering::Relaxed), 2, "unchanged bits");
+        cell.store_if_changed(Some(0.0));
+        assert_eq!(cell.load(), Some(0.0));
+        assert_eq!(count.load(Ordering::Relaxed), 3, "changed bits");
+        cell.store_if_changed(None);
+        assert_eq!(cell.load(), None);
+        assert_eq!(count.load(Ordering::Relaxed), 4, "Some(0.0) to None");
+        cell.store_if_changed(Some(f32::NAN));
+        cell.store_if_changed(Some(f32::NAN));
+        assert!(cell.load().is_some_and(f32::is_nan));
+        assert_eq!(count.load(Ordering::Relaxed), 5, "NaN stored twice");
     }
 
     #[test]
