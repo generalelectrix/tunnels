@@ -69,7 +69,7 @@ impl eframe::App for ConfigApp {
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.active_tab, Tab::Midi, "MIDI");
-                let clip = **self.gui_state.input_clip_lit.load();
+                let clip = self.gui_state.input_clip_lit.load();
                 if audio_panel::audio_tab(ui, "Audio", self.active_tab == Tab::Audio, clip) {
                     self.active_tab = Tab::Audio;
                 }
@@ -167,7 +167,7 @@ impl eframe::App for ConfigApp {
                         &mut self.audio_panel,
                         &audio_state,
                         **self.gui_state.active_role.load(),
-                        **self.gui_state.input_trim_db.load(),
+                        self.gui_state.input_trim_db.load(),
                     );
 
                     if audio_state.device_name != tunnels::audio::OFFLINE_DEVICE_NAME {

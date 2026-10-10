@@ -593,11 +593,7 @@ mod test {
             show.update_state(Duration::from_millis(4));
             let fired = repaints.load(Ordering::Relaxed) - before;
             let gui = &show.gui_state;
-            (
-                **gui.input_clip_lit.load(),
-                **gui.input_trim_db.load(),
-                fired,
-            )
+            (gui.input_clip_lit.load(), gui.input_trim_db.load(), fired)
         };
 
         assert_eq!(
@@ -629,8 +625,8 @@ mod test {
         drop(meter);
         let before = repaints.load(Ordering::Relaxed);
         show.update_state(Duration::from_millis(4));
-        assert_eq!(**show.gui_state.input_clip_lit.load(), None);
-        assert_eq!(**show.gui_state.input_trim_db.load(), None);
+        assert_eq!(show.gui_state.input_clip_lit.load(), None);
+        assert_eq!(show.gui_state.input_trim_db.load(), None);
         assert_eq!(
             repaints.load(Ordering::Relaxed) - before,
             2,
