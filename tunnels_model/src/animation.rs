@@ -23,8 +23,9 @@ pub enum Waveform {
     Noise,
     /// The audio spectrum's band levels, folded out and back across a period.
     ///
-    /// Always unipolar, and always carried by the clock: pulse and standing do
-    /// not reach it.
+    /// Pulsed, a band reads its level; unpulsed, the level is rescaled to the
+    /// bipolar range, so a silent band reads -1. Always carried by the clock:
+    /// standing does not reach it.
     Spectrum,
     Constant,
 }
@@ -769,11 +770,11 @@ mod test {
         assert!(prepare(Waveform::Spectrum, 1, 1.0).varies_in_space());
     }
 
-    /// The spectrum reads its band levels as they are, whatever pulse and
-    /// standing are set to, with the clock carrying it round. Invert negates
-    /// it, a duty cycle compresses the whole period into the front of its
-    /// window, and with no periodicity every point reads the one place the
-    /// clock is at.
+    /// Pulsed, the spectrum reads its band levels as they are; unpulsed, it
+    /// reads each level `v` as `2v - 1`. Either way the clock carries it round
+    /// whatever standing is set to. Invert negates it, a duty cycle compresses
+    /// the whole period into the front of its window, and with no periodicity
+    /// every point reads the one place the clock is at.
     #[test]
     fn a_spectrum_reads_its_levels_carried_by_the_clock() {
         struct Noop;
@@ -815,29 +816,39 @@ mod test {
             "the clock sat at {clock:?}, too near a cycle's top for standing to show"
         );
 
+        let pulsed = prepare(&[StateChange::Pulse(true)]);
         let points = (0..400).map(|i| Phase::new(i as f64 / 400.0));
+        let (mut lowest, mut highest) = (f64::INFINITY, f64::NEG_INFINITY);
         for x in points.clone() {
+            let level = tables.value(x + clock, smoothing);
+            assert_eq!(pulsed.unit_value(x, 0), level, "pulsed at {x:?}");
             let read = plain.unit_value(x, 0);
-            assert_eq!(read, tables.value(x + clock, smoothing), "at {x:?}");
             assert!(
-                (0.0..=1.0).contains(&read),
-                "{read} at {x:?} is not unipolar"
+                (read - (2.0 * level - 1.0)).abs() < 1e-12,
+                "unpulsed, a level of {level} read {read} at {x:?}"
             );
+            lowest = lowest.min(read);
+            highest = highest.max(read);
         }
+        assert!(
+            lowest < -0.5 && highest > 0.5,
+            "unpulsed, the spectrum only spanned {lowest} to {highest}, too \
+             little of the bipolar range to tell it from a pulse"
+        );
 
-        for (flags, changes) in [
-            ("pulse", vec![StateChange::Pulse(true)]),
-            ("standing", vec![StateChange::Standing(true)]),
+        for (flags, changes, reference) in [
+            ("standing", vec![StateChange::Standing(true)], &plain),
             (
                 "pulse and standing",
                 vec![StateChange::Pulse(true), StateChange::Standing(true)],
+                &pulsed,
             ),
         ] {
             let flagged = prepare(&changes);
             for x in points.clone() {
                 assert_eq!(
                     flagged.unit_value(x, 0),
-                    plain.unit_value(x, 0),
+                    reference.unit_value(x, 0),
                     "{flags} changed the spectrum at {x:?}"
                 );
             }
@@ -859,7 +870,7 @@ mod test {
             let expected = if p >= duty {
                 0.0
             } else {
-                tables.value(p / duty, smoothing)
+                tables.value(p / duty, smoothing).mul_add(2.0, -1.0)
             };
             assert_eq!(
                 compressed.unit_value(x, 0),
@@ -872,7 +883,7 @@ mod test {
         for x in points {
             assert_eq!(
                 still.unit_value(x, 0),
-                tables.value(clock, smoothing),
+                tables.value(clock, smoothing).mul_add(2.0, -1.0),
                 "no periodicity read a different place at {x:?}"
             );
         }

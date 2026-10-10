@@ -205,24 +205,30 @@ fn tri_saw_spatial(args: &WaveformArgsSpatial) -> f64 {
     }
 }
 
-/// The spectrum's level at a point, in [0, 1].
+/// The spectrum at a point: the band level `v` as a pulse, in [0, 1], and
+/// `2v - 1` otherwise, so that a silent band sits at the bottom of the
+/// bipolar range and a full one at the top.
 ///
-/// The spatial and temporal phases always sum, as a travelling wave's do:
-/// the standing flag does not reach the spectrum, and neither does pulse,
-/// since the spectrum is unipolar already. A duty cycle compresses the whole
-/// folded period into the front of the window, as it does a periodic
+/// The spatial and temporal phases always sum, as a travelling wave's do: the
+/// standing flag does not reach the spectrum. A duty cycle compresses the
+/// whole folded period into the front of the window, as it does a periodic
 /// waveform's.
 pub fn spectrum(args: &WaveformArgs, tables: &SpectrumTables) -> f64 {
-    let args = WaveformArgsSpatial {
+    let spatial = WaveformArgsSpatial {
         phase: args.phase_spatial + args.phase_temporal,
         smoothing: args.smoothing,
         duty_cycle: args.duty_cycle,
-        pulse: false,
+        pulse: args.pulse,
     };
-    if args.outside_duty_cycle() {
+    if spatial.outside_duty_cycle() {
         return 0.0;
     }
-    tables.value(args.duty_cycle_scaled_phase(), args.smoothing)
+    let level = tables.value(spatial.duty_cycle_scaled_phase(), spatial.smoothing);
+    if spatial.pulse {
+        level
+    } else {
+        level.mul_add(2.0, -1.0)
+    }
 }
 
 #[cfg(test)]
