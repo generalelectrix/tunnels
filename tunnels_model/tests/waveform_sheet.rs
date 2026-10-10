@@ -19,15 +19,16 @@
 //!
 //! The spectrum sheet draws one period of the fixed band levels in
 //! `SHEET_LEVELS`, out from band 0 at a cell's left edge to band 25 at its
-//! middle and back. The spectrum is unipolar, so it sits in the top half of
-//! each cell, and pulse does not reach it, so the three pulsed columns repeat
-//! the three unpulsed ones. A duty cycle compresses the whole period into the
-//! front of the cell and leaves the rest at zero. At smoothing 0 each band is
-//! a flat step, fifty to a period, with band 0 and band 25 each one step
-//! straddling its turn; down the rows the steps blend into the smooth curve
-//! through the band levels, which is all that is left at smoothing 1 and is
-//! held to the range, so its overshoot either side of the full-scale pair is
-//! cut flat at 1 and at 0.
+//! middle and back. Unpulsed, each level `v` is drawn at `2v - 1`, so the
+//! trace spans the whole cell with an empty band on its bottom edge; pulsed,
+//! it is drawn at `v`, in the top half of the cell above the zero line. A duty
+//! cycle compresses the whole period into the front of the cell and leaves
+//! the rest at zero. At smoothing 0 each band is a flat step, fifty to a
+//! period, with band 0 and band 25 each one step straddling its turn; down the
+//! rows the steps blend into the smooth curve through the band levels, which
+//! is all that is left at smoothing 1 and is held to the range, so its
+//! overshoot either side of the full-scale pair is cut flat at both ends of
+//! it.
 //!
 //! Nothing is labelled and nothing is antialiased: a label needs a font and a
 //! blend needs a rounding, and either one puts differences into a golden that
