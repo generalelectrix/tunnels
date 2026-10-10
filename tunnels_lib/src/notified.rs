@@ -34,6 +34,16 @@ impl<T> Notified<T> {
     }
 }
 
+impl<T: PartialEq> Notified<T> {
+    /// Store `new` if it differs from the current value, firing the
+    /// `RepaintSignal`; otherwise neither store nor fire.
+    pub fn store_if_changed(&self, new: T) {
+        if **self.load() != new {
+            self.store(new);
+        }
+    }
+}
+
 /// An atomic cell whose value loads and stores as a named `Value` type.
 /// Ordering is `Relaxed` internally and intentionally not exposed: each value is
 /// a self-contained payload, so no stronger ordering is load-bearing.
@@ -130,6 +140,12 @@ mod tests {
         // container deduplicates, and "no change" is still a valid wake.
         notified.store(2);
         assert_eq!(count.load(Ordering::Relaxed), 2);
+
+        notified.store_if_changed(2);
+        assert_eq!(count.load(Ordering::Relaxed), 2, "an unchanged value");
+        notified.store_if_changed(3);
+        assert_eq!(**notified.load(), 3);
+        assert_eq!(count.load(Ordering::Relaxed), 3, "a changed value");
     }
 
     #[test]

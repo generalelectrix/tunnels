@@ -249,10 +249,23 @@ impl Show {
             self.audio.envelope(),
             &mut ShowEmitter(&mut self.dispatcher),
         );
+        self.relay_input_meter();
         self.state
             .clocks
             .update_state(delta_t, &self.audio, &mut self.dispatcher);
         self.state.mixer.update_state(delta_t, &self.audio);
+    }
+
+    /// Store what the GUI shows of the audio input's meter, waking the GUI
+    /// only when that changes.
+    fn relay_input_meter(&mut self) {
+        let meter = self.audio_input.input_meter();
+        self.gui_state
+            .input_clip_lit
+            .store_if_changed(meter.as_ref().map(|m| m.clip_lit()));
+        self.gui_state
+            .input_trim_db
+            .store_if_changed(meter.as_ref().map(|m| m.displayed_trim_db()));
     }
 
     /// Push the full show state to all connected MIDI devices.
@@ -468,11 +481,13 @@ pub struct ShowState {
 
 #[cfg(test)]
 mod test {
-    use std::sync::{Arc, mpsc::channel};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Weak, mpsc::channel};
 
     use tunnels_model::layer::{Layer, SegmentLayer, ShapeGeometry};
 
     use super::*;
+    use crate::audio::{InputMeter, InputReaders};
     use crate::control::{CommandClient, ControlEvent, MetaCommand, ReceivedEvent};
     use crate::mixer::VideoChannel;
     use crate::test_mode::stress;
@@ -513,8 +528,11 @@ mod test {
         let (send, recv) = channel();
         let (envelope_tx, _envelope_rx) = channel();
         let mut show = Show::new(send, recv, test_gui_state(), envelope_tx, 1)?;
-        let (mut producer, reader) = audio::frame_buffer::frame_buffer();
-        show.audio_input = AudioInput::from_frames(reader);
+        let (mut producer, frames) = audio::frame_buffer::frame_buffer();
+        show.audio_input = AudioInput::from_readers(InputReaders {
+            frames,
+            meter: Weak::new(),
+        });
         let frame = AudioFrame::new(
             std::array::from_fn(|r| UnipolarF32::new(0.1 + 0.2 * r as f32)),
             std::array::from_fn(|b| UnipolarF32::new(b as f32 / 26.0)),
@@ -545,6 +563,79 @@ mod test {
         let clock_bytes = postcard::to_allocvec(&show.clock_data())?;
         let clocks: SharedClockData = postcard::from_bytes(&clock_bytes)?;
         assert_eq!(clocks.audio, expected, "clock stream");
+        Ok(())
+    }
+
+    /// A show tick stores what the GUI shows of the input meter, firing the
+    /// repaint signal only when that changes.
+    #[test]
+    fn the_input_meter_wakes_the_gui_only_on_change() -> Result<()> {
+        let repaints = Arc::new(AtomicUsize::new(0));
+        let repaints_for_signal = repaints.clone();
+        let gui_state = Arc::new(crate::gui_state::GuiState::new(Arc::new(move || {
+            repaints_for_signal.fetch_add(1, Ordering::Relaxed);
+        })));
+        let (send, recv) = channel();
+        let (envelope_tx, _envelope_rx) = channel();
+        let mut show = Show::new(send, recv, gui_state, envelope_tx, 1)?;
+        let (_producer, frames) = audio::frame_buffer::frame_buffer();
+        let meter = Arc::new(InputMeter::default());
+        show.audio_input = AudioInput::from_readers(InputReaders {
+            frames,
+            meter: Arc::downgrade(&meter),
+        });
+
+        let mut tick_with = |meter_reading: Option<(f32, bool)>| {
+            if let Some((trim_db, clip_lit)) = meter_reading {
+                meter.set(trim_db, clip_lit);
+            }
+            let before = repaints.load(Ordering::Relaxed);
+            show.update_state(Duration::from_millis(4));
+            let fired = repaints.load(Ordering::Relaxed) - before;
+            let gui = &show.gui_state;
+            (
+                **gui.input_clip_lit.load(),
+                **gui.input_trim_db.load(),
+                fired,
+            )
+        };
+
+        assert_eq!(
+            tick_with(Some((0.1, false))),
+            (Some(false), Some(0.0), 2),
+            "a meter appearing"
+        );
+        assert_eq!(
+            tick_with(Some((0.2, false))),
+            (Some(false), Some(0.0), 0),
+            "a sub-step trim change and an unchanged lit flag"
+        );
+        assert_eq!(
+            tick_with(Some((0.2, true))),
+            (Some(true), Some(0.0), 1),
+            "the clip indicator lighting"
+        );
+        assert_eq!(
+            tick_with(Some((0.3, true))),
+            (Some(true), Some(0.5), 1),
+            "the trim crossing a display step"
+        );
+        assert_eq!(
+            tick_with(None),
+            (Some(true), Some(0.5), 0),
+            "an unchanged meter"
+        );
+
+        drop(meter);
+        let before = repaints.load(Ordering::Relaxed);
+        show.update_state(Duration::from_millis(4));
+        assert_eq!(**show.gui_state.input_clip_lit.load(), None);
+        assert_eq!(**show.gui_state.input_trim_db.load(), None);
+        assert_eq!(
+            repaints.load(Ordering::Relaxed) - before,
+            2,
+            "a dropped meter clears both fields"
+        );
         Ok(())
     }
 
