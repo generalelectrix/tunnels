@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use midi_harness::SlotStatus;
-use tunnels_audio::AudioSnapshot;
+use tunnels_audio::{AudioSnapshot, Role};
 use tunnels_lib::notified::{Notified, NotifiedAtomicBool};
 use tunnels_lib::repaint::RepaintSignal;
 
@@ -26,6 +26,8 @@ bitflags::bitflags! {
 pub struct GuiState {
     pub midi_slots: Notified<Vec<SlotStatus>>,
     pub audio_state: Notified<AudioSnapshot>,
+    /// The role the show follows.
+    pub active_role: Notified<Role>,
     pub clock_service_running: NotifiedAtomicBool,
     pub touchosc_server_running: NotifiedAtomicBool,
     pub animation_state: ArcSwap<AnimationSnapshot>,
@@ -38,6 +40,7 @@ impl GuiState {
         Self {
             midi_slots: Notified::new(Vec::new(), repaint.clone()),
             audio_state: Notified::new(AudioSnapshot::default(), repaint.clone()),
+            active_role: Notified::new(Role::default(), repaint.clone()),
             clock_service_running: NotifiedAtomicBool::new(false, repaint.clone()),
             touchosc_server_running: NotifiedAtomicBool::new(false, repaint),
             animation_state: ArcSwap::from_pointee(AnimationSnapshot::default()),

@@ -162,7 +162,7 @@ mod tests {
             clocks: frame.clocks.clone(),
             palette: &frame.palette,
             positions: &frame.positions,
-            audio_envelope: frame.audio_envelope,
+            audio: &frame.audio,
         }
     }
 

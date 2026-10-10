@@ -3,5 +3,6 @@
 #![allow(dead_code)]
 
 pub mod clip;
+pub mod golden;
 pub mod offline;
 pub mod signals;

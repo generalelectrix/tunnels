@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use std::time::Duration;
 use strum::VariantArray;
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::{BipolarFloat, Phase, UnipolarFloat};
 use tunnels_lib::smooth::Smoothed;
 
@@ -79,10 +80,10 @@ impl TargetedAnimation {
     pub fn prepare(
         &self,
         external_clocks: &impl ClockStore,
-        audio_envelope: UnipolarFloat,
+        audio: &AudioState,
     ) -> TargetedAnimation<PreparedAnimation> {
         TargetedAnimation {
-            animation: self.animation.prepare(external_clocks, audio_envelope),
+            animation: self.animation.prepare(external_clocks, audio),
             target: self.target,
         }
     }
@@ -173,7 +174,7 @@ impl Animation {
         self.internal_clock.rate_coarse = speed.val() * ControllableClock::RATE_SCALE;
     }
 
-    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+    pub fn update_state(&mut self, delta_t: Duration, audio: &AudioState) {
         // The controls are reached whatever the amplitude: an animation held at
         // no size is one being set up, and the controls turned while it is have
         // to arrive. Its clock is a different matter — an animation that is not
@@ -183,7 +184,7 @@ impl Animation {
         self.duty_cycle.update_state(delta_t);
         self.smoothing.update_state(delta_t);
         if self.active() {
-            self.internal_clock.update_state(delta_t, audio_envelope);
+            self.internal_clock.update_state(delta_t, audio);
         }
     }
 
@@ -205,7 +206,7 @@ impl Animation {
     pub fn prepare(
         &self,
         external_clocks: &impl ClockStore,
-        audio_envelope: UnipolarFloat,
+        audio: &AudioState,
     ) -> PreparedAnimation {
         PreparedAnimation {
             static_params: self.static_params,
@@ -213,7 +214,7 @@ impl Animation {
             duty_cycle: self.duty_cycle.smoothed(),
             smoothing: self.smoothing.smoothed(),
             ticks: self.ticks(external_clocks),
-            scale: self.scale_value(external_clocks, audio_envelope, 1.0),
+            scale: self.scale_value(external_clocks, audio, 1.0),
             simplex_gen: self.simplex_gen,
             active: self.active(),
         }
@@ -224,7 +225,7 @@ impl Animation {
     fn scale_value(
         &self,
         external_clocks: &impl ClockStore,
-        audio_envelope: UnipolarFloat,
+        audio: &AudioState,
         mut v: f64,
     ) -> f64 {
         v *= self.size.smoothed().val();
@@ -243,7 +244,7 @@ impl Animation {
         }
         // scale this animation by audio envelope if set
         if use_audio_size {
-            v *= audio_envelope.val();
+            v *= audio.envelope().val();
         }
 
         v
@@ -616,9 +617,9 @@ mod test {
             );
 
             // Longer than the control takes to be reached.
-            animation.update_state(Duration::from_millis(500), UnipolarFloat::ZERO);
+            animation.update_state(Duration::from_millis(500), &AudioState::default());
 
-            let reached = animation.prepare(&clocks, UnipolarFloat::ZERO).smoothing;
+            let reached = animation.prepare(&clocks, &AudioState::default()).smoothing;
             assert_eq!(
                 reached,
                 animation.smoothing(),
@@ -674,7 +675,7 @@ mod test {
         } in controls
         {
             let mut animation = Animation::default();
-            let prepared = |a: &Animation| rendered(&a.prepare(&clocks, UnipolarFloat::ZERO));
+            let prepared = |a: &Animation| rendered(&a.prepare(&clocks, &AudioState::default()));
             let before = prepared(&animation);
             animation.control(ControlMessage::Set(control()), &mut Recorder::default());
             assert_eq!(before, prepared(&animation), "{:?} jumped", control());
@@ -688,7 +689,7 @@ mod test {
                 talkback.0
             );
 
-            animation.update_state(Duration::from_millis(16), UnipolarFloat::ZERO);
+            animation.update_state(Duration::from_millis(16), &AudioState::default());
             let gliding = prepared(&animation);
             assert!(
                 gliding != before && gliding != target,
@@ -696,7 +697,7 @@ mod test {
                 control()
             );
 
-            animation.update_state(Duration::from_secs(1), UnipolarFloat::ZERO);
+            animation.update_state(Duration::from_secs(1), &AudioState::default());
             assert_eq!(target, prepared(&animation), "{:?} did not land", control());
         }
     }
@@ -725,7 +726,7 @@ mod test {
                 &mut Noop,
             );
             animation.settle_controls();
-            animation.prepare(&ClockBank::default(), UnipolarFloat::ZERO)
+            animation.prepare(&ClockBank::default(), &AudioState::default())
         };
 
         assert!(prepare(Waveform::SineSquare, 1, 1.0).varies_in_space());

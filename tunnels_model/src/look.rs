@@ -5,6 +5,7 @@ use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::time::Duration;
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::UnipolarFloat;
 
 /// A look is a beam that is essentially the contents of an entire mixer.
@@ -19,9 +20,9 @@ impl Look {
         Self { channels }
     }
 
-    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+    pub fn update_state(&mut self, delta_t: Duration, audio: &AudioState) {
         for channel in &mut self.channels {
-            channel.update_state(delta_t, audio_envelope);
+            channel.update_state(delta_t, audio);
         }
     }
 

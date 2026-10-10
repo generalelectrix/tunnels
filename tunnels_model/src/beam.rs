@@ -3,6 +3,7 @@ use crate::render_context::RenderContext;
 use crate::{look::Look, tunnel::Tunnel};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::UnipolarFloat;
 
 /// Union type for all of the kinds of beams we can have.
@@ -17,10 +18,10 @@ pub enum Beam {
 }
 
 impl Beam {
-    pub fn update_state(&mut self, delta_t: Duration, audio_envelope: UnipolarFloat) {
+    pub fn update_state(&mut self, delta_t: Duration, audio: &AudioState) {
         match self {
-            Self::Tunnel(t) => t.update_state(delta_t, audio_envelope),
-            Self::Look(l) => l.update_state(delta_t, audio_envelope),
+            Self::Tunnel(t) => t.update_state(delta_t, audio),
+            Self::Look(l) => l.update_state(delta_t, audio),
         }
     }
 

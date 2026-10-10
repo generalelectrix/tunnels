@@ -37,8 +37,8 @@ fn run_loops(clip: &clip::Clip, loops: usize) -> Vec<LoopSummary> {
         FRAMES_PER_BUFFER,
         ProcessorSettings::default(),
         &signal,
-        |_, processor, outputs| {
-            bass.push(outputs[Role::Bass.index()]);
+        |_, processor, frame| {
+            bass.push(frame.role(Role::Bass).val() as f32);
             if bass.len() == buffers_per_loop {
                 let meter = processor.input_meter().upgrade();
                 let meter = meter.expect("a live processor's meter upgrades");

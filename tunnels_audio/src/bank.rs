@@ -21,7 +21,7 @@
 //! band's own shape by under a dB.
 
 /// Number of bands, in ascending frequency order.
-pub const NUM_BANDS: usize = 26;
+pub const NUM_BANDS: usize = tunnels_lib::audio::SPECTRUM_BANDS;
 
 /// Resonators in cascade per band. More stages steepen a band's skirts at the
 /// same bandwidth, at the cost of a little more delay.
@@ -72,8 +72,6 @@ pub struct ResonatorBank {
     previous_sample: f32,
     state_re: [[f32; LANES]; ORDER],
     state_im: [[f32; LANES]; ORDER],
-    /// Largest squared magnitude per band since the peaks were last taken.
-    peak_sq: [f32; LANES],
 }
 
 impl ResonatorBank {
@@ -87,7 +85,6 @@ impl ResonatorBank {
             previous_sample: 0.0,
             state_re: [[0.0; LANES]; ORDER],
             state_im: [[0.0; LANES]; ORDER],
-            peak_sq: [0.0; LANES],
         };
         // The cascade's bandwidth narrows with each stage, so each stage is
         // made wider by the factor that brings the cascade back to the band's.
@@ -140,9 +137,6 @@ impl ResonatorBank {
                 in_im[l] = im;
             }
         }
-        for l in 0..LANES {
-            self.peak_sq[l] = self.peak_sq[l].max(in_re[l] * in_re[l] + in_im[l] * in_im[l]);
-        }
     }
 
     /// A band's envelope at the latest sample.
@@ -154,18 +148,23 @@ impl ResonatorBank {
         );
         2.0 * (re * re + im * im).sqrt()
     }
-
-    /// Each band's peak envelope since the last call, and start the next.
-    pub fn take_peaks(&mut self) -> [f32; NUM_BANDS] {
-        let peaks = std::array::from_fn(|band| 2.0 * self.peak_sq[band].sqrt());
-        self.peak_sq = [0.0; LANES];
-        peaks
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each band's largest envelope while `samples` more samples are pushed.
+    fn peaks(bank: &mut ResonatorBank, samples: impl Iterator<Item = f32>) -> [f32; NUM_BANDS] {
+        let mut peaks = [0.0_f32; NUM_BANDS];
+        for sample in samples {
+            bank.push(sample);
+            for (band, peak) in peaks.iter_mut().enumerate() {
+                *peak = peak.max(bank.magnitude(band));
+            }
+        }
+        peaks
+    }
 
     /// A steady tone at a band's centre reads as its amplitude there, and
     /// much less in bands well clear of it: an octave for the quarter-octave
@@ -178,15 +177,12 @@ mod tests {
         for band in [0, 1, 6, 14, 22] {
             let mut bank = ResonatorBank::new(sample_rate);
             let f = centre(band);
-            for i in 0..(sample_rate as usize / 2) {
-                bank.push((std::f32::consts::TAU * f * i as f32 / sample_rate).sin());
+            let tone = |n: usize| (std::f32::consts::TAU * f * n as f32 / sample_rate).sin();
+            let settle = sample_rate as usize / 2;
+            for n in 0..settle {
+                bank.push(tone(n));
             }
-            bank.take_peaks();
-            for i in 0..4800 {
-                let n = sample_rate as usize / 2 + i;
-                bank.push((std::f32::consts::TAU * f * n as f32 / sample_rate).sin());
-            }
-            let peaks = bank.take_peaks();
+            let peaks = peaks(&mut bank, (settle..settle + 4800).map(tone));
             assert!(
                 (peaks[band] - 1.0).abs() < 0.05,
                 "band {band}: {}",
@@ -203,13 +199,12 @@ mod tests {
         // Measured while the tone is still sounding: stopping it would be a
         // step, which really does reach the treble.
         let mut bank = ResonatorBank::new(sample_rate);
-        let mut leak = [0.0; NUM_BANDS];
-        for i in 0..(sample_rate as usize) {
-            bank.push(0.8 * (std::f32::consts::TAU * 55.0 * i as f32 / sample_rate).sin());
-            if i % 64 == 63 {
-                leak = bank.take_peaks();
-            }
+        let tone = |n: usize| 0.8 * (std::f32::consts::TAU * 55.0 * n as f32 / sample_rate).sin();
+        let settle = sample_rate as usize - 64;
+        for n in 0..settle {
+            bank.push(tone(n));
         }
+        let leak = peaks(&mut bank, (settle..settle + 64).map(tone));
         for (band, level) in leak.iter().enumerate().skip(16) {
             let db = 20.0 * level.log10();
             assert!(

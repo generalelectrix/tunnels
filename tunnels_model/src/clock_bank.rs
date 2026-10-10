@@ -9,6 +9,7 @@ use arrayvec::ArrayVec;
 use log::error;
 use serde::de::{Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
+use tunnels_lib::audio::AudioState;
 use tunnels_lib::number::{Phase, UnipolarFloat};
 
 /// Read-only interface to the state of a collection of clocks.
@@ -98,13 +99,13 @@ impl ClockBank {
     pub fn update_state<E: EmitStateChange>(
         &mut self,
         delta_t: Duration,
-        audio_envelope: UnipolarFloat,
+        audio: &AudioState,
         emitter: &mut E,
     ) {
         for (i, clock) in self.0.iter_mut().enumerate() {
             clock.update_state(
                 delta_t,
-                audio_envelope,
+                audio,
                 &mut ChannelEmitter {
                     channel: ClockIdx(i),
                     emitter,

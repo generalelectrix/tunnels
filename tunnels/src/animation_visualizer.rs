@@ -50,7 +50,7 @@ impl VisualizerPanelState {
         // plots.
         let anim = state
             .animation
-            .prepare(&state.clocks.clock_bank, state.clocks.audio_envelope);
+            .prepare(&state.clocks.clock_bank, &state.clocks.audio);
 
         // Unit waveform (amplitude always 1).
         self.preview.clear();
@@ -114,6 +114,7 @@ impl VisualizerPanelState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tunnels_lib::audio::AudioState;
 
     #[test]
     fn compute_default_state() {
@@ -255,7 +256,7 @@ mod tests {
                 animation.control(ControlMessage::Set(sc), &mut Silent);
             }
             // The smoothing control is reached over time rather than set.
-            animation.update_state(std::time::Duration::from_secs(1), UnipolarFloat::ZERO);
+            animation.update_state(std::time::Duration::from_secs(1), &AudioState::default());
             let mut panel = VisualizerPanelState::default();
             panel.compute(&AnimationSnapshot {
                 animation,

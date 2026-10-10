@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use tunnels_lib::number::UnipolarFloat;
+use tunnels_lib::audio::AudioState;
 
 use crate::clock_bank::StaticClockBank;
 use crate::mixer::Mixer;
@@ -23,7 +23,7 @@ pub struct ShowFrame {
     pub clocks: StaticClockBank,
     pub palette: ColorPalette,
     pub positions: PositionBank,
-    pub audio_envelope: UnipolarFloat,
+    pub audio: AudioState,
 }
 
 /// One frame of show state, held by reference.
@@ -40,7 +40,7 @@ pub struct ShowFrameRef<'a> {
     pub clocks: StaticClockBank,
     pub palette: &'a ColorPalette,
     pub positions: &'a PositionBank,
-    pub audio_envelope: UnipolarFloat,
+    pub audio: &'a AudioState,
 }
 
 /// The scratch a show frame is serialized in.
@@ -74,7 +74,7 @@ impl ShowFrame {
             clocks: &self.clocks,
             palette: &self.palette,
             positions: &self.positions,
-            audio_envelope: self.audio_envelope,
+            audio: &self.audio,
         }
     }
 
@@ -119,8 +119,9 @@ impl Error for FrameCodecError {
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixture {
     use arrayvec::ArrayVec;
+    use tunnels_lib::audio::{AudioFrame, Role, SPECTRUM_BANDS, UnipolarF32};
     use tunnels_lib::color::Hsv;
-    use tunnels_lib::number::Phase;
+    use tunnels_lib::number::{Phase, UnipolarFloat};
 
     use crate::beam::Beam;
     use crate::clock::StaticClock;
@@ -189,13 +190,13 @@ pub mod fixture {
         for channel in mixer.channels() {
             channel.level = UnipolarFloat::ONE;
         }
-        mixer.update_state(ADVANCE, UnipolarFloat::ZERO);
+        mixer.update_state(ADVANCE, &AudioState::default());
         ShowFrame {
             mixer,
             clocks: StaticClockBank::default(),
             palette: ColorPalette::default(),
             positions: PositionBank::default(),
-            audio_envelope: UnipolarFloat::ZERO,
+            audio: AudioState::default(),
         }
     }
 
@@ -226,14 +227,14 @@ pub mod fixture {
                 stress_tunnel(tunnel, i, n_channels);
             }
         }
-        mixer.update_state(ADVANCE, audio_envelope());
+        mixer.update_state(ADVANCE, &audio());
 
         ShowFrame {
             mixer,
             clocks: clocks(),
             palette: palette(),
             positions: positions(),
-            audio_envelope: audio_envelope(),
+            audio: audio(),
         }
     }
 
@@ -278,14 +279,14 @@ pub mod fixture {
                 );
             }
         }
-        mixer.update_state(ADVANCE, audio_envelope());
+        mixer.update_state(ADVANCE, &audio());
 
         ShowFrame {
             mixer,
             clocks: clocks(),
             palette: palette(),
             positions: positions(),
-            audio_envelope: audio_envelope(),
+            audio: audio(),
         }
     }
 
@@ -303,20 +304,33 @@ pub mod fixture {
         let mut mixer = stress_mixer(2);
         *mixer.beam(ChannelIdx(2)) = Beam::Look(middle.clone());
         *mixer.beam(ChannelIdx(6)) = Beam::Look(middle);
-        mixer.update_state(ADVANCE, audio_envelope());
+        mixer.update_state(ADVANCE, &audio());
 
         ShowFrame {
             mixer,
             clocks: clocks(),
             palette: palette(),
             positions: positions(),
-            audio_envelope: audio_envelope(),
+            audio: audio(),
         }
     }
 
-    /// The audio level the fixtures that read the envelope are scaled by.
-    fn audio_envelope() -> UnipolarFloat {
-        UnipolarFloat::new(0.7)
+    /// The audio the fixtures read: the followed envelope at 0.7, the other
+    /// roles apart from it, and a spectrum rising across the bands.
+    fn audio() -> AudioState {
+        let active_role = Role::Bass;
+        let roles = std::array::from_fn(|r| {
+            UnipolarF32::new(if r == active_role.index() {
+                0.7
+            } else {
+                0.1 * r as f32
+            })
+        });
+        let spectrum = std::array::from_fn(|b| UnipolarF32::new(b as f32 / SPECTRUM_BANDS as f32));
+        AudioState {
+            frame: AudioFrame::new(roles, spectrum),
+            active_role,
+        }
     }
 
     /// Configure one tunnel of a stressed channel, spread by its position in
@@ -420,6 +434,8 @@ mod tests {
     use crate::tunnel::Tunnel;
     use std::collections::BTreeSet;
     use std::fmt;
+    use tunnels_lib::audio::{AudioFrame, NUM_ROLES, Role, UnipolarF32};
+    use tunnels_lib::number::UnipolarFloat;
 
     /// The wire bytes of a frame, written by an encoder the caller holds.
     fn encoded(encoder: &mut FrameEncoder, frame: &ShowFrame) -> Vec<u8> {
@@ -432,7 +448,10 @@ mod tests {
             clocks: StaticClockBank::default(),
             palette: ColorPalette::default(),
             positions: PositionBank::default(),
-            audio_envelope: UnipolarFloat::new(0.5),
+            audio: AudioState {
+                frame: AudioFrame::new([UnipolarF32::new(0.5); NUM_ROLES], Default::default()),
+                active_role: Role::Mid,
+            },
         }
     }
 
@@ -701,7 +720,7 @@ mod tests {
             clocks: frame.clocks.clone(),
             palette: &frame.palette,
             positions: &frame.positions,
-            audio_envelope: frame.audio_envelope,
+            audio: &frame.audio,
         }
     }
 
@@ -729,7 +748,7 @@ mod tests {
     fn round_trip_preserves_the_frame() {
         let mut encoder = FrameEncoder::default();
         let decoded = ShowFrame::decode(&encoded(&mut encoder, &frame())).unwrap();
-        assert_eq!(decoded.audio_envelope, UnipolarFloat::new(0.5));
+        assert_eq!(decoded.audio, frame().audio);
         assert_eq!(decoded.mixer.channel_count(), 8);
     }
 

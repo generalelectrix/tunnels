@@ -185,6 +185,7 @@ impl eframe::App for ConfigApp {
                         },
                         &mut self.audio_panel,
                         &audio_state,
+                        **self.gui_state.active_role.load(),
                     );
 
                     if audio_online {

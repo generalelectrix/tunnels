@@ -2,9 +2,8 @@ use eframe::egui::{self, Color32};
 use std::sync::Weak;
 use std::time::Duration;
 pub use tunnels_audio::AudioSnapshot;
-use tunnels_audio::roles::Role;
 use tunnels_audio::time::HalfLife;
-use tunnels_audio::{InputMeter, OFFLINE_DEVICE_NAME};
+use tunnels_audio::{InputMeter, OFFLINE_DEVICE_NAME, Role};
 
 use crate::STATUS_COLORS;
 
@@ -74,6 +73,8 @@ pub struct AudioPanel<'a, C: AudioCommands> {
     pub commands: &'a mut C,
     pub state: &'a mut AudioPanelState,
     pub snapshot: &'a AudioSnapshot,
+    /// The role the show follows.
+    pub active_role: Role,
 }
 
 impl<C: AudioCommands> AudioPanel<'_, C> {
@@ -143,7 +144,7 @@ impl<C: AudioCommands> AudioPanel<'_, C> {
         egui::Grid::new("input_controls_grid").show(ui, |ui| {
             // The envelope the show follows.
             ui.label("Follow:");
-            if let Some(role) = follow_selector(ui, self.snapshot.active_role) {
+            if let Some(role) = follow_selector(ui, self.active_role) {
                 self.commands.set_active_role(role);
             }
             ui.end_row();
@@ -348,6 +349,7 @@ mod tests {
                 commands: &mut commands,
                 state: &mut state,
                 snapshot: &snapshot,
+                active_role: Role::default(),
             }
             .ui(ui);
         });
@@ -377,6 +379,7 @@ mod tests {
                 commands: &mut commands,
                 state: &mut state,
                 snapshot: &snapshot,
+                active_role: Role::default(),
             }
             .ui(ui);
         });
@@ -413,6 +416,7 @@ mod tests {
                 commands: &mut commands,
                 state: &mut *state,
                 snapshot: &snapshot,
+                active_role: Role::default(),
             }
             .ui(ui);
         });

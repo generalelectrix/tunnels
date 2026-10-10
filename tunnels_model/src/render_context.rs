@@ -3,7 +3,7 @@
 use crate::clock_bank::StaticClockBank;
 use crate::palette::ColorPalette;
 use crate::position_bank::PositionBank;
-use tunnels_lib::number::UnipolarFloat;
+use tunnels_lib::audio::AudioState;
 
 /// The state a beam resolves its parameters against for one frame.
 ///
@@ -14,5 +14,5 @@ pub struct RenderContext<'a> {
     pub clocks: &'a StaticClockBank,
     pub palette: &'a ColorPalette,
     pub positions: &'a PositionBank,
-    pub audio_envelope: UnipolarFloat,
+    pub audio: &'a AudioState,
 }

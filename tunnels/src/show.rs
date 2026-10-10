@@ -2,7 +2,7 @@ use crate::{
     animation,
     animation_target::AnimationTarget,
     animation_visualizer::AnimationSnapshot,
-    audio::{self, AudioInput, ShowEmitter},
+    audio::{self, AudioInput, AudioState, Role, ShowEmitter},
     beam::Beam,
     clock_bank::{self, ClockBank},
     clock_server::{self, ClockPublisher, SharedClockData},
@@ -49,6 +49,8 @@ pub struct Show {
     envelope_streams_tx: Sender<EnvelopeStreams>,
     /// Whether the GUI has the animation visualizer visible.
     visualizer_active: bool,
+    /// The latest audio frame and the role the show follows.
+    audio: AudioState,
 }
 
 impl Show {
@@ -93,6 +95,7 @@ impl Show {
             gui_state,
             envelope_streams_tx,
             visualizer_active: false,
+            audio: AudioState::default(),
         };
         Ok(show)
     }
@@ -185,13 +188,7 @@ impl Show {
                 self.update_state(time_since_update);
                 last_update = now;
 
-                frame_publisher.send(&ShowFrameRef {
-                    mixer: &self.state.mixer,
-                    clocks: self.state.clocks.as_static(),
-                    palette: &self.state.color_palette,
-                    positions: &self.state.positions,
-                    audio_envelope: self.audio_input.envelope(),
-                });
+                frame_publisher.send(&self.show_frame());
                 self.send_clock_data();
                 self.snapshot_animation_state();
             }
@@ -214,26 +211,48 @@ impl Show {
         }
     }
 
+    /// The frame of show state a render reads.
+    fn show_frame(&self) -> ShowFrameRef<'_> {
+        ShowFrameRef {
+            mixer: &self.state.mixer,
+            clocks: self.state.clocks.as_static(),
+            palette: &self.state.color_palette,
+            positions: &self.state.positions,
+            audio: &self.audio,
+        }
+    }
+
+    /// The clocks and the audio state.
+    fn clock_data(&self) -> SharedClockData {
+        SharedClockData {
+            clock_bank: self.state.clocks.as_static(),
+            audio: self.audio,
+        }
+    }
+
     fn send_clock_data(&mut self) {
-        if let Some(ref mut publisher) = self.clock_publisher {
-            let data = SharedClockData {
-                clock_bank: self.state.clocks.as_static(),
-                audio_envelope: self.audio_input.envelope(),
-            };
-            if let Err(e) = publisher.send(&data) {
-                error!("Failed to send clock data: {e}");
-            }
+        if self.clock_publisher.is_none() {
+            return;
+        }
+        let data = self.clock_data();
+        if let Some(ref mut publisher) = self.clock_publisher
+            && let Err(e) = publisher.send(&data)
+        {
+            error!("Failed to send clock data: {e}");
         }
     }
 
     fn update_state(&mut self, delta_t: Duration) {
-        self.audio_input
-            .update_state(delta_t, &mut ShowEmitter(&mut self.dispatcher));
-        let audio_envelope = self.audio_input.envelope();
+        self.audio.frame = self.audio_input.frame();
+        self.audio_input.update_state(
+            delta_t,
+            self.audio.envelope(),
+            &mut ShowEmitter(&mut self.dispatcher),
+        );
         self.state
             .clocks
-            .update_state(delta_t, audio_envelope, &mut self.dispatcher);
-        self.state.mixer.update_state(delta_t, audio_envelope);
+            .update_state(delta_t, &self.audio, &mut self.dispatcher);
+        self.state.mixer.update_state(delta_t, &self.audio);
     }
 
     /// Push the full show state to all connected MIDI devices.
@@ -251,6 +270,7 @@ impl Show {
         self.gui_state
             .audio_state
             .store(self.audio_input.snapshot());
+        self.gui_state.active_role.store(self.audio.active_role);
     }
 
     fn snapshot_animation_state(&mut self) {
@@ -267,10 +287,7 @@ impl Show {
             .animation_state
             .store(std::sync::Arc::new(AnimationSnapshot {
                 animation,
-                clocks: SharedClockData {
-                    clock_bank: self.state.clocks.as_static(),
-                    audio_envelope: self.audio_input.envelope(),
-                },
+                clocks: self.clock_data(),
                 fixture_count,
                 // A tunnel is drawn as a dense run, so its points would only
                 // retrace the line they lie on.
@@ -338,8 +355,15 @@ impl Show {
                 GuiDirty::AUDIO
             }
             AudioControl(msg) => {
+                if matches!(msg, audio::ControlMessage::ResetParameters) {
+                    self.set_active_role(Role::default());
+                }
                 self.audio_input
                     .control(msg, &mut ShowEmitter(&mut self.dispatcher));
+                GuiDirty::AUDIO
+            }
+            SetActiveRole(role) => {
+                self.set_active_role(role);
                 GuiDirty::AUDIO
             }
             StartClockService => {
@@ -377,6 +401,11 @@ impl Show {
                 GuiDirty::CLEAN
             }
         })
+    }
+
+    /// Make `role` the one the show follows.
+    fn set_active_role(&mut self, role: Role) {
+        self.audio.active_role = role;
     }
 
     fn snapshot_gui_state(&self, dirty: GuiDirty) {
@@ -441,7 +470,6 @@ pub struct ShowState {
 mod test {
     use std::sync::{Arc, mpsc::channel};
 
-    use tunnels_lib::number::UnipolarFloat;
     use tunnels_model::layer::{Layer, SegmentLayer, ShapeGeometry};
 
     use super::*;
@@ -449,7 +477,9 @@ mod test {
     use crate::mixer::VideoChannel;
     use crate::test_mode::stress;
     use insta::assert_yaml_snapshot;
+    use tunnels_lib::audio::{AudioFrame, UnipolarF32};
     use tunnels_model::render_context::RenderContext;
+    use tunnels_model::show_frame::{FrameEncoder, ShowFrame};
 
     /// Test show rendering against static test expectations.
     /// The purpose of this test is to catch accidental regressions in the
@@ -474,6 +504,44 @@ mod test {
         Ok(())
     }
 
+    /// The frame the audio input publishes is the one the show follows, and
+    /// the one a client decodes from a show frame or the clock stream, with
+    /// the role the show was told to follow.
+    #[test]
+    fn a_published_audio_frame_reaches_every_reader() -> Result<()> {
+        let (send, recv) = channel();
+        let (envelope_tx, _envelope_rx) = channel();
+        let mut show = Show::new(send, recv, test_gui_state(), envelope_tx, 1)?;
+        let (mut producer, reader) = audio::frame_buffer::frame_buffer();
+        show.audio_input = AudioInput::from_frames(reader);
+        let frame = AudioFrame::new(
+            std::array::from_fn(|r| UnipolarF32::new(0.1 + 0.2 * r as f32)),
+            std::array::from_fn(|b| UnipolarF32::new(b as f32 / 26.0)),
+        );
+        producer.publish(frame);
+        let dirty = show.handle_meta_command(MetaCommand::SetActiveRole(Role::Hats))?;
+        show.snapshot_gui_state(dirty);
+        show.update_state(Duration::from_millis(4));
+
+        let expected = AudioState {
+            frame,
+            active_role: Role::Hats,
+        };
+        assert_eq!(show.audio, expected);
+        assert_eq!(show.audio.envelope(), frame.role(Role::Hats));
+        assert_eq!(**show.gui_state.active_role.load(), Role::Hats);
+
+        let mut encoder = FrameEncoder::default();
+        let decoded = ShowFrame::decode(encoder.encode(&show.show_frame())?)?;
+        assert_eq!(decoded.audio, expected, "show frame");
+        assert_eq!(*decoded.render_context().audio, expected, "render context");
+
+        let clock_bytes = postcard::to_allocvec(&show.clock_data())?;
+        let clocks: SharedClockData = postcard::from_bytes(&clock_bytes)?;
+        assert_eq!(clocks.audio, expected, "clock stream");
+        Ok(())
+    }
+
     /// Render the state of the show with some assertions on structure.
     ///
     /// Returns the segment layers, which is everything the test mode draws:
@@ -485,7 +553,7 @@ mod test {
             clocks: &clocks,
             palette: &show.state.color_palette,
             positions: &show.state.positions,
-            audio_envelope: UnipolarFloat::ZERO,
+            audio: &AudioState::default(),
         };
 
         // Channel 0 should contain data, but none of the others.
