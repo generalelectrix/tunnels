@@ -97,14 +97,13 @@ impl VertexBuffers {
     /// figure while a warp moves it rather than sliding across it.
     pub fn vertex_pass(&mut self, mesh: &RefinedMesh, work: VertexWork) {
         let needs = Needs::of(&work);
-        let anchor = Displacement::anchor(&work);
         self.positions.clear();
         self.uvs.clear();
 
         for (i, v) in mesh.points().enumerate() {
             let polar = Polar::of(v, needs.angle, needs.radius);
             let along = polar.phase(v, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
+            let displacement = Displacement::of(&work, polar, along, i);
 
             let (x, y) = if needs.rotates {
                 // The figure's own points, moved in polar terms because a
@@ -148,7 +147,6 @@ impl VertexBuffers {
     /// a figure and gone at another.
     pub fn stroke_vertex_pass(&mut self, mesh: &StrokeMesh, work: VertexWork) {
         let needs = Needs::of(&work);
-        let anchor = Displacement::anchor(&work);
         self.positions.clear();
         self.uvs.clear();
 
@@ -156,7 +154,7 @@ impl VertexBuffers {
             let on_path = run.point;
             let polar = Polar::of(on_path, needs.angle, needs.radius);
             let along = polar.phase(on_path, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
+            let displacement = Displacement::of(&work, polar, along, i);
             let reach = work.taper_at(along, i);
             let (sin, cos) = if needs.rotates {
                 displacement.turn.sin_cos()
@@ -201,6 +199,9 @@ pub struct VertexWork<'a> {
     /// The width an outline is drawn at where nothing tapers it, as a fraction
     /// of the width it was stroked at.
     pub stroke_width: f32,
+    /// Takes a position offset, in the units a position knob is in and along
+    /// the screen's axes, to the same offset in the figure's own coordinates.
+    pub to_figure: [[f32; 2]; 2],
 }
 
 impl VertexWork<'_> {
@@ -276,6 +277,9 @@ impl Displacement {
             offset_x: 0.0,
             offset_y: 0.0,
         };
+        // A position, in the units a position knob is in along the screen's
+        // axes, carried into the figure's coordinates once every warp is in.
+        let (mut across, mut up) = (0.0, 0.0);
         for warp in work.warps {
             let value = warp.animation.value(Phase::new(f64::from(along)), index) as f32;
             // Where a target means something different on a figure than on a
@@ -285,8 +289,8 @@ impl Displacement {
             // the radius it pinches one into rings. `Spin` turns a segment about
             // its own centroid; a point has no orientation to turn, so the
             // same intent arrives as a shear growing with radius. A position
-            // moves a whole run of segments at once; here each point moves on
-            // its own, and the figure bends between them.
+            // moves each segment of a run by the value at its own place; here
+            // each point moves by its own, and the figure bends between them.
             match warp.target {
                 // Multiplicative, so the deformation is proportional.
                 AnimationTarget::Size => out.radial *= 1.0 + value,
@@ -295,11 +299,12 @@ impl Displacement {
                     out.scale_x *= 1.0 + value;
                     out.scale_y *= 1.0 - value;
                 }
-                // Additive, in the figure's own units, so a unit of it is a
-                // unit of the figure — the same amount of travel whatever the
-                // figure has been scaled to.
-                AnimationTarget::PositionX => out.offset_x += value,
-                AnimationTarget::PositionY => out.offset_y += value,
+                // Additive, in the units a position knob is in and along the
+                // screen's axes, so a point moves as far and the same way a
+                // segment at the same value would, however the figure is
+                // stretched or turned.
+                AnimationTarget::PositionX => across += value,
+                AnimationTarget::PositionY => up += value,
                 // The rest never arrive. A colour target is answered once per
                 // ramp texel; thickness is answered per vertex too, but on the
                 // outline alone, where it scales the ribbon's reach rather
@@ -314,34 +319,13 @@ impl Displacement {
                 | AnimationTarget::MarqueeRotation => {}
             }
         }
+        let [[xx, xy], [yx, yy]] = work.to_figure;
+        out.offset_x = xx * across + xy * up;
+        out.offset_y = yx * across + yy * up;
         // A negative radius would turn the figure inside out through the
         // origin rather than collapsing it.
         out.radial = out.radial.max(0.0);
         out
-    }
-
-    /// The displacement where a figure has no coordinate: at the start of the
-    /// cycle, and at the centre.
-    ///
-    /// A figure's placement is answered there, so this is the offset it already
-    /// carries.
-    fn anchor(work: &VertexWork) -> Self {
-        Self::of(work, Polar::default(), 0.0, 0)
-    }
-
-    /// This displacement with the offset the placement already carries taken
-    /// out, leaving only what deviates from it.
-    ///
-    /// A placement is in the units a position knob is in and a point is in the
-    /// figure's own, so the two cannot be added together and the whole value
-    /// cannot be spent twice. Measuring the points from the placement's own
-    /// reading leaves a figure that varies nowhere exactly where it was put.
-    fn beyond(self, anchor: Self) -> Self {
-        Self {
-            offset_x: self.offset_x - anchor.offset_x,
-            offset_y: self.offset_y - anchor.offset_y,
-            ..self
-        }
     }
 
     /// Where a point lands once this displacement has been applied to it.
@@ -603,6 +587,7 @@ mod test {
                 warps: &warps,
                 taper: &[],
                 stroke_width: 1.0,
+                to_figure: [[1.0, 0.0], [0.0, 1.0]],
             },
         );
 
@@ -651,6 +636,7 @@ mod test {
                 warps: &warps,
                 taper: &[],
                 stroke_width: 1.0,
+                to_figure: [[1.0, 0.0], [0.0, 1.0]],
             })
         };
 
@@ -713,19 +699,19 @@ mod test {
         }
     }
 
-    /// A position warp displaces a point by how far the animation departs from
-    /// the value the placement already took, and by nothing else.
+    /// A position warp moves a point by the animation's own value there,
+    /// carried into the figure's coordinates, and by nothing else.
     ///
-    /// The placement is answered where a figure has no coordinate — at the
-    /// start of the cycle — so that is where the deviation is measured from.
-    /// A point read there is left exactly where an unwarped one would be,
-    /// which is what keeps a figure placed where it was put.
+    /// The value is in the units a position knob is in, along the screen's
+    /// axes; how that comes out in the figure's own coordinates is the work's
+    /// to say, and here it is lopsided enough that a mixed-up axis shows.
     #[test]
-    fn a_position_warp_displaces_a_point_by_what_it_deviates() {
+    fn a_position_warp_moves_a_point_by_its_own_value() {
         let warps = [
             varying_warp(AnimationTarget::PositionX),
             varying_warp(AnimationTarget::PositionY),
         ];
+        let to_figure = [[2.0, 0.5], [-0.25, 3.0]];
         let work = VertexWork {
             field: PhaseField {
                 phase: PhaseAxis::Linear,
@@ -736,27 +722,22 @@ mod test {
             warps: &warps,
             taper: &[],
             stroke_width: 1.0,
+            to_figure,
         };
-        let anchor = Displacement::anchor(&work);
-        let at = |along| Displacement::of(&work, Polar::default(), along, 0).beyond(anchor);
-
-        let start = at(0.0);
-        assert_eq!(
-            (start.offset_x, start.offset_y),
-            (0.0, 0.0),
-            "the point the placement was answered at moved"
-        );
-
-        // A sawtooth a quarter of the way along is halfway up its rise, which
-        // is a displacement of half a figure-space unit on both axes.
-        let quarter = at(0.25);
-        assert_eq!(quarter.offset_x, 0.5);
-        assert_eq!(quarter.offset_y, 0.5);
-
-        // Nothing else the warps could have touched moved with them.
-        assert_eq!(quarter.radial, 1.0);
-        assert_eq!(quarter.turn, 0.0);
-        assert_eq!((quarter.scale_x, quarter.scale_y), (1.0, 1.0));
+        for along in [0.0, 0.25, 0.6] {
+            let moved = Displacement::of(&work, Polar::default(), along, 0);
+            let value = warps[0].animation.value(Phase::new(f64::from(along)), 0) as f32;
+            let [[xx, xy], [yx, yy]] = to_figure;
+            assert_eq!(
+                (moved.offset_x, moved.offset_y),
+                ((xx + xy) * value, (yx + yy) * value),
+                "a point at phase {along} did not move by the value there"
+            );
+            // Nothing else the warps could have touched moved with them.
+            assert_eq!(moved.radial, 1.0);
+            assert_eq!(moved.turn, 0.0);
+            assert_eq!((moved.scale_x, moved.scale_y), (1.0, 1.0));
+        }
     }
 
     /// The offset lands on the point after everything that scales it, so a

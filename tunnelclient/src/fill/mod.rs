@@ -450,6 +450,7 @@ where
             warps: &fill.warps,
             taper: &fill.taper,
             stroke_width,
+            to_figure: placed.to_figure,
         };
 
         // Nothing varies across the figure and nothing displaces it, so its
@@ -603,6 +604,9 @@ struct Placed {
     /// Pixels one figure-space unit covers, which is what mesh density and
     /// stroke bucketing are both measured against.
     px_per_unit: f64,
+    /// Takes a position offset, in the units a position knob is in and along
+    /// the screen's axes, to the same offset in the figure's own coordinates.
+    to_figure: [[f32; 2]; 2],
 }
 
 impl Placed {
@@ -619,11 +623,34 @@ impl Placed {
             p.extent_x * cfg.critical_size,
             p.extent_y * cfg.critical_size,
         );
+        // A unit of position is a screen's width or height of pixels, and a
+        // pixel is taken back into the figure by undoing its rotation, its
+        // stretch and its own turn. A flip mirrors the offset and the figure
+        // alike, so it cancels. An axis stretched to nothing has nowhere to
+        // carry an offset along it.
+        let inverse = |half: f64| {
+            if half.abs() > f64::EPSILON {
+                1.0 / half
+            } else {
+                0.0
+            }
+        };
+        let (sin_rot, cos_rot) = (-p.rot_angle * TAU).sin_cos();
+        let (sin_turn, cos_turn) = (-fill.figure_angle * TAU).sin_cos();
+        let into_figure = |x: f64, y: f64| -> [f32; 2] {
+            let (x, y) = (cos_rot * x - sin_rot * y, sin_rot * x + cos_rot * y);
+            let (x, y) = (x * inverse(half_x), y * inverse(half_y));
+            let (x, y) = (cos_turn * x - sin_turn * y, sin_turn * x + cos_turn * y);
+            [x as f32, y as f32]
+        };
+        let across = into_figure(f64::from(cfg.x_resolution), 0.0);
+        let up = into_figure(0.0, f64::from(cfg.y_resolution));
         Self {
             m: placed
                 .scale(half_x, half_y)
                 .rot_rad(fill.figure_angle * TAU),
             px_per_unit: half_x.abs().max(half_y.abs()),
+            to_figure: [[across[0], up[0]], [across[1], up[1]]],
         }
     }
 }
@@ -715,6 +742,175 @@ mod test {
             S: Into<[u32; 2]>,
         {
             Ok(())
+        }
+    }
+
+    /// Every vertex a draw hands the backend, in the order it hands them.
+    #[derive(Default)]
+    struct Recorder(Vec<[f32; 2]>);
+
+    impl Graphics for Recorder {
+        type Texture = FakeTexture;
+
+        fn clear_color(&mut self, _: Color) {}
+
+        fn clear_stencil(&mut self, _: u8) {}
+
+        fn tri_list<F>(&mut self, _: &DrawState, _: &[f32; 4], mut f: F)
+        where
+            F: FnMut(&mut dyn FnMut(&[[f32; 2]])),
+        {
+            f(&mut |vertices| self.0.extend_from_slice(vertices));
+        }
+
+        fn tri_list_c<F>(&mut self, _: &DrawState, mut f: F)
+        where
+            F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 4]])),
+        {
+            f(&mut |vertices, _| self.0.extend_from_slice(vertices));
+        }
+
+        fn tri_list_uv<F>(&mut self, _: &DrawState, _: &[f32; 4], _: &FakeTexture, mut f: F)
+        where
+            F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]])),
+        {
+            f(&mut |vertices, _| self.0.extend_from_slice(vertices));
+        }
+
+        fn tri_list_uv_c<F>(&mut self, _: &DrawState, _: &FakeTexture, mut f: F)
+        where
+            F: FnMut(&mut dyn FnMut(&[[f32; 2]], &[[f32; 2]], &[[f32; 4]])),
+        {
+            f(&mut |vertices, _, _| self.0.extend_from_slice(vertices));
+        }
+    }
+
+    /// A position animation that varies across a figure moves each point by
+    /// its own value, along the screen's axes and in the units a position knob
+    /// is in, whatever the figure's size, aspect, rotation and turn.
+    ///
+    /// That is how a run of segments takes the same animation, so a figure and
+    /// a beam at the same settings move alike. The figure here sits still
+    /// beneath the warp, so every vertex's shift is the warp's alone.
+    #[test]
+    fn a_varying_position_animation_moves_each_point_by_its_own_value_on_screen() {
+        use std::time::Duration;
+        use tunnels_lib::audio::AudioState;
+        use tunnels_lib::number::UnipolarFloat;
+        use tunnels_model::animation::{
+            Animation, ControlMessage, EmitStateChange, StateChange, TargetedAnimation, Waveform,
+        };
+        use tunnels_model::animation_target::AnimationTarget;
+        use tunnels_model::clock_bank::ClockBank;
+        use tunnels_model::spectrum::SpectrumTables;
+
+        struct Silent;
+        impl EmitStateChange for Silent {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let mut animation = Animation::default();
+        for sc in [
+            StateChange::Waveform(Waveform::SineSquare),
+            StateChange::NPeriods(1),
+            StateChange::Size(UnipolarFloat::new(0.2)),
+        ] {
+            animation.control(ControlMessage::Set(sc), &mut Silent);
+        }
+        animation.update_state(Duration::from_secs(1), &AudioState::default());
+        let warp = TargetedAnimation {
+            animation: animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            ),
+            target: AnimationTarget::PositionX,
+        };
+
+        let cfg = ClientConfig::new(
+            0,
+            "test".to_string(),
+            (800, 600),
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let draw = |placement: Placement, figure_angle: f64, warped: bool| -> Vec<[f32; 2]> {
+            let mut layer = fill(0.25);
+            layer.color.phase = PhaseAxis::Linear;
+            layer.placement = placement;
+            layer.figure_angle = figure_angle;
+            if warped {
+                layer.warps = vec![warp.clone()];
+            }
+            let mut gl = Recorder::default();
+            Renderer::<FakeTexture>::default().draw(
+                &vec![Layer::Fill(layer)],
+                &Context::new(),
+                &mut gl,
+                &cfg,
+            );
+            gl.0
+        };
+        let shifts = |placement: Placement, figure_angle: f64| -> Vec<[f32; 2]> {
+            let (still, moved) = (
+                draw(placement, figure_angle, false),
+                draw(placement, figure_angle, true),
+            );
+            assert_eq!(still.len(), moved.len(), "the warp changed the mesh drawn");
+            still
+                .iter()
+                .zip(&moved)
+                .map(|(a, b)| [b[0] - a[0], b[1] - a[1]])
+                .collect()
+        };
+
+        // Square, upright and unturned, so each vertex's place on the figure
+        // can be read back from where it was drawn.
+        let upright = Placement {
+            x: 0.,
+            y: 0.,
+            extent_x: 0.5,
+            extent_y: 0.5,
+            rot_angle: 0.,
+        };
+        let half_y = 0.5 * cfg.critical_size;
+        let still = draw(upright, 0., false);
+        let shifted = shifts(upright, 0.);
+        let tolerance = 0.05;
+        let mut moved_something = false;
+        for (vertex, shift) in still.iter().zip(&shifted) {
+            let figure_y = (f64::from(vertex[1]) - cfg.y_center) / half_y;
+            let along = (figure_y + 1.0) / 2.0;
+            let expected = warp.animation.value(Phase::new(along), 0) * f64::from(cfg.x_resolution);
+            assert!(
+                (f64::from(shift[0]) - expected).abs() <= tolerance
+                    && f64::from(shift[1]).abs() <= tolerance,
+                "a vertex at phase {along} moved by {shift:?}, not by ({expected}, 0)"
+            );
+            moved_something |= expected.abs() > 1.0;
+        }
+        assert!(
+            moved_something,
+            "the warp moved nothing, so this measured nothing"
+        );
+
+        // Stretched, rotated and turned, on the same mesh: every vertex moves
+        // across the screen by exactly what it moved upright.
+        let turned = Placement {
+            x: 0.1,
+            y: -0.05,
+            extent_x: 0.3,
+            extent_y: 0.5,
+            rot_angle: 0.125,
+        };
+        for (upright, turned) in shifted.iter().zip(&shifts(turned, 0.2)) {
+            assert!(
+                (upright[0] - turned[0]).abs() <= tolerance as f32
+                    && (upright[1] - turned[1]).abs() <= tolerance as f32,
+                "a vertex moved by {turned:?} on a turned figure but {upright:?} on an upright one"
+            );
         }
     }
 
