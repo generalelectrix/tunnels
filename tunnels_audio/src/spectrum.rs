@@ -1,9 +1,10 @@
 //! The spectrum: every band of the resonator bank as a level from 0 to 1,
 //! whitened so that typical music reads roughly even across the bands.
 //!
-//! Each band's envelope is followed sample by sample, with an instant attack
-//! and a 50 ms release, so a band's level does not depend on where the music
-//! falls against the buffers. At the end of each buffer:
+//! Each band's envelope is followed sample by sample, with an instant attack,
+//! a 32 ms hold at each peak and then a 50 ms release, so a band's level does
+//! not depend on where the music falls against the buffers. At the end of each
+//! buffer:
 //!
 //! 1. each band's level is taken in dB per octave, so bands of different
 //!    widths compare;
@@ -14,14 +15,16 @@
 //!    bright or dark track still reads even. The average holds still while
 //!    every band is below −60 dB per octave;
 //! 4. one motion-clocked ceiling follows the loudest band, and every band
-//!    reads as its place in a 30 dB window under the ceiling.
+//!    reads as its place in a 30 dB window under the ceiling;
+//! 5. each band's reading passes through a one-pole low-pass with a 30 Hz
+//!    corner, [`OUTPUT_CORNER`], stepped once per buffer.
 
 use std::time::Duration;
 
 use tunnels_lib::audio::UnipolarF32;
 
 use crate::bank::{self, NUM_BANDS, ResonatorBank};
-use crate::processor::{MotionCeiling, UpdateRate, halflife_to_coeff};
+use crate::processor::{MotionCeiling, UpdateRate, halflife_to_coeff, secs_to_duration};
 
 /// Each band's median level over a corpus of music, in dB per octave.
 ///
@@ -40,6 +43,41 @@ pub const CORPUS_LEVEL_DB: [f32; NUM_BANDS] = [
 /// count as silent.
 pub const SILENCE_DB: f32 = -60.0;
 
+/// The corner of the low-pass every band's output passes through.
+pub const OUTPUT_CORNER: CornerFrequency = CornerFrequency::from_hz(30.0);
+
+/// The corner frequency of a one-pole low-pass, in Hz.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CornerFrequency(f32);
+
+impl CornerFrequency {
+    pub const fn from_hz(hz: f32) -> Self {
+        Self(hz)
+    }
+
+    pub const fn as_hz(self) -> f32 {
+        self.0
+    }
+
+    /// The time constant of a one-pole low-pass with this corner,
+    /// 1 / (2π · corner).
+    pub fn time_constant(self) -> Duration {
+        secs_to_duration(1.0 / (std::f32::consts::TAU * self.0))
+    }
+
+    /// The coefficient of a one-pole low-pass with this corner, stepped at
+    /// `update_rate`: the fraction of the output kept each step, in [0, 1),
+    /// so that a step in the input is 63% complete after one time constant.
+    /// Zero, passing the input through, at a rate that is not positive.
+    fn one_pole_coeff(self, update_rate: UpdateRate) -> f32 {
+        let update_rate = update_rate.as_hz();
+        if update_rate <= 0.0 {
+            return 0.0;
+        }
+        (-std::f32::consts::TAU * self.0 / update_rate).exp()
+    }
+}
+
 /// The spectrum stage: follows the bank sample by sample and reports every
 /// band once per buffer.
 pub(crate) struct Spectrum {
@@ -56,6 +94,8 @@ pub(crate) struct Spectrum {
     tilt: Tilt,
     /// Follows the loudest whitened band, as a linear level.
     ceiling: MotionCeiling,
+    /// The low-pass every band's output passes through.
+    output_filter: OutputFilter,
     /// Each band's level in dB per octave at the end of the latest buffer.
     levels_db: [f32; NUM_BANDS],
 }
@@ -79,6 +119,7 @@ impl Spectrum {
             followers: BandFollowers::new(sample_rate),
             tilt: Tilt::new(live, &octave),
             ceiling: MotionCeiling::new(Self::INITIAL_CEILING, Self::CEILING_GATE),
+            output_filter: OutputFilter::new(OUTPUT_CORNER),
             levels_db: [20.0 * BandFollowers::MIN_ENVELOPE.log10(); NUM_BANDS],
         }
     }
@@ -114,13 +155,14 @@ impl Spectrum {
             .fold(f32::NEG_INFINITY, f32::max);
         let top = 10f32.powf(top_db / 20.0);
         let ceiling_db = 20.0 * self.ceiling.step(top, forget).log10();
-        std::array::from_fn(|band| {
+        let windowed = std::array::from_fn(|band| {
             if self.live[band] {
                 UnipolarF32::new(1.0 + (whitened[band] - ceiling_db) / Self::WINDOW_DB)
             } else {
                 UnipolarF32::ZERO
             }
-        })
+        });
+        self.output_filter.step(&windowed, buffer_rate)
     }
 
     /// Whether any live band was above [`SILENCE_DB`] at the end of the latest
@@ -136,27 +178,37 @@ impl Spectrum {
     }
 }
 
-/// Every band's envelope, followed sample by sample with an instant attack
-/// and a 50 ms release.
+/// Every band's envelope, followed sample by sample: a magnitude at or above
+/// the envelope sets it at once and starts a [`BandFollowers::HOLD`] in which
+/// the envelope stays put, and once the hold has run out the envelope falls
+/// with a [`BandFollowers::RELEASE_HALFLIFE`] release.
 pub(crate) struct BandFollowers {
     /// Each band's envelope at the latest sample.
     envelopes: [f32; NUM_BANDS],
+    /// The samples left in each band's hold.
+    hold_left: [u32; NUM_BANDS],
+    /// The hold, in samples.
+    hold: u32,
     /// The release coefficient, in [0, 1): the fraction of an envelope kept
     /// each sample while its band is falling.
     release: f32,
 }
 
 impl BandFollowers {
+    /// How long each envelope holds a peak before it releases.
+    const HOLD: Duration = Duration::from_millis(32);
     /// Half-life of each envelope's release.
     const RELEASE_HALFLIFE: Duration = Duration::from_millis(50);
     /// The smallest envelope a level is taken from, so silence reads as a
     /// finite level.
     const MIN_ENVELOPE: f32 = 1e-9;
 
-    /// Every envelope at zero, released at the sample rate.
+    /// Every envelope at zero, held and released at the sample rate.
     pub(crate) fn new(sample_rate: UpdateRate) -> Self {
         Self {
             envelopes: [0.0; NUM_BANDS],
+            hold_left: [0; NUM_BANDS],
+            hold: (Self::HOLD.as_secs_f32() * sample_rate.as_hz()).round() as u32,
             release: halflife_to_coeff(Self::RELEASE_HALFLIFE, sample_rate),
         }
     }
@@ -166,9 +218,21 @@ impl BandFollowers {
     #[inline]
     pub(crate) fn push(&mut self, magnitude: impl Fn(usize) -> f32) {
         let release = self.release;
-        for (band, envelope) in self.envelopes.iter_mut().enumerate() {
+        for (band, (envelope, hold_left)) in self
+            .envelopes
+            .iter_mut()
+            .zip(self.hold_left.iter_mut())
+            .enumerate()
+        {
             let magnitude = magnitude(band);
-            *envelope = magnitude.max(release * *envelope + (1.0 - release) * magnitude);
+            if magnitude >= *envelope {
+                *envelope = magnitude;
+                *hold_left = self.hold;
+            } else if *hold_left > 0 {
+                *hold_left -= 1;
+            } else {
+                *envelope = release * *envelope + (1.0 - release) * magnitude;
+            }
         }
     }
 
@@ -178,6 +242,57 @@ impl BandFollowers {
         std::array::from_fn(|band| {
             20.0 * self.envelopes[band].max(Self::MIN_ENVELOPE).log10() - width_db[band]
         })
+    }
+}
+
+/// A one-pole low-pass on every band's output, stepped once per buffer at
+/// that buffer's rate. An output below [`OutputFilter::FLOOR`] reads zero, so
+/// a band settles to exactly zero.
+struct OutputFilter {
+    /// The filter's corner.
+    corner: CornerFrequency,
+    /// The coefficient, in [0, 1): the fraction of each output kept each
+    /// buffer.
+    coeff: f32,
+    /// The buffer rate `coeff` was derived for, if it has been.
+    buffer_rate: Option<UpdateRate>,
+    /// Each band's output at the latest buffer.
+    outputs: [f32; NUM_BANDS],
+}
+
+impl OutputFilter {
+    /// The smallest output that does not read zero.
+    const FLOOR: f32 = 1e-6;
+
+    /// Every output at zero.
+    fn new(corner: CornerFrequency) -> Self {
+        Self {
+            corner,
+            coeff: 0.0,
+            buffer_rate: None,
+            outputs: [0.0; NUM_BANDS],
+        }
+    }
+
+    /// Step every band's output toward its input over one buffer at
+    /// `buffer_rate`, and return the outputs.
+    fn step(
+        &mut self,
+        input: &[UnipolarF32; NUM_BANDS],
+        buffer_rate: UpdateRate,
+    ) -> [UnipolarF32; NUM_BANDS] {
+        if self.buffer_rate != Some(buffer_rate) {
+            self.buffer_rate = Some(buffer_rate);
+            self.coeff = self.corner.one_pole_coeff(buffer_rate);
+        }
+        let gain = 1.0 - self.coeff;
+        for (output, input) in self.outputs.iter_mut().zip(input) {
+            *output += gain * (input.val() - *output);
+            if *output < Self::FLOOR {
+                *output = 0.0;
+            }
+        }
+        self.outputs.map(UnipolarF32::new)
     }
 }
 
@@ -347,7 +462,9 @@ mod tests {
 
         for slope in [2.0, -2.0, 5.0, -5.0] {
             let mut spectrum = Spectrum::new([true; NUM_BANDS], SAMPLE_RATE);
-            let first = hold(&mut spectrum, tilted(slope), 1.0 / BUFFER_RATE.as_hz(), 1);
+            // Long enough for the output filter to settle, and too short for
+            // the tilt to move more than a fraction of a percent.
+            let first = hold(&mut spectrum, tilted(slope), 0.1, 1);
             // A steeper tilt spans more than the window, and the bands below
             // it read zero.
             if slope.abs() < Tilt::LIMIT {
@@ -393,6 +510,129 @@ mod tests {
         let out = hold(&mut spectrum, silence, 60.0, 64);
         assert_eq!(spectrum.tilt.slope(), tilt, "silence moved the tilt");
         assert_eq!(out, [UnipolarF32::ZERO; NUM_BANDS], "silence reads zero");
+    }
+
+    /// A peak holds its band's envelope for the hold, a new peak in the hold
+    /// starts it again, and once it has run out the envelope falls at the
+    /// release.
+    #[test]
+    fn a_peak_holds_then_releases() {
+        let mut followers = BandFollowers::new(SAMPLE_RATE);
+        let hold = (BandFollowers::HOLD.as_secs_f32() * SAMPLE_RATE.as_hz()).round() as usize;
+        assert_eq!(hold, 1536, "32 ms at 48 kHz");
+        let release = halflife_to_coeff(BandFollowers::RELEASE_HALFLIFE, SAMPLE_RATE);
+        let half_life =
+            (BandFollowers::RELEASE_HALFLIFE.as_secs_f32() * SAMPLE_RATE.as_hz()).round() as usize;
+
+        // One sample at 1, then silence; band 1 stays silent throughout.
+        let push = |followers: &mut BandFollowers, m: f32| {
+            followers.push(|b| if b == 0 { m } else { 0.0 });
+        };
+        push(&mut followers, 1.0);
+        for i in 0..hold {
+            push(&mut followers, 0.0);
+            assert_eq!(followers.envelopes[0], 1.0, "sample {i} of the hold");
+        }
+        let mut expected = 1.0;
+        for i in 0..half_life {
+            push(&mut followers, 0.0);
+            expected *= release;
+            assert!(
+                (followers.envelopes[0] / expected - 1.0).abs() < 1e-4,
+                "sample {i} of the release reads {}, not {expected}",
+                followers.envelopes[0]
+            );
+        }
+        assert!(
+            (followers.envelopes[0] - 0.5).abs() < 1e-3,
+            "a half-life after the hold the envelope is at {}",
+            followers.envelopes[0]
+        );
+        assert_eq!(followers.envelopes[1], 0.0, "a silent band");
+
+        // A peak, a lower magnitude that does not restart the hold, and a
+        // peak equal to the envelope halfway through that does.
+        let mut followers = BandFollowers::new(SAMPLE_RATE);
+        push(&mut followers, 1.0);
+        for i in 1..hold / 2 {
+            push(&mut followers, if i == 10 { 0.9 } else { 0.0 });
+        }
+        push(&mut followers, 1.0);
+        for i in 0..hold {
+            push(&mut followers, 0.0);
+            assert_eq!(
+                followers.envelopes[0], 1.0,
+                "sample {i} of the restarted hold"
+            );
+        }
+        push(&mut followers, 0.0);
+        assert_eq!(
+            followers.envelopes[0], release,
+            "the first sample of the release"
+        );
+    }
+
+    /// A step into the output filter is 63% complete after one time constant
+    /// of the corner, to within a buffer, at any buffer size, and settles on
+    /// the step; an input that stays at zero reads exactly zero, and
+    /// an output that decays toward zero reaches it.
+    #[test]
+    fn the_output_filter_follows_a_step_at_its_corner() {
+        let tau = OUTPUT_CORNER.time_constant().as_secs_f32();
+        assert!(
+            (tau - 1.0 / (std::f32::consts::TAU * 30.0)).abs() < 1e-6,
+            "time constant {tau} s"
+        );
+        let target = 1.0 - (-1.0f32).exp();
+        let step: [UnipolarF32; NUM_BANDS] = std::array::from_fn(|b| {
+            if b == 0 {
+                UnipolarF32::ZERO
+            } else {
+                UnipolarF32::new(0.8)
+            }
+        });
+        for frames in [16, 64, 256] {
+            let buffer_rate = UpdateRate::new(48_000, frames);
+            let mut filter = OutputFilter::new(OUTPUT_CORNER);
+            let at_tau = tau * buffer_rate.as_hz();
+            let mut previous = 0.0;
+            for n in 1..=(at_tau.ceil() as usize) {
+                let out = filter.step(&step, buffer_rate);
+                assert_eq!(out[0], UnipolarF32::ZERO, "a band held at zero");
+                let fraction = out[1].val() / 0.8;
+                if n == at_tau.floor() as usize {
+                    previous = fraction;
+                }
+                if n == at_tau.ceil() as usize {
+                    assert!(
+                        previous <= target && target <= fraction,
+                        "{frames} frames per buffer: {previous} to {fraction} of the step \
+                         either side of one time constant"
+                    );
+                }
+            }
+            let mut out = [UnipolarF32::ZERO; NUM_BANDS];
+            for _ in 0..(buffer_rate.as_hz() as usize) {
+                out = filter.step(&step, buffer_rate);
+            }
+            for (band, (out, step)) in out.iter().zip(&step).enumerate() {
+                assert!(
+                    (out.val() - step.val()).abs() < 1e-6,
+                    "{frames} frames per buffer: band {band} settled at {}, not {}",
+                    out.val(),
+                    step.val()
+                );
+            }
+
+            for _ in 0..(buffer_rate.as_hz() as usize) {
+                out = filter.step(&[UnipolarF32::ZERO; NUM_BANDS], buffer_rate);
+            }
+            assert_eq!(
+                out,
+                [UnipolarF32::ZERO; NUM_BANDS],
+                "{frames} frames per buffer: decayed"
+            );
+        }
     }
 
     /// The tilt fits only the live bands, moves by the average's share of
