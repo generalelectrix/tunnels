@@ -150,15 +150,15 @@ impl VertexBuffers {
         self.positions.clear();
         self.uvs.clear();
 
-        for (vertex, ordinal) in mesh.vertices().zip(mesh.ordinals()) {
+        for (i, vertex) in mesh.vertices().enumerate() {
             let polar = Polar::of(vertex.on_path, needs.angle, needs.radius);
             let along = polar.phase(vertex.on_path, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along, ordinal).beyond(anchor);
+            let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
 
             // The ribbon's own width, applied before anything moves the
             // point: the offset is in the figure's undisplaced coordinates,
             // which is where the contour point it is measured from lives.
-            let reach = work.taper_at(along, ordinal);
+            let reach = work.taper_at(along, i);
             let (x, y) = (
                 vertex.on_path.x() + (vertex.position.x() - vertex.on_path.x()) * reach,
                 vertex.on_path.y() + (vertex.position.y() - vertex.on_path.y()) * reach,

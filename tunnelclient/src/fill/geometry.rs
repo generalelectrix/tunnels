@@ -61,8 +61,8 @@ const STROKE_SEGMENT: f32 = 0.025;
 ///
 /// Set at the generous end of what the knobs can ask for, because the choice
 /// is nearly free: what a stroke costs is set by how finely the contour is
-/// sampled and not by how wide it is, so the whole library measures 91.3 MB
-/// stroked at 0.02 and 103.1 MB stroked at 1.0 — a 13% spread across a
+/// sampled and not by how wide it is, so the whole library measures 71.1 MB
+/// stroked at 0.02 and 80.5 MB stroked at 1.0 — a 13% spread across a
 /// fiftyfold range of widths. The only thing a narrow reference would buy is a clamp,
 /// where a beam asks to be wider than its outline was cut.
 pub const REFERENCE_WIDTH: f32 = 1.0;
@@ -135,10 +135,10 @@ impl FillGeometry {
 /// so a count of outlines says almost nothing about what they weigh — and once
 /// vertices are shared, a count of them does not either, since how many
 /// triangles each one serves varies with the figure. Sixty-four megabytes is
-/// 374 figures at the mean of 179 kB, or 35 at the largest, and either way it
+/// 480 figures at the mean of 140 kB, or 42 at the largest, and either way it
 /// is sixty-four megabytes.
 ///
-/// The whole library at once is 103.1 MB, against the 17.5 MB its interiors
+/// The whole library at once is 80.5 MB, against the 17.5 MB its interiors
 /// come to. Outlines outweigh the interiors they follow because what a stroke
 /// costs is set by how finely the contour is sampled — [`STROKE_SEGMENT`] puts
 /// a join every 0.025 units along it — and hardly at all by how wide it is.
@@ -275,9 +275,6 @@ pub struct StrokeVertexPair {
 pub struct StrokeMesh {
     positions: Vec<StoredPoint>,
     on_path: Vec<StoredPoint>,
-    /// The index each vertex had as the tessellator emitted it, which is the
-    /// index an animation reading a vertex's index is given.
-    ordinals: Vec<u32>,
     indices: Indices,
 }
 
@@ -344,9 +341,8 @@ impl StrokeMesh {
     /// every width, so they are kept as one; a triangle left naming one vertex
     /// twice has no area at any width, and is dropped.
     ///
-    /// A kept vertex carries the ordinal its first copy was emitted with,
-    /// which is the index an animation reading a vertex's index is given; its
-    /// other copies, being the same vertex, move with it.
+    /// Kept vertices are numbered in the order their first copies were
+    /// emitted, and a vertex's copies, being one vertex, move as one.
     fn of(stroke: TessellatedStroke) -> Self {
         let mut mesh = Self::default();
         let mut held: FxHashMap<(StoredPoint, StoredPoint), u32> =
@@ -355,15 +351,12 @@ impl StrokeMesh {
             .positions
             .iter()
             .zip(&stroke.on_path)
-            .enumerate()
-            .map(|(ordinal, (&position, &on_path))| {
+            .map(|(&position, &on_path)| {
                 let place = (StoredPoint::of(position), StoredPoint::of(on_path));
                 *held.entry(place).or_insert_with(|| {
                     let kept = u32::try_from(mesh.positions.len()).unwrap_or(u32::MAX);
                     mesh.positions.push(place.0);
                     mesh.on_path.push(place.1);
-                    mesh.ordinals
-                        .push(u32::try_from(ordinal).unwrap_or(u32::MAX));
                     kept
                 })
             })
@@ -386,7 +379,6 @@ impl StrokeMesh {
         mesh.indices = Indices::of(flat, mesh.positions.len());
         mesh.positions.shrink_to_fit();
         mesh.on_path.shrink_to_fit();
-        mesh.ordinals.shrink_to_fit();
         mesh
     }
 
@@ -403,13 +395,7 @@ impl StrokeMesh {
     /// is used, since the difference is memory either way.
     fn bytes(&self) -> usize {
         (self.positions.capacity() + self.on_path.capacity()) * size_of::<StoredPoint>()
-            + self.ordinals.capacity() * size_of::<u32>()
             + self.indices.bytes()
-    }
-
-    /// Each vertex's ordinal, in the order [`Self::vertices`] walks them.
-    pub fn ordinals(&self) -> impl Iterator<Item = usize> + '_ {
-        self.ordinals.iter().map(|&ordinal| ordinal as usize)
     }
 
     /// Each vertex, paired with the contour point it was offset from.
@@ -545,20 +531,22 @@ mod test {
                 v.position.y() - v.on_path.y(),
             )
         };
-        let exact: Vec<(f32, f32)> = stroke(&skew_square(), REFERENCE_WIDTH)
+        // A stored vertex stands for every tessellated one snapping into its
+        // cells, so each tessellated vertex is compared with the one it became.
+        let place = |v: StrokeVertexPair| (StoredPoint::of(v.position), StoredPoint::of(v.on_path));
+        let stored: HashMap<_, _> = StrokeMesh::of(stroke(&skew_square(), REFERENCE_WIDTH))
             .vertices()
-            .map(offsets)
+            .map(|v| (place(v), offsets(v)))
             .collect();
-        let mesh = StrokeMesh::of(stroke(&skew_square(), REFERENCE_WIDTH));
-        assert!(
-            mesh.vertices().next().is_some(),
-            "the fixture stored nothing"
-        );
+        assert!(!stored.is_empty(), "the fixture stored nothing");
 
         let step = 1.0 / QUANTISATION;
         let mut worst = 0.0f32;
-        for (stored, ordinal) in mesh.vertices().zip(mesh.ordinals()) {
-            let (a, b) = (exact[ordinal], offsets(stored));
+        for v in stroke(&skew_square(), REFERENCE_WIDTH).vertices() {
+            let a = offsets(v);
+            let Some(&b) = stored.get(&place(v)) else {
+                panic!("a tessellated vertex has no stored vertex in its cells");
+            };
             worst = worst.max((a.0 - b.0).abs()).max((a.1 - b.1).abs());
         }
         assert!(
@@ -618,17 +606,6 @@ mod test {
 
         let distinct: std::collections::HashSet<_> = kept.iter().collect();
         assert_eq!(distinct.len(), kept.len(), "a place is held more than once");
-
-        // A kept vertex answers to the first copy of itself, which is the
-        // index an animation reading one had for it.
-        for (&at, ordinal) in kept.iter().zip(mesh.ordinals()) {
-            let first = unwelded.iter().position(|&p| p == at);
-            assert_eq!(
-                first,
-                Some(ordinal),
-                "a kept vertex carries ordinal {ordinal}, not that of the first copy of its place"
-            );
-        }
     }
 
     #[test]
