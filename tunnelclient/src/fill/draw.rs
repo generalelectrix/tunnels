@@ -132,11 +132,13 @@ impl VertexBuffers {
     /// place on the figure, so both its edges take the same colour, and there
     /// is no variation across its width for a refinement to resolve.
     ///
-    /// The displacement is worked out from the contour point too, so a warp
-    /// moves the ribbon as a unit rather than shearing its two edges apart. It
-    /// is then applied to the vertex where it actually is — as a rotation and
-    /// a scale about the origin, which is the same transform the fill reaches
-    /// through polar coordinates, without a second arctangent per vertex.
+    /// The displacement is worked out from the contour point too, once for
+    /// all the vertices offset from it, so a warp moves the ribbon as a unit
+    /// rather than shearing its two edges apart — a waveform that reads an
+    /// index is given the contour point's. It is then applied to each vertex
+    /// where it actually is — as a rotation and a scale about the origin,
+    /// which is the same transform the fill reaches through polar
+    /// coordinates, without a second arctangent per vertex.
     ///
     /// The width is answered here as well, and only here. An outline is
     /// stroked once at a width no beam exceeds, and each vertex is drawn in
@@ -150,28 +152,37 @@ impl VertexBuffers {
         self.positions.clear();
         self.uvs.clear();
 
-        for (i, vertex) in mesh.vertices().enumerate() {
-            let polar = Polar::of(vertex.on_path, needs.angle, needs.radius);
-            let along = polar.phase(vertex.on_path, work.field.phase);
+        for (i, run) in mesh.runs().enumerate() {
+            let on_path = run.point;
+            let polar = Polar::of(on_path, needs.angle, needs.radius);
+            let along = polar.phase(on_path, work.field.phase);
             let displacement = Displacement::of(&work, polar, along, i).beyond(anchor);
-
-            // The ribbon's own width, applied before anything moves the
-            // point: the offset is in the figure's undisplaced coordinates,
-            // which is where the contour point it is measured from lives.
             let reach = work.taper_at(along, i);
-            let (x, y) = (
-                vertex.on_path.x() + (vertex.position.x() - vertex.on_path.x()) * reach,
-                vertex.on_path.y() + (vertex.position.y() - vertex.on_path.y()) * reach,
-            );
-            let (x, y) = if needs.rotates {
-                let (sin, cos) = displacement.turn.sin_cos();
-                (x * cos - y * sin, x * sin + y * cos)
+            let (sin, cos) = if needs.rotates {
+                displacement.turn.sin_cos()
             } else {
-                (x, y)
+                (0.0, 1.0)
             };
-            self.positions
-                .push(displacement.place(x * displacement.radial, y * displacement.radial));
-            self.uvs.push([along * work.field.ramp_scale(), 0.5]);
+            let uv = [along * work.field.ramp_scale(), 0.5];
+
+            for vertex in run.vertices() {
+                // The ribbon's own width, applied before anything moves the
+                // point: the offset is in the figure's undisplaced
+                // coordinates, which is where the contour point it is
+                // measured from lives.
+                let (x, y) = (
+                    on_path.x() + (vertex.x() - on_path.x()) * reach,
+                    on_path.y() + (vertex.y() - on_path.y()) * reach,
+                );
+                let (x, y) = if needs.rotates {
+                    (x * cos - y * sin, x * sin + y * cos)
+                } else {
+                    (x, y)
+                };
+                self.positions
+                    .push(displacement.place(x * displacement.radial, y * displacement.radial));
+                self.uvs.push(uv);
+            }
         }
     }
 }
@@ -500,9 +511,12 @@ fn project(m: Matrix2d, v: Point) -> [f32; 2] {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::time::Duration;
     use tunnels_lib::audio::AudioState;
     use tunnels_lib::number::UnipolarFloat;
-    use tunnels_model::animation::Animation;
+    use tunnels_model::animation::{
+        Animation, ControlMessage, EmitStateChange, StateChange, Waveform,
+    };
     use tunnels_model::clock_bank::ClockBank;
     use tunnels_model::spectrum::SpectrumTables;
 
@@ -517,6 +531,108 @@ mod test {
             ),
             target,
         }
+    }
+
+    /// A noise warp aimed at `target`, uncorrelated from one index to the next.
+    ///
+    /// Noise is the one waveform that reads the index it is given as well as
+    /// the phase, so it is the one that can tell apart vertices at one place.
+    fn noise_warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation<'static>> {
+        struct Silent;
+        impl EmitStateChange for Silent {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let mut animation = Animation::default();
+        for sc in [
+            StateChange::Waveform(Waveform::Noise),
+            StateChange::NPeriods(2),
+            StateChange::Size(UnipolarFloat::new(0.4)),
+            StateChange::Smoothing(UnipolarFloat::ZERO),
+        ] {
+            animation.control(ControlMessage::Set(sc), &mut Silent);
+        }
+        animation.update_state(Duration::from_secs(1), &AudioState::default());
+        TargetedAnimation {
+            animation: animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            ),
+            target,
+        }
+    }
+
+    /// A warp moves every vertex offset from one contour point by the same
+    /// amount, so a ribbon is displaced as a unit and its two edges never
+    /// shear apart.
+    ///
+    /// Noise that decorrelates from one index to the next is the warp that
+    /// would tell them apart, if anything per vertex reached it.
+    #[test]
+    fn a_warp_moves_a_ribbon_as_a_unit() {
+        use super::super::geometry::StrokeGeometry;
+        use std::collections::HashMap;
+        use tunnels_model::layer::{FigureId, SpriteId};
+        use tunnels_sprites::{Contour, Figure, FillRule};
+
+        let square = [Figure {
+            rule: FillRule::NonZero,
+            subpaths: vec![
+                Contour::new(vec![
+                    Point::new(-0.5, -0.5),
+                    Point::new(0.5, -0.5),
+                    Point::new(0.5, 0.5),
+                    Point::new(-0.5, 0.5),
+                ])
+                .expect("four corners is a loop"),
+            ],
+        }];
+        let mut outlines = StrokeGeometry::default();
+        let mesh = outlines.get(FigureId::Baked(SpriteId(0)), &square);
+        let warps = [noise_warp(AnimationTarget::PositionX)];
+        let mut buffers = VertexBuffers::default();
+        buffers.stroke_vertex_pass(
+            mesh,
+            VertexWork {
+                field: PhaseField {
+                    phase: PhaseAxis::Linear,
+                    cycles: 1.0,
+                    span: RampSpan::Cycle,
+                },
+                spin_speed: 0.0,
+                warps: &warps,
+                taper: &[],
+                stroke_width: 1.0,
+            },
+        );
+
+        // Each vertex's horizontal shift, gathered by the contour point it
+        // was offset from.
+        let mut shifts: HashMap<[u32; 2], Vec<f32>> = HashMap::new();
+        for (vertex, moved) in mesh.vertices().zip(buffers.positions()) {
+            let point = [vertex.on_path.x().to_bits(), vertex.on_path.y().to_bits()];
+            shifts
+                .entry(point)
+                .or_default()
+                .push(moved.x() - vertex.position.x());
+        }
+        // Rounding in the narrowing and the placement is all that may differ.
+        let tolerance = 1e-5;
+        for moved in shifts.values() {
+            assert!(
+                moved.iter().all(|s| (s - moved[0]).abs() <= tolerance),
+                "the vertices of one contour point moved by {moved:?}"
+            );
+        }
+        // And the noise moved something: one shift for every point proves
+        // nothing about telling points apart.
+        let first = shifts.values().next().map_or(0.0, |moved| moved[0]);
+        assert!(
+            shifts
+                .values()
+                .any(|moved| (moved[0] - first).abs() > tolerance),
+            "every contour point moved alike"
+        );
     }
 
     /// An angle costs an arctangent and a radius a square root, so a layer
