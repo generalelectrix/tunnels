@@ -34,6 +34,7 @@ lyon_path = "1"
 image.workspace = true
 tunnels_sprites = { path = "../tunnels_sprites" }
 tunnels_shapes = { path = "../tunnels_shapes" }
+rustc-hash = "2"
 
 [dev-dependencies]
 image.workspace = true

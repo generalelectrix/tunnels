@@ -24,6 +24,7 @@ use lyon_tessellation::{
     BuffersBuilder, FillOptions, FillRule as LyonFillRule, FillTessellator, FillVertex, LineCap,
     LineJoin, StrokeOptions, StrokeTessellator, StrokeVertex, VertexBuffers,
 };
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use tunnels_model::layer::FigureId;
 use tunnels_sprites::{Figure, FillRule, Point};
@@ -60,9 +61,9 @@ const STROKE_SEGMENT: f32 = 0.025;
 ///
 /// Set at the generous end of what the knobs can ask for, because the choice
 /// is nearly free: what a stroke costs is set by how finely the contour is
-/// sampled and not by how wide it is, so the whole library measures 281 MB
-/// stroked at 0.02 and 305 MB stroked at 1.0 — an 8% spread across a fiftyfold
-/// range of widths. The only thing a narrow reference would buy is a clamp,
+/// sampled and not by how wide it is, so the whole library measures 91.3 MB
+/// stroked at 0.02 and 103.1 MB stroked at 1.0 — a 13% spread across a
+/// fiftyfold range of widths. The only thing a narrow reference would buy is a clamp,
 /// where a beam asks to be wider than its outline was cut.
 pub const REFERENCE_WIDTH: f32 = 1.0;
 
@@ -129,15 +130,15 @@ impl FillGeometry {
 /// The most the outline table may hold, in bytes.
 ///
 /// **Sized in bytes rather than in entries or in vertices, because neither of
-/// those is a bound on anything.** A figure strokes to 12,869 distinct
-/// vertices on average and to 108,212 at the largest, a spread of eight times,
+/// those is a bound on anything.** A figure strokes to 9,839 distinct
+/// vertices on average and to 79,810 at the largest, a spread of eight times,
 /// so a count of outlines says almost nothing about what they weigh — and once
 /// vertices are shared, a count of them does not either, since how many
 /// triangles each one serves varies with the figure. Sixty-four megabytes is
-/// 352 figures at the mean of 190 kB, or 31 at the largest, and either way it
+/// 374 figures at the mean of 179 kB, or 35 at the largest, and either way it
 /// is sixty-four megabytes.
 ///
-/// The whole library at once is 109.6 MB, against the 17.5 MB its interiors
+/// The whole library at once is 103.1 MB, against the 17.5 MB its interiors
 /// come to. Outlines outweigh the interiors they follow because what a stroke
 /// costs is set by how finely the contour is sampled — [`STROKE_SEGMENT`] puts
 /// a join every 0.025 units along it — and hardly at all by how wide it is.
@@ -231,7 +232,7 @@ fn stroke(figures: &[Figure], width: f32) -> TessellatedStroke {
     out.positions.shrink_to_fit();
     out.on_path.shrink_to_fit();
     flat.shrink_to_fit();
-    out.indices = Indices::of(flat, out.positions.len());
+    out.indices = flat;
     out
 }
 
@@ -274,6 +275,9 @@ pub struct StrokeVertexPair {
 pub struct StrokeMesh {
     positions: Vec<StoredPoint>,
     on_path: Vec<StoredPoint>,
+    /// The index each vertex had as the tessellator emitted it, which is the
+    /// index an animation reading a vertex's index is given.
+    ordinals: Vec<u32>,
     indices: Indices,
 }
 
@@ -291,7 +295,8 @@ pub struct StrokeMesh {
 pub struct TessellatedStroke {
     positions: Vec<Point>,
     on_path: Vec<Point>,
-    indices: Indices,
+    /// Triangles, three indices apiece.
+    indices: Vec<u32>,
 }
 
 impl TessellatedStroke {
@@ -329,26 +334,60 @@ impl TessellatedStroke {
 }
 
 impl StrokeMesh {
-    /// Keep a tessellated stroke, snapped to the grid stored vertices sit on.
+    /// Keep a tessellated stroke, snapped to the grid stored vertices sit on,
+    /// with each place held once.
+    ///
+    /// Lyon builds a round join's rim at every point where the contour turns,
+    /// including the points where splitting a straight edge only pretends it
+    /// does, and there the rim lands on the edges' own vertices. Two vertices
+    /// in one cell, offset from one contour point, are the same vertex at
+    /// every width, so they are kept as one; a triangle left naming one vertex
+    /// twice has no area at any width, and is dropped.
+    ///
+    /// A kept vertex carries the ordinal its first copy was emitted with,
+    /// which is the index an animation reading a vertex's index is given; its
+    /// other copies, being the same vertex, move with it.
     fn of(stroke: TessellatedStroke) -> Self {
-        let mut snapped = Self {
-            positions: stroke
-                .positions
-                .iter()
-                .copied()
-                .map(StoredPoint::of)
-                .collect(),
-            on_path: stroke
-                .on_path
-                .iter()
-                .copied()
-                .map(StoredPoint::of)
-                .collect(),
-            indices: stroke.indices,
-        };
-        snapped.positions.shrink_to_fit();
-        snapped.on_path.shrink_to_fit();
-        snapped
+        let mut mesh = Self::default();
+        let mut held: FxHashMap<(StoredPoint, StoredPoint), u32> =
+            FxHashMap::with_capacity_and_hasher(stroke.positions.len(), Default::default());
+        let welded: Vec<u32> = stroke
+            .positions
+            .iter()
+            .zip(&stroke.on_path)
+            .enumerate()
+            .map(|(ordinal, (&position, &on_path))| {
+                let place = (StoredPoint::of(position), StoredPoint::of(on_path));
+                *held.entry(place).or_insert_with(|| {
+                    let kept = u32::try_from(mesh.positions.len()).unwrap_or(u32::MAX);
+                    mesh.positions.push(place.0);
+                    mesh.on_path.push(place.1);
+                    mesh.ordinals
+                        .push(u32::try_from(ordinal).unwrap_or(u32::MAX));
+                    kept
+                })
+            })
+            .collect();
+
+        let mut flat = Vec::with_capacity(stroke.indices.len());
+        for triangle in stroke.indices.as_chunks::<3>().0 {
+            // `extend` keeps only triangles whose corners exist, so every
+            // index lands; one that did not would drop its own triangle.
+            let [Some(a), Some(b), Some(c)] = triangle.map(|i| welded.get(i as usize).copied())
+            else {
+                continue;
+            };
+            if a != b && b != c && a != c {
+                flat.extend([a, b, c]);
+            }
+        }
+        // Sized for every triangle the tessellator emitted, and fewer are kept.
+        flat.shrink_to_fit();
+        mesh.indices = Indices::of(flat, mesh.positions.len());
+        mesh.positions.shrink_to_fit();
+        mesh.on_path.shrink_to_fit();
+        mesh.ordinals.shrink_to_fit();
+        mesh
     }
 
     pub fn is_empty(&self) -> bool {
@@ -364,7 +403,13 @@ impl StrokeMesh {
     /// is used, since the difference is memory either way.
     fn bytes(&self) -> usize {
         (self.positions.capacity() + self.on_path.capacity()) * size_of::<StoredPoint>()
+            + self.ordinals.capacity() * size_of::<u32>()
             + self.indices.bytes()
+    }
+
+    /// Each vertex's ordinal, in the order [`Self::vertices`] walks them.
+    pub fn ordinals(&self) -> impl Iterator<Item = usize> + '_ {
+        self.ordinals.iter().map(|&ordinal| ordinal as usize)
     }
 
     /// Each vertex, paired with the contour point it was offset from.
@@ -504,16 +549,16 @@ mod test {
             .vertices()
             .map(offsets)
             .collect();
-        let stored: Vec<(f32, f32)> = StrokeMesh::of(stroke(&skew_square(), REFERENCE_WIDTH))
-            .vertices()
-            .map(offsets)
-            .collect();
-        assert_eq!(exact.len(), stored.len(), "storing lost a vertex");
-        assert!(!exact.is_empty(), "the fixture stroked to nothing");
+        let mesh = StrokeMesh::of(stroke(&skew_square(), REFERENCE_WIDTH));
+        assert!(
+            mesh.vertices().next().is_some(),
+            "the fixture stored nothing"
+        );
 
         let step = 1.0 / QUANTISATION;
         let mut worst = 0.0f32;
-        for (a, b) in exact.iter().zip(&stored) {
+        for (stored, ordinal) in mesh.vertices().zip(mesh.ordinals()) {
+            let (a, b) = (exact[ordinal], offsets(stored));
             worst = worst.max((a.0 - b.0).abs()).max((a.1 - b.1).abs());
         }
         assert!(
@@ -525,6 +570,65 @@ mod test {
             worst > 0.0,
             "nothing moved, so this measured a grid-aligned fixture"
         );
+    }
+
+    /// Storing a stroke holds each place once and keeps every triangle that
+    /// can draw.
+    ///
+    /// A square's edges are split into many short segments, and each split is
+    /// a join to the tessellator, so the fixture is full of rims built at
+    /// straight-through joins. Everything is compared at the stored
+    /// precision, a vertex standing for its cell and its contour point's cell,
+    /// because that is where two copies become one.
+    #[test]
+    fn a_stored_stroke_holds_each_place_once_and_drops_only_empty_triangles() {
+        let exact = stroke(&square(), REFERENCE_WIDTH);
+        let mesh = StrokeMesh::of(stroke(&square(), REFERENCE_WIDTH));
+        let place = |v: StrokeVertexPair| (StoredPoint::of(v.position), StoredPoint::of(v.on_path));
+        let unwelded: Vec<_> = exact.vertices().map(place).collect();
+        let kept: Vec<_> = mesh.vertices().map(place).collect();
+
+        // A triangle naming one place twice is empty at every width, since
+        // two corners offset from one contour point by one offset narrow
+        // together; the rest are what the stored mesh has to draw, in order.
+        let (empty, drawn): (Vec<[_; 3]>, Vec<[_; 3]>) = exact
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| t.map(|i| unwelded[i as usize]))
+            .partition(|[a, b, c]| a == b || b == c || a == c);
+        let stored: Vec<[_; 3]> = mesh
+            .indices()
+            .batches(usize::MAX)
+            .flat_map(|batch| batch.triangles())
+            .map(|t| t.map(|i| kept[i as usize]))
+            .collect();
+        assert!(
+            stored == drawn,
+            "the stored mesh draws {} triangles, not the {} that can draw",
+            stored.len(),
+            drawn.len()
+        );
+        // And there were some to drop: a fixture with none proves nothing.
+        assert!(
+            !empty.is_empty(),
+            "nothing was welded, so this measured nothing"
+        );
+
+        let distinct: std::collections::HashSet<_> = kept.iter().collect();
+        assert_eq!(distinct.len(), kept.len(), "a place is held more than once");
+
+        // A kept vertex answers to the first copy of itself, which is the
+        // index an animation reading one had for it.
+        for (&at, ordinal) in kept.iter().zip(mesh.ordinals()) {
+            let first = unwelded.iter().position(|&p| p == at);
+            assert_eq!(
+                first,
+                Some(ordinal),
+                "a kept vertex carries ordinal {ordinal}, not that of the first copy of its place"
+            );
+        }
     }
 
     #[test]
