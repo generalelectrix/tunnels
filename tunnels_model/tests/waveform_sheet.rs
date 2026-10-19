@@ -10,12 +10,13 @@
 //! pulse's rest sits on the same line a bipolar wave crosses, and a frame
 //! marks where the range ends.
 //!
-//! The noise sheet draws four traces to a cell rather than one, at offset
-//! indices 0 to 3, brightest trace first and each one after it dimmer. Noise
-//! takes smoothing as a cross-correlation term rather than as a shape, so what
-//! a cell shows is how far apart those four offsets are: at smoothing 1 they
-//! are one curve, and at smoothing 0 four unrelated ones. That spread closing
-//! down the rows is what the sheet is for.
+//! The noise sheet draws noise across `NOISE_PERIODS` periods to a cell.
+//! Noise is sampled along a line through its field that smoothing turns and
+//! lengthens, so smoothing reads as how far through the field a cell's sweep
+//! reaches rather than as a shape: a calm curve at smoothing 1, and a sharp,
+//! choppy one at smoothing 0. That roughening up the rows is what the sheet is
+//! for. A duty cycle holds the back of each period at zero, and a pulse holds
+//! the trace flat at both ends of the unipolar range.
 //!
 //! The spectrum sheet draws one period of the fixed band levels in
 //! `SHEET_LEVELS`, out from band 0 at a cell's left edge to band 25 at its
@@ -80,25 +81,15 @@ const FRAME: Rgba<u8> = Rgba([80, 80, 80, 255]);
 const ZERO_LINE: Rgba<u8> = Rgba([64, 64, 64, 255]);
 const TRACE: Rgba<u8> = Rgba([255, 255, 255, 255]);
 
-/// The colours the noise offsets are drawn in, offset 0 first.
-///
-/// Every one of them is brighter than the frame, so that the dimmest trace
-/// still reads as a trace rather than as part of the cell.
-const OFFSET_TRACES: [Rgba<u8>; 4] = [
-    Rgba([255, 255, 255, 255]),
-    Rgba([180, 180, 180, 255]),
-    Rgba([140, 140, 140, 255]),
-    Rgba([105, 105, 105, 255]),
-];
-
 /// How many periods of noise a cell's phase sweep covers.
 ///
-/// Noise varies over about a unit of its field, and a sweep covers this many
-/// units, so this is directly how many features of noise a cell shows. Few
-/// enough to read as a curve rather than as hash, and enough of them that the
-/// trace reaches both ends of the gate rather than wandering across the
-/// middle. It is also how many times the duty cycle opens and closes across a
-/// cell, because the gate wraps the phase it is given.
+/// Noise varies over about a unit of its field, and at full smoothing a sweep
+/// covers this many units, so this is how many features of noise the calmest
+/// cells show; rougher rows reach further across the same sweep. Few enough to
+/// read as a curve rather than as hash at full smoothing, and enough of them
+/// that even there the trace reaches both ends of the gate rather than
+/// wandering across the middle. It is also how many times the duty cycle opens
+/// and closes across a cell, because the gate wraps the phase it is given.
 const NOISE_PERIODS: u16 = 3;
 
 /// Long enough for the smoothing smoother to arrive wherever it was sent.
@@ -254,26 +245,21 @@ fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnim
     )
 }
 
-/// The rows each noise offset traces in one cell, offset 0 first.
-fn noise_rows(smoothing: f64, duty_cycle: f64, pulse: bool) -> Vec<Vec<u32>> {
+/// The rows noise traces in one cell.
+fn noise_rows(smoothing: f64, duty_cycle: f64, pulse: bool) -> Vec<u32> {
     let animation = noise_animation(smoothing, duty_cycle, pulse);
-    (0..OFFSET_TRACES.len())
-        .map(|offset| trace_rows(|phase| animation.unit_value(phase, offset)))
-        .collect()
+    trace_rows(|phase| animation.unit_value(phase))
 }
 
 /// A sheet of noise at every smoothing, duty cycle and pulse setting.
 fn noise_sheet() -> RgbaImage {
     sheet_of(|sheet, origin, smoothing, duty_cycle, pulse| {
-        // Drawn from the dimmest offset up, so that where offsets coincide the
-        // brightest is the one left showing.
-        for (offset, rows) in noise_rows(smoothing, duty_cycle, pulse)
-            .iter()
-            .enumerate()
-            .rev()
-        {
-            draw_trace(sheet, origin, OFFSET_TRACES[offset], rows);
-        }
+        draw_trace(
+            sheet,
+            origin,
+            TRACE,
+            &noise_rows(smoothing, duty_cycle, pulse),
+        );
     })
 }
 
@@ -309,7 +295,7 @@ fn spectrum_sheet() -> RgbaImage {
             },
             &spectrum,
         );
-        let rows = trace_rows(|phase| animation.unit_value(phase, 0));
+        let rows = trace_rows(|phase| animation.unit_value(phase));
         draw_trace(sheet, origin, TRACE, &rows);
     })
 }
@@ -337,50 +323,56 @@ fn waveforms_draw_their_sheets() {
     goldens.compare(&spectrum_sheet(), "spectrum.png");
 }
 
-/// Smoothing is what decides how far apart noise holds the offsets it is read
-/// at: at full it reads every offset off one trajectory, and at none it reads
-/// each off a trajectory of its own.
+/// Smoothing is what decides how far through its field noise reaches across a
+/// cell: at every step up the rows the trace travels further, from a calm
+/// curve at full smoothing to a choppy one at none.
 ///
 /// This is the claim the noise sheet is drawn to show, and a sheet alone
 /// cannot fail when it stops being true.
 #[test]
-fn smoothing_closes_the_spread_between_noise_offsets() {
-    let spread = |smoothing: f64| {
-        let rows = noise_rows(smoothing, 1.0, false);
-        rows.iter().filter(|other| **other != rows[0]).count()
+fn smoothing_calms_the_noise_down_the_rows() {
+    // How far a cell's trace travels, in pixel rows.
+    let travel = |smoothing: f64| -> u32 {
+        noise_rows(smoothing, 1.0, false)
+            .windows(2)
+            .map(|pair| pair[0].abs_diff(pair[1]))
+            .sum()
     };
-
-    assert_eq!(
-        spread(1.0),
-        0,
-        "at full smoothing the offsets traced different curves"
-    );
-    assert_eq!(
-        spread(0.0),
-        OFFSET_TRACES.len() - 1,
-        "at no smoothing some offset traced the same curve as offset 0"
-    );
+    let travels = SMOOTHINGS.map(travel);
+    for (travel, smoothing) in travels.windows(2).zip(SMOOTHINGS.windows(2)) {
+        assert!(
+            travel[0] > travel[1],
+            "noise travelled {} rows at smoothing {} and {} at the smoother {}",
+            travel[0],
+            smoothing[0],
+            travel[1],
+            smoothing[1]
+        );
+    }
 }
 
 /// A pulsed cell is drawn across enough of the noise field to show the gate
 /// flat at both of its ends: some of the cell resting at dark, some of it
-/// arrived at full.
+/// arrived at full. Full smoothing reaches the least far through the field,
+/// but every row is held to it.
 ///
 /// Noise crosses the upper knee only rarely, so a sweep too narrow to reach it
 /// would draw a sheet that shows a pulse rising and falling and never
 /// saturating, which is the wrong picture of the gate.
 #[test]
 fn a_pulsed_cell_reaches_both_ends_of_the_gate() {
-    let animation = noise_animation(1.0, 1.0, true);
-    let values: Vec<f64> = (0..TRACE_WIDTH)
-        .map(|x| animation.unit_value(Phase::new(f64::from(x) / f64::from(TRACE_WIDTH)), 0))
-        .collect();
+    for smoothing in SMOOTHINGS {
+        let animation = noise_animation(smoothing, 1.0, true);
+        let values: Vec<f64> = (0..TRACE_WIDTH)
+            .map(|x| animation.unit_value(Phase::new(f64::from(x) / f64::from(TRACE_WIDTH))))
+            .collect();
 
-    let resting = values.iter().filter(|v| **v == 0.0).count();
-    let full = values.iter().filter(|v| **v == 1.0).count();
-    assert!(
-        resting > 0 && full > 0,
-        "across {TRACE_WIDTH} columns a pulsed cell rested at dark for {resting} of them \
-         and reached full for {full}"
-    );
+        let resting = values.iter().filter(|v| **v == 0.0).count();
+        let full = values.iter().filter(|v| **v == 1.0).count();
+        assert!(
+            resting > 0 && full > 0,
+            "across {TRACE_WIDTH} columns a pulsed cell at smoothing {smoothing} rested at \
+             dark for {resting} of them and reached full for {full}"
+        );
+    }
 }
