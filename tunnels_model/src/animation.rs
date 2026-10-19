@@ -453,6 +453,31 @@ impl PreparedAnimation<'_> {
         self.unit_value_at(along, Sample::Figure) * self.scale
     }
 
+    /// The animation's value at many points on a figure, with amplitude
+    /// applied.
+    ///
+    /// `out[i]` is [`value_on_figure`](Self::value_on_figure) at the phase
+    /// `alongs[i]`, narrowed to `f32`. As many values are written as the
+    /// shorter of the two holds.
+    pub fn values_on_figure(&self, alongs: &[f32], out: &mut [f32]) {
+        for (value, &along) in out.iter_mut().zip(alongs) {
+            *value = self.value_on_figure(Phase::new(f64::from(along))) as f32;
+        }
+    }
+
+    /// The animation's value along a run of elements spread evenly across one
+    /// unit of phase, with amplitude applied.
+    ///
+    /// The run is as long as `out`: element `i` of `n` sits at phase `i / n`,
+    /// and `out[i]` is [`value`](Self::value) at that phase with `i` as the
+    /// element's index.
+    pub fn values_on_elements(&self, out: &mut [f64]) {
+        let n = out.len() as f64;
+        for (i, value) in out.iter_mut().enumerate() {
+            *value = self.value(Phase::new(i as f64 / n), i);
+        }
+    }
+
     /// Scale a value by the amplitude factors: size, clock submaster, and audio
     /// envelope.
     pub fn scale_value(&self, v: f64) -> f64 {
@@ -899,6 +924,94 @@ mod test {
             largest < 0.1,
             "rough noise stepped by {largest} between neighbouring points"
         );
+    }
+
+    /// Asked about many places at once, an animation answers each exactly as
+    /// it does asked about that place alone, whatever waveform and shape it
+    /// has.
+    #[test]
+    fn a_batch_answers_each_place_as_it_is_answered_alone() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let tables = SpectrumTables::new(&AudioFrame::new(
+            Default::default(),
+            std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0)),
+        ));
+        let shapes: [Vec<StateChange>; 9] = [
+            vec![StateChange::Waveform(Waveform::SineSquare)],
+            vec![
+                StateChange::Waveform(Waveform::SineSquare),
+                StateChange::Smoothing(UnipolarFloat::new(0.0)),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::TriSaw),
+                StateChange::DutyCycle(UnipolarFloat::new(0.4)),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::Smoothing(UnipolarFloat::new(0.0)),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::Smoothing(UnipolarFloat::new(0.6)),
+                StateChange::Pulse(true),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::NPeriods(0),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::Spectrum),
+                StateChange::Invert(true),
+            ],
+            vec![StateChange::Waveform(Waveform::Constant)],
+            vec![StateChange::Size(UnipolarFloat::new(0.0))],
+        ];
+        // Off either end of the unit interval as well as inside it, since a
+        // figure's coordinates can run past both.
+        let alongs: Vec<f32> = (-20..140).map(|i| i as f32 / 97.0).collect();
+        let elements = 37;
+        for changes in shapes {
+            let mut animation = Animation::default();
+            for sc in [
+                StateChange::Size(UnipolarFloat::new(0.8)),
+                StateChange::NPeriods(3),
+                StateChange::Speed(BipolarFloat::new(0.3)),
+            ]
+            .into_iter()
+            .chain(changes.iter().cloned())
+            {
+                animation.control(ControlMessage::Set(sc), &mut Noop);
+            }
+            animation.settle_controls();
+            animation.update_state(Duration::from_millis(2300), &AudioState::default());
+            let prepared =
+                animation.prepare(&ClockBank::default(), &AudioState::default(), &tables);
+
+            let mut on_figure = vec![f32::NAN; alongs.len()];
+            prepared.values_on_figure(&alongs, &mut on_figure);
+            for (&along, &batched) in alongs.iter().zip(&on_figure) {
+                let alone = prepared.value_on_figure(Phase::new(f64::from(along))) as f32;
+                assert_eq!(
+                    batched.to_bits(),
+                    alone.to_bits(),
+                    "{changes:?} answered {batched} on a figure at {along}, and {alone} alone"
+                );
+            }
+
+            let mut on_elements = vec![f64::NAN; elements];
+            prepared.values_on_elements(&mut on_elements);
+            for (i, &batched) in on_elements.iter().enumerate() {
+                let alone = prepared.value(Phase::new(i as f64 / elements as f64), i);
+                assert_eq!(
+                    batched.to_bits(),
+                    alone.to_bits(),
+                    "{changes:?} answered {batched} at element {i} of a run, and {alone} alone"
+                );
+            }
+        }
     }
 
     /// Pulsed, the spectrum reads its band levels as they are; unpulsed, it

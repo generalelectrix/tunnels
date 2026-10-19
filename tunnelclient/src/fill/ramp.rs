@@ -106,28 +106,43 @@ pub fn blank(span: RampSpan) -> RgbaImage {
     RgbaImage::new(span.texels(), 1)
 }
 
+/// Where a ramp's colour animations are worked out before it is written,
+/// reused across frames so building a ramp allocates nothing.
+#[derive(Default)]
+pub struct RampScratch {
+    /// One animation's value at every texel.
+    values: Vec<f64>,
+    /// What the animations add to each texel's colour.
+    adjusts: Vec<ColorAdjust>,
+}
+
 /// Write a layer's colour into `img`, across the span `img` is sized for.
 ///
-/// Every colour animation is resolved here, once per texel, rather than per
-/// vertex or per pixel. That is why an animated colour costs the same as a
-/// still one: however fast a waveform moves, the frame's work is a few thousand
-/// evaluations and one texture write.
+/// Every colour animation is resolved here, across all the texels in one call
+/// apiece, rather than per vertex or per pixel. That is why an animated colour
+/// costs the same as a still one: however fast a waveform moves, the frame's
+/// work is a few thousand evaluations and one texture write.
 pub fn build_into(
     img: &mut RgbaImage,
+    scratch: &mut RampScratch,
     span: RampSpan,
     color: &ColorField,
     anims: &[TargetedAnimation<PreparedAnimation>],
 ) {
     let texels = img.width();
-    for x in 0..texels {
+    let RampScratch { values, adjusts } = scratch;
+    let len = texels as usize;
+    adjusts.clear();
+    adjusts.resize(len, ColorAdjust::default());
+    // Every value is written over before it is read, so nothing needs
+    // clearing first.
+    values.resize(len, 0.0);
+    for anim in anims {
         // Across a cycle or across the figure, according to what this table
         // holds. Either way it is the coordinate an animation is asked at, so
         // an animation's period is the span's and never the colour's.
-        let phase = Phase::new(f64::from(x) / f64::from(texels));
-
-        let mut adjust = ColorAdjust::default();
-        for anim in anims {
-            let value = anim.animation.value(phase, x as usize);
+        anim.animation.values_on_elements(values);
+        for (adjust, &value) in adjusts.iter_mut().zip(values.iter()) {
             // The same adjustments a beam makes to its own colour, against
             // the ramp's coordinate instead of a segment index.
             match anim.target {
@@ -148,7 +163,10 @@ pub fn build_into(
                 | AnimationTarget::Spin => {}
             }
         }
+    }
 
+    for (x, &adjust) in (0..texels).zip(adjusts.iter()) {
+        let phase = Phase::new(f64::from(x) / f64::from(texels));
         // A figure-wide table walks the colour through every one of its cycles,
         // because the coordinate indexing it covers the whole figure.
         let sampled = match span {
