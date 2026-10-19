@@ -11,7 +11,6 @@ use super::ramp::RampSpan;
 use graphics::Graphics;
 use graphics::draw_state::DrawState;
 use graphics::math::Matrix2d;
-use tunnels_lib::number::Phase;
 use tunnels_model::animation::{PreparedAnimation, TargetedAnimation};
 use tunnels_model::animation_target::AnimationTarget;
 use tunnels_model::layer::PhaseAxis;
@@ -76,6 +75,9 @@ pub struct VertexBuffers {
     /// Where each vertex looks in the colour ramp. Already in the backend's
     /// vocabulary, since nothing between here and the sampler reads it.
     uvs: Vec<[f32; 2]>,
+    /// Where each point sits on the figure, and what the animations come to
+    /// there, gathered before any point is moved.
+    samples: Samples,
 }
 
 impl VertexBuffers {
@@ -84,27 +86,40 @@ impl VertexBuffers {
         &self.positions
     }
 
-    /// Everything a frame does per vertex, in one walk of the mesh.
+    /// Everything a frame does per vertex.
     ///
-    /// Fused because the things it produces all want the same polar
-    /// coordinates: the ramp coordinate is an angle, a spin is a rotation
-    /// about the same centre, and a radial animation scales the same radius.
-    /// Computed separately that was two `atan2` calls a vertex, which a
-    /// profile of the prototype put at a third of the frame.
+    /// Each vertex's polar coordinates are worked out once and serve
+    /// everything that wants them: the ramp coordinate is an angle, a spin is
+    /// a rotation about the same centre, and a radial animation scales the
+    /// same radius. Computed separately that was two `atan2` calls a vertex,
+    /// which a profile of the prototype put at a third of the frame.
+    ///
+    /// Every warp is asked for its value at all the vertices in one call
+    /// before any vertex is moved, so an animation is evaluated in a loop of
+    /// its own rather than between everything else a vertex needs.
     ///
     /// Position comes out displaced; the ramp coordinate is read from the
     /// vertex *before* displacement, so a colour pattern stays glued to the
     /// figure while a warp moves it rather than sliding across it.
     pub fn vertex_pass(&mut self, mesh: &RefinedMesh, work: VertexWork) {
         let needs = Needs::of(&work);
-        self.positions.clear();
-        self.uvs.clear();
+        let Self {
+            positions,
+            uvs,
+            samples,
+        } = self;
+        samples.locate(mesh.points(), needs, work.field.phase);
+        samples.warps.fill(work.warps, &samples.alongs);
 
-        for v in mesh.points() {
-            let polar = Polar::of(v, needs.angle, needs.radius);
-            let along = polar.phase(v, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along);
-
+        positions.clear();
+        uvs.clear();
+        for (i, ((v, &polar), &along)) in mesh
+            .points()
+            .zip(&samples.polars)
+            .zip(&samples.alongs)
+            .enumerate()
+        {
+            let displacement = Displacement::of(&work, polar, samples.warps.at(i));
             let (x, y) = if needs.rotates {
                 // The figure's own points, moved in polar terms because a
                 // spin is a rotation about the same centre the phase is
@@ -118,8 +133,8 @@ impl VertexBuffers {
                 // coordinates.
                 (v.x() * displacement.radial, v.y() * displacement.radial)
             };
-            self.positions.push(displacement.place(x, y));
-            self.uvs.push([along * work.field.ramp_scale(), 0.5]);
+            positions.push(displacement.place(x, y));
+            uvs.push([along * work.field.ramp_scale(), 0.5]);
         }
     }
 
@@ -146,15 +161,26 @@ impl VertexBuffers {
     /// a figure and gone at another.
     pub fn stroke_vertex_pass(&mut self, mesh: &StrokeMesh, work: VertexWork) {
         let needs = Needs::of(&work);
-        self.positions.clear();
-        self.uvs.clear();
+        let Self {
+            positions,
+            uvs,
+            samples,
+        } = self;
+        samples.locate(mesh.runs().map(|run| run.point), needs, work.field.phase);
+        samples.warps.fill(work.warps, &samples.alongs);
+        samples.taper.fill(work.taper, &samples.alongs);
 
-        for run in mesh.runs() {
+        positions.clear();
+        uvs.clear();
+        for (i, ((run, &polar), &along)) in mesh
+            .runs()
+            .zip(&samples.polars)
+            .zip(&samples.alongs)
+            .enumerate()
+        {
             let on_path = run.point;
-            let polar = Polar::of(on_path, needs.angle, needs.radius);
-            let along = polar.phase(on_path, work.field.phase);
-            let displacement = Displacement::of(&work, polar, along);
-            let reach = work.taper_at(along);
+            let displacement = Displacement::of(&work, polar, samples.warps.at(i));
+            let reach = work.reach(samples.taper.at(i));
             let (sin, cos) = if needs.rotates {
                 displacement.turn.sin_cos()
             } else {
@@ -176,11 +202,75 @@ impl VertexBuffers {
                 } else {
                     (x, y)
                 };
-                self.positions
+                positions
                     .push(displacement.place(x * displacement.radial, y * displacement.radial));
-                self.uvs.push(uv);
+                uvs.push(uv);
             }
         }
+    }
+}
+
+/// A run of points on a figure: where each sits, and what every animation on
+/// its layer comes to there.
+#[derive(Default)]
+struct Samples {
+    /// Each point's polar coordinates, as far as the layer asks for them.
+    polars: Vec<Polar>,
+    /// Each point's phase along the coordinate the ramp is indexed by, which
+    /// is also where an animation is asked for its value.
+    alongs: Vec<f32>,
+    /// What each warp comes to at each point.
+    warps: AnimationRows,
+    /// What each thickness animation comes to at each point.
+    taper: AnimationRows,
+}
+
+impl Samples {
+    /// Make `points` the run: where each sits in the coordinates `needs` asks
+    /// for, and its phase along `phase`.
+    fn locate(&mut self, points: impl Iterator<Item = Point>, needs: Needs, phase: PhaseAxis) {
+        self.polars.clear();
+        self.alongs.clear();
+        for v in points {
+            let polar = Polar::of(v, needs.angle, needs.radius);
+            self.polars.push(polar);
+            self.alongs.push(polar.phase(v, phase));
+        }
+    }
+}
+
+/// Animations' values across a run of points, a row per animation.
+#[derive(Default)]
+struct AnimationRows {
+    /// The rows end to end, each as long as the run.
+    values: Vec<f32>,
+    /// How many points each row covers.
+    points: usize,
+}
+
+impl AnimationRows {
+    /// Ask each of `anims` for its value at every one of `alongs`, a row
+    /// apiece, in the order they are given.
+    fn fill(&mut self, anims: &[TargetedAnimation<PreparedAnimation>], alongs: &[f32]) {
+        self.points = alongs.len();
+        // Every value is written over below, so nothing needs clearing first.
+        self.values.resize(anims.len() * self.points, 0.0);
+        for (anim, row) in anims
+            .iter()
+            .zip(self.values.chunks_exact_mut(self.points.max(1)))
+        {
+            anim.animation.values_on_figure(alongs, row);
+        }
+    }
+
+    /// Each animation's value at one point of the run, in the order the
+    /// animations were given.
+    fn at(&self, point: usize) -> impl Iterator<Item = f32> + '_ {
+        self.values
+            .iter()
+            .skip(point)
+            .step_by(self.points.max(1))
+            .copied()
     }
 }
 
@@ -205,7 +295,7 @@ pub struct VertexWork<'a> {
 
 impl VertexWork<'_> {
     /// How far a ribbon reaches at one point, as a fraction of the width its
-    /// outline was stroked at.
+    /// outline was stroked at, given each thickness animation's value there.
     ///
     /// Never past one, so the width only ever narrows. Narrowing is what keeps
     /// the ribbon the shape it was cut as: an offset scaled down lands where a
@@ -216,12 +306,10 @@ impl VertexWork<'_> {
     /// waveform at full amplitude troughs at exactly minus one, which is a
     /// ribbon of no width and a beam that has gone out.
     #[inline]
-    fn taper_at(&self, along: f32) -> f32 {
+    fn reach(&self, taper: impl IntoIterator<Item = f32>) -> f32 {
         // Summed the way a beam sums them, so a figure and a run of segments
         // answer a stack of thickness animations alike.
-        let scale = self.taper.iter().fold(1.0, |acc, a| {
-            acc + a.animation.value_on_figure(Phase::new(f64::from(along))) as f32
-        });
+        let scale = taper.into_iter().fold(1.0, |acc, value| acc + value);
         (self.stroke_width * scale).clamp(0.0, 1.0)
     }
 }
@@ -262,7 +350,9 @@ struct Displacement {
 }
 
 impl Displacement {
-    fn of(work: &VertexWork, polar: Polar, along: f32) -> Self {
+    /// What the work's warps come to at a point, given each warp's value
+    /// there in the order the work lists them.
+    fn of(work: &VertexWork, polar: Polar, values: impl IntoIterator<Item = f32>) -> Self {
         let mut out = Self {
             radial: 1.0,
             // A tunnel integrates this knob into an angle that grows without
@@ -279,8 +369,7 @@ impl Displacement {
         // A position, in the units a position knob is in along the screen's
         // axes, carried into the figure's coordinates once every warp is in.
         let (mut across, mut up) = (0.0, 0.0);
-        for warp in work.warps {
-            let value = warp.animation.value_on_figure(Phase::new(f64::from(along))) as f32;
+        for (warp, value) in work.warps.iter().zip(values) {
             // Where a target means something different on a figure than on a
             // run of segments, this is where it is reinterpreted. `Size` scales a
             // segment; here it scales each point's distance from the centre,
@@ -340,7 +429,7 @@ impl Displacement {
     }
 }
 
-/// A vertex's polar coordinates, computed only where they are wanted.
+/// A point's polar coordinates, computed only where they are wanted.
 #[derive(Clone, Copy, Default)]
 struct Polar {
     radius: f32,
@@ -496,7 +585,7 @@ mod test {
     use super::*;
     use std::time::Duration;
     use tunnels_lib::audio::AudioState;
-    use tunnels_lib::number::UnipolarFloat;
+    use tunnels_lib::number::{Phase, UnipolarFloat};
     use tunnels_model::animation::{
         Animation, ControlMessage, EmitStateChange, StateChange, Waveform,
     };
@@ -665,8 +754,11 @@ mod test {
     }
 
     /// An animation aimed at `target`, shaped so that its value runs across the
-    /// figure rather than standing at one number.
-    fn varying_warp(target: AnimationTarget) -> TargetedAnimation<PreparedAnimation<'static>> {
+    /// figure `n_periods` times rather than standing at one number.
+    fn varying_warp(
+        target: AnimationTarget,
+        n_periods: u16,
+    ) -> TargetedAnimation<PreparedAnimation<'static>> {
         use std::time::Duration;
         use tunnels_model::animation::{ControlMessage, StateChange, Waveform};
 
@@ -678,7 +770,7 @@ mod test {
         let mut animation = Animation::default();
         for sc in [
             StateChange::Waveform(Waveform::TriSaw),
-            StateChange::NPeriods(1),
+            StateChange::NPeriods(n_periods),
             StateChange::Size(UnipolarFloat::ONE),
             // Unsmoothed, so the ramp is the straight line the arithmetic here
             // is written against rather than one with its corners rounded off.
@@ -704,12 +796,15 @@ mod test {
     ///
     /// The value is in the units a position knob is in, along the screen's
     /// axes; how that comes out in the figure's own coordinates is the work's
-    /// to say, and here it is lopsided enough that a mixed-up axis shows.
+    /// to say, and here it is lopsided enough that a mixed-up axis shows. The
+    /// two warps run at different periodicities, so a point handed another
+    /// point's values, or one warp's value in place of the other's, shows
+    /// too.
     #[test]
     fn a_position_warp_moves_a_point_by_its_own_value() {
         let warps = [
-            varying_warp(AnimationTarget::PositionX),
-            varying_warp(AnimationTarget::PositionY),
+            varying_warp(AnimationTarget::PositionX, 1),
+            varying_warp(AnimationTarget::PositionY, 2),
         ];
         let to_figure = [[2.0, 0.5], [-0.25, 3.0]];
         let work = VertexWork {
@@ -724,22 +819,30 @@ mod test {
             stroke_width: 1.0,
             to_figure,
         };
-        for along in [0.0, 0.25, 0.6] {
-            let moved = Displacement::of(&work, Polar::default(), along);
-            let value = warps[0]
-                .animation
-                .value_on_figure(Phase::new(f64::from(along))) as f32;
+        let alongs = [0.0, 0.25, 0.6, 0.9];
+        let mut values = AnimationRows::default();
+        values.fill(&warps, &alongs);
+        let mut told_apart = false;
+        for (i, &along) in alongs.iter().enumerate() {
+            let moved = Displacement::of(&work, Polar::default(), values.at(i));
+            let [across, up] = [&warps[0], &warps[1]]
+                .map(|warp| warp.animation.value_on_figure(Phase::new(f64::from(along))) as f32);
             let [[xx, xy], [yx, yy]] = to_figure;
             assert_eq!(
                 (moved.offset_x, moved.offset_y),
-                ((xx + xy) * value, (yx + yy) * value),
-                "a point at phase {along} did not move by the value there"
+                (xx * across + xy * up, yx * across + yy * up),
+                "a point at phase {along} did not move by the values there"
             );
             // Nothing else the warps could have touched moved with them.
             assert_eq!(moved.radial, 1.0);
             assert_eq!(moved.turn, 0.0);
             assert_eq!((moved.scale_x, moved.scale_y), (1.0, 1.0));
+            told_apart |= across != up;
         }
+        assert!(
+            told_apart,
+            "the two warps agreed at every point, so a swap between them would not show"
+        );
     }
 
     /// The offset lands on the point after everything that scales it, so a

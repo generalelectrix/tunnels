@@ -20,7 +20,7 @@ use self::draw::{PhaseField, VertexBuffers, VertexWork, draw_flat, draw_textured
 use self::figure::FigureCache;
 use self::geometry::{FillGeometry, StrokeGeometry};
 use self::mesh::{Level, MeshId, MeshLibrary};
-use self::ramp::RampSpan;
+use self::ramp::{RampScratch, RampSpan};
 use crate::draw::{draw_segments, hsv_to_rgb, place, thickness_px};
 use client_lib::config::ClientConfig;
 use graphics::draw_state::DrawState;
@@ -108,6 +108,8 @@ struct RampPool<T> {
     /// figure-wide image freed and reallocated every frame.
     cycle_scratch: RgbaImage,
     figure_scratch: RgbaImage,
+    /// Where the colour animations are worked out on the way into either.
+    anim_scratch: RampScratch,
     settings: TextureSettings,
 }
 
@@ -120,6 +122,7 @@ where
             entries: Vec::new(),
             cycle_scratch: ramp::blank(RampSpan::Cycle),
             figure_scratch: ramp::blank(RampSpan::Figure),
+            anim_scratch: RampScratch::default(),
             // Repeating wrap is what lets a phase coordinate run past one
             // cycle and keep indexing the ramp, so the cycle count never
             // reaches the mesh. Linear filtering puts the sawtooth's jump
@@ -140,13 +143,14 @@ where
             entries,
             cycle_scratch,
             figure_scratch,
+            anim_scratch,
             settings,
         } = self;
         let scratch = match span {
             RampSpan::Cycle => cycle_scratch,
             RampSpan::Figure => figure_scratch,
         };
-        ramp::build_into(scratch, span, &fill.color, &fill.color_anims);
+        ramp::build_into(scratch, anim_scratch, span, &fill.color, &fill.color_anims);
         let (width, height) = scratch.dimensions();
 
         let free = entries
@@ -481,9 +485,9 @@ where
             );
             // Phase comes from the undeformed position, so a colour pattern
             // stays glued to the figure while a warp moves it rather than
-            // sliding across it. One walk of the mesh produces displaced
-            // positions and ramp coordinates together, because both want the
-            // same polar coordinates for a point.
+            // sliding across it. One pass produces displaced positions and
+            // ramp coordinates together, because both want the same polar
+            // coordinates for a point.
             verts.vertex_pass(mesh, work);
             match texture {
                 Some(texture) => draw_textured(
