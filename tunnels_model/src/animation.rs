@@ -125,6 +125,33 @@ fn get_simplex_gen() -> &'static Simplex {
 /// is sharp and choppy rather than a slow wobble.
 pub const FIGURE_NOISE_ROUGHENING: f64 = 7.0;
 
+/// The line through the noise field a figure's points are sampled along:
+/// lengthened and turned by smoothing (see [`FIGURE_NOISE_ROUGHENING`]).
+#[derive(Clone, Copy, Debug)]
+struct NoiseLine {
+    length: f64,
+    cos: f64,
+    sin: f64,
+}
+
+impl NoiseLine {
+    fn new(n_periods: u16, smoothing: UnipolarFloat) -> Self {
+        let rough = 1.0 - smoothing.val();
+        let angle = rough * std::f64::consts::FRAC_PI_2;
+        Self {
+            length: f64::from(n_periods) * (1.0 + FIGURE_NOISE_ROUGHENING * rough),
+            cos: angle.cos(),
+            sin: angle.sin(),
+        }
+    }
+
+    /// Where the point at `phase` lands in the field.
+    fn at(&self, phase: Phase) -> (f64, f64) {
+        let along = phase.val() * self.length;
+        (along * self.cos, along * self.sin)
+    }
+}
+
 /// Where an animation is asked for its value, beyond its phase.
 #[derive(Clone, Copy)]
 enum Sample {
@@ -236,11 +263,13 @@ impl Animation {
         audio: &AudioState,
         spectrum: &'f SpectrumTables,
     ) -> PreparedAnimation<'f> {
+        let smoothing = self.smoothing.smoothed();
         PreparedAnimation {
             static_params: self.static_params,
             phase_temporal: self.phase(external_clocks),
             duty_cycle: self.duty_cycle.smoothed(),
-            smoothing: self.smoothing.smoothed(),
+            smoothing,
+            noise_line: NoiseLine::new(self.static_params.n_periods, smoothing),
             ticks: self.ticks(external_clocks),
             scale: self.scale_value(external_clocks, audio, 1.0),
             simplex_gen: self.simplex_gen,
@@ -398,6 +427,8 @@ pub struct PreparedAnimation<'f> {
     duty_cycle: UnipolarFloat,
     /// The smoothing control's current value, not its target.
     smoothing: UnipolarFloat,
+    /// The line a figure's noise is sampled along, at that smoothing.
+    noise_line: NoiseLine,
     /// Whole periods elapsed, which noise uses to drift its field.
     ticks: Ticks,
     /// Size, clock submaster and audio envelope, multiplied out.
@@ -510,14 +541,7 @@ impl PreparedAnimation<'_> {
                     // turned from time's direction by roughness and lengthened
                     // with it. No periodicity is a line of no length, one value
                     // everywhere.
-                    Sample::Figure => {
-                        let rough = 1.0 - self.smoothing.val();
-                        let angle = rough * std::f64::consts::FRAC_PI_2;
-                        let length = self.static_params.n_periods as f64
-                            * (1.0 + FIGURE_NOISE_ROUGHENING * rough);
-                        let along = spatial_phase_offset.val() * length;
-                        (along * angle.cos(), along * angle.sin())
-                    }
+                    Sample::Figure => self.noise_line.at(spatial_phase_offset),
                 };
                 let x_offset = self.ticks as f64 + spatial_x + temporal_phase;
 
