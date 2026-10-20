@@ -135,19 +135,15 @@ codesign -s - --force \
   "$APP"
 
 echo "==> Creating DMG..."
-BG_PNG="$PROJECT_DIR/dist/dmg-background.png"
-rsvg-convert -w 600 -h 400 "$PROJECT_DIR/resources/dmg-background.svg" > "$BG_PNG"
-
 DMG="$PROJECT_DIR/dist/Tunnels.dmg"
 rm -f "$DMG"
+# --skip-jenkins skips create-dmg's Finder AppleScript, which only lays out
+# the DMG window (icon positions, background) and takes over the screen while
+# it runs. The app-drop-link coordinates are required but unused.
 create-dmg \
   --volname "Tunnels" \
-  --background "$BG_PNG" \
-  --window-size 600 400 \
-  --icon-size 128 \
-  --icon "Tunnels.app" 150 210 \
+  --skip-jenkins \
   --app-drop-link 450 210 \
   "$DMG" "$APP"
-rm -f "$BG_PNG"
 
 echo "==> Done: $DMG"
