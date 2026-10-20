@@ -227,7 +227,9 @@ pub fn spectrum(args: &WaveformArgs, tables: &SpectrumTables) -> f64 {
     if spatial.pulse {
         level
     } else {
-        level.mul_add(2.0, -1.0)
+        // Doubling is exact, so this rounds once, as a fused multiply-add
+        // would, without the library call a CPU lacking one makes for it.
+        level * 2.0 - 1.0
     }
 }
 

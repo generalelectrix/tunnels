@@ -125,6 +125,56 @@ fn get_simplex_gen() -> &'static Simplex {
 /// is sharp and choppy rather than a slow wobble.
 pub const FIGURE_NOISE_ROUGHENING: f64 = 7.0;
 
+/// The line through the noise field a figure's points are sampled along:
+/// lengthened and turned by smoothing (see [`FIGURE_NOISE_ROUGHENING`]).
+#[derive(Clone, Copy, Debug)]
+struct NoiseLine {
+    length: f64,
+    cos: f64,
+    sin: f64,
+}
+
+impl NoiseLine {
+    fn new(n_periods: u16, smoothing: UnipolarFloat) -> Self {
+        let rough = 1.0 - smoothing.val();
+        let angle = rough * std::f64::consts::FRAC_PI_2;
+        Self {
+            length: f64::from(n_periods) * (1.0 + FIGURE_NOISE_ROUGHENING * rough),
+            cos: angle.cos(),
+            sin: angle.sin(),
+        }
+    }
+
+    /// Where the point at `phase` lands in the field.
+    fn at(&self, phase: Phase) -> (f64, f64) {
+        let along = phase.val() * self.length;
+        (along * self.cos, along * self.sin)
+    }
+}
+
+/// A waveform, with whatever it needs worked out for one frame.
+#[derive(Clone, Copy, Debug)]
+enum PreparedWaveform {
+    SineSquare,
+    TriSaw,
+    /// Noise, with the line through its field a figure is sampled along.
+    Noise(NoiseLine),
+    Spectrum,
+    Constant,
+}
+
+impl PreparedWaveform {
+    fn new(params: &StaticParams, smoothing: UnipolarFloat) -> Self {
+        match params.waveform {
+            Waveform::SineSquare => Self::SineSquare,
+            Waveform::TriSaw => Self::TriSaw,
+            Waveform::Noise => Self::Noise(NoiseLine::new(params.n_periods, smoothing)),
+            Waveform::Spectrum => Self::Spectrum,
+            Waveform::Constant => Self::Constant,
+        }
+    }
+}
+
 /// Where an animation is asked for its value, beyond its phase.
 #[derive(Clone, Copy)]
 enum Sample {
@@ -236,11 +286,13 @@ impl Animation {
         audio: &AudioState,
         spectrum: &'f SpectrumTables,
     ) -> PreparedAnimation<'f> {
+        let smoothing = self.smoothing.smoothed();
         PreparedAnimation {
             static_params: self.static_params,
             phase_temporal: self.phase(external_clocks),
             duty_cycle: self.duty_cycle.smoothed(),
-            smoothing: self.smoothing.smoothed(),
+            smoothing,
+            waveform: PreparedWaveform::new(&self.static_params, smoothing),
             ticks: self.ticks(external_clocks),
             scale: self.scale_value(external_clocks, audio, 1.0),
             simplex_gen: self.simplex_gen,
@@ -398,6 +450,8 @@ pub struct PreparedAnimation<'f> {
     duty_cycle: UnipolarFloat,
     /// The smoothing control's current value, not its target.
     smoothing: UnipolarFloat,
+    /// The waveform, resolved at that smoothing.
+    waveform: PreparedWaveform,
     /// Whole periods elapsed, which noise uses to drift its field.
     ticks: Ticks,
     /// Size, clock submaster and audio envelope, multiplied out.
@@ -466,12 +520,14 @@ impl PreparedAnimation<'_> {
 
     /// The waveform's own value at one place, before amplitude.
     fn unit_value_at(&self, spatial_phase_offset: Phase, sample: Sample) -> f64 {
-        let result = match self.static_params.waveform {
-            Waveform::SineSquare => {
+        let result = match self.waveform {
+            PreparedWaveform::SineSquare => {
                 waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
             }
-            Waveform::TriSaw => waveforms::tri_saw(&self.waveform_args(spatial_phase_offset)),
-            Waveform::Noise => {
+            PreparedWaveform::TriSaw => {
+                waveforms::tri_saw(&self.waveform_args(spatial_phase_offset))
+            }
+            PreparedWaveform::Noise(line) => {
                 // Handle duty cycle - this is a bit odd compared to waveforms,
                 // since noise isn't periodic. Rather than trying to compress
                 // the waveform to maintain the waveshape, we just turn off
@@ -510,14 +566,7 @@ impl PreparedAnimation<'_> {
                     // turned from time's direction by roughness and lengthened
                     // with it. No periodicity is a line of no length, one value
                     // everywhere.
-                    Sample::Figure => {
-                        let rough = 1.0 - self.smoothing.val();
-                        let angle = rough * std::f64::consts::FRAC_PI_2;
-                        let length = self.static_params.n_periods as f64
-                            * (1.0 + FIGURE_NOISE_ROUGHENING * rough);
-                        let along = spatial_phase_offset.val() * length;
-                        (along * angle.cos(), along * angle.sin())
-                    }
+                    Sample::Figure => line.at(spatial_phase_offset),
                 };
                 let x_offset = self.ticks as f64 + spatial_x + temporal_phase;
 
@@ -529,10 +578,10 @@ impl PreparedAnimation<'_> {
                     val
                 }
             }
-            Waveform::Spectrum => {
+            PreparedWaveform::Spectrum => {
                 waveforms::spectrum(&self.waveform_args(spatial_phase_offset), self.spectrum)
             }
-            Waveform::Constant => 1.0,
+            PreparedWaveform::Constant => 1.0,
         };
 
         if self.static_params.invert {
