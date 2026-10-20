@@ -15,6 +15,7 @@ members = [
     "stage_theme",
     "touchosc_sync",
     "gui_common",
+    "app_update",
     "console",
     "client_lib",
     "minusmq",

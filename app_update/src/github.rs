@@ -1,0 +1,47 @@
+use reqwest::blocking::Client;
+use reqwest::header::ACCEPT;
+use serde::Deserialize;
+
+use crate::{CheckError, ReleaseFeed};
+
+/// The fields of GitHub's release object the updater reads.
+#[derive(Debug, Deserialize)]
+pub(crate) struct LatestRelease {
+    pub tag_name: String,
+    pub html_url: String,
+    pub assets: Vec<ReleaseAssetJson>,
+}
+
+/// The fields of GitHub's release asset object the updater reads.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ReleaseAssetJson {
+    pub name: String,
+    pub browser_download_url: String,
+    /// `sha256:<hex>`, absent on assets uploaded before GitHub began publishing digests.
+    pub digest: Option<String>,
+}
+
+/// The newest published release of `feed`'s repository, read from the REST API at `api_base`.
+pub(crate) fn fetch_latest(
+    client: &Client,
+    api_base: &str,
+    feed: &ReleaseFeed,
+    timeout: std::time::Duration,
+) -> Result<LatestRelease, CheckError> {
+    let url = format!(
+        "{api_base}/repos/{}/{}/releases/latest",
+        feed.owner, feed.repo
+    );
+    let response = client
+        .get(url)
+        .header(ACCEPT, "application/vnd.github+json")
+        .timeout(timeout)
+        .send()?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(CheckError::Status {
+            status: status.as_u16(),
+        });
+    }
+    Ok(response.json()?)
+}
