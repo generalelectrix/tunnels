@@ -11,13 +11,12 @@ use crate::clock_server::SharedClockData;
 pub struct AnimationSnapshot {
     pub animation: Animation,
     pub clocks: SharedClockData,
-    /// How many places along the beam the animation is resolved at.
+    /// How many places along the beam take a value from the animation, one
+    /// per segment, evenly spaced across a cycle from its start.
     ///
-    /// A waveform is asked for a value once per place, and which place is
-    /// asking is part of the question — noise reads it directly, and the
-    /// controls that spread an animation across a beam have nothing to act on
-    /// without it. So this decides the shape of the plot, not just how finely
-    /// it is sampled.
+    /// Each place reads the animation at its own phase, so its value lies on
+    /// the scaled waveform, and the count marks points on that line without
+    /// changing its shape.
     pub fixture_count: usize,
     /// Whether each of those places is also drawn as a point of its own.
     ///
@@ -39,12 +38,6 @@ const NUM_WAVE_POINTS: usize = 1000;
 impl VisualizerPanelState {
     /// Recompute plot data from the current animation snapshot.
     fn compute(&mut self, state: &AnimationSnapshot) {
-        let phase_offset_per_fixture = if state.fixture_count == 0 {
-            1.0
-        } else {
-            1.0 / state.fixture_count as f64
-        };
-
         // The animation is the same for every point being plotted, so resolve
         // its frame-constant state once rather than a thousand times. The unit
         // waveform ignores the amplitude, so one preparation serves all three
@@ -59,8 +52,7 @@ impl VisualizerPanelState {
         self.preview.clear();
         self.preview.extend((0..NUM_WAVE_POINTS).map(|i| {
             let phase = i as f64 / NUM_WAVE_POINTS as f64;
-            let offset_index = (phase / phase_offset_per_fixture) as usize;
-            PlotPoint::new(phase, anim.unit_value(Phase::new(phase), offset_index))
+            PlotPoint::new(phase, anim.unit_value(Phase::new(phase)))
         }));
 
         // Scaled waveform (applies audio envelope and animation scaling).
@@ -71,12 +63,13 @@ impl VisualizerPanelState {
                 .map(|point| PlotPoint::new(point.x, anim.scale_value(point.y))),
         );
 
-        // Individual fixture dots.
+        // Individual fixture dots, each at its own phase.
         self.dots.clear();
         if state.show_fixture_values {
+            let phase_offset_per_fixture = 1.0 / state.fixture_count as f64;
             self.dots.extend((0..state.fixture_count).map(|i| {
                 let phase = i as f64 * phase_offset_per_fixture;
-                PlotPoint::new(phase, anim.value(Phase::new(phase), i))
+                PlotPoint::new(phase, anim.value(Phase::new(phase)))
             }));
         }
     }
@@ -200,44 +193,13 @@ mod tests {
         assert_eq!(panel.dots.len(), 2);
     }
 
-    /// The count of places along the beam and the drawing of a point at each
-    /// of them are separate questions: a dense run still has to be resolved at
-    /// every one of its places for the waveform to come out right, while
-    /// drawing all of them would bury the line they lie on.
+    /// The plot is the function a beam renders: every point of the waveform
+    /// is the animation's unit value at that phase, and every fixture's dot
+    /// its scaled value at that fixture's phase. So neither how many places
+    /// the beam has nor whether each is drawn changes the line, and noise
+    /// comes out shaped by its smoothing at any count of places, one included.
     #[test]
-    fn the_places_are_resolved_whether_or_not_each_is_drawn() {
-        let plot = |show_fixture_values| {
-            let mut panel = VisualizerPanelState::default();
-            panel.compute(&AnimationSnapshot {
-                fixture_count: 126,
-                show_fixture_values,
-                ..Default::default()
-            });
-            (
-                panel.preview.iter().map(|p| p.y).collect::<Vec<_>>(),
-                panel.dots.len(),
-            )
-        };
-        let (drawn, drawn_dots) = plot(true);
-        let (undrawn, undrawn_dots) = plot(false);
-
-        assert_eq!(drawn_dots, 126, "a plot that draws its places drew none");
-        assert_eq!(
-            undrawn_dots, 0,
-            "a plot that draws no places drew {undrawn_dots}"
-        );
-        assert_eq!(
-            drawn, undrawn,
-            "the waveform changed shape according to whether its places were drawn"
-        );
-    }
-
-    /// An animation that reads where along the beam it is being asked about —
-    /// noise, through its cross-correlation — only answers differently at
-    /// different places, so a plot that resolves every place at the first one
-    /// silently drops every control that shapes the animation across the beam.
-    #[test]
-    fn a_waveform_that_reads_its_place_on_the_beam_is_shaped_by_the_controls() {
+    fn the_plot_is_the_animation_at_each_phase() {
         use crate::animation::{ControlMessage, EmitStateChange, StateChange, Waveform};
         use tunnels_lib::number::UnipolarFloat;
 
@@ -246,49 +208,91 @@ mod tests {
             fn emit_animation_state_change(&mut self, _: StateChange) {}
         }
 
-        let plot = |smoothing: f64, fixture_count: usize| {
+        let noise = |smoothing: f64| {
             let mut animation = Animation::default();
             for sc in [
                 StateChange::Waveform(Waveform::Noise),
                 StateChange::NPeriods(3),
-                // No size: a plot draws the waveform an animation would make
-                // whatever its amplitude, and an animation still being set up
-                // is exactly the one an operator is watching the plot for.
+                // Off full size, so a dot that drew the unit value instead of
+                // the scaled one would be seen to.
+                StateChange::Size(UnipolarFloat::new(0.5)),
                 StateChange::Smoothing(UnipolarFloat::new(smoothing)),
             ] {
                 animation.control(ControlMessage::Set(sc), &mut Silent);
             }
             // The smoothing control is reached over time rather than set.
             animation.update_state(std::time::Duration::from_secs(1), &AudioState::default());
-            let mut panel = VisualizerPanelState::default();
-            panel.compute(&AnimationSnapshot {
-                animation,
+            animation
+        };
+        let plot = |animation: &Animation, fixture_count: usize, show_fixture_values: bool| {
+            let state = AnimationSnapshot {
+                animation: animation.clone(),
                 fixture_count,
+                show_fixture_values,
                 ..Default::default()
-            });
-            panel.preview.iter().map(|p| p.y).collect::<Vec<_>>()
+            };
+            let mut panel = VisualizerPanelState::default();
+            panel.compute(&state);
+            let spectrum = SpectrumTables::new(&state.clocks.audio.frame);
+            let rendered =
+                state
+                    .animation
+                    .prepare(&state.clocks.clock_bank, &state.clocks.audio, &spectrum);
+            for point in &panel.preview {
+                assert_eq!(
+                    point.y,
+                    rendered.unit_value(Phase::new(point.x)),
+                    "the waveform at {} is not what a beam renders there",
+                    point.x
+                );
+            }
+            for dot in &panel.dots {
+                assert_eq!(
+                    dot.y,
+                    rendered.value(Phase::new(dot.x)),
+                    "the dot at {} is not what a beam renders there",
+                    dot.x
+                );
+            }
+            panel
         };
 
-        let spread = |count| {
-            plot(0.0, count)
-                .iter()
-                .zip(plot(1.0, count).iter())
-                .map(|(a, b)| (a - b).abs())
-                .fold(0.0_f64, f64::max)
+        let rough = noise(0.0);
+        let line = |panel: &VisualizerPanelState| -> Vec<f64> {
+            panel.preview.iter().map(|p| p.y).collect()
         };
+        let reference = line(&plot(&rough, 1, false));
+        for (fixture_count, show_fixture_values) in
+            [(1, true), (4, true), (126, true), (126, false)]
+        {
+            let panel = plot(&rough, fixture_count, show_fixture_values);
+            assert_eq!(
+                line(&panel),
+                reference,
+                "{fixture_count} places, drawn {show_fixture_values}, changed the waveform"
+            );
+            assert_eq!(
+                panel.dots.len(),
+                if show_fixture_values {
+                    fixture_count
+                } else {
+                    0
+                },
+                "{fixture_count} places, drawn {show_fixture_values}, drew {} dots",
+                panel.dots.len()
+            );
+        }
 
+        let smooth = line(&plot(&noise(1.0), 1, false));
+        let spread = reference
+            .iter()
+            .zip(&smooth)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f64, f64::max);
         assert!(
-            spread(126) > 0.1,
-            "turning the control across a run of 126 places moved the waveform by \
-             {}, which is nothing a viewer would see",
-            spread(126)
-        );
-        // One place is the degenerate case the bug wore: every sample resolves
-        // at the first place, so there is no second place to differ from.
-        assert_eq!(
-            spread(1),
-            0.0,
-            "a run of one place somehow varies along itself"
+            spread > 0.1,
+            "turning the smoothing control moved the waveform by {spread}, which is \
+             nothing a viewer would see"
         );
     }
 }

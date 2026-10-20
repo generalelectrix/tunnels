@@ -127,7 +127,7 @@ pub fn build_into(
 
         let mut adjust = ColorAdjust::default();
         for anim in anims {
-            let value = anim.animation.value(phase, x as usize);
+            let value = anim.animation.value(phase);
             // The same adjustments a beam makes to its own colour, against
             // the ramp's coordinate instead of a segment index.
             match anim.target {

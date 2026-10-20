@@ -883,7 +883,7 @@ mod test {
         for (vertex, shift) in still.iter().zip(&shifted) {
             let figure_y = (f64::from(vertex[1]) - cfg.y_center) / half_y;
             let along = (figure_y + 1.0) / 2.0;
-            let expected = warp.animation.value(Phase::new(along), 0) * f64::from(cfg.x_resolution);
+            let expected = warp.animation.value(Phase::new(along)) * f64::from(cfg.x_resolution);
             assert!(
                 (f64::from(shift[0]) - expected).abs() <= tolerance
                     && f64::from(shift[1]).abs() <= tolerance,

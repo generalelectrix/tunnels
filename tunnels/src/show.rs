@@ -1406,11 +1406,8 @@ mod test {
     }
 
     /// An animation is resolved once for each place along the beam it is
-    /// spread over, and which place is asking is part of the question: a
-    /// waveform that reads its position along the beam answers differently at
-    /// each one. A snapshot that did not carry how many places there are would
-    /// collapse them all onto the first, and every control that shapes an
-    /// animation across the beam would stop reaching the visualiser.
+    /// spread over, one per segment, so a snapshot of it carries how many
+    /// segments the beam has and follows the control that changes the count.
     #[test]
     fn an_animation_snapshot_carries_the_places_along_the_beam() {
         use tunnels_model::tunnel::{SEGMENTS_MIN, StateChange as TunnelStateChange};

@@ -220,7 +220,7 @@ impl VertexWork<'_> {
         // Summed the way a beam sums them, so a figure and a run of segments
         // answer a stack of thickness animations alike.
         let scale = self.taper.iter().fold(1.0, |acc, a| {
-            acc + a.animation.value_on_figure(Phase::new(f64::from(along))) as f32
+            acc + a.animation.value(Phase::new(f64::from(along))) as f32
         });
         (self.stroke_width * scale).clamp(0.0, 1.0)
     }
@@ -280,7 +280,7 @@ impl Displacement {
         // axes, carried into the figure's coordinates once every warp is in.
         let (mut across, mut up) = (0.0, 0.0);
         for warp in work.warps {
-            let value = warp.animation.value_on_figure(Phase::new(f64::from(along))) as f32;
+            let value = warp.animation.value(Phase::new(f64::from(along))) as f32;
             // Where a target means something different on a figure than on a
             // run of segments, this is where it is reinterpreted. `Size` scales a
             // segment; here it scales each point's distance from the centre,
@@ -516,7 +516,7 @@ mod test {
         }
     }
 
-    /// A noise warp aimed at `target`, uncorrelated from one index to the next.
+    /// A noise warp aimed at `target`, at its roughest.
     ///
     /// Noise at no smoothing changes fastest along a figure, so it is the warp
     /// most able to tell apart vertices at one place, if anything per vertex
@@ -550,8 +550,8 @@ mod test {
     /// amount, so a ribbon is displaced as a unit and its two edges never
     /// shear apart.
     ///
-    /// Noise that decorrelates from one index to the next is the warp that
-    /// would tell them apart, if anything per vertex reached it.
+    /// Noise at its roughest is the warp that would tell them apart, if
+    /// anything per vertex reached it.
     #[test]
     fn a_warp_moves_a_ribbon_as_a_unit() {
         use super::super::geometry::StrokeGeometry;
@@ -726,9 +726,7 @@ mod test {
         };
         for along in [0.0, 0.25, 0.6] {
             let moved = Displacement::of(&work, Polar::default(), along);
-            let value = warps[0]
-                .animation
-                .value_on_figure(Phase::new(f64::from(along))) as f32;
+            let value = warps[0].animation.value(Phase::new(f64::from(along))) as f32;
             let [[xx, xy], [yx, yy]] = to_figure;
             assert_eq!(
                 (moved.offset_x, moved.offset_y),

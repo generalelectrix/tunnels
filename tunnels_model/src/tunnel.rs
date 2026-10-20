@@ -491,13 +491,13 @@ impl Tunnel {
     ) -> FillLayer<'f> {
         let (offset, base_hue) = self.placement_and_hue(ctx);
 
-        // A figure has no segment index and no angle around a ring, so a
-        // uniform target is asked for its value at the start of its cycle.
+        // A figure has no angle around a ring, so a uniform target is asked
+        // for its value at the start of its cycle.
         let uniform = |target: AnimationTarget| -> f64 {
             anims
                 .iter()
                 .filter(|a| a.target == target)
-                .map(|a| a.animation.value(Phase::ZERO, 0))
+                .map(|a| a.animation.value(Phase::ZERO))
                 .sum()
         };
 
@@ -508,7 +508,7 @@ impl Tunnel {
             anims
                 .iter()
                 .filter(|a| a.target == target && !a.animation.varies_in_space())
-                .map(|a| a.animation.value(Phase::ZERO, 0))
+                .map(|a| a.animation.value(Phase::ZERO))
                 .sum()
         };
 
@@ -634,7 +634,7 @@ impl Tunnel {
             let mut spin_angle_adjust = 0.;
             // accumulate animation adjustments based on targets
             for anim in anims {
-                let anim_value = anim.animation.value(rel_angle, seg_num as usize);
+                let anim_value = anim.animation.value(rel_angle);
 
                 use AnimationTarget::*;
                 match anim.target {
@@ -2103,16 +2103,16 @@ mod test {
         // the cycle is a zero, which is what the fold used to read and why a
         // sine's animation used to draw nothing at all.
         let taper = &fill.taper[0].animation;
-        assert_eq!(taper.value(Phase::ZERO, 0), 0.0);
+        assert_eq!(taper.value(Phase::ZERO), 0.0);
         assert!(
-            taper.value(Phase::new(0.125), 0) > 0.99,
+            taper.value(Phase::new(0.125)) > 0.99,
             "the peak does not reach full amplitude, only {}",
-            taper.value(Phase::new(0.125), 0)
+            taper.value(Phase::new(0.125))
         );
         assert!(
-            taper.value(Phase::new(0.375), 0) < -0.99,
+            taper.value(Phase::new(0.375)) < -0.99,
             "at full amplitude the trough takes the width to nothing, not to {}",
-            taper.value(Phase::new(0.375), 0)
+            taper.value(Phase::new(0.375))
         );
     }
 
@@ -2907,8 +2907,8 @@ pub mod fixture {
         };
         let shaping = SlotWaveform::for_slot(slot);
         set(Waveform(shaping.waveform));
-        // Never zero: noise reads its smoothing as a cross-correlation term
-        // only where the period count is not.
+        // Never zero: with no periods noise is one value everywhere, and its
+        // smoothing has nothing along the phase to roughen.
         set(NPeriods(1 + (slot % 4) as u16));
         // Never zero either, or the animation contributes nothing and stops
         // advancing its own clock.
@@ -3187,10 +3187,10 @@ pub mod fixture {
 
     /// An outline displaced by a noise warp.
     ///
-    /// Noise on a figure is sampled along a line through its field that
-    /// smoothing turns and lengthens. At zero smoothing the line stands across
-    /// time and is at its longest, so the outline is at its roughest: sharp
-    /// and choppy, but still one connected ribbon.
+    /// Noise is sampled along a line through its field that smoothing turns
+    /// and lengthens. At zero smoothing the line stands across time and is at
+    /// its longest, so the outline is at its roughest: sharp and choppy, but
+    /// still one connected ribbon.
     pub fn sprite_noise_warp_outline_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(BULLSEYE);
         tunnel.draw_mode = DrawMode::Outline;

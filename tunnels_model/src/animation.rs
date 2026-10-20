@@ -116,17 +116,17 @@ fn get_simplex_gen() -> &'static Simplex {
     &SIMPLEX_GEN
 }
 
-/// How much finer noise grows on a figure as its smoothing falls.
+/// How much finer noise grows as its smoothing falls.
 ///
-/// On a figure, smoothing turns the line noise is sampled along: at one the
-/// line runs with time, so a pattern travels round the figure, and at zero it
-/// stands across time, so the figure boils in place. The line also lengthens
-/// as it turns, to `periods × (1 + this × (1 − smoothing))`, so a rough setting
-/// is sharp and choppy rather than a slow wobble.
-pub const FIGURE_NOISE_ROUGHENING: f64 = 7.0;
+/// Noise is sampled along a line through its field, and smoothing turns that
+/// line: at one it runs with time, so the clock carries a pattern along the
+/// phase, and at zero it stands across time, so the noise boils in place. The
+/// line also lengthens as it turns, to `periods × (1 + this × (1 − smoothing))`,
+/// so a rough setting is sharp and choppy rather than a slow wobble.
+pub const NOISE_ROUGHENING: f64 = 7.0;
 
-/// The line through the noise field a figure's points are sampled along:
-/// lengthened and turned by smoothing (see [`FIGURE_NOISE_ROUGHENING`]).
+/// The line through the noise field that the phase runs along, lengthened and
+/// turned by smoothing (see [`NOISE_ROUGHENING`]).
 #[derive(Clone, Copy, Debug)]
 struct NoiseLine {
     length: f64,
@@ -139,7 +139,7 @@ impl NoiseLine {
         let rough = 1.0 - smoothing.val();
         let angle = rough * std::f64::consts::FRAC_PI_2;
         Self {
-            length: f64::from(n_periods) * (1.0 + FIGURE_NOISE_ROUGHENING * rough),
+            length: f64::from(n_periods) * (1.0 + NOISE_ROUGHENING * rough),
             cos: angle.cos(),
             sin: angle.sin(),
         }
@@ -157,7 +157,7 @@ impl NoiseLine {
 enum PreparedWaveform {
     SineSquare,
     TriSaw,
-    /// Noise, with the line through its field a figure is sampled along.
+    /// Noise, with the line through its field that it is sampled along.
     Noise(NoiseLine),
     Spectrum,
     Constant,
@@ -173,16 +173,6 @@ impl PreparedWaveform {
             Waveform::Constant => Self::Constant,
         }
     }
-}
-
-/// Where an animation is asked for its value, beyond its phase.
-#[derive(Clone, Copy)]
-enum Sample {
-    /// The given one of a run of discrete elements, such as a tunnel's
-    /// segments.
-    Element(usize),
-    /// A point on a continuous figure, placed by its phase alone.
-    Figure,
 }
 
 impl Default for Animation {
@@ -486,25 +476,12 @@ impl PreparedAnimation<'_> {
             && self.static_params.waveform.varies_with_phase()
     }
 
-    /// The animation's value at a point, with amplitude applied.
-    pub fn value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
+    /// The animation's value at a phase, with amplitude applied.
+    pub fn value(&self, spatial_phase_offset: Phase) -> f64 {
         if !self.active {
             return 0.;
         }
-        self.unit_value(spatial_phase_offset, offset_index) * self.scale
-    }
-
-    /// The animation's value at a point on a figure, with amplitude applied.
-    ///
-    /// A figure is continuous, so a point on it is placed by its phase alone
-    /// and has no index; noise there is sampled along a line through its field
-    /// that smoothing turns and lengthens (see [`FIGURE_NOISE_ROUGHENING`]).
-    /// Every other waveform answers as [`value`](Self::value) does.
-    pub fn value_on_figure(&self, along: Phase) -> f64 {
-        if !self.active {
-            return 0.;
-        }
-        self.unit_value_at(along, Sample::Figure) * self.scale
+        self.unit_value(spatial_phase_offset) * self.scale
     }
 
     /// Scale a value by the amplitude factors: size, clock submaster, and audio
@@ -513,13 +490,11 @@ impl PreparedAnimation<'_> {
         v * self.scale
     }
 
-    /// The waveform's own value, before amplitude.
-    pub fn unit_value(&self, spatial_phase_offset: Phase, offset_index: usize) -> f64 {
-        self.unit_value_at(spatial_phase_offset, Sample::Element(offset_index))
-    }
-
-    /// The waveform's own value at one place, before amplitude.
-    fn unit_value_at(&self, spatial_phase_offset: Phase, sample: Sample) -> f64 {
+    /// The waveform's own value at a phase, before amplitude.
+    ///
+    /// For noise, the phase places a point on a line through the field that
+    /// smoothing turns and lengthens (see [`NOISE_ROUGHENING`]).
+    pub fn unit_value(&self, spatial_phase_offset: Phase) -> f64 {
         let result = match self.waveform {
             PreparedWaveform::SineSquare => {
                 waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
@@ -542,32 +517,11 @@ impl PreparedAnimation<'_> {
                     return 0.0;
                 }
 
-                let (spatial_x, y_offset) = match sample {
-                    // Use smoothing parameter as a "cross-correlation" term;
-                    // increased smoothing means a smaller Y-offset between
-                    // samples. Smoothing of zero offsets each sample by a full
-                    // interval, which should produce fairly uncorrelated noise
-                    // for different offsets.
-                    // Always use a Y-offset of 0 in periodicity of 0 to
-                    // preserve the expected behavior.
-                    //
-                    // Because of the smooth 2D landscape, smoothing parameters
-                    // modestly lower than 1 tend to look similar to an
-                    // increase in periodicity.
-                    Sample::Element(offset_index) => (
-                        spatial_phase,
-                        if self.static_params.n_periods == 0 {
-                            0.0
-                        } else {
-                            (1.0 - self.smoothing.val()) * offset_index as f64
-                        },
-                    ),
-                    // The point's phase places it on a line through the field,
-                    // turned from time's direction by roughness and lengthened
-                    // with it. No periodicity is a line of no length, one value
-                    // everywhere.
-                    Sample::Figure => line.at(spatial_phase_offset),
-                };
+                // The phase places the point on a line through the field,
+                // turned from time's direction by roughness and lengthened
+                // with it. No periodicity is a line of no length, one value
+                // everywhere.
+                let (spatial_x, y_offset) = line.at(spatial_phase_offset);
                 let x_offset = self.ticks as f64 + spatial_x + temporal_phase;
 
                 let val = self.simplex_gen.get([x_offset, y_offset]);
@@ -872,18 +826,21 @@ mod test {
         assert!(prepare(Waveform::Spectrum, 1, 1.0).varies_in_space());
     }
 
-    /// Noise on a figure is sampled along a line that smoothing turns and
-    /// lengthens. At full smoothing it is the noise a run's first element
-    /// reads, travelling round the figure; with no periodicity it is one value
-    /// everywhere; and set rough it varies far more along the figure without
-    /// ever stepping from one point to the next.
+    /// Noise is sampled along a line through its field that smoothing turns
+    /// and lengthens. With no periodicity the line has no length, so noise is
+    /// one value everywhere however it is smoothed. At full smoothing the line
+    /// runs with time, so the clock carries the pattern along the phase; with
+    /// none it stands across time, so the pattern boils in place instead. And
+    /// the rougher it is set, the further the line reaches through the field:
+    /// noise varies more along the phase at every step down in smoothing,
+    /// without ever stepping from one point to the next.
     #[test]
-    fn noise_on_a_figure_roughens_as_smoothing_falls() {
+    fn noise_roughens_along_its_line_as_smoothing_falls() {
         struct Noop;
         impl EmitStateChange for Noop {
             fn emit_animation_state_change(&mut self, _: StateChange) {}
         }
-        let noise = |n_periods: u16, smoothing: f64| {
+        let running = |n_periods: u16, smoothing: f64| {
             let mut animation = Animation::default();
             for sc in [
                 StateChange::Waveform(Waveform::Noise),
@@ -895,7 +852,10 @@ mod test {
                 animation.control(ControlMessage::Set(sc), &mut Noop);
             }
             animation.settle_controls();
-            animation.update_state(std::time::Duration::from_secs(1), &AudioState::default());
+            animation.update_state(Duration::from_secs(1), &AudioState::default());
+            animation
+        };
+        let prepare = |animation: &Animation| {
             animation.prepare(
                 &ClockBank::default(),
                 &AudioState::default(),
@@ -905,32 +865,56 @@ mod test {
         let phases: Vec<Phase> = (0..1000)
             .map(|i| Phase::new(f64::from(i) / 1000.0))
             .collect();
+        let smoothings = [0.0, 0.25, 0.5, 0.75, 1.0];
 
-        let smooth = noise(2, 1.0);
-        for &phase in &phases {
-            assert_eq!(
-                smooth.value_on_figure(phase),
-                smooth.value(phase, 0),
-                "at full smoothing a figure read other noise than a run does at {phase:?}"
+        for smoothing in smoothings {
+            let flat = prepare(&running(0, smoothing));
+            let first = flat.value(phases[0]);
+            assert!(
+                phases.iter().all(|&phase| flat.value(phase) == first),
+                "noise with no periodicity varied along the phase at smoothing {smoothing}"
             );
         }
 
-        let flat = noise(0, 0.0);
-        let first = flat.value_on_figure(phases[0]);
-        assert!(
+        const PERIODS: u16 = 2;
+
+        // After a moment's running, how far the noise anywhere has strayed from
+        // the earlier pattern carried along the phase by as far as the clock ran.
+        let left_behind = |smoothing: f64| -> f64 {
+            let mut animation = running(PERIODS, smoothing);
+            let early = prepare(&animation);
+            animation.update_state(Duration::from_millis(200), &AudioState::default());
+            let late = prepare(&animation);
+            let clock = |p: &PreparedAnimation| p.ticks as f64 + p.phase_temporal.val();
+            let carried = (clock(&late) - clock(&early)) / f64::from(PERIODS);
+            assert!(carried != 0.0, "the clock did not move");
             phases
                 .iter()
-                .all(|&phase| flat.value_on_figure(phase) == first),
-            "noise with no periodicity varied across a figure"
+                .filter_map(|&phase| {
+                    let from = phase.val() + carried;
+                    (0.0..1.0)
+                        .contains(&from)
+                        .then(|| (late.value(phase) - early.value(Phase::new(from))).abs())
+                })
+                .fold(0.0, f64::max)
+        };
+        let travelling = left_behind(1.0);
+        let boiling = left_behind(0.0);
+        assert!(
+            travelling < 1e-9,
+            "at full smoothing the clock moved noise {travelling} off the line it travels"
+        );
+        assert!(
+            boiling > 0.1,
+            "with no smoothing the clock only moved noise {boiling} off the line, as if \
+             it travelled along it"
         );
 
-        // How far the value travels across the figure, and its largest step
+        // How far the value travels along the phase, and its largest step
         // between neighbouring points.
-        let walk = |animation: &PreparedAnimation| -> (f64, f64) {
-            let values: Vec<f64> = phases
-                .iter()
-                .map(|&p| animation.value_on_figure(p))
-                .collect();
+        let walk = |smoothing: f64| -> (f64, f64) {
+            let animation = prepare(&running(PERIODS, smoothing));
+            let values: Vec<f64> = phases.iter().map(|&p| animation.value(p)).collect();
             values
                 .windows(2)
                 .map(|pair| (pair[1] - pair[0]).abs())
@@ -938,11 +922,27 @@ mod test {
                     (total + step, f64::max(largest, step))
                 })
         };
-        let (calm, _) = walk(&smooth);
-        let (rough, largest) = walk(&noise(2, 0.0));
+        let walks = smoothings.map(walk);
+        for (pair, smoothing) in walks.windows(2).zip(smoothings.windows(2)) {
+            let ((rougher, _), (smoother, _)) = (pair[0], pair[1]);
+            assert!(
+                rougher > smoother,
+                "noise travelled {rougher} along the phase at smoothing {} against \
+                 {smoother} at {}",
+                smoothing[0],
+                smoothing[1]
+            );
+        }
+        let (calm, _) = walks[walks.len() - 1];
+        let (rough, largest) = walks[0];
+        // A line this many times longer crosses about as many times as much
+        // of the field; half of that leaves room for what this stretch of the
+        // field happens to hold.
+        let lengthening = 1.0 + NOISE_ROUGHENING;
         assert!(
-            rough > 2.0 * calm,
-            "rough noise travelled {rough} across the figure against {calm} smooth"
+            rough > lengthening / 2.0 * calm,
+            "rough noise travelled {rough} along the phase against {calm} smooth, on a \
+             line {lengthening} times as long"
         );
         assert!(
             largest < 0.1,
@@ -1001,8 +1001,8 @@ mod test {
         let (mut lowest, mut highest) = (f64::INFINITY, f64::NEG_INFINITY);
         for x in points.clone() {
             let level = tables.value(x + clock, smoothing);
-            assert_eq!(pulsed.unit_value(x, 0), level, "pulsed at {x:?}");
-            let read = plain.unit_value(x, 0);
+            assert_eq!(pulsed.unit_value(x), level, "pulsed at {x:?}");
+            let read = plain.unit_value(x);
             assert!(
                 (read - (2.0 * level - 1.0)).abs() < 1e-12,
                 "unpulsed, a level of {level} read {read} at {x:?}"
@@ -1027,8 +1027,8 @@ mod test {
             let flagged = prepare(&changes);
             for x in points.clone() {
                 assert_eq!(
-                    flagged.unit_value(x, 0),
-                    reference.unit_value(x, 0),
+                    flagged.unit_value(x),
+                    reference.unit_value(x),
                     "{flags} changed the spectrum at {x:?}"
                 );
             }
@@ -1036,11 +1036,7 @@ mod test {
 
         let inverted = prepare(&[StateChange::Invert(true)]);
         for x in points.clone() {
-            assert_eq!(
-                inverted.unit_value(x, 0),
-                -plain.unit_value(x, 0),
-                "at {x:?}"
-            );
+            assert_eq!(inverted.unit_value(x), -plain.unit_value(x), "at {x:?}");
         }
 
         let duty = UnipolarFloat::new(0.5);
@@ -1052,17 +1048,13 @@ mod test {
             } else {
                 tables.value(p / duty, smoothing).mul_add(2.0, -1.0)
             };
-            assert_eq!(
-                compressed.unit_value(x, 0),
-                expected,
-                "at {x:?}, {p:?} along"
-            );
+            assert_eq!(compressed.unit_value(x), expected, "at {x:?}, {p:?} along");
         }
 
         let still = prepare(&[StateChange::NPeriods(0)]);
         for x in points {
             assert_eq!(
-                still.unit_value(x, 0),
+                still.unit_value(x),
                 tables.value(clock, smoothing).mul_add(2.0, -1.0),
                 "no periodicity read a different place at {x:?}"
             );
