@@ -25,7 +25,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use self_update::{Release, ReleaseAsset, ReleaseSource, UpdateStrategy};
+use self_update::{Release, ReleaseAsset, ReleaseSource};
 
 pub use transport::{CancelToken, Timeouts};
 pub use version::{ParseVersionError, ReleaseVersion};
@@ -54,6 +54,8 @@ pub struct Updater {
     api_base: String,
     /// The bundle to replace; `None` replaces the bundle containing the running executable.
     install_path: Option<PathBuf>,
+    /// Whether a new bundle's code signature must verify before it is installed.
+    check_signature: bool,
 }
 
 /// A release newer than the running build.
@@ -99,6 +101,8 @@ pub enum BadRelease {
     MissingAsset { name: String },
     #[error("release asset {name:?} has no sha256 digest")]
     MissingDigest { name: String },
+    #[error("GitHub's description of the latest release is unreadable: {reason}")]
+    Unreadable { reason: String },
 }
 
 /// Why [`Updater::install`] left the installed bundle as it was.
@@ -123,6 +127,7 @@ impl Updater {
             timeouts: Timeouts::default(),
             api_base: GITHUB_API.to_string(),
             install_path: None,
+            check_signature: true,
         }
     }
 
@@ -148,8 +153,8 @@ impl Updater {
 
     /// Replace the installed bundle with `update`, reporting progress to `on_progress`.
     ///
-    /// Cancelling `cancel` stops the install until it reports [`InstallProgress::Committing`].
-    /// Any failure leaves the installed bundle as it was.
+    /// `cancel` can stop the install until it reports [`InstallProgress::Committing`]. Any
+    /// failure leaves the installed bundle as it was.
     pub fn install(
         &self,
         update: &AvailableUpdate,
@@ -158,7 +163,6 @@ impl Updater {
     ) -> Result<(), InstallError> {
         let client = transport::client(&self.user_agent(), self.timeouts)?;
         let on_progress = Arc::new(on_progress);
-        let archive_asset = self.feed.archive_asset;
 
         let mut builder = self_update::backends::custom::Update::configure();
         builder
@@ -171,13 +175,9 @@ impl Updater {
                 client,
                 cancel.clone(),
             )))
-            .asset_matcher(move |assets| {
-                assets
-                    .iter()
-                    .find(|asset| asset.name() == archive_asset)
-                    .cloned()
-            })
-            .update_strategy(UpdateStrategy::Latest)
+            // The offered release carries only the bundle archive.
+            .asset_matcher(|assets| assets.first().cloned())
+            .check_install_path_writable(true)
             .retries(0)
             .unattended()
             .progress_callback({
@@ -186,10 +186,12 @@ impl Updater {
             })
             .verify_binary({
                 let cancel = cancel.clone();
+                let check_signature = self.check_signature;
                 move |staged_bundle| {
-                    verify_signature(staged_bundle)?;
-                    // The last point before the swap at which a cancel can still take effect.
-                    if cancel.is_cancelled() {
+                    if check_signature {
+                        verify_signature(staged_bundle)?;
+                    }
+                    if !cancel.begin_commit() {
                         return Err(self_update::Error::verification_rejected("cancelled"));
                     }
                     on_progress(InstallProgress::Committing);

@@ -111,12 +111,12 @@ fn read_body(client: &CancellableClient, url: &str) -> io::Result<Vec<u8>> {
 #[test]
 fn transport_sends_user_agent_maps_status_and_bounds_stalls_not_drips() {
     let server = serve(|url| match url {
-        "/drip" => drip(4, Duration::from_millis(300)),
-        "/stall" => drip(2, Duration::from_millis(1500)),
+        "/drip" => drip(8, Duration::from_millis(200)),
+        "/stall" => drip(2, Duration::from_secs(3)),
         _ => Response::empty(404).boxed(),
     });
     let timeouts = Timeouts {
-        stall: Duration::from_millis(700),
+        stall: Duration::from_secs(1),
         ..Timeouts::default()
     };
     let client = CancellableClient::new(
@@ -124,12 +124,12 @@ fn transport_sends_user_agent_maps_status_and_bounds_stalls_not_drips() {
         CancelToken::new(),
     );
 
-    // The drip takes ~900 ms in total, longer than the stall limit, but never pauses that long.
+    // The drip takes ~1.4 s in total, longer than the stall limit, but never pauses that long.
     assert_eq!(
         read_body(&client, &format!("{}/drip", server.base))
             .unwrap()
             .len(),
-        4 * CHUNK,
+        8 * CHUNK,
     );
 
     let stalled = read_body(&client, &format!("{}/stall", server.base));
@@ -310,10 +310,13 @@ fn installed_contents(bundle: &Path) -> String {
     std::fs::read_to_string(bundle.join("Contents/MacOS/fake")).unwrap()
 }
 
+/// An updater installing to `bundle` from `server`, skipping the code-signature check that the
+/// unsigned test bundles would fail.
 fn updater(server: &TestServer, bundle: &Path) -> Updater {
     Updater {
         api_base: server.base.clone(),
         install_path: Some(bundle.to_path_buf()),
+        check_signature: false,
         ..Updater::new(FEED, v("2026.09.09-1"))
     }
 }
@@ -398,15 +401,68 @@ fn install_leaves_the_bundle_alone_on_bad_digest_or_cancel() {
     assert_eq!(installed_contents(&bundle), "old");
 }
 
+#[cfg(target_os = "macos")]
 #[test]
-fn check_reports_http_failures() {
-    let server = serve(|_| Response::empty(503).boxed());
+fn install_rejects_a_bundle_whose_signature_does_not_verify() {
+    let archive = bundle_archive(b"new");
+    let server = publish("v2026.10.01-1", archive.clone(), sha256(&archive));
     let (_dir, bundle) = installed_bundle("old");
+    let updater = Updater {
+        check_signature: true,
+        ..updater(&server, &bundle)
+    };
+    let update = updater.check().unwrap().unwrap();
+
+    let result = updater.install(&update, |_| {}, &CancelToken::new());
+    assert!(
+        matches!(
+            result,
+            Err(InstallError::Update(
+                self_update::Error::VerificationRejected { .. }
+            ))
+        ),
+        "got {result:?}",
+    );
+    assert_eq!(installed_contents(&bundle), "old");
+}
+
+#[test]
+fn check_reports_http_failures_and_unreadable_releases() {
+    let (_dir, bundle) = installed_bundle("old");
+
+    let server = serve(|_| Response::empty(503).boxed());
     let result = updater(&server, &bundle).check();
     assert!(
         matches!(result, Err(CheckError::Status { status: 503 })),
         "got {result:?}",
     );
+
+    let server = serve(|_| Response::from_string("not json").boxed());
+    let result = updater(&server, &bundle).check();
+    assert!(
+        matches!(
+            result,
+            Err(CheckError::BadRelease(BadRelease::Unreadable { .. }))
+        ),
+        "got {result:?}",
+    );
+}
+
+#[test]
+fn cancelling_and_committing_exclude_each_other() {
+    let cancelled = CancelToken::new();
+    assert!(cancelled.cancel());
+    assert!(
+        cancelled.cancel(),
+        "cancelling again still reports cancelled"
+    );
+    assert!(!cancelled.begin_commit());
+    assert!(cancelled.is_cancelled());
+
+    let committing = CancelToken::new();
+    assert!(committing.begin_commit());
+    assert!(!committing.cancel());
+    assert!(!committing.is_cancelled());
 }
 
 #[test]

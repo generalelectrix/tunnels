@@ -2,7 +2,7 @@ use reqwest::blocking::Client;
 use reqwest::header::ACCEPT;
 use serde::Deserialize;
 
-use crate::{CheckError, ReleaseFeed};
+use crate::{BadRelease, CheckError, ReleaseFeed};
 
 /// The fields of GitHub's release object the updater reads.
 #[derive(Debug, Deserialize)]
@@ -43,5 +43,15 @@ pub(crate) fn fetch_latest(
             status: status.as_u16(),
         });
     }
-    Ok(response.json()?)
+    response.json().map_err(|e| {
+        // A body that stalls past its timeout is also reported as a decode error.
+        if e.is_decode() && !e.is_timeout() {
+            BadRelease::Unreadable {
+                reason: e.to_string(),
+            }
+            .into()
+        } else {
+            CheckError::Network(e)
+        }
+    })
 }

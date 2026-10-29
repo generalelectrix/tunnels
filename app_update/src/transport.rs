@@ -1,27 +1,45 @@
 use std::io::{self, Read};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use reqwest::blocking::Client;
 use self_update::http_client::{HeaderMap, HttpClient, HttpResponse};
 
-/// A shared flag that stops an update while it is still downloading.
+/// Whether one install may still be cancelled: shared between the install and whoever may
+/// cancel it, so that cancelling and committing exclude each other.
 #[derive(Clone, Debug, Default)]
-pub struct CancelToken(Arc<AtomicBool>);
+pub struct CancelToken(Arc<AtomicU8>);
+
+const DOWNLOADING: u8 = 0;
+const CANCELLED: u8 = 1;
+const COMMITTING: u8 = 2;
 
 impl CancelToken {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Ask the update holding a clone of this token to stop.
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::Relaxed);
+    /// Cancel the install unless it has begun committing. Returns whether it is cancelled.
+    pub fn cancel(&self) -> bool {
+        match self
+            .0
+            .compare_exchange(DOWNLOADING, CANCELLED, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => true,
+            Err(state) => state == CANCELLED,
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
+        self.0.load(Ordering::Acquire) == CANCELLED
+    }
+
+    /// Commit the install unless it was cancelled. Returns whether it is committing.
+    pub(crate) fn begin_commit(&self) -> bool {
+        self.0
+            .compare_exchange(DOWNLOADING, COMMITTING, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 }
 
@@ -40,7 +58,7 @@ impl Default for Timeouts {
     fn default() -> Self {
         Self {
             connect: Duration::from_secs(5),
-            lookup: Duration::from_secs(10),
+            lookup: Duration::from_secs(5),
             stall: Duration::from_secs(20),
         }
     }
