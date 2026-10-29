@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+app_update = { path = "../app_update" }
 chrono = "0.4"
 eframe = "0.33"
 egui_plot = "0.34"
