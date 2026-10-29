@@ -14,6 +14,13 @@ pub(crate) struct LatestRelease {
 pub(crate) struct ReleaseAssetJson {
     pub name: String,
     pub browser_download_url: String,
+    pub uploader: Uploader,
+}
+
+/// The account that uploaded a release asset.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Uploader {
+    pub login: String,
 }
 
 /// The newest published release of `feed`'s repository, read from the REST API at `api_base`.

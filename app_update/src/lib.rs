@@ -24,6 +24,11 @@ use std::time::Duration;
 pub use version::{ParseVersionError, ReleaseVersion};
 
 const GITHUB_API: &str = "https://api.github.com";
+const GITHUB_WEB: &str = "https://github.com";
+
+/// The account the release workflows upload assets as. An asset anyone else uploaded is never
+/// installed.
+const RELEASE_UPLOADER: &str = "github-actions[bot]";
 
 /// A GitHub repository whose releases each carry a gzipped tar of an app bundle.
 #[derive(Clone, Copy, Debug)]
@@ -44,6 +49,10 @@ pub struct Updater {
     feed: ReleaseFeed,
     current: ReleaseVersion,
     api_base: String,
+    /// Where release assets are downloaded from.
+    web_base: String,
+    /// Whether every request, including each redirect, must use HTTPS.
+    https_only: bool,
     /// The bundle to replace; `None` replaces the bundle containing the running executable.
     install_path: Option<PathBuf>,
     /// Whether a new bundle's code signature must verify before it is installed.
@@ -91,6 +100,10 @@ pub enum BadRelease {
     MissingAsset { name: String },
     #[error("GitHub's description of the latest release is unreadable: {reason}")]
     Unreadable { reason: String },
+    #[error("release asset {name:?} was uploaded by {login:?}, not the release workflow")]
+    UntrustedUploader { name: String, login: String },
+    #[error("release asset {name:?} downloads from an unexpected address: {url}")]
+    UnexpectedUrl { name: String, url: String },
 }
 
 /// Why [`Updater::install`] left the installed bundle as it was.
@@ -110,6 +123,16 @@ pub enum InstallError {
     MissingBundle { name: String },
     #[error("the new app's code signature doesn't verify: {reason}")]
     BadSignature { reason: String },
+    #[error(
+        "couldn't move the update into place ({error}), and putting the original back failed \
+         ({restore}); the original is at {}",
+        .original.display()
+    )]
+    Stranded {
+        original: PathBuf,
+        error: io::Error,
+        restore: io::Error,
+    },
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -121,6 +144,8 @@ impl Updater {
             feed,
             current,
             api_base: GITHUB_API.to_string(),
+            web_base: GITHUB_WEB.to_string(),
+            https_only: true,
             install_path: None,
             check_signature: true,
         }
@@ -133,7 +158,7 @@ impl Updater {
     /// The page listing the latest release, for installing by hand.
     pub fn release_page_url(&self) -> String {
         format!(
-            "https://github.com/{}/{}/releases/latest",
+            "{GITHUB_WEB}/{}/{}/releases/latest",
             self.feed.owner, self.feed.repo
         )
     }
@@ -141,9 +166,13 @@ impl Updater {
     /// The feed's latest release, if it is newer than the running build. Gives up after
     /// `timeout`.
     pub fn check(&self, timeout: Duration) -> Result<Option<AvailableUpdate>, CheckError> {
-        let agent = agent(&self.user_agent(), Some(timeout));
+        let agent = agent(&self.user_agent(), Some(timeout), self.https_only);
         let latest = github::fetch_latest(&agent, &self.api_base, &self.feed)?;
-        Ok(select(&self.feed, self.current, latest)?)
+        let download_prefix = format!(
+            "{}/{}/{}/releases/download/",
+            self.web_base, self.feed.owner, self.feed.repo
+        );
+        Ok(select(&self.feed, self.current, latest, &download_prefix)?)
     }
 
     /// Replace the installed bundle with `update`, reporting the download to `on_progress`. Any
@@ -169,10 +198,13 @@ impl Updater {
 
         let archive = staging.path().join("archive.tar.gz");
         self.download(update, &archive, on_progress)?;
-        tar::Archive::new(flate2::read::GzDecoder::new(File::open(&archive)?))
-            .unpack(staging.path())?;
+        let mut unpacker = tar::Archive::new(flate2::read::GzDecoder::new(File::open(&archive)?));
+        // Nothing unpacked is writable by group or others, whatever the archive says.
+        unpacker.set_mask(0o022);
+        unpacker.unpack(staging.path())?;
         let new_bundle = staging.path().join(self.feed.bundle_name);
-        if !new_bundle.is_dir() {
+        // A real directory, not a symlink to one somewhere else.
+        if !fs::symlink_metadata(&new_bundle).is_ok_and(|meta| meta.is_dir()) {
             return Err(InstallError::MissingBundle {
                 name: self.feed.bundle_name.to_string(),
             });
@@ -180,11 +212,9 @@ impl Updater {
         if self.check_signature {
             verify_signature(&new_bundle)?;
         }
-        Ok(swap(
-            &installed,
-            &new_bundle,
-            &staging.path().join("replaced"),
-        )?)
+        commit(staging, &installed, &new_bundle, |from, to| {
+            fs::rename(from, to)
+        })
     }
 
     /// The bundle an install replaces.
@@ -211,7 +241,7 @@ impl Updater {
         path: &Path,
         on_progress: impl Fn(DownloadProgress),
     ) -> Result<(), InstallError> {
-        let mut response = agent(&self.user_agent(), None)
+        let mut response = agent(&self.user_agent(), None, self.https_only)
             .get(&update.archive_url)
             .call()?;
         let status = response.status();
@@ -246,8 +276,9 @@ impl Updater {
 }
 
 /// An HTTP agent sending `user_agent`, trusting the system's root certificates, giving up on a
-/// request after `timeout` when there is one, and returning HTTP error statuses as responses.
-fn agent(user_agent: &str, timeout: Option<Duration>) -> ureq::Agent {
+/// request after `timeout` when there is one, refusing plain HTTP anywhere along the way if
+/// `https_only`, and returning HTTP error statuses as responses.
+fn agent(user_agent: &str, timeout: Option<Duration>, https_only: bool) -> ureq::Agent {
     use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
     // With native-tls, `PlatformVerifier` means the system's trust store; ureq's default,
     // `WebPki`, panics on first use unless a feature this crate doesn't enable is on.
@@ -259,16 +290,19 @@ fn agent(user_agent: &str, timeout: Option<Duration>) -> ureq::Agent {
         .tls_config(tls)
         .user_agent(user_agent)
         .timeout_global(timeout)
+        .https_only(https_only)
         .http_status_as_error(false)
         .build();
     ureq::Agent::new_with_config(config)
 }
 
-/// `latest` as an update to `current`, or `None` when it is not newer.
+/// `latest` as an update to `current`, or `None` when it is not newer. The update's archive must
+/// have been uploaded by [`RELEASE_UPLOADER`] and download from under `download_prefix`.
 fn select(
     feed: &ReleaseFeed,
     current: ReleaseVersion,
     latest: github::LatestRelease,
+    download_prefix: &str,
 ) -> Result<Option<AvailableUpdate>, BadRelease> {
     let version: ReleaseVersion = latest.tag_name.parse().map_err(|_| BadRelease::Tag {
         tag: latest.tag_name.clone(),
@@ -283,26 +317,50 @@ fn select(
         .ok_or_else(|| BadRelease::MissingAsset {
             name: feed.archive_asset.to_string(),
         })?;
+    if asset.uploader.login != RELEASE_UPLOADER {
+        return Err(BadRelease::UntrustedUploader {
+            name: asset.name,
+            login: asset.uploader.login,
+        });
+    }
+    let url = &asset.browser_download_url;
+    let dot_segment = url
+        .split('/')
+        .any(|segment| segment == "." || segment == "..");
+    if !url.starts_with(download_prefix) || dot_segment {
+        return Err(BadRelease::UnexpectedUrl {
+            name: asset.name,
+            url: asset.browser_download_url,
+        });
+    }
     Ok(Some(AvailableUpdate {
         version,
         archive_url: asset.browser_download_url,
     }))
 }
 
-/// Put `new` in `installed`'s place, moving the original to `replaced` and restoring it if `new`
-/// cannot be moved in.
-fn swap(installed: &Path, new: &Path, replaced: &Path) -> io::Result<()> {
-    fs::rename(installed, replaced)?;
-    if let Err(e) = fs::rename(new, installed) {
-        if let Err(restore) = fs::rename(replaced, installed) {
-            return Err(io::Error::other(format!(
-                "{e}, and restoring the original from {} failed: {restore}",
-                replaced.display()
-            )));
-        }
-        return Err(e);
+/// Put `new` in `installed`'s place with `rename`, moving the original into `staging` and
+/// restoring it if `new` cannot be moved in. If the restore fails too, `staging` is kept so the
+/// original survives there.
+fn commit(
+    staging: tempfile::TempDir,
+    installed: &Path,
+    new: &Path,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> Result<(), InstallError> {
+    let replaced = staging.path().join("replaced");
+    rename(installed, &replaced)?;
+    let Err(error) = rename(new, installed) else {
+        return Ok(());
+    };
+    match rename(&replaced, installed) {
+        Ok(()) => Err(error.into()),
+        Err(restore) => Err(InstallError::Stranded {
+            original: staging.keep().join("replaced"),
+            error,
+            restore,
+        }),
     }
-    Ok(())
 }
 
 /// Reject a bundle whose code signature does not verify, since macOS refuses to launch one.

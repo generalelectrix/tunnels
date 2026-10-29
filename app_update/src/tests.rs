@@ -6,7 +6,7 @@ use std::time::Duration;
 use tiny_http::{Header, Response, ResponseBox, Server};
 
 use super::*;
-use crate::github::{LatestRelease, ReleaseAssetJson};
+use crate::github::{LatestRelease, ReleaseAssetJson, Uploader};
 
 const FEED: ReleaseFeed = ReleaseFeed {
     owner: "owner",
@@ -41,10 +41,16 @@ fn latest(tag: &str, assets: Vec<ReleaseAssetJson>) -> LatestRelease {
     }
 }
 
+const DOWNLOADS: &str = "https://example.com/owner/repo/releases/download/";
+
+/// An asset named `name`, uploaded by the release workflow, downloading from under [`DOWNLOADS`].
 fn asset(name: &str) -> ReleaseAssetJson {
     ReleaseAssetJson {
         name: name.to_string(),
-        browser_download_url: format!("https://example.com/{name}"),
+        browser_download_url: format!("{DOWNLOADS}v2026.10.01-2/{name}"),
+        uploader: Uploader {
+            login: RELEASE_UPLOADER.to_string(),
+        },
     }
 }
 
@@ -52,34 +58,53 @@ fn asset(name: &str) -> ReleaseAssetJson {
 fn select_offers_only_newer_well_formed_releases() {
     let current = v("2026.09.09-1");
     let good = || vec![asset("Other.dmg"), asset("Fake.app.tar.gz")];
+    let select = |release| select(&FEED, current, release, DOWNLOADS);
 
-    let update = select(&FEED, current, latest("v2026.10.01-2", good()))
-        .unwrap()
-        .unwrap();
+    let update = select(latest("v2026.10.01-2", good())).unwrap().unwrap();
     assert_eq!(update.version(), v("2026.10.01-2"));
-    assert_eq!(update.archive_url, "https://example.com/Fake.app.tar.gz");
+    assert_eq!(
+        update.archive_url,
+        format!("{DOWNLOADS}v2026.10.01-2/Fake.app.tar.gz")
+    );
 
     for not_newer in ["v2026.09.09-1", "v2026.09.08-3"] {
-        assert!(
-            select(&FEED, current, latest(not_newer, good()))
-                .unwrap()
-                .is_none()
+        assert!(select(latest(not_newer, good())).unwrap().is_none());
+    }
+
+    let mut by_someone_else = asset("Fake.app.tar.gz");
+    by_someone_else.uploader.login = "mallory".to_string();
+    assert_eq!(
+        select(latest("v2026.10.01-1", vec![by_someone_else])).unwrap_err(),
+        BadRelease::UntrustedUploader {
+            name: "Fake.app.tar.gz".to_string(),
+            login: "mallory".to_string(),
+        },
+    );
+
+    for url in [
+        "https://evil.example/owner/repo/releases/download/v1/Fake.app.tar.gz".to_string(),
+        format!("{DOWNLOADS}../../../mallory/repo/releases/download/v1/Fake.app.tar.gz"),
+        format!("{DOWNLOADS}v1/./Fake.app.tar.gz"),
+    ] {
+        let mut elsewhere = asset("Fake.app.tar.gz");
+        elsewhere.browser_download_url = url.clone();
+        assert_eq!(
+            select(latest("v2026.10.01-1", vec![elsewhere])).unwrap_err(),
+            BadRelease::UnexpectedUrl {
+                name: "Fake.app.tar.gz".to_string(),
+                url,
+            },
         );
     }
 
     assert_eq!(
-        select(&FEED, current, latest("nightly", good())).unwrap_err(),
+        select(latest("nightly", good())).unwrap_err(),
         BadRelease::Tag {
             tag: "nightly".to_string()
         },
     );
     assert_eq!(
-        select(
-            &FEED,
-            current,
-            latest("v2026.10.01-1", vec![asset("Other.dmg")])
-        )
-        .unwrap_err(),
+        select(latest("v2026.10.01-1", vec![asset("Other.dmg")])).unwrap_err(),
         BadRelease::MissingAsset {
             name: "Fake.app.tar.gz".to_string()
         },
@@ -102,22 +127,25 @@ fn bundle_archive(contents: &[u8]) -> Vec<u8> {
     archive.into_inner().unwrap().finish().unwrap()
 }
 
-/// A server publishing `tag` with `archive` as its bundle asset.
+/// A server publishing `tag` with `archive` as its bundle asset, uploaded by the release
+/// workflow.
 fn publish(tag: &'static str, archive: Vec<u8>) -> String {
     let base = Arc::new(Mutex::new(String::new()));
     let base_for_json = base.clone();
     let server = serve(move |url| {
         if url == "/repos/owner/repo/releases/latest" {
             let json = format!(
-                r#"{{"tag_name": "{tag}", "html_url": "https://example.com/release",
+                r#"{{"tag_name": "{tag}",
                     "assets": [{{"name": "Fake.app.tar.gz",
-                                "browser_download_url": "{}/Fake.app.tar.gz"}}]}}"#,
+                                "uploader": {{"login": "{RELEASE_UPLOADER}"}},
+                                "browser_download_url":
+                                    "{}/owner/repo/releases/download/{tag}/Fake.app.tar.gz"}}]}}"#,
                 base_for_json.lock().unwrap(),
             );
             Response::from_string(json)
                 .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
                 .boxed()
-        } else if url == "/Fake.app.tar.gz" {
+        } else if url == format!("/owner/repo/releases/download/{tag}/Fake.app.tar.gz") {
             Response::from_data(archive.clone()).boxed()
         } else {
             Response::empty(404).boxed()
@@ -151,11 +179,13 @@ fn installed_contents(bundle: &Path) -> String {
     std::fs::read_to_string(bundle.join("Contents/MacOS/fake")).unwrap()
 }
 
-/// An updater installing to `bundle` from the server at `base`, skipping the code-signature check
-/// that the unsigned test bundles would fail.
+/// An updater installing to `bundle` from the plain-HTTP server at `base`, skipping the
+/// code-signature check that the unsigned test bundles would fail.
 fn updater(base: &str, bundle: &Path) -> Updater {
     Updater {
         api_base: base.to_string(),
+        web_base: base.to_string(),
+        https_only: false,
         install_path: Some(bundle.to_path_buf()),
         check_signature: false,
         ..Updater::new(FEED, v("2026.09.09-1"))
@@ -260,17 +290,67 @@ fn check_reports_http_failures_and_unreadable_releases() {
     );
 }
 
-/// A failed swap puts the original bundle back.
+/// A failed swap puts the original bundle back, and if even that fails, the original survives
+/// where the error says it is.
 #[test]
-fn a_failed_swap_restores_the_original() {
+fn a_failed_swap_keeps_the_original() {
     let (dir, bundle) = installed_bundle("old");
     let missing = dir.path().join("Missing.app");
-    let replaced = dir.path().join("replaced");
-
-    let err = swap(&bundle, &missing, &replaced).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    let staging = tempfile::tempdir_in(dir.path()).unwrap();
+    let result = commit(staging, &bundle, &missing, |from, to| {
+        std::fs::rename(from, to)
+    });
+    assert!(
+        matches!(&result, Err(InstallError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound),
+        "got {result:?}",
+    );
     assert_eq!(installed_contents(&bundle), "old");
-    assert!(!replaced.exists());
+    assert_no_staging_left(&bundle);
+
+    // Only the first rename, moving the original aside, succeeds.
+    let renames = std::cell::Cell::new(0);
+    let staging = tempfile::tempdir_in(dir.path()).unwrap();
+    let result = commit(staging, &bundle, &missing, |from, to| {
+        renames.set(renames.get() + 1);
+        if renames.get() == 1 {
+            std::fs::rename(from, to)
+        } else {
+            Err(std::io::Error::other("injected"))
+        }
+    });
+    let Err(InstallError::Stranded { original, .. }) = result else {
+        panic!("expected Stranded, got {result:?}");
+    };
+    assert_eq!(installed_contents(&original), "old");
+}
+
+/// An archive whose bundle is a symlink, here to the installed bundle itself, is refused.
+#[test]
+fn install_refuses_a_symlinked_bundle() {
+    let (_dir, bundle) = installed_bundle("old");
+    let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+        Vec::new(),
+        flate2::Compression::default(),
+    ));
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Symlink);
+    header.set_size(0);
+    archive
+        .append_link(&mut header, "Fake.app", &bundle)
+        .unwrap();
+    let server = publish(
+        "v2026.10.01-1",
+        archive.into_inner().unwrap().finish().unwrap(),
+    );
+    let updater = updater(&server, &bundle);
+    let update = updater.check(TIMEOUT).unwrap().unwrap();
+
+    let result = updater.install(&update, |_| {});
+    assert!(
+        matches!(result, Err(InstallError::MissingBundle { .. })),
+        "got {result:?}",
+    );
+    assert_eq!(installed_contents(&bundle), "old");
 }
 
 /// ureq's default root certificates panic on first use with native-tls in this crate's feature
@@ -278,7 +358,8 @@ fn a_failed_swap_restores_the_original() {
 #[test]
 fn the_agent_trusts_the_system_roots() {
     use ureq::tls::{RootCerts, TlsProvider};
-    let agent = agent("test", None);
+    let agent = agent("test", None, true);
+    assert!(agent.config().https_only());
     let tls = agent.config().tls_config();
     assert!(matches!(tls.provider(), TlsProvider::NativeTls));
     assert!(matches!(tls.root_certs(), RootCerts::PlatformVerifier));
