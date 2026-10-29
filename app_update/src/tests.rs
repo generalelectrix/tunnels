@@ -38,7 +38,6 @@ fn serve(respond: impl Fn(&str) -> ResponseBox + Send + 'static) -> String {
 fn latest(tag: &str, assets: Vec<ReleaseAssetJson>) -> LatestRelease {
     LatestRelease {
         tag_name: tag.to_string(),
-        html_url: "https://example.com/release".to_string(),
         assets,
     }
 }
@@ -65,12 +64,8 @@ fn select_offers_only_newer_well_formed_releases() {
         .unwrap()
         .unwrap();
     assert_eq!(update.version(), v("2026.10.01-2"));
-    assert_eq!(update.release.version(), "2026.10.1-2");
-    let [offered] = update.release.assets() else {
-        panic!("expected exactly the archive asset");
-    };
-    assert_eq!(offered.name(), "Fake.app.tar.gz");
-    assert_eq!(offered.digest(), Some("sha256:ab"));
+    assert_eq!(update.archive_url, "https://example.com/Fake.app.tar.gz");
+    assert_eq!(update.sha256, "ab");
 
     for not_newer in ["v2026.09.09-1", "v2026.09.08-3"] {
         assert!(
@@ -166,6 +161,17 @@ fn installed_bundle(contents: &str) -> (tempfile::TempDir, PathBuf) {
     (dir, bundle)
 }
 
+/// Assert that no staging directory is left beside `bundle`.
+fn assert_no_staging_left(bundle: &Path) {
+    let parent = bundle.parent().unwrap();
+    let leftovers: Vec<_> = std::fs::read_dir(parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().starts_with(".update-"))
+        .collect();
+    assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+}
+
 fn installed_contents(bundle: &Path) -> String {
     std::fs::read_to_string(bundle.join("Contents/MacOS/fake")).unwrap()
 }
@@ -199,6 +205,7 @@ fn check_and_install_swap_in_the_new_bundle() {
         .unwrap();
 
     assert_eq!(installed_contents(&bundle), "new");
+    assert_no_staging_left(&bundle);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -233,15 +240,11 @@ fn install_leaves_the_bundle_alone_on_a_bad_digest() {
 
     let result = updater.install(&update, |_| {});
     assert!(
-        matches!(
-            result,
-            Err(InstallError::Update(
-                self_update::Error::ChecksumMismatch { .. }
-            ))
-        ),
+        matches!(result, Err(InstallError::DigestMismatch)),
         "got {result:?}",
     );
     assert_eq!(installed_contents(&bundle), "old");
+    assert_no_staging_left(&bundle);
 }
 
 #[cfg(target_os = "macos")]
@@ -258,12 +261,7 @@ fn install_rejects_a_bundle_whose_signature_does_not_verify() {
 
     let result = updater.install(&update, |_| {});
     assert!(
-        matches!(
-            result,
-            Err(InstallError::Update(
-                self_update::Error::VerificationRejected { .. }
-            ))
-        ),
+        matches!(result, Err(InstallError::BadSignature { .. })),
         "got {result:?}",
     );
     assert_eq!(installed_contents(&bundle), "old");
@@ -291,6 +289,19 @@ fn check_reports_http_failures_and_unreadable_releases() {
     );
 }
 
+/// A failed swap puts the original bundle back.
+#[test]
+fn a_failed_swap_restores_the_original() {
+    let (dir, bundle) = installed_bundle("old");
+    let missing = dir.path().join("Missing.app");
+    let replaced = dir.path().join("replaced");
+
+    let err = swap(&bundle, &missing, &replaced).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(installed_contents(&bundle), "old");
+    assert!(!replaced.exists());
+}
+
 /// ureq's default root certificates panic on first use with native-tls in this crate's feature
 /// set, and every other test talks plain HTTP, so pin the agent's trust store here.
 #[test]
@@ -300,6 +311,41 @@ fn the_agent_trusts_the_system_roots() {
     let tls = agent.config().tls_config();
     assert!(matches!(tls.provider(), TlsProvider::NativeTls));
     assert!(matches!(tls.root_certs(), RootCerts::PlatformVerifier));
+}
+
+/// Downloads a real release asset over HTTPS, following GitHub's redirect to its CDN, and checks
+/// it against GitHub's digest. The latest release's DMG stands in for an update archive.
+#[test]
+#[ignore = "needs the network"]
+fn downloads_a_real_asset_over_https() {
+    let feed = ReleaseFeed {
+        owner: "generalelectrix",
+        repo: "COBRA_COMMANDER",
+        archive_asset: "CobraCommander.dmg",
+        bundle_name: "Cobra Commander.app",
+    };
+    let updater = Updater::new(feed, v("2000.01.01-1"));
+    let update = updater
+        .check(Duration::from_secs(10))
+        .unwrap()
+        .expect("the latest release is newer than 2000");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("download");
+
+    let progress = Arc::new(Mutex::new(None));
+    let recorded = progress.clone();
+    updater
+        .download(&update, &path, move |p| *recorded.lock().unwrap() = Some(p))
+        .unwrap();
+
+    let size = std::fs::metadata(&path).unwrap().len();
+    assert_eq!(
+        *progress.lock().unwrap(),
+        Some(DownloadProgress {
+            received: size,
+            total: Some(size)
+        }),
+    );
 }
 
 /// Reaches the real GitHub API over HTTPS. The latest release may predate the bundle archive,

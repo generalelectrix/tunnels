@@ -3,12 +3,8 @@
 //! [`Updater::check`] asks GitHub for the repository's latest release and reports it if it is
 //! newer than the running build. [`Updater::install`] downloads that release's gzipped tar of the
 //! app bundle, verifies it against the digest GitHub publishes, and swaps it in for the
-//! installed bundle as one unit, restoring the original if any step fails. [`relaunch`] starts
-//! the installed build.
-//!
-//! Releases are versioned `YYYY.MM.DD-N` ([`ReleaseVersion`]). The download and swap are
-//! [`self_update`]'s, which compares versions as semver, so it is handed each version's
-//! [`ReleaseVersion::semver_key`].
+//! installed bundle, restoring the original if the swap fails. [`relaunch`] starts the installed
+//! build.
 //!
 //! The download goes through this process rather than a browser, so the installed bundle
 //! carries no quarantine attribute and Gatekeeper does not hold its launch for approval. An
@@ -20,12 +16,12 @@ mod version;
 #[cfg(test)]
 mod tests;
 
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use self_update::ureq;
-use self_update::{Release, ReleaseAsset, ReleaseSource};
+use sha2::{Digest, Sha256};
 
 pub use version::{ParseVersionError, ReleaseVersion};
 
@@ -60,7 +56,9 @@ pub struct Updater {
 #[derive(Clone, Debug)]
 pub struct AvailableUpdate {
     version: ReleaseVersion,
-    release: Release,
+    archive_url: String,
+    /// The archive's SHA-256, as lowercase hex.
+    sha256: String,
 }
 
 impl AvailableUpdate {
@@ -104,10 +102,24 @@ pub enum BadRelease {
 /// Why [`Updater::install`] left the installed bundle as it was.
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
-    #[error("the installed version is already {0} or newer")]
-    NotNewer(ReleaseVersion),
+    #[error("{} is not inside an app bundle", .0.display())]
+    NoBundle(PathBuf),
+    #[error("the app is running from a read-only copy; move it to Applications and reopen it")]
+    Translocated,
+    #[error("couldn't write next to {}: {source}", .bundle.display())]
+    NotWritable { bundle: PathBuf, source: io::Error },
+    #[error("couldn't download the update: {0}")]
+    Download(#[from] ureq::Error),
+    #[error("the download answered HTTP {status}")]
+    Status { status: u16 },
+    #[error("the download doesn't match the digest GitHub published")]
+    DigestMismatch,
+    #[error("the update archive has no {name}")]
+    MissingBundle { name: String },
+    #[error("the new app's code signature doesn't verify: {reason}")]
+    BadSignature { reason: String },
     #[error(transparent)]
-    Update(#[from] self_update::Error),
+    Io(#[from] io::Error),
 }
 
 impl Updater {
@@ -147,37 +159,98 @@ impl Updater {
     pub fn install(
         &self,
         update: &AvailableUpdate,
-        on_progress: impl Fn(DownloadProgress) + Send + Sync + 'static,
+        on_progress: impl Fn(DownloadProgress),
     ) -> Result<(), InstallError> {
-        let mut builder = self_update::backends::custom::Update::configure();
-        builder
-            // Install exactly the release that was offered, without asking GitHub again.
-            .source(Prefetched(update.release.clone()))
-            .bin_name(self.feed.bundle_name)
-            .current_version(self.current.semver_key())
-            .bundle_path_in_archive(self.feed.bundle_name)
-            .ureq_agent(agent(&self.user_agent(), None))
-            // The offered release carries only the bundle archive.
-            .asset_matcher(|assets| assets.first().cloned())
-            .check_install_path_writable(true)
-            .retries(0)
-            .unattended()
-            .progress_callback(move |received, total| {
-                on_progress(DownloadProgress { received, total })
-            });
-        if self.check_signature {
-            builder.verify_binary(verify_signature);
-        }
-        if let Some(install_path) = &self.install_path {
-            builder.bundle_install_path(install_path);
-        }
+        let installed = self.installed_bundle()?;
+        let parent = installed
+            .parent()
+            .ok_or_else(|| InstallError::NoBundle(installed.clone()))?;
+        // Everything is staged beside the installed bundle, so the swap's renames stay on one
+        // filesystem. Dropping the directory removes the archive and the replaced bundle.
+        let staging = tempfile::Builder::new()
+            .prefix(".update-")
+            .tempdir_in(parent)
+            .map_err(|source| InstallError::NotWritable {
+                bundle: installed.clone(),
+                source,
+            })?;
 
-        match builder.build().and_then(|update| update.update_extended()) {
-            Ok(status) => status
-                .into_updated_release()
-                .map(|_| ())
-                .ok_or(InstallError::NotNewer(update.version)),
-            Err(e) => Err(e.into()),
+        let archive = staging.path().join("archive.tar.gz");
+        self.download(update, &archive, on_progress)?;
+        tar::Archive::new(flate2::read::GzDecoder::new(File::open(&archive)?))
+            .unpack(staging.path())?;
+        let new_bundle = staging.path().join(self.feed.bundle_name);
+        if !new_bundle.is_dir() {
+            return Err(InstallError::MissingBundle {
+                name: self.feed.bundle_name.to_string(),
+            });
+        }
+        if self.check_signature {
+            verify_signature(&new_bundle)?;
+        }
+        Ok(swap(
+            &installed,
+            &new_bundle,
+            &staging.path().join("replaced"),
+        )?)
+    }
+
+    /// The bundle an install replaces.
+    fn installed_bundle(&self) -> Result<PathBuf, InstallError> {
+        if let Some(path) = &self.install_path {
+            return Ok(path.clone());
+        }
+        let exe = std::env::current_exe()?;
+        let bundle = containing_bundle(&exe).ok_or_else(|| InstallError::NoBundle(exe.clone()))?;
+        // macOS runs a quarantined app from a read-only "App Translocation" mount.
+        if bundle
+            .components()
+            .any(|c| c.as_os_str() == "AppTranslocation")
+        {
+            return Err(InstallError::Translocated);
+        }
+        Ok(bundle.to_path_buf())
+    }
+
+    /// Download `update`'s archive to `path`, checking it against the published digest.
+    fn download(
+        &self,
+        update: &AvailableUpdate,
+        path: &Path,
+        on_progress: impl Fn(DownloadProgress),
+    ) -> Result<(), InstallError> {
+        let mut response = agent(&self.user_agent(), None)
+            .get(&update.archive_url)
+            .call()?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(InstallError::Status {
+                status: status.as_u16(),
+            });
+        }
+        let total = response
+            .headers()
+            .get("content-length")
+            .and_then(|length| length.to_str().ok()?.parse().ok());
+        let mut body = response.body_mut().as_reader();
+        let mut file = File::create(path)?;
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0; 64 * 1024];
+        let mut received = 0;
+        loop {
+            let n = body.read(&mut buf)?;
+            let Some(chunk) = buf.get(..n).filter(|chunk| !chunk.is_empty()) else {
+                break;
+            };
+            file.write_all(chunk)?;
+            hasher.update(chunk);
+            received += n as u64;
+            on_progress(DownloadProgress { received, total });
+        }
+        if format!("{:x}", hasher.finalize()) == update.sha256 {
+            Ok(())
+        } else {
+            Err(InstallError::DigestMismatch)
         }
     }
 
@@ -211,50 +284,52 @@ fn select(
     current: ReleaseVersion,
     latest: github::LatestRelease,
 ) -> Result<Option<AvailableUpdate>, BadRelease> {
-    let bad_tag = || BadRelease::Tag {
+    let version: ReleaseVersion = latest.tag_name.parse().map_err(|_| BadRelease::Tag {
         tag: latest.tag_name.clone(),
-    };
-    let version: ReleaseVersion = latest.tag_name.parse().map_err(|_| bad_tag())?;
+    })?;
     if version <= current {
         return Ok(None);
     }
     let asset = latest
         .assets
-        .iter()
+        .into_iter()
         .find(|asset| asset.name == feed.archive_asset)
         .ok_or_else(|| BadRelease::MissingAsset {
             name: feed.archive_asset.to_string(),
         })?;
-    let digest = asset
+    let Some(sha256) = asset
         .digest
         .as_deref()
-        .filter(|digest| digest.starts_with("sha256:"))
-        .ok_or_else(|| BadRelease::MissingDigest {
-            name: asset.name.clone(),
-        })?;
-    let release = Release::builder()
-        .version(version.semver_key())
-        .name(version.to_string())
-        .release_notes_url(latest.html_url.clone())
-        .asset(ReleaseAsset::new(&asset.name, &asset.browser_download_url).with_digest(digest))
-        .build()
-        .map_err(|_| bad_tag())?;
-    Ok(Some(AvailableUpdate { version, release }))
+        .and_then(|digest| digest.strip_prefix("sha256:"))
+    else {
+        return Err(BadRelease::MissingDigest { name: asset.name });
+    };
+    Ok(Some(AvailableUpdate {
+        version,
+        sha256: sha256.to_ascii_lowercase(),
+        archive_url: asset.browser_download_url,
+    }))
 }
 
-/// A release source serving one fixed release.
-struct Prefetched(Release);
-
-impl ReleaseSource for Prefetched {
-    fn get_releases(&self) -> self_update::Result<Vec<Release>> {
-        Ok(vec![self.0.clone()])
+/// Put `new` in `installed`'s place, moving the original to `replaced` and restoring it if `new`
+/// cannot be moved in.
+fn swap(installed: &Path, new: &Path, replaced: &Path) -> io::Result<()> {
+    fs::rename(installed, replaced)?;
+    if let Err(e) = fs::rename(new, installed) {
+        if let Err(restore) = fs::rename(replaced, installed) {
+            return Err(io::Error::other(format!(
+                "{e}, and restoring the original from {} failed: {restore}",
+                replaced.display()
+            )));
+        }
+        return Err(e);
     }
+    Ok(())
 }
 
-/// Reject a staged bundle whose code signature does not verify, since macOS refuses to launch
-/// one.
+/// Reject a bundle whose code signature does not verify, since macOS refuses to launch one.
 #[cfg(target_os = "macos")]
-fn verify_signature(bundle: &Path) -> self_update::Result<()> {
+fn verify_signature(bundle: &Path) -> Result<(), InstallError> {
     let output = std::process::Command::new("/usr/bin/codesign")
         .args(["--verify", "--deep", "--strict"])
         .arg(bundle)
@@ -262,16 +337,15 @@ fn verify_signature(bundle: &Path) -> self_update::Result<()> {
     if output.status.success() {
         Ok(())
     } else {
-        Err(self_update::Error::verification_rejected(format!(
-            "the new app's code signature doesn't verify: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )))
+        Err(InstallError::BadSignature {
+            reason: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        })
     }
 }
 
 /// Code signatures are only checked on macOS.
 #[cfg(not(target_os = "macos"))]
-fn verify_signature(_bundle: &Path) -> self_update::Result<()> {
+fn verify_signature(_bundle: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 

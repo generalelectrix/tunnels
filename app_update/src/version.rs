@@ -13,14 +13,6 @@ pub struct ReleaseVersion {
     build: u32,
 }
 
-impl ReleaseVersion {
-    /// The semver string that orders the same as this version: the same numbers without zero
-    /// padding, which semver forbids, with the build ordinal as a numeric pre-release.
-    pub fn semver_key(&self) -> String {
-        format!("{}.{}.{}-{}", self.year, self.month, self.day, self.build)
-    }
-}
-
 impl fmt::Display for ReleaseVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -128,27 +120,5 @@ mod tests {
         for pair in ascending.windows(2) {
             assert!(v(pair[0]) < v(pair[1]), "{} < {}", pair[0], pair[1]);
         }
-    }
-
-    /// The updater compares `semver_key`s, so they must order exactly as the versions do and
-    /// parse for every date the release workflow can stamp.
-    #[test]
-    fn semver_key_parses_and_agrees_with_ordering() {
-        let mut versions = Vec::new();
-        for month in 1..=12 {
-            for day in 1..=31 {
-                for build in [1, 9, 10] {
-                    versions.push(v(&format!("2026.{month:02}.{day:02}-{build}")));
-                }
-            }
-        }
-        versions.push(v("2027.01.01-1"));
-        versions.sort();
-
-        let keys: Vec<semver::Version> = versions
-            .iter()
-            .map(|v| semver::Version::parse(&v.semver_key()).unwrap())
-            .collect();
-        assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
     }
 }

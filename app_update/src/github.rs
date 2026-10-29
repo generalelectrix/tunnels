@@ -1,4 +1,3 @@
-use self_update::ureq;
 use serde::Deserialize;
 
 use crate::{BadRelease, CheckError, ReleaseFeed};
@@ -7,7 +6,6 @@ use crate::{BadRelease, CheckError, ReleaseFeed};
 #[derive(Debug, Deserialize)]
 pub(crate) struct LatestRelease {
     pub tag_name: String,
-    pub html_url: String,
     pub assets: Vec<ReleaseAssetJson>,
 }
 
