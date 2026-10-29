@@ -14,8 +14,6 @@ pub(crate) struct LatestRelease {
 pub(crate) struct ReleaseAssetJson {
     pub name: String,
     pub browser_download_url: String,
-    /// `sha256:<hex>`, absent on assets uploaded before GitHub began publishing digests.
-    pub digest: Option<String>,
 }
 
 /// The newest published release of `feed`'s repository, read from the REST API at `api_base`.

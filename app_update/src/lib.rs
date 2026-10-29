@@ -2,8 +2,8 @@
 //!
 //! [`Updater::check`] asks GitHub for the repository's latest release and reports it if it is
 //! newer than the running build. [`Updater::install`] downloads that release's gzipped tar of the
-//! app bundle, verifies it against the digest GitHub publishes, and swaps it in for the
-//! installed bundle, restoring the original if the swap fails. [`relaunch`] starts the installed
+//! app bundle, checks the bundle's code signature, and swaps it in for the installed bundle,
+//! restoring the original if the swap fails. [`relaunch`] starts the installed
 //! build.
 //!
 //! The download goes through this process rather than a browser, so the installed bundle
@@ -20,8 +20,6 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-
-use sha2::{Digest, Sha256};
 
 pub use version::{ParseVersionError, ReleaseVersion};
 
@@ -57,8 +55,6 @@ pub struct Updater {
 pub struct AvailableUpdate {
     version: ReleaseVersion,
     archive_url: String,
-    /// The archive's SHA-256, as lowercase hex.
-    sha256: String,
 }
 
 impl AvailableUpdate {
@@ -93,8 +89,6 @@ pub enum BadRelease {
     Tag { tag: String },
     #[error("the latest release has no asset named {name:?}")]
     MissingAsset { name: String },
-    #[error("release asset {name:?} has no sha256 digest")]
-    MissingDigest { name: String },
     #[error("GitHub's description of the latest release is unreadable: {reason}")]
     Unreadable { reason: String },
 }
@@ -112,8 +106,6 @@ pub enum InstallError {
     Download(#[from] ureq::Error),
     #[error("the download answered HTTP {status}")]
     Status { status: u16 },
-    #[error("the download doesn't match the digest GitHub published")]
-    DigestMismatch,
     #[error("the update archive has no {name}")]
     MissingBundle { name: String },
     #[error("the new app's code signature doesn't verify: {reason}")]
@@ -212,7 +204,7 @@ impl Updater {
         Ok(bundle.to_path_buf())
     }
 
-    /// Download `update`'s archive to `path`, checking it against the published digest.
+    /// Download `update`'s archive to `path`.
     fn download(
         &self,
         update: &AvailableUpdate,
@@ -234,7 +226,6 @@ impl Updater {
             .and_then(|length| length.to_str().ok()?.parse().ok());
         let mut body = response.body_mut().as_reader();
         let mut file = File::create(path)?;
-        let mut hasher = Sha256::new();
         let mut buf = vec![0; 64 * 1024];
         let mut received = 0;
         loop {
@@ -243,15 +234,10 @@ impl Updater {
                 break;
             };
             file.write_all(chunk)?;
-            hasher.update(chunk);
             received += n as u64;
             on_progress(DownloadProgress { received, total });
         }
-        if format!("{:x}", hasher.finalize()) == update.sha256 {
-            Ok(())
-        } else {
-            Err(InstallError::DigestMismatch)
-        }
+        Ok(())
     }
 
     fn user_agent(&self) -> String {
@@ -297,16 +283,8 @@ fn select(
         .ok_or_else(|| BadRelease::MissingAsset {
             name: feed.archive_asset.to_string(),
         })?;
-    let Some(sha256) = asset
-        .digest
-        .as_deref()
-        .and_then(|digest| digest.strip_prefix("sha256:"))
-    else {
-        return Err(BadRelease::MissingDigest { name: asset.name });
-    };
     Ok(Some(AvailableUpdate {
         version,
-        sha256: sha256.to_ascii_lowercase(),
         archive_url: asset.browser_download_url,
     }))
 }

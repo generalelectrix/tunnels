@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 flate2 = "1"
 serde = { workspace = true }
-sha2 = "0.10"
 tar = "0.4"
 tempfile = "3"
 thiserror = "2"

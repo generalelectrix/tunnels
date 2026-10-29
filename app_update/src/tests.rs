@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use sha2::Digest;
 use tiny_http::{Header, Response, ResponseBox, Server};
 
 use super::*;
@@ -42,30 +41,23 @@ fn latest(tag: &str, assets: Vec<ReleaseAssetJson>) -> LatestRelease {
     }
 }
 
-fn asset(name: &str, digest: Option<&str>) -> ReleaseAssetJson {
+fn asset(name: &str) -> ReleaseAssetJson {
     ReleaseAssetJson {
         name: name.to_string(),
         browser_download_url: format!("https://example.com/{name}"),
-        digest: digest.map(str::to_string),
     }
 }
 
 #[test]
 fn select_offers_only_newer_well_formed_releases() {
     let current = v("2026.09.09-1");
-    let good = || {
-        vec![
-            asset("Other.dmg", Some("sha256:00")),
-            asset("Fake.app.tar.gz", Some("sha256:ab")),
-        ]
-    };
+    let good = || vec![asset("Other.dmg"), asset("Fake.app.tar.gz")];
 
     let update = select(&FEED, current, latest("v2026.10.01-2", good()))
         .unwrap()
         .unwrap();
     assert_eq!(update.version(), v("2026.10.01-2"));
     assert_eq!(update.archive_url, "https://example.com/Fake.app.tar.gz");
-    assert_eq!(update.sha256, "ab");
 
     for not_newer in ["v2026.09.09-1", "v2026.09.08-3"] {
         assert!(
@@ -85,26 +77,13 @@ fn select_offers_only_newer_well_formed_releases() {
         select(
             &FEED,
             current,
-            latest("v2026.10.01-1", vec![asset("Other.dmg", None)])
+            latest("v2026.10.01-1", vec![asset("Other.dmg")])
         )
         .unwrap_err(),
         BadRelease::MissingAsset {
             name: "Fake.app.tar.gz".to_string()
         },
     );
-    for digest in [None, Some("md5:ab")] {
-        assert_eq!(
-            select(
-                &FEED,
-                current,
-                latest("v2026.10.01-1", vec![asset("Fake.app.tar.gz", digest)]),
-            )
-            .unwrap_err(),
-            BadRelease::MissingDigest {
-                name: "Fake.app.tar.gz".to_string()
-            },
-        );
-    }
 }
 
 /// A gzipped tar of a bundle `Fake.app` whose executable holds `contents`.
@@ -123,15 +102,15 @@ fn bundle_archive(contents: &[u8]) -> Vec<u8> {
     archive.into_inner().unwrap().finish().unwrap()
 }
 
-/// A server publishing `tag` with `archive` as its bundle asset, advertised with `digest`.
-fn publish(tag: &'static str, archive: Vec<u8>, digest: String) -> String {
+/// A server publishing `tag` with `archive` as its bundle asset.
+fn publish(tag: &'static str, archive: Vec<u8>) -> String {
     let base = Arc::new(Mutex::new(String::new()));
     let base_for_json = base.clone();
     let server = serve(move |url| {
         if url == "/repos/owner/repo/releases/latest" {
             let json = format!(
                 r#"{{"tag_name": "{tag}", "html_url": "https://example.com/release",
-                    "assets": [{{"name": "Fake.app.tar.gz", "digest": "{digest}",
+                    "assets": [{{"name": "Fake.app.tar.gz",
                                 "browser_download_url": "{}/Fake.app.tar.gz"}}]}}"#,
                 base_for_json.lock().unwrap(),
             );
@@ -146,10 +125,6 @@ fn publish(tag: &'static str, archive: Vec<u8>, digest: String) -> String {
     });
     *base.lock().unwrap() = server.clone();
     server
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", sha2::Sha256::digest(bytes))
 }
 
 /// A `Fake.app` in a fresh directory whose executable holds `contents`.
@@ -191,7 +166,7 @@ fn updater(base: &str, bundle: &Path) -> Updater {
 fn check_and_install_swap_in_the_new_bundle() {
     let archive = bundle_archive(b"new");
     let archive_len = archive.len() as u64;
-    let server = publish("v2026.10.01-1", archive.clone(), sha256(&archive));
+    let server = publish("v2026.10.01-1", archive);
     let (_dir, bundle) = installed_bundle("old");
     let updater = updater(&server, &bundle);
 
@@ -231,18 +206,14 @@ fn check_and_install_swap_in_the_new_bundle() {
 }
 
 #[test]
-fn install_leaves_the_bundle_alone_on_a_bad_digest() {
-    let archive = bundle_archive(b"new");
-    let server = publish("v2026.10.01-1", archive, sha256(b"something else"));
+fn install_leaves_the_bundle_alone_on_a_corrupt_archive() {
+    let server = publish("v2026.10.01-1", b"not a gzipped tar".to_vec());
     let (_dir, bundle) = installed_bundle("old");
     let updater = updater(&server, &bundle);
     let update = updater.check(TIMEOUT).unwrap().unwrap();
 
     let result = updater.install(&update, |_| {});
-    assert!(
-        matches!(result, Err(InstallError::DigestMismatch)),
-        "got {result:?}",
-    );
+    assert!(matches!(result, Err(InstallError::Io(_))), "got {result:?}",);
     assert_eq!(installed_contents(&bundle), "old");
     assert_no_staging_left(&bundle);
 }
@@ -251,7 +222,7 @@ fn install_leaves_the_bundle_alone_on_a_bad_digest() {
 #[test]
 fn install_rejects_a_bundle_whose_signature_does_not_verify() {
     let archive = bundle_archive(b"new");
-    let server = publish("v2026.10.01-1", archive.clone(), sha256(&archive));
+    let server = publish("v2026.10.01-1", archive);
     let (_dir, bundle) = installed_bundle("old");
     let updater = Updater {
         check_signature: true,
@@ -313,8 +284,8 @@ fn the_agent_trusts_the_system_roots() {
     assert!(matches!(tls.root_certs(), RootCerts::PlatformVerifier));
 }
 
-/// Downloads a real release asset over HTTPS, following GitHub's redirect to its CDN, and checks
-/// it against GitHub's digest. The latest release's DMG stands in for an update archive.
+/// Downloads a real release asset over HTTPS, following GitHub's redirect to its CDN. The latest
+/// release's DMG stands in for an update archive.
 #[test]
 #[ignore = "needs the network"]
 fn downloads_a_real_asset_over_https() {
