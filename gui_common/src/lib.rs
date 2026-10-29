@@ -5,7 +5,7 @@ pub mod log_status;
 pub mod midi_panel;
 pub mod scrolling_plot;
 pub mod tracked;
-pub mod update_panel;
+pub mod update_app;
 
 use eframe::egui::{self, Color32};
 

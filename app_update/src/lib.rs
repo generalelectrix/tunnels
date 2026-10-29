@@ -15,7 +15,6 @@
 //! ad-hoc signature suffices.
 
 mod github;
-mod transport;
 mod version;
 
 #[cfg(test)]
@@ -23,11 +22,11 @@ mod tests;
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::time::Duration;
 
+use self_update::ureq;
 use self_update::{Release, ReleaseAsset, ReleaseSource};
 
-pub use transport::{CancelToken, Timeouts};
 pub use version::{ParseVersionError, ReleaseVersion};
 
 const GITHUB_API: &str = "https://api.github.com";
@@ -50,7 +49,6 @@ pub struct ReleaseFeed {
 pub struct Updater {
     feed: ReleaseFeed,
     current: ReleaseVersion,
-    timeouts: Timeouts,
     api_base: String,
     /// The bundle to replace; `None` replaces the bundle containing the running executable.
     install_path: Option<PathBuf>,
@@ -71,21 +69,19 @@ impl AvailableUpdate {
     }
 }
 
-/// How far an [`Updater::install`] has got.
+/// How much of an update's archive has arrived.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InstallProgress {
-    /// `received` bytes of the archive have arrived, of `total` when the server said.
-    Downloading { received: u64, total: Option<u64> },
-    /// The downloaded bundle has passed verification and is moving into place, past the point a
-    /// cancel can stop.
-    Committing,
+pub struct DownloadProgress {
+    pub received: u64,
+    /// The archive's size, when the server reported it.
+    pub total: Option<u64>,
 }
 
 /// Why [`Updater::check`] could not report on the latest release.
 #[derive(Debug, thiserror::Error)]
 pub enum CheckError {
     #[error("couldn't reach GitHub: {0}")]
-    Network(#[from] reqwest::Error),
+    Network(#[from] ureq::Error),
     #[error("GitHub answered HTTP {status}")]
     Status { status: u16 },
     #[error(transparent)]
@@ -108,10 +104,6 @@ pub enum BadRelease {
 /// Why [`Updater::install`] left the installed bundle as it was.
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
-    #[error("the update was cancelled")]
-    Cancelled,
-    #[error("couldn't set up the download: {0}")]
-    Client(#[from] reqwest::Error),
     #[error("the installed version is already {0} or newer")]
     NotNewer(ReleaseVersion),
     #[error(transparent)]
@@ -124,7 +116,6 @@ impl Updater {
         Self {
             feed,
             current,
-            timeouts: Timeouts::default(),
             api_base: GITHUB_API.to_string(),
             install_path: None,
             check_signature: true,
@@ -143,27 +134,21 @@ impl Updater {
         )
     }
 
-    /// The feed's latest release, if it is newer than the running build.
-    pub fn check(&self) -> Result<Option<AvailableUpdate>, CheckError> {
-        let client = transport::client(&self.user_agent(), self.timeouts)?;
-        let latest =
-            github::fetch_latest(&client, &self.api_base, &self.feed, self.timeouts.lookup)?;
+    /// The feed's latest release, if it is newer than the running build. Gives up after
+    /// `timeout`.
+    pub fn check(&self, timeout: Duration) -> Result<Option<AvailableUpdate>, CheckError> {
+        let agent = agent(&self.user_agent(), Some(timeout));
+        let latest = github::fetch_latest(&agent, &self.api_base, &self.feed)?;
         Ok(select(&self.feed, self.current, latest)?)
     }
 
-    /// Replace the installed bundle with `update`, reporting progress to `on_progress`.
-    ///
-    /// `cancel` can stop the install until it reports [`InstallProgress::Committing`]. Any
+    /// Replace the installed bundle with `update`, reporting the download to `on_progress`. Any
     /// failure leaves the installed bundle as it was.
     pub fn install(
         &self,
         update: &AvailableUpdate,
-        on_progress: impl Fn(InstallProgress) + Send + Sync + 'static,
-        cancel: &CancelToken,
+        on_progress: impl Fn(DownloadProgress) + Send + Sync + 'static,
     ) -> Result<(), InstallError> {
-        let client = transport::client(&self.user_agent(), self.timeouts)?;
-        let on_progress = Arc::new(on_progress);
-
         let mut builder = self_update::backends::custom::Update::configure();
         builder
             // Install exactly the release that was offered, without asking GitHub again.
@@ -171,33 +156,18 @@ impl Updater {
             .bin_name(self.feed.bundle_name)
             .current_version(self.current.semver_key())
             .bundle_path_in_archive(self.feed.bundle_name)
-            .http_client(Arc::new(transport::CancellableClient::new(
-                client,
-                cancel.clone(),
-            )))
+            .ureq_agent(agent(&self.user_agent(), None))
             // The offered release carries only the bundle archive.
             .asset_matcher(|assets| assets.first().cloned())
             .check_install_path_writable(true)
             .retries(0)
             .unattended()
-            .progress_callback({
-                let on_progress = on_progress.clone();
-                move |received, total| on_progress(InstallProgress::Downloading { received, total })
-            })
-            .verify_binary({
-                let cancel = cancel.clone();
-                let check_signature = self.check_signature;
-                move |staged_bundle| {
-                    if check_signature {
-                        verify_signature(staged_bundle)?;
-                    }
-                    if !cancel.begin_commit() {
-                        return Err(self_update::Error::verification_rejected("cancelled"));
-                    }
-                    on_progress(InstallProgress::Committing);
-                    Ok(())
-                }
+            .progress_callback(move |received, total| {
+                on_progress(DownloadProgress { received, total })
             });
+        if self.check_signature {
+            builder.verify_binary(verify_signature);
+        }
         if let Some(install_path) = &self.install_path {
             builder.bundle_install_path(install_path);
         }
@@ -207,7 +177,6 @@ impl Updater {
                 .into_updated_release()
                 .map(|_| ())
                 .ok_or(InstallError::NotNewer(update.version)),
-            Err(_) if cancel.is_cancelled() => Err(InstallError::Cancelled),
             Err(e) => Err(e.into()),
         }
     }
@@ -215,6 +184,25 @@ impl Updater {
     fn user_agent(&self) -> String {
         format!("{}-updater/{}", self.feed.repo, self.current)
     }
+}
+
+/// An HTTP agent sending `user_agent`, trusting the system's root certificates, giving up on a
+/// request after `timeout` when there is one, and returning HTTP error statuses as responses.
+fn agent(user_agent: &str, timeout: Option<Duration>) -> ureq::Agent {
+    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+    // With native-tls, `PlatformVerifier` means the system's trust store; ureq's default,
+    // `WebPki`, panics on first use unless a feature this crate doesn't enable is on.
+    let tls = TlsConfig::builder()
+        .provider(TlsProvider::NativeTls)
+        .root_certs(RootCerts::PlatformVerifier)
+        .build();
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .user_agent(user_agent)
+        .timeout_global(timeout)
+        .http_status_as_error(false)
+        .build();
+    ureq::Agent::new_with_config(config)
 }
 
 /// `latest` as an update to `current`, or `None` when it is not newer.

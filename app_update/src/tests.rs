@@ -1,16 +1,13 @@
-use std::io::{self, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use self_update::http_client::{HeaderMap, HttpClient};
 use sha2::Digest;
-use tiny_http::{Header, Response, ResponseBox, Server, StatusCode};
+use tiny_http::{Header, Response, ResponseBox, Server};
 
 use super::*;
 use crate::github::{LatestRelease, ReleaseAssetJson};
-use crate::transport::CancellableClient;
 
 const FEED: ReleaseFeed = ReleaseFeed {
     owner: "owner",
@@ -19,160 +16,23 @@ const FEED: ReleaseFeed = ReleaseFeed {
     bundle_name: "Fake.app",
 };
 
+const TIMEOUT: Duration = Duration::from_secs(5);
+
 fn v(s: &str) -> ReleaseVersion {
     s.parse().unwrap()
 }
 
-/// A local HTTP server answering each request, on its own thread, with `respond(url)`, and
-/// recording the `User-Agent` each request carried.
-struct TestServer {
-    base: String,
-    user_agents: Arc<Mutex<Vec<String>>>,
-}
-
-fn serve(respond: impl Fn(&str) -> ResponseBox + Send + Sync + 'static) -> TestServer {
+/// A local HTTP server answering each request with `respond(url)`. Returns its base URL.
+fn serve(respond: impl Fn(&str) -> ResponseBox + Send + 'static) -> String {
     let server = Server::http("127.0.0.1:0").unwrap();
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
-    let user_agents = Arc::new(Mutex::new(Vec::new()));
-    let recorded = user_agents.clone();
-    let respond = Arc::new(respond);
     thread::spawn(move || {
         for request in server.incoming_requests() {
-            if let Some(ua) = request
-                .headers()
-                .iter()
-                .find(|h| h.field.equiv("User-Agent"))
-            {
-                recorded.lock().unwrap().push(ua.value.to_string());
-            }
-            let respond = respond.clone();
-            thread::spawn(move || {
-                let response = respond(request.url());
-                let _ = request.respond(response);
-            });
+            let response = respond(request.url());
+            let _ = request.respond(response);
         }
     });
-    TestServer { base, user_agents }
-}
-
-/// Large enough that the server flushes each chunk as it is produced rather than buffering
-/// the response.
-const CHUNK: usize = 32 * 1024;
-
-/// A body of `chunks` chunks of [`CHUNK`] bytes, pausing `gap` before each chunk after the first.
-struct Drip {
-    chunks: usize,
-    gap: Duration,
-    /// Bytes delivered so far.
-    sent: usize,
-}
-
-impl Read for Drip {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let total = self.chunks * CHUNK;
-        if self.sent == total {
-            return Ok(0);
-        }
-        if self.sent > 0 && self.sent.is_multiple_of(CHUNK) {
-            thread::sleep(self.gap);
-        }
-        let rest_of_chunk = CHUNK - self.sent % CHUNK;
-        let n = rest_of_chunk.min(buf.len());
-        buf[..n].fill(b'x');
-        self.sent += n;
-        Ok(n)
-    }
-}
-
-fn drip(chunks: usize, gap: Duration) -> ResponseBox {
-    Response::new(
-        StatusCode(200),
-        vec![],
-        Drip {
-            chunks,
-            gap,
-            sent: 0,
-        },
-        Some(chunks * CHUNK),
-        None,
-    )
-    .boxed()
-}
-
-fn read_body(client: &CancellableClient, url: &str) -> io::Result<Vec<u8>> {
-    let response = client
-        .get(url, &HeaderMap::new(), None)
-        .map_err(io::Error::other)?;
-    let mut body = Vec::new();
-    response.body().read_to_end(&mut body)?;
-    Ok(body)
-}
-
-#[test]
-fn transport_sends_user_agent_maps_status_and_bounds_stalls_not_drips() {
-    let server = serve(|url| match url {
-        "/drip" => drip(8, Duration::from_millis(200)),
-        "/stall" => drip(2, Duration::from_secs(3)),
-        _ => Response::empty(404).boxed(),
-    });
-    let timeouts = Timeouts {
-        stall: Duration::from_secs(1),
-        ..Timeouts::default()
-    };
-    let client = CancellableClient::new(
-        transport::client("test-agent/1", timeouts).unwrap(),
-        CancelToken::new(),
-    );
-
-    // The drip takes ~1.4 s in total, longer than the stall limit, but never pauses that long.
-    assert_eq!(
-        read_body(&client, &format!("{}/drip", server.base))
-            .unwrap()
-            .len(),
-        8 * CHUNK,
-    );
-
-    let stalled = read_body(&client, &format!("{}/stall", server.base));
-    let timed_out = stalled.as_ref().is_err_and(|e| {
-        e.get_ref()
-            .and_then(|inner| inner.downcast_ref::<reqwest::Error>())
-            .is_some_and(reqwest::Error::is_timeout)
-    });
-    assert!(timed_out, "a stalled body should time out, got {stalled:?}");
-
-    let missing = client.get(&format!("{}/missing", server.base), &HeaderMap::new(), None);
-    assert!(
-        matches!(missing, Err(self_update::Error::NotFound { .. })),
-        "a 404 should map to NotFound, got {:?}",
-        missing.map(|_| ()),
-    );
-
-    assert!(
-        server
-            .user_agents
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|ua| ua == "test-agent/1"),
-    );
-}
-
-#[test]
-fn cancelling_fails_the_next_body_read() {
-    let server = serve(|_| drip(3, Duration::from_millis(50)));
-    let cancel = CancelToken::new();
-    let client = CancellableClient::new(
-        transport::client("test-agent/1", Timeouts::default()).unwrap(),
-        cancel.clone(),
-    );
-    let response = client.get(&server.base, &HeaderMap::new(), None).unwrap();
-    let mut body = response.body();
-    let mut buf = [0; 16];
-    assert!(body.read(&mut buf).unwrap() > 0);
-
-    cancel.cancel();
-    let err = body.read(&mut buf).unwrap_err();
-    assert_eq!(err.to_string(), "download cancelled");
+    base
 }
 
 fn latest(tag: &str, assets: Vec<ReleaseAssetJson>) -> LatestRelease {
@@ -269,7 +129,7 @@ fn bundle_archive(contents: &[u8]) -> Vec<u8> {
 }
 
 /// A server publishing `tag` with `archive` as its bundle asset, advertised with `digest`.
-fn publish(tag: &'static str, archive: Vec<u8>, digest: String) -> TestServer {
+fn publish(tag: &'static str, archive: Vec<u8>, digest: String) -> String {
     let base = Arc::new(Mutex::new(String::new()));
     let base_for_json = base.clone();
     let server = serve(move |url| {
@@ -289,7 +149,7 @@ fn publish(tag: &'static str, archive: Vec<u8>, digest: String) -> TestServer {
             Response::empty(404).boxed()
         }
     });
-    *base.lock().unwrap() = server.base.clone();
+    *base.lock().unwrap() = server.clone();
     server
 }
 
@@ -310,11 +170,11 @@ fn installed_contents(bundle: &Path) -> String {
     std::fs::read_to_string(bundle.join("Contents/MacOS/fake")).unwrap()
 }
 
-/// An updater installing to `bundle` from `server`, skipping the code-signature check that the
-/// unsigned test bundles would fail.
-fn updater(server: &TestServer, bundle: &Path) -> Updater {
+/// An updater installing to `bundle` from the server at `base`, skipping the code-signature check
+/// that the unsigned test bundles would fail.
+fn updater(base: &str, bundle: &Path) -> Updater {
     Updater {
-        api_base: server.base.clone(),
+        api_base: base.to_string(),
         install_path: Some(bundle.to_path_buf()),
         check_signature: false,
         ..Updater::new(FEED, v("2026.09.09-1"))
@@ -329,17 +189,13 @@ fn check_and_install_swap_in_the_new_bundle() {
     let (_dir, bundle) = installed_bundle("old");
     let updater = updater(&server, &bundle);
 
-    let update = updater.check().unwrap().unwrap();
+    let update = updater.check(TIMEOUT).unwrap().unwrap();
     assert_eq!(update.version(), v("2026.10.01-1"));
 
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let recorded = events.clone();
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let recorded = progress.clone();
     updater
-        .install(
-            &update,
-            move |event| recorded.lock().unwrap().push(event),
-            &CancelToken::new(),
-        )
+        .install(&update, move |p| recorded.lock().unwrap().push(p))
         .unwrap();
 
     assert_eq!(installed_contents(&bundle), "new");
@@ -352,51 +208,38 @@ fn check_and_install_swap_in_the_new_bundle() {
             .mode();
         assert_eq!(mode & 0o111, 0o111, "the executable bit must survive");
     }
-    let events = events.lock().unwrap();
     assert_eq!(
-        events.iter().rev().take(2).collect::<Vec<_>>(),
-        [
-            &InstallProgress::Committing,
-            &InstallProgress::Downloading {
-                received: archive_len,
-                total: Some(archive_len)
-            },
-        ],
+        progress.lock().unwrap().last(),
+        Some(&DownloadProgress {
+            received: archive_len,
+            total: Some(archive_len)
+        }),
     );
 
     let up_to_date = Updater {
         current: v("2026.10.01-1"),
         ..updater
     };
-    assert!(up_to_date.check().unwrap().is_none());
+    assert!(up_to_date.check(TIMEOUT).unwrap().is_none());
 }
 
 #[test]
-fn install_leaves_the_bundle_alone_on_bad_digest_or_cancel() {
+fn install_leaves_the_bundle_alone_on_a_bad_digest() {
     let archive = bundle_archive(b"new");
     let server = publish("v2026.10.01-1", archive, sha256(b"something else"));
     let (_dir, bundle) = installed_bundle("old");
     let updater = updater(&server, &bundle);
-    let update = updater.check().unwrap().unwrap();
+    let update = updater.check(TIMEOUT).unwrap().unwrap();
 
-    let mismatch = updater.install(&update, |_| {}, &CancelToken::new());
+    let result = updater.install(&update, |_| {});
     assert!(
         matches!(
-            mismatch,
+            result,
             Err(InstallError::Update(
                 self_update::Error::ChecksumMismatch { .. }
             ))
         ),
-        "got {mismatch:?}",
-    );
-    assert_eq!(installed_contents(&bundle), "old");
-
-    let cancelled = CancelToken::new();
-    cancelled.cancel();
-    let result = updater.install(&update, |_| {}, &cancelled);
-    assert!(
-        matches!(result, Err(InstallError::Cancelled)),
-        "got {result:?}"
+        "got {result:?}",
     );
     assert_eq!(installed_contents(&bundle), "old");
 }
@@ -411,9 +254,9 @@ fn install_rejects_a_bundle_whose_signature_does_not_verify() {
         check_signature: true,
         ..updater(&server, &bundle)
     };
-    let update = updater.check().unwrap().unwrap();
+    let update = updater.check(TIMEOUT).unwrap().unwrap();
 
-    let result = updater.install(&update, |_| {}, &CancelToken::new());
+    let result = updater.install(&update, |_| {});
     assert!(
         matches!(
             result,
@@ -431,14 +274,14 @@ fn check_reports_http_failures_and_unreadable_releases() {
     let (_dir, bundle) = installed_bundle("old");
 
     let server = serve(|_| Response::empty(503).boxed());
-    let result = updater(&server, &bundle).check();
+    let result = updater(&server, &bundle).check(TIMEOUT);
     assert!(
         matches!(result, Err(CheckError::Status { status: 503 })),
         "got {result:?}",
     );
 
     let server = serve(|_| Response::from_string("not json").boxed());
-    let result = updater(&server, &bundle).check();
+    let result = updater(&server, &bundle).check(TIMEOUT);
     assert!(
         matches!(
             result,
@@ -448,21 +291,33 @@ fn check_reports_http_failures_and_unreadable_releases() {
     );
 }
 
+/// ureq's default root certificates panic on first use with native-tls in this crate's feature
+/// set, and every other test talks plain HTTP, so pin the agent's trust store here.
 #[test]
-fn cancelling_and_committing_exclude_each_other() {
-    let cancelled = CancelToken::new();
-    assert!(cancelled.cancel());
-    assert!(
-        cancelled.cancel(),
-        "cancelling again still reports cancelled"
-    );
-    assert!(!cancelled.begin_commit());
-    assert!(cancelled.is_cancelled());
+fn the_agent_trusts_the_system_roots() {
+    use ureq::tls::{RootCerts, TlsProvider};
+    let agent = agent("test", None);
+    let tls = agent.config().tls_config();
+    assert!(matches!(tls.provider(), TlsProvider::NativeTls));
+    assert!(matches!(tls.root_certs(), RootCerts::PlatformVerifier));
+}
 
-    let committing = CancelToken::new();
-    assert!(committing.begin_commit());
-    assert!(!committing.cancel());
-    assert!(!committing.is_cancelled());
+/// Reaches the real GitHub API over HTTPS. The latest release may predate the bundle archive,
+/// so only a network or HTTP failure counts as broken.
+#[test]
+#[ignore = "needs the network"]
+fn checks_a_real_feed_over_https() {
+    let feed = ReleaseFeed {
+        owner: "generalelectrix",
+        repo: "COBRA_COMMANDER",
+        archive_asset: "CobraCommander.app.tar.gz",
+        bundle_name: "Cobra Commander.app",
+    };
+    let result = Updater::new(feed, v("2000.01.01-1")).check(Duration::from_secs(10));
+    assert!(
+        matches!(result, Ok(Some(_)) | Err(CheckError::BadRelease(_))),
+        "got {result:?}",
+    );
 }
 
 #[test]

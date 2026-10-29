@@ -1,5 +1,4 @@
-use reqwest::blocking::Client;
-use reqwest::header::ACCEPT;
+use self_update::ureq;
 use serde::Deserialize;
 
 use crate::{BadRelease, CheckError, ReleaseFeed};
@@ -23,35 +22,29 @@ pub(crate) struct ReleaseAssetJson {
 
 /// The newest published release of `feed`'s repository, read from the REST API at `api_base`.
 pub(crate) fn fetch_latest(
-    client: &Client,
+    agent: &ureq::Agent,
     api_base: &str,
     feed: &ReleaseFeed,
-    timeout: std::time::Duration,
 ) -> Result<LatestRelease, CheckError> {
     let url = format!(
         "{api_base}/repos/{}/{}/releases/latest",
         feed.owner, feed.repo
     );
-    let response = client
-        .get(url)
-        .header(ACCEPT, "application/vnd.github+json")
-        .timeout(timeout)
-        .send()?;
+    let mut response = agent
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .call()?;
     let status = response.status();
     if !status.is_success() {
         return Err(CheckError::Status {
             status: status.as_u16(),
         });
     }
-    response.json().map_err(|e| {
-        // A body that stalls past its timeout is also reported as a decode error.
-        if e.is_decode() && !e.is_timeout() {
-            BadRelease::Unreadable {
-                reason: e.to_string(),
-            }
-            .into()
-        } else {
-            CheckError::Network(e)
+    response.body_mut().read_json().map_err(|e| match e {
+        ureq::Error::Json(e) => BadRelease::Unreadable {
+            reason: e.to_string(),
         }
+        .into(),
+        e => CheckError::Network(e),
     })
 }
