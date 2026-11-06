@@ -47,15 +47,6 @@ use tunnels_model::animation::{
 };
 use tunnels_model::clock_bank::ClockBank;
 use tunnels_model::spectrum::SpectrumTables;
-use tunnels_model::waveforms::{WaveformArgs, sine_square, tri_saw};
-
-/// A waveform as a sheet samples it: one number for one phase.
-type WaveformFn = fn(&WaveformArgs) -> f64;
-
-/// The waveforms drawn from a pure function of their arguments, each named
-/// after the golden it is compared against.
-const WAVEFORM_FNS: [(&str, WaveformFn); 2] =
-    [("sine_square.png", sine_square), ("tri_saw.png", tri_saw)];
 
 /// Smoothing down the rows.
 const SMOOTHINGS: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
@@ -161,27 +152,6 @@ fn sheet_of(mut draw: impl FnMut(&mut RgbaImage, (u32, u32), f64, f64, bool)) ->
     sheet
 }
 
-/// A sheet of `waveform` at every smoothing, duty cycle and pulse setting.
-fn waveform_sheet(waveform: WaveformFn) -> RgbaImage {
-    sheet_of(|sheet, origin, smoothing, duty_cycle, pulse| {
-        let rows = trace_rows(|phase_spatial| {
-            waveform(&WaveformArgs {
-                phase_spatial,
-                // A sheet is the shape of one period, not its travel. At rest
-                // a standing wave is at full amplitude and a travelling one
-                // has no offset, so the two draw the same cell and only the
-                // shape is left.
-                phase_temporal: Phase::ZERO,
-                standing: false,
-                smoothing: UnipolarFloat::new(smoothing),
-                duty_cycle: UnipolarFloat::new(duty_cycle),
-                pulse,
-            })
-        });
-        draw_trace(sheet, origin, &rows);
-    })
-}
-
 /// Discards the state changes an animation reports while it is being set up.
 struct Discard;
 
@@ -189,7 +159,7 @@ impl EmitStateChange for Discard {
     fn emit_animation_state_change(&mut self, _: StateChange) {}
 }
 
-/// The settings one cell of an animation-driven sheet is drawn at.
+/// The settings one cell of a sheet is drawn at.
 #[derive(Copy, Clone)]
 struct Cell {
     smoothing: f64,
@@ -244,10 +214,16 @@ fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnim
     )
 }
 
-/// A sheet of noise at every smoothing, duty cycle and pulse setting.
-fn noise_sheet() -> RgbaImage {
+/// A sheet of `waveform` over `n_periods` to a cell, at every smoothing, duty
+/// cycle and pulse setting.
+fn sheet(waveform: Waveform, n_periods: u16, spectrum: &SpectrumTables) -> RgbaImage {
     sheet_of(|sheet, origin, smoothing, duty_cycle, pulse| {
-        let animation = noise_animation(smoothing, duty_cycle, pulse);
+        let cell = Cell {
+            smoothing,
+            duty_cycle,
+            pulse,
+        };
+        let animation = settled_animation(waveform, n_periods, cell, spectrum);
         let rows = trace_rows(|phase| animation.unit_value(phase));
         draw_trace(sheet, origin, &rows);
     })
@@ -267,27 +243,12 @@ const SHEET_LEVELS: [f32; SPECTRUM_BANDS] = [
     0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8,
 ];
 
-/// A sheet of the spectrum of `SHEET_LEVELS` at every smoothing, duty cycle
-/// and pulse setting, one period to a cell.
-fn spectrum_sheet() -> RgbaImage {
-    let spectrum = SpectrumTables::new(&AudioFrame::new(
+/// A spectrum holding `SHEET_LEVELS`.
+fn sheet_spectrum() -> SpectrumTables {
+    SpectrumTables::new(&AudioFrame::new(
         Default::default(),
         SHEET_LEVELS.map(UnipolarF32::new),
-    ));
-    sheet_of(|sheet, origin, smoothing, duty_cycle, pulse| {
-        let animation = settled_animation(
-            Waveform::Spectrum,
-            1,
-            Cell {
-                smoothing,
-                duty_cycle,
-                pulse,
-            },
-            &spectrum,
-        );
-        let rows = trace_rows(|phase| animation.unit_value(phase));
-        draw_trace(sheet, origin, &rows);
-    })
+    ))
 }
 
 /// This suite's goldens. A sheet is drawn by integer arithmetic over a fixed
@@ -306,11 +267,14 @@ fn goldens() -> Goldens {
 #[test]
 fn waveforms_draw_their_sheets() {
     let goldens = goldens();
-    for (name, waveform) in WAVEFORM_FNS {
-        goldens.compare(&waveform_sheet(waveform), name);
-    }
-    goldens.compare(&noise_sheet(), "noise.png");
-    goldens.compare(&spectrum_sheet(), "spectrum.png");
+    let silent = SpectrumTables::SILENT;
+    goldens.compare(&sheet(Waveform::SineSquare, 1, &silent), "sine_square.png");
+    goldens.compare(&sheet(Waveform::TriSaw, 1, &silent), "tri_saw.png");
+    goldens.compare(&sheet(Waveform::Noise, NOISE_PERIODS, &silent), "noise.png");
+    goldens.compare(
+        &sheet(Waveform::Spectrum, 1, &sheet_spectrum()),
+        "spectrum.png",
+    );
 }
 
 /// A pulsed cell is drawn across enough of the noise field to show the gate
