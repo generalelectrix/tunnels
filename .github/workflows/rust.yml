@@ -36,3 +36,20 @@ jobs:
         run: |
           cargo build --workspace
           cargo test --workspace
+
+  vectorization:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v5
+      # A cache saves only when its key is new, so changing what this job builds
+      # needs a new key here.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-tests
+      - name: Test optimised, where the batch loops are vectorised
+        run: cargo test --release -p tunnels_model
+      - name: Check that batch animation evaluation vectorises
+        run: python3 scripts/check-vectorized.py

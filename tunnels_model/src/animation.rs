@@ -3,13 +3,11 @@ use crate::clock::Clock;
 use crate::clock::ControllableClock;
 use crate::clock::Ticks;
 use crate::clock_bank::ClockStore;
+use crate::noise::{self, NoiseBase};
 use crate::spectrum::SpectrumTables;
 use crate::waveforms::WaveformArgs;
 use crate::{clock_bank::ClockIdx, waveforms};
-use noise::NoiseFn;
-use noise::Simplex;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
 use std::time::Duration;
 use strum::VariantArray;
 use tunnels_lib::audio::AudioState;
@@ -106,14 +104,6 @@ pub struct Animation {
     internal_clock: Clock,
     clock_source: Option<ClockIdx>,
     use_audio_size: bool,
-    #[serde(skip, default = "get_simplex_gen")]
-    simplex_gen: &'static Simplex,
-}
-
-fn get_simplex_gen() -> &'static Simplex {
-    static SIMPLEX_GEN: LazyLock<Simplex> = LazyLock::new(Default::default);
-
-    &SIMPLEX_GEN
 }
 
 /// How much the noise line lengthens as smoothing falls, to
@@ -127,28 +117,55 @@ const NOISE_ROUGHENING: f64 = 7.0;
 /// runs with time, so the clock carries a pattern along the phase, and at zero
 /// it stands across time, so the noise boils in place. No periodicity is a line
 /// of no length, one value everywhere.
+///
+/// Where it starts is resolved once, so a point on it is `f32` arithmetic on
+/// small numbers however far the clock has run.
 #[derive(Clone, Copy, Debug)]
 struct NoiseLine {
-    length: f64,
-    cos: f64,
-    sin: f64,
+    /// Where a phase of zero sits in the field.
+    base: NoiseBase,
+    /// How far through the field a phase of one carries a point.
+    reach: [f32; 2],
 }
 
 impl NoiseLine {
-    fn new(n_periods: u16, smoothing: UnipolarFloat) -> Self {
+    /// The line at `smoothing`, starting `position` along the field's first
+    /// axis.
+    fn new(n_periods: u16, smoothing: UnipolarFloat, position: f64) -> Self {
         let rough = 1.0 - smoothing.val();
         let angle = rough * std::f64::consts::FRAC_PI_2;
+        let length = f64::from(n_periods) * (1.0 + NOISE_ROUGHENING * rough);
         Self {
-            length: f64::from(n_periods) * (1.0 + NOISE_ROUGHENING * rough),
-            cos: angle.cos(),
-            sin: angle.sin(),
+            base: NoiseBase::new(position, 0.0),
+            reach: [(length * angle.cos()) as f32, (length * angle.sin()) as f32],
         }
     }
+}
 
-    /// Where the point at `phase` lands in the field.
-    fn at(&self, phase: Phase) -> (f64, f64) {
-        let along = phase.val() * self.length;
-        (along * self.cos, along * self.sin)
+/// What turns a sample of noise into a value, in the `f32` a point is worked
+/// out in.
+struct NoiseShape {
+    periods: f32,
+    clock: f32,
+    duty_cycle: f32,
+}
+
+impl NoiseShape {
+    /// The value at `phase`, in [0, 1], on `line`, before amplitude.
+    ///
+    /// Duty cycle is a bit odd compared to waveforms, since noise isn't
+    /// periodic. Rather than trying to compress the waveform to maintain the
+    /// waveshape, a point simply goes dark for a portion of each cycle.
+    #[inline(always)]
+    fn at<const PULSE: bool>(&self, line: &NoiseLine, phase: f32) -> f32 {
+        let cycle = phase * self.periods + self.clock;
+        if cycle - cycle.floor() >= self.duty_cycle {
+            return 0.0;
+        }
+        let sample = line
+            .base
+            .sample(phase * line.reach[0], phase * line.reach[1]);
+        if PULSE { noise::gate(sample) } else { sample }
     }
 }
 
@@ -164,11 +181,11 @@ enum PreparedWaveform {
 }
 
 impl PreparedWaveform {
-    fn new(params: &StaticParams, smoothing: UnipolarFloat) -> Self {
+    fn new(params: &StaticParams, smoothing: UnipolarFloat, position: f64) -> Self {
         match params.waveform {
             Waveform::SineSquare => Self::SineSquare,
             Waveform::TriSaw => Self::TriSaw,
-            Waveform::Noise => Self::Noise(NoiseLine::new(params.n_periods, smoothing)),
+            Waveform::Noise => Self::Noise(NoiseLine::new(params.n_periods, smoothing, position)),
             Waveform::Spectrum => Self::Spectrum,
             Waveform::Constant => Self::Constant,
         }
@@ -185,7 +202,6 @@ impl Default for Animation {
             internal_clock: Default::default(),
             clock_source: None,
             use_audio_size: false,
-            simplex_gen: get_simplex_gen(),
         }
     }
 }
@@ -277,15 +293,18 @@ impl Animation {
         spectrum: &'f SpectrumTables,
     ) -> PreparedAnimation<'f> {
         let smoothing = self.smoothing.smoothed();
+        let phase_temporal = self.phase(external_clocks);
         PreparedAnimation {
             static_params: self.static_params,
-            phase_temporal: self.phase(external_clocks),
+            phase_temporal,
             duty_cycle: self.duty_cycle.smoothed(),
             smoothing,
-            waveform: PreparedWaveform::new(&self.static_params, smoothing),
-            ticks: self.ticks(external_clocks),
+            waveform: PreparedWaveform::new(
+                &self.static_params,
+                smoothing,
+                self.ticks(external_clocks) as f64 + phase_temporal.val(),
+            ),
             scale: self.scale_value(external_clocks, audio, 1.0),
-            simplex_gen: self.simplex_gen,
             spectrum,
             active: self.active(),
         }
@@ -442,11 +461,8 @@ pub struct PreparedAnimation<'f> {
     smoothing: UnipolarFloat,
     /// The waveform, resolved at that smoothing.
     waveform: PreparedWaveform,
-    /// Whole periods elapsed, which noise uses to drift its field.
-    ticks: Ticks,
     /// Size, clock submaster and audio envelope, multiplied out.
     scale: f64,
-    simplex_gen: &'static Simplex,
     /// The frame's spectrum, as the spectrum waveform reads it.
     spectrum: &'f SpectrumTables,
     /// A zero-size animation contributes nothing and skips the waveform.
@@ -487,11 +503,18 @@ impl PreparedAnimation<'_> {
     /// The animation's value at many points on a figure, with amplitude
     /// applied.
     ///
-    /// `out[i]` is [`value`](Self::value) at the phase `alongs[i]`, narrowed to
-    /// `f32`. As many values are written as the shorter of the two holds.
+    /// `out[i]` is [`value`](Self::value) at the phase `alongs[i]`, to `f32`
+    /// precision. As many values are written as the shorter of the two holds.
     pub fn values_on_figure(&self, alongs: &[f32], out: &mut [f32]) {
-        for (value, &along) in out.iter_mut().zip(alongs) {
-            *value = self.value(Phase::new(f64::from(along))) as f32;
+        match &self.waveform {
+            PreparedWaveform::Noise(line) if self.active => {
+                self.noise_fill(line, alongs.iter().map(|&along| along - along.floor()), out);
+            }
+            _ => {
+                for (value, &along) in out.iter_mut().zip(alongs) {
+                    *value = self.value(Phase::new(f64::from(along))) as f32;
+                }
+            }
         }
     }
 
@@ -499,11 +522,19 @@ impl PreparedAnimation<'_> {
     /// unit of phase, with amplitude applied.
     ///
     /// The run is as long as `out`: element `i` of `n` sits at phase `i / n`,
-    /// and `out[i]` is [`value`](Self::value) at that phase.
-    pub fn values_on_elements(&self, out: &mut [f64]) {
-        let n = out.len() as f64;
-        for (i, value) in out.iter_mut().enumerate() {
-            *value = self.value(Phase::new(i as f64 / n));
+    /// and `out[i]` is [`value`](Self::value) at that phase, to `f32` precision.
+    pub fn values_on_elements(&self, out: &mut [f32]) {
+        match &self.waveform {
+            PreparedWaveform::Noise(line) if self.active => {
+                let n = out.len() as f32;
+                self.noise_fill(line, (0..out.len() as i32).map(|i| i as f32 / n), out);
+            }
+            _ => {
+                let n = out.len() as f64;
+                for (i, value) in out.iter_mut().enumerate() {
+                    *value = self.value(Phase::new(i as f64 / n)) as f32;
+                }
+            }
         }
     }
 
@@ -523,30 +554,7 @@ impl PreparedAnimation<'_> {
                 waveforms::tri_saw(&self.waveform_args(spatial_phase_offset))
             }
             PreparedWaveform::Noise(line) => {
-                // Handle duty cycle - this is a bit odd compared to waveforms,
-                // since noise isn't periodic. Rather than trying to compress
-                // the waveform to maintain the waveshape, we just turn off
-                // the animation for a portion of each cycle.
-                let spatial_phase =
-                    spatial_phase_offset.val() * self.static_params.n_periods as f64;
-                let temporal_phase = self.phase_temporal.val();
-
-                if Phase::new(spatial_phase + temporal_phase) > self.duty_cycle
-                    || self.duty_cycle == 0.0
-                {
-                    return 0.0;
-                }
-
-                let (along_time, across_time) = line.at(spatial_phase_offset);
-                let val = self
-                    .simplex_gen
-                    .get([self.ticks as f64 + along_time + temporal_phase, across_time]);
-
-                if self.static_params.pulse {
-                    gate_noise(val)
-                } else {
-                    val
-                }
+                f64::from(self.noise_value(&line, spatial_phase_offset))
             }
             PreparedWaveform::Spectrum => {
                 waveforms::spectrum(&self.waveform_args(spatial_phase_offset), self.spectrum)
@@ -558,6 +566,46 @@ impl PreparedAnimation<'_> {
             -result
         } else {
             result
+        }
+    }
+
+    fn noise_shape(&self) -> NoiseShape {
+        NoiseShape {
+            periods: f32::from(self.static_params.n_periods),
+            clock: self.phase_temporal.val() as f32,
+            duty_cycle: self.duty_cycle.val() as f32,
+        }
+    }
+
+    /// Noise at `phase`, before amplitude and inversion.
+    fn noise_value(&self, line: &NoiseLine, phase: Phase) -> f32 {
+        let shape = self.noise_shape();
+        let phase = phase.val() as f32;
+        if self.static_params.pulse {
+            shape.at::<true>(line, phase)
+        } else {
+            shape.at::<false>(line, phase)
+        }
+    }
+
+    /// Write noise at each of `phases`, each in [0, 1], with amplitude and
+    /// inversion applied, into the same place in `out`.
+    #[inline]
+    fn noise_fill(&self, line: &NoiseLine, phases: impl Iterator<Item = f32>, out: &mut [f32]) {
+        let shape = self.noise_shape();
+        let gain = (if self.static_params.invert {
+            -self.scale
+        } else {
+            self.scale
+        }) as f32;
+        if self.static_params.pulse {
+            for (value, phase) in out.iter_mut().zip(phases) {
+                *value = shape.at::<true>(line, phase) * gain;
+            }
+        } else {
+            for (value, phase) in out.iter_mut().zip(phases) {
+                *value = shape.at::<false>(line, phase) * gain;
+            }
         }
     }
 
@@ -574,112 +622,25 @@ impl PreparedAnimation<'_> {
     }
 }
 
-/// Where a noise pulse stops being dark, as a magnitude of the noise.
-///
-/// The magnitude of simplex noise is close to uniform across the lower part of
-/// its range, so where this knee sits in that range is directly how much of the
-/// time a pulse rests: about a seventh of the way up it, and so dark about a
-/// seventh of the time.
-const NOISE_GATE_LOW: f64 = 0.09;
-
-/// Where a noise pulse reaches full, as a magnitude of the noise.
-///
-/// Placed so that about the top twentieth of noise magnitudes saturate. Noise
-/// approaches the end of its own range too rarely to arrive at full any other
-/// way, and the flat top that arriving costs is worth no more of the period
-/// than it takes.
-const NOISE_GATE_HIGH: f64 = 0.71;
-
-/// Shape bipolar noise into a unipolar pulse.
-///
-/// Noise reaches the ends of its own range only rarely, so a curve that merely
-/// rescales it settles into a dim middle: never resolving to black, never
-/// arriving at full. The gate is flat at both ends instead — dark below one
-/// knee, full above the other — which is what buys a pulse that starts and
-/// ends at rest and a peak that lands rather than approaches.
-///
-/// Between the knees it is smoothstepped, so brightness enters and leaves a
-/// pulse with no kink. The dark zone also holds the fold that taking a
-/// magnitude puts at zero, keeping that corner off the sloped part of the
-/// curve.
-fn gate_noise(v: f64) -> f64 {
-    let t = ((v.abs() - NOISE_GATE_LOW) / (NOISE_GATE_HIGH - NOISE_GATE_LOW)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::clock_bank::ClockBank;
     use tunnels_lib::audio::{AudioFrame, UnipolarF32};
 
-    /// A gated noise pulse rests at each end of the unipolar range rather than
-    /// only approaching it, so the two knees are where it arrives, and outside
-    /// them it holds still however far the noise goes on.
-    #[test]
-    fn a_noise_gate_rests_at_both_ends_of_its_range() {
-        for v in [0.0, NOISE_GATE_LOW / 2.0, NOISE_GATE_LOW, -NOISE_GATE_LOW] {
-            assert_eq!(
-                gate_noise(v),
-                0.0,
-                "noise of {v} lit a pulse from inside the dark zone"
-            );
-        }
-        let above = (NOISE_GATE_HIGH + 1.0) / 2.0;
-        for v in [NOISE_GATE_HIGH, -NOISE_GATE_HIGH, above, -above, 1.0, -1.0] {
-            assert_eq!(
-                gate_noise(v),
-                1.0,
-                "noise of {v} fell short of full from above the high knee"
-            );
-        }
+    struct Noop;
+    impl EmitStateChange for Noop {
+        fn emit_animation_state_change(&mut self, _: StateChange) {}
     }
 
-    /// The gate reads a magnitude, so noise displaced either way lights a pulse
-    /// the same amount, and a pulse rises without pause between its knees.
-    #[test]
-    fn a_noise_gate_is_symmetric_and_rises_between_its_knees() {
-        let step = (NOISE_GATE_HIGH - NOISE_GATE_LOW) / 64.0;
-        let mut previous = 0.0;
-        for i in 1..64 {
-            let v = NOISE_GATE_LOW + step * i as f64;
-            let value = gate_noise(v);
-            assert_eq!(
-                value,
-                gate_noise(-v),
-                "noise of {v} and of its negation lit a pulse differently"
-            );
-            assert!(
-                value > previous,
-                "a pulse stalled at {value} between its knees, at noise of {v}"
-            );
-            assert!(
-                (0.0..=1.0).contains(&value),
-                "noise of {v} lit a pulse to {value}, outside the unipolar range"
-            );
-            previous = value;
+    /// An animation with `changes` made, and its controls at rest on them.
+    fn animation_with(changes: impl IntoIterator<Item = StateChange>) -> Animation {
+        let mut animation = Animation::default();
+        for sc in changes {
+            animation.control(ControlMessage::Set(sc), &mut Noop);
         }
-    }
-
-    /// A pulse leaves and reaches rest smoothly, so brightness has no kink at
-    /// either knee where a viewer would read it as a corner in the light.
-    #[test]
-    fn a_noise_gate_has_no_kink_at_either_knee() {
-        let span = NOISE_GATE_HIGH - NOISE_GATE_LOW;
-        let step = span / 4096.0;
-        // The slope just inside a knee, against the slope of a straight ramp
-        // between the knees, which is what the gate would have if it did not
-        // ease in and out.
-        let ramp = step / span;
-        for knee in [NOISE_GATE_LOW, NOISE_GATE_HIGH] {
-            let inside = if knee == NOISE_GATE_LOW { step } else { -step };
-            let slope = (gate_noise(knee + inside) - gate_noise(knee)).abs();
-            assert!(
-                slope < ramp / 100.0,
-                "a pulse turned a corner at the {knee} knee: it moved {slope} \
-                 over a step a straight ramp would move {ramp}"
-            );
-        }
+        animation.settle_controls();
+        animation
     }
 
     /// A control that shapes an animation is reached over time rather than set,
@@ -690,10 +651,6 @@ mod test {
     /// where it was until the animation is given a size.
     #[test]
     fn a_shaping_control_is_reached_at_any_amplitude() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let clocks = crate::clock_bank::ClockBank::default();
 
         for size in [UnipolarFloat::ZERO, UnipolarFloat::ONE] {
@@ -800,26 +757,13 @@ mod test {
     /// no periodicity and no amplitude — both have to read that way.
     #[test]
     fn periodicity_is_what_makes_an_animation_vary_in_space() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let prepare = |waveform: Waveform, n_periods: u16, size: f64| {
-            let mut animation = Animation::default();
-            animation.control(
-                ControlMessage::Set(StateChange::Waveform(waveform)),
-                &mut Noop,
-            );
-            animation.control(
-                ControlMessage::Set(StateChange::NPeriods(n_periods)),
-                &mut Noop,
-            );
-            animation.control(
-                ControlMessage::Set(StateChange::Size(UnipolarFloat::new(size))),
-                &mut Noop,
-            );
-            animation.settle_controls();
-            animation.prepare(
+            animation_with([
+                StateChange::Waveform(waveform),
+                StateChange::NPeriods(n_periods),
+                StateChange::Size(UnipolarFloat::new(size)),
+            ])
+            .prepare(
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
@@ -852,22 +796,14 @@ mod test {
     /// without ever stepping from one point to the next.
     #[test]
     fn noise_roughens_along_its_line_as_smoothing_falls() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let running = |n_periods: u16, smoothing: f64| {
-            let mut animation = Animation::default();
-            for sc in [
+            let mut animation = animation_with([
                 StateChange::Waveform(Waveform::Noise),
                 StateChange::NPeriods(n_periods),
                 StateChange::Size(UnipolarFloat::ONE),
                 StateChange::Smoothing(UnipolarFloat::new(smoothing)),
                 StateChange::Speed(BipolarFloat::new(0.3)),
-            ] {
-                animation.control(ControlMessage::Set(sc), &mut Noop);
-            }
-            animation.settle_controls();
+            ]);
             animation.update_state(Duration::from_secs(1), &AudioState::default());
             animation
         };
@@ -898,11 +834,15 @@ mod test {
         // the earlier pattern carried along the phase by as far as the clock ran.
         let left_behind = |smoothing: f64| -> f64 {
             let mut animation = running(PERIODS, smoothing);
+            let clock = |a: &Animation| {
+                let clocks = ClockBank::default();
+                a.ticks(&clocks) as f64 + a.phase(&clocks).val()
+            };
             let early = prepare(&animation);
+            let started = clock(&animation);
             animation.update_state(Duration::from_millis(200), &AudioState::default());
             let late = prepare(&animation);
-            let clock = |p: &PreparedAnimation| p.ticks as f64 + p.phase_temporal.val();
-            let carried = (clock(&late) - clock(&early)) / f64::from(PERIODS);
+            let carried = (clock(&animation) - started) / f64::from(PERIODS);
             assert!(carried != 0.0, "the clock did not move");
             phases
                 .iter()
@@ -917,7 +857,7 @@ mod test {
         let travelling = left_behind(1.0);
         let boiling = left_behind(0.0);
         assert!(
-            travelling < 1e-9,
+            travelling < 1e-5,
             "at full smoothing the clock moved noise {travelling} off the line it travels"
         );
         assert!(
@@ -966,20 +906,129 @@ mod test {
         );
     }
 
-    /// Asked about many places at once, an animation answers each exactly as
-    /// it does asked about that place alone, whatever waveform and shape it
-    /// has.
+    /// Noise reads the field where its line puts a point, whichever settings
+    /// put it there: the point at phase `p` sits `p` of the way along a line
+    /// that smoothing turns and lengthens, from where the clock has got to. The
+    /// duty cycle lights it where its place in a cycle is before the duty
+    /// cycle, so never at a duty cycle of zero. A lit point is its sample,
+    /// optionally gated, negated if inverted, times the size.
+    #[test]
+    fn noise_reads_the_field_where_its_line_puts_a_point() {
+        // Next to the duty cycle or the end of a cycle, f32 and f64 may light a
+        // point differently.
+        const EDGE: f64 = 1e-5;
+        const TOLERANCE: f64 = 3e-4;
+        let clocks = ClockBank::default();
+        for (n_periods, smoothing, duty_cycle, pulse, invert) in [
+            (16, 0.5, 1.0, false, false),
+            (16, 0.5, 0.7, true, false),
+            (4, 0.0, 0.3, false, true),
+            (1, 1.0, 1.0, true, false),
+            (0, 0.2, 0.5, false, false),
+            (3, 0.9, 0.0, true, false),
+            (64, 0.0, 0.95, false, true),
+        ] {
+            let mut animation = animation_with([
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::NPeriods(n_periods),
+                StateChange::Size(UnipolarFloat::new(0.8)),
+                StateChange::Smoothing(UnipolarFloat::new(smoothing)),
+                StateChange::DutyCycle(UnipolarFloat::new(duty_cycle)),
+                StateChange::Pulse(pulse),
+                StateChange::Invert(invert),
+                StateChange::Speed(BipolarFloat::new(0.3)),
+            ]);
+            // Far enough for the clock to be many periods along.
+            for _ in 0..6000 {
+                animation.update_state(Duration::from_millis(123), &AudioState::default());
+            }
+            let ticks = animation.ticks(&clocks);
+            assert!(ticks.abs() > 10, "the clock only ran {ticks} ticks");
+            let prepared =
+                animation.prepare(&clocks, &AudioState::default(), &SpectrumTables::SILENT);
+
+            let clock = animation.phase(&clocks).val();
+            let origin = animation.ticks(&clocks) as f64 + clock;
+            let rough = 1.0 - smoothing;
+            let angle = rough * std::f64::consts::FRAC_PI_2;
+            let periods = f64::from(n_periods);
+            let length = periods * (1.0 + NOISE_ROUGHENING * rough);
+            let polarity = if invert { -1.0 } else { 1.0 };
+            let mut compared = 0;
+            for i in 0..4096 {
+                let phase = f64::from(i) / 4096.0;
+                let place = Phase::new(phase * periods + clock).val();
+                if (place - duty_cycle).abs() < EDGE || place < EDGE || place > 1.0 - EDGE {
+                    continue;
+                }
+                compared += 1;
+                let expected = if place < duty_cycle {
+                    let sample = NoiseBase::new(
+                        origin + phase * length * angle.cos(),
+                        phase * length * angle.sin(),
+                    )
+                    .sample(0.0, 0.0);
+                    let shaped = if pulse { noise::gate(sample) } else { sample };
+                    f64::from(shaped) * polarity * 0.8
+                } else {
+                    0.0
+                };
+                let value = prepared.value(Phase::new(phase));
+                assert!(
+                    (value - expected).abs() < TOLERANCE,
+                    "at phase {phase}, with {n_periods} periods, smoothing {smoothing}, duty \
+                     cycle {duty_cycle}, pulse {pulse} and invert {invert}, noise read {value} \
+                     where the field holds {expected}"
+                );
+            }
+            assert!(compared > 4000, "only {compared} points were compared");
+        }
+    }
+
+    /// A duty cycle of zero lights nothing, including a point exactly at the
+    /// start of a cycle, however the point is asked for.
+    #[test]
+    fn a_duty_cycle_of_zero_lights_nothing() {
+        let prepared = |duty_cycle: f64| {
+            animation_with([
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::NPeriods(2),
+                StateChange::Size(UnipolarFloat::ONE),
+                StateChange::Smoothing(UnipolarFloat::new(0.5)),
+                StateChange::DutyCycle(UnipolarFloat::new(duty_cycle)),
+            ])
+            .prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            )
+        };
+        // With two periods and the clock at rest, this is where a cycle starts.
+        const CYCLE_START: f32 = 0.5;
+        let at_start = Phase::new(f64::from(CYCLE_START));
+        assert_ne!(
+            prepared(1.0).value(at_start),
+            0.0,
+            "the field reads zero here, so this could not show a point lit"
+        );
+
+        let dark = prepared(0.0);
+        assert_eq!(dark.value(at_start), 0.0);
+        let mut batched = [f32::NAN];
+        dark.values_on_figure(&[CYCLE_START], &mut batched);
+        assert_eq!(batched[0], 0.0);
+    }
+
+    /// Asked about many places at once, an animation answers each as it does
+    /// asked about that place alone, whatever waveform and shape it has, to
+    /// within the rounding of applying amplitude in `f32`.
     #[test]
     fn a_batch_answers_each_place_as_it_is_answered_alone() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let tables = SpectrumTables::new(&AudioFrame::new(
             Default::default(),
             std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0)),
         ));
-        let shapes: [Vec<StateChange>; 9] = [
+        let shapes: [Vec<StateChange>; 12] = [
             vec![StateChange::Waveform(Waveform::SineSquare)],
             vec![
                 StateChange::Waveform(Waveform::SineSquare),
@@ -1000,6 +1049,20 @@ mod test {
             ],
             vec![
                 StateChange::Waveform(Waveform::Noise),
+                StateChange::Smoothing(UnipolarFloat::new(0.3)),
+                StateChange::DutyCycle(UnipolarFloat::new(0.4)),
+                StateChange::Invert(true),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::DutyCycle(UnipolarFloat::new(0.0)),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::Size(UnipolarFloat::new(0.0)),
+            ],
+            vec![
+                StateChange::Waveform(Waveform::Noise),
                 StateChange::NPeriods(0),
             ],
             vec![
@@ -1012,20 +1075,18 @@ mod test {
         // Off either end of the unit interval as well as inside it, since a
         // figure's coordinates can run past both.
         let alongs: Vec<f32> = (-20..140).map(|i| i as f32 / 97.0).collect();
+        const ROUNDING: f32 = 1e-6;
         let elements = 37;
         for changes in shapes {
-            let mut animation = Animation::default();
-            for sc in [
-                StateChange::Size(UnipolarFloat::new(0.8)),
-                StateChange::NPeriods(3),
-                StateChange::Speed(BipolarFloat::new(0.3)),
-            ]
-            .into_iter()
-            .chain(changes.iter().cloned())
-            {
-                animation.control(ControlMessage::Set(sc), &mut Noop);
-            }
-            animation.settle_controls();
+            let mut animation = animation_with(
+                [
+                    StateChange::Size(UnipolarFloat::new(0.8)),
+                    StateChange::NPeriods(3),
+                    StateChange::Speed(BipolarFloat::new(0.3)),
+                ]
+                .into_iter()
+                .chain(changes.iter().cloned()),
+            );
             animation.update_state(Duration::from_millis(2300), &AudioState::default());
             let prepared =
                 animation.prepare(&ClockBank::default(), &AudioState::default(), &tables);
@@ -1034,20 +1095,18 @@ mod test {
             prepared.values_on_figure(&alongs, &mut on_figure);
             for (&along, &batched) in alongs.iter().zip(&on_figure) {
                 let alone = prepared.value(Phase::new(f64::from(along))) as f32;
-                assert_eq!(
-                    batched.to_bits(),
-                    alone.to_bits(),
+                assert!(
+                    (batched - alone).abs() < ROUNDING,
                     "{changes:?} answered {batched} on a figure at {along}, and {alone} alone"
                 );
             }
 
-            let mut on_elements = vec![f64::NAN; elements];
+            let mut on_elements = vec![f32::NAN; elements];
             prepared.values_on_elements(&mut on_elements);
             for (i, &batched) in on_elements.iter().enumerate() {
-                let alone = prepared.value(Phase::new(i as f64 / elements as f64));
-                assert_eq!(
-                    batched.to_bits(),
-                    alone.to_bits(),
+                let alone = prepared.value(Phase::new(i as f64 / elements as f64)) as f32;
+                assert!(
+                    (batched - alone).abs() < ROUNDING,
                     "{changes:?} answered {batched} at element {i} of a run, and {alone} alone"
                 );
             }
@@ -1061,26 +1120,18 @@ mod test {
     /// every point reads the one place the clock is at.
     #[test]
     fn a_spectrum_reads_its_levels_carried_by_the_clock() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let tables = SpectrumTables::new(&AudioFrame::new(
             Default::default(),
             std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0)),
         ));
         let smoothing = UnipolarFloat::new(0.4);
 
-        let mut running = Animation::default();
-        for sc in [
+        let mut running = animation_with([
             StateChange::Waveform(Waveform::Spectrum),
             StateChange::Size(UnipolarFloat::ONE),
             StateChange::Smoothing(smoothing),
             StateChange::Speed(BipolarFloat::new(0.3)),
-        ] {
-            running.control(ControlMessage::Set(sc), &mut Noop);
-        }
-        running.settle_controls();
+        ]);
         // Off the top of its cycle, where a standing wave would be at full
         // amplitude and so indistinguishable from a travelling one.
         running.update_state(Duration::from_millis(700), &AudioState::default());
