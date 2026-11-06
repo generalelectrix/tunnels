@@ -628,6 +628,21 @@ mod test {
     use crate::clock_bank::ClockBank;
     use tunnels_lib::audio::{AudioFrame, UnipolarF32};
 
+    struct Noop;
+    impl EmitStateChange for Noop {
+        fn emit_animation_state_change(&mut self, _: StateChange) {}
+    }
+
+    /// An animation with `changes` made, and its controls at rest on them.
+    fn animation_with(changes: impl IntoIterator<Item = StateChange>) -> Animation {
+        let mut animation = Animation::default();
+        for sc in changes {
+            animation.control(ControlMessage::Set(sc), &mut Noop);
+        }
+        animation.settle_controls();
+        animation
+    }
+
     /// A control that shapes an animation is reached over time rather than set,
     /// and it has to be reached whether or not the animation is currently
     /// showing. An animation at no amplitude is still one an operator is
@@ -636,10 +651,6 @@ mod test {
     /// where it was until the animation is given a size.
     #[test]
     fn a_shaping_control_is_reached_at_any_amplitude() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let clocks = crate::clock_bank::ClockBank::default();
 
         for size in [UnipolarFloat::ZERO, UnipolarFloat::ONE] {
@@ -746,26 +757,13 @@ mod test {
     /// no periodicity and no amplitude — both have to read that way.
     #[test]
     fn periodicity_is_what_makes_an_animation_vary_in_space() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let prepare = |waveform: Waveform, n_periods: u16, size: f64| {
-            let mut animation = Animation::default();
-            animation.control(
-                ControlMessage::Set(StateChange::Waveform(waveform)),
-                &mut Noop,
-            );
-            animation.control(
-                ControlMessage::Set(StateChange::NPeriods(n_periods)),
-                &mut Noop,
-            );
-            animation.control(
-                ControlMessage::Set(StateChange::Size(UnipolarFloat::new(size))),
-                &mut Noop,
-            );
-            animation.settle_controls();
-            animation.prepare(
+            animation_with([
+                StateChange::Waveform(waveform),
+                StateChange::NPeriods(n_periods),
+                StateChange::Size(UnipolarFloat::new(size)),
+            ])
+            .prepare(
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
@@ -798,22 +796,14 @@ mod test {
     /// without ever stepping from one point to the next.
     #[test]
     fn noise_roughens_along_its_line_as_smoothing_falls() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let running = |n_periods: u16, smoothing: f64| {
-            let mut animation = Animation::default();
-            for sc in [
+            let mut animation = animation_with([
                 StateChange::Waveform(Waveform::Noise),
                 StateChange::NPeriods(n_periods),
                 StateChange::Size(UnipolarFloat::ONE),
                 StateChange::Smoothing(UnipolarFloat::new(smoothing)),
                 StateChange::Speed(BipolarFloat::new(0.3)),
-            ] {
-                animation.control(ControlMessage::Set(sc), &mut Noop);
-            }
-            animation.settle_controls();
+            ]);
             animation.update_state(Duration::from_secs(1), &AudioState::default());
             animation
         };
@@ -924,10 +914,6 @@ mod test {
     /// optionally gated, negated if inverted, times the size.
     #[test]
     fn noise_reads_the_field_where_its_line_puts_a_point() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         // Next to the duty cycle or the end of a cycle, f32 and f64 may light a
         // point differently.
         const EDGE: f64 = 1e-5;
@@ -942,8 +928,7 @@ mod test {
             (3, 0.9, 0.0, true, false),
             (64, 0.0, 0.95, false, true),
         ] {
-            let mut animation = Animation::default();
-            for sc in [
+            let mut animation = animation_with([
                 StateChange::Waveform(Waveform::Noise),
                 StateChange::NPeriods(n_periods),
                 StateChange::Size(UnipolarFloat::new(0.8)),
@@ -952,10 +937,7 @@ mod test {
                 StateChange::Pulse(pulse),
                 StateChange::Invert(invert),
                 StateChange::Speed(BipolarFloat::new(0.3)),
-            ] {
-                animation.control(ControlMessage::Set(sc), &mut Noop);
-            }
-            animation.settle_controls();
+            ]);
             // Far enough for the clock to be many periods along.
             for _ in 0..6000 {
                 animation.update_state(Duration::from_millis(123), &AudioState::default());
@@ -1007,23 +989,15 @@ mod test {
     /// start of a cycle, however the point is asked for.
     #[test]
     fn a_duty_cycle_of_zero_lights_nothing() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let prepared = |duty_cycle: f64| {
-            let mut animation = Animation::default();
-            for sc in [
+            animation_with([
                 StateChange::Waveform(Waveform::Noise),
                 StateChange::NPeriods(2),
                 StateChange::Size(UnipolarFloat::ONE),
                 StateChange::Smoothing(UnipolarFloat::new(0.5)),
                 StateChange::DutyCycle(UnipolarFloat::new(duty_cycle)),
-            ] {
-                animation.control(ControlMessage::Set(sc), &mut Noop);
-            }
-            animation.settle_controls();
-            animation.prepare(
+            ])
+            .prepare(
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
@@ -1050,10 +1024,6 @@ mod test {
     /// within the rounding of applying amplitude in `f32`.
     #[test]
     fn a_batch_answers_each_place_as_it_is_answered_alone() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let tables = SpectrumTables::new(&AudioFrame::new(
             Default::default(),
             std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0)),
@@ -1108,18 +1078,15 @@ mod test {
         const ROUNDING: f32 = 1e-6;
         let elements = 37;
         for changes in shapes {
-            let mut animation = Animation::default();
-            for sc in [
-                StateChange::Size(UnipolarFloat::new(0.8)),
-                StateChange::NPeriods(3),
-                StateChange::Speed(BipolarFloat::new(0.3)),
-            ]
-            .into_iter()
-            .chain(changes.iter().cloned())
-            {
-                animation.control(ControlMessage::Set(sc), &mut Noop);
-            }
-            animation.settle_controls();
+            let mut animation = animation_with(
+                [
+                    StateChange::Size(UnipolarFloat::new(0.8)),
+                    StateChange::NPeriods(3),
+                    StateChange::Speed(BipolarFloat::new(0.3)),
+                ]
+                .into_iter()
+                .chain(changes.iter().cloned()),
+            );
             animation.update_state(Duration::from_millis(2300), &AudioState::default());
             let prepared =
                 animation.prepare(&ClockBank::default(), &AudioState::default(), &tables);
@@ -1153,26 +1120,18 @@ mod test {
     /// every point reads the one place the clock is at.
     #[test]
     fn a_spectrum_reads_its_levels_carried_by_the_clock() {
-        struct Noop;
-        impl EmitStateChange for Noop {
-            fn emit_animation_state_change(&mut self, _: StateChange) {}
-        }
         let tables = SpectrumTables::new(&AudioFrame::new(
             Default::default(),
             std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0)),
         ));
         let smoothing = UnipolarFloat::new(0.4);
 
-        let mut running = Animation::default();
-        for sc in [
+        let mut running = animation_with([
             StateChange::Waveform(Waveform::Spectrum),
             StateChange::Size(UnipolarFloat::ONE),
             StateChange::Smoothing(smoothing),
             StateChange::Speed(BipolarFloat::new(0.3)),
-        ] {
-            running.control(ControlMessage::Set(sc), &mut Noop);
-        }
-        running.settle_controls();
+        ]);
         // Off the top of its cycle, where a standing wave would be at full
         // amplitude and so indistinguishable from a travelling one.
         running.update_state(Duration::from_millis(700), &AudioState::default());
