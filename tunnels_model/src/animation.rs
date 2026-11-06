@@ -111,111 +111,64 @@ pub struct Animation {
 /// choppy rather than a slow wobble.
 const NOISE_ROUGHENING: f64 = 7.0;
 
-/// An animation's controls and clock as they stand for one frame.
-struct FrameControls {
-    params: StaticParams,
-    smoothing: UnipolarFloat,
-    duty_cycle: UnipolarFloat,
-    /// Where the driving clock is within its period.
-    clock: Phase,
-    /// Whole periods the driving clock has run.
-    ticks: Ticks,
-    /// Size, clock submaster and audio envelope, multiplied out.
-    scale: f64,
-}
-
-/// Noise for one frame: the line through the field that the phase runs along,
-/// and what turns a point on it into a value.
+/// The line through the noise field that the phase runs along.
 ///
-/// Smoothing turns the line and lengthens it (see [`NOISE_ROUGHENING`]): at one
-/// it runs with time, so the clock carries a pattern along the phase, and at
-/// zero it stands across time, so the noise boils in place. No periodicity is a
-/// line of no length, one value everywhere.
+/// Smoothing turns it and lengthens it (see [`NOISE_ROUGHENING`]): at one it
+/// runs with time, so the clock carries a pattern along the phase, and at zero
+/// it stands across time, so the noise boils in place. No periodicity is a line
+/// of no length, one value everywhere.
 ///
-/// The field drifts along its first axis with the clock, resolved here once.
-/// Every point is then `f32` arithmetic on small numbers, whether it is asked
-/// for alone or in a batch, and both give the same bits.
+/// Where it starts is resolved once, so a point on it is `f32` arithmetic on
+/// small numbers however far the clock has run.
 #[derive(Clone, Copy, Debug)]
 struct NoiseLine {
     /// Where a phase of zero sits in the field.
     base: NoiseBase,
     /// How far through the field a phase of one carries a point.
     reach: [f32; 2],
-    /// Spatial periods across a phase of one.
-    periods: f32,
-    /// Where the clock is within its period.
-    clock: f32,
-    /// The furthest place in a cycle that the duty cycle lights; before every
-    /// place in a cycle at a duty cycle of zero.
-    lit_up_to: f32,
-    pulse: bool,
-    /// What a value is multiplied by once amplitude and inversion are applied.
-    amplitude: f32,
 }
 
 impl NoiseLine {
-    fn new(frame: &FrameControls) -> Self {
-        let rough = 1.0 - frame.smoothing.val();
+    /// The line at `smoothing`, starting `position` along the field's first
+    /// axis.
+    fn new(n_periods: u16, smoothing: UnipolarFloat, position: f64) -> Self {
+        let rough = 1.0 - smoothing.val();
         let angle = rough * std::f64::consts::FRAC_PI_2;
-        let length = f64::from(frame.params.n_periods) * (1.0 + NOISE_ROUGHENING * rough);
-        let polarity = if frame.params.invert { -1.0 } else { 1.0 };
+        let length = f64::from(n_periods) * (1.0 + NOISE_ROUGHENING * rough);
         Self {
-            base: NoiseBase::new(frame.ticks as f64 + frame.clock.val(), 0.0),
+            base: NoiseBase::new(position, 0.0),
             reach: [(length * angle.cos()) as f32, (length * angle.sin()) as f32],
-            periods: f32::from(frame.params.n_periods),
-            clock: frame.clock.val() as f32,
-            lit_up_to: if frame.duty_cycle == 0.0 {
-                -1.0
-            } else {
-                frame.duty_cycle.val() as f32
-            },
-            pulse: frame.params.pulse,
-            amplitude: (polarity * frame.scale) as f32,
         }
     }
+}
 
-    /// The value at `phase`, in [0, 1], multiplied by `gain`.
-    #[inline]
-    fn value(&self, phase: f32, gain: f32) -> f32 {
-        if self.pulse {
-            self.at::<true>(phase, gain)
-        } else {
-            self.at::<false>(phase, gain)
-        }
-    }
+/// What turns a sample of noise into a value, in the `f32` a point is worked
+/// out in.
+#[derive(Clone, Copy)]
+struct NoiseShape {
+    periods: f32,
+    clock: f32,
+    duty_cycle: f32,
+    gain: f32,
+}
 
-    /// Write the value at each of `phases`, each in [0, 1], at this line's
-    /// amplitude, into the same place in `out`.
-    #[inline]
-    fn fill(&self, phases: impl Iterator<Item = f32>, out: &mut [f32]) {
-        if self.pulse {
-            self.fill_shaped::<true>(phases, out);
-        } else {
-            self.fill_shaped::<false>(phases, out);
-        }
-    }
-
-    #[inline]
-    fn fill_shaped<const PULSE: bool>(&self, phases: impl Iterator<Item = f32>, out: &mut [f32]) {
-        for (value, phase) in out.iter_mut().zip(phases) {
-            *value = self.at::<PULSE>(phase, self.amplitude);
-        }
-    }
-
+impl NoiseShape {
+    /// The value at `phase`, in [0, 1], on `line`.
+    ///
     /// Duty cycle is a bit odd compared to waveforms, since noise isn't
     /// periodic. Rather than trying to compress the waveform to maintain the
     /// waveshape, a point simply goes dark for a portion of each cycle.
     #[inline(always)]
-    fn at<const PULSE: bool>(&self, phase: f32, gain: f32) -> f32 {
+    fn at<const PULSE: bool>(&self, line: &NoiseLine, phase: f32) -> f32 {
         let cycle = phase * self.periods + self.clock;
-        if cycle - cycle.floor() > self.lit_up_to {
+        if cycle - cycle.floor() >= self.duty_cycle {
             return 0.0;
         }
-        let sample = self
+        let sample = line
             .base
-            .sample(phase * self.reach[0], phase * self.reach[1]);
+            .sample(phase * line.reach[0], phase * line.reach[1]);
         let shaped = if PULSE { noise::gate(sample) } else { sample };
-        shaped * gain
+        shaped * self.gain
     }
 }
 
@@ -231,11 +184,11 @@ enum PreparedWaveform {
 }
 
 impl PreparedWaveform {
-    fn new(frame: &FrameControls) -> Self {
-        match frame.params.waveform {
+    fn new(params: &StaticParams, smoothing: UnipolarFloat, position: f64) -> Self {
+        match params.waveform {
             Waveform::SineSquare => Self::SineSquare,
             Waveform::TriSaw => Self::TriSaw,
-            Waveform::Noise => Self::Noise(NoiseLine::new(frame)),
+            Waveform::Noise => Self::Noise(NoiseLine::new(params.n_periods, smoothing, position)),
             Waveform::Spectrum => Self::Spectrum,
             Waveform::Constant => Self::Constant,
         }
@@ -342,21 +295,19 @@ impl Animation {
         audio: &AudioState,
         spectrum: &'f SpectrumTables,
     ) -> PreparedAnimation<'f> {
-        let frame = FrameControls {
-            params: self.static_params,
-            smoothing: self.smoothing.smoothed(),
-            duty_cycle: self.duty_cycle.smoothed(),
-            clock: self.phase(external_clocks),
-            ticks: self.ticks(external_clocks),
-            scale: self.scale_value(external_clocks, audio, 1.0),
-        };
+        let smoothing = self.smoothing.smoothed();
+        let phase_temporal = self.phase(external_clocks);
         PreparedAnimation {
-            static_params: frame.params,
-            phase_temporal: frame.clock,
-            duty_cycle: frame.duty_cycle,
-            smoothing: frame.smoothing,
-            waveform: PreparedWaveform::new(&frame),
-            scale: frame.scale,
+            static_params: self.static_params,
+            phase_temporal,
+            duty_cycle: self.duty_cycle.smoothed(),
+            smoothing,
+            waveform: PreparedWaveform::new(
+                &self.static_params,
+                smoothing,
+                self.ticks(external_clocks) as f64 + phase_temporal.val(),
+            ),
+            scale: self.scale_value(external_clocks, audio, 1.0),
             spectrum,
             active: self.active(),
         }
@@ -551,7 +502,7 @@ impl PreparedAnimation<'_> {
         }
         match &self.waveform {
             PreparedWaveform::Noise(line) => {
-                f64::from(line.value(spatial_phase_offset.val() as f32, line.amplitude))
+                f64::from(self.noise_value(line, spatial_phase_offset, self.signed_scale()))
             }
             _ => self.unit_value(spatial_phase_offset) * self.scale,
         }
@@ -565,7 +516,7 @@ impl PreparedAnimation<'_> {
     pub fn values_on_figure(&self, alongs: &[f32], out: &mut [f32]) {
         match &self.waveform {
             PreparedWaveform::Noise(line) if self.active => {
-                line.fill(alongs.iter().map(|&along| along - along.floor()), out);
+                self.noise_fill(line, alongs.iter().map(|&along| along - along.floor()), out);
             }
             _ => {
                 for (value, &along) in out.iter_mut().zip(alongs) {
@@ -584,7 +535,7 @@ impl PreparedAnimation<'_> {
         match &self.waveform {
             PreparedWaveform::Noise(line) if self.active => {
                 let n = out.len() as f32;
-                line.fill((0..out.len() as i32).map(|i| i as f32 / n), out);
+                self.noise_fill(line, (0..out.len() as i32).map(|i| i as f32 / n), out);
             }
             _ => {
                 let n = out.len() as f64;
@@ -611,7 +562,7 @@ impl PreparedAnimation<'_> {
                 waveforms::tri_saw(&self.waveform_args(spatial_phase_offset))
             }
             PreparedWaveform::Noise(line) => {
-                f64::from(line.value(spatial_phase_offset.val() as f32, 1.0))
+                f64::from(self.noise_value(&line, spatial_phase_offset, 1.0))
             }
             PreparedWaveform::Spectrum => {
                 waveforms::spectrum(&self.waveform_args(spatial_phase_offset), self.spectrum)
@@ -623,6 +574,51 @@ impl PreparedAnimation<'_> {
             -result
         } else {
             result
+        }
+    }
+
+    /// Amplitude with inversion applied.
+    fn signed_scale(&self) -> f64 {
+        if self.static_params.invert {
+            -self.scale
+        } else {
+            self.scale
+        }
+    }
+
+    fn noise_shape(&self, gain: f64) -> NoiseShape {
+        NoiseShape {
+            periods: f32::from(self.static_params.n_periods),
+            clock: self.phase_temporal.val() as f32,
+            duty_cycle: self.duty_cycle.val() as f32,
+            gain: gain as f32,
+        }
+    }
+
+    /// Noise at `phase`, multiplied by `gain`.
+    fn noise_value(&self, line: &NoiseLine, phase: Phase, gain: f64) -> f32 {
+        let shape = self.noise_shape(gain);
+        let phase = phase.val() as f32;
+        if self.static_params.pulse {
+            shape.at::<true>(line, phase)
+        } else {
+            shape.at::<false>(line, phase)
+        }
+    }
+
+    /// Write noise at each of `phases`, each in [0, 1], with amplitude applied,
+    /// into the same place in `out`.
+    #[inline]
+    fn noise_fill(&self, line: &NoiseLine, phases: impl Iterator<Item = f32>, out: &mut [f32]) {
+        let shape = self.noise_shape(self.signed_scale());
+        if self.static_params.pulse {
+            for (value, phase) in out.iter_mut().zip(phases) {
+                *value = shape.at::<true>(line, phase);
+            }
+        } else {
+            for (value, phase) in out.iter_mut().zip(phases) {
+                *value = shape.at::<false>(line, phase);
+            }
         }
     }
 
@@ -936,8 +932,8 @@ mod test {
     /// Noise reads the field where its line puts a point, whichever settings
     /// put it there: the point at phase `p` sits `p` of the way along a line
     /// that smoothing turns and lengthens, from where the clock has got to. The
-    /// duty cycle lights it where its place in a cycle is at most the duty
-    /// cycle, and never at a duty cycle of zero. A lit point is its sample,
+    /// duty cycle lights it where its place in a cycle is before the duty
+    /// cycle, so never at a duty cycle of zero. A lit point is its sample,
     /// optionally gated, negated if inverted, times the size.
     #[test]
     fn noise_reads_the_field_where_its_line_puts_a_point() {
@@ -997,7 +993,7 @@ mod test {
                     continue;
                 }
                 compared += 1;
-                let expected = if place <= duty_cycle && duty_cycle != 0.0 {
+                let expected = if place < duty_cycle {
                     let sample = NoiseBase::new(
                         origin + phase * length * angle.cos(),
                         phase * length * angle.sin(),
