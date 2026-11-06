@@ -62,11 +62,7 @@ impl MasterUI {
     }
 
     /// The animation the controls are pointed at, and how many places along the
-    /// beam it is resolved at.
-    ///
-    /// The two travel together because reading an animation is only meaningful
-    /// against the run it is spread over: a waveform is asked for a value once
-    /// per segment, and which segment is asking is part of the question.
+    /// beam it is resolved at: one per segment, each at its own phase.
     pub(crate) fn current_animation_and_segments<'m>(
         &self,
         mixer: &'m mut Mixer,

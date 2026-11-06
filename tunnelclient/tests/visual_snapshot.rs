@@ -664,9 +664,8 @@ fn sprite_position_animation_outline() {
     FIGURE_GOLDENS.compare(&image, "sprite_position_animation_outline.png");
 }
 
-/// A noise warp on an outline, which is the only waveform whose value depends
-/// on which vertex it is asked about rather than only on where that vertex
-/// sits on the figure.
+/// A noise warp on an outline, at its roughest: sharp and choppy, but still
+/// one connected ribbon.
 #[test]
 fn sprite_noise_warp_outline() {
     let image = render_snapshot(
