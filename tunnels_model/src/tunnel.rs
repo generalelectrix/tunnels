@@ -3185,12 +3185,8 @@ pub mod fixture {
         sprite_position_animation(DrawMode::Outline)
     }
 
-    /// An outline displaced by a noise warp.
-    ///
-    /// Noise is sampled along a line through its field that smoothing turns
-    /// and lengthens. At zero smoothing the line stands across time and is at
-    /// its longest, so the outline is at its roughest: sharp and choppy, but
-    /// still one connected ribbon.
+    /// An outline displaced by a noise warp at zero smoothing, its roughest:
+    /// sharp and choppy, but still one connected ribbon.
     pub fn sprite_noise_warp_outline_snapshot() -> LayerCollection<'static> {
         let mut tunnel = sprite_tunnel(BULLSEYE);
         tunnel.draw_mode = DrawMode::Outline;

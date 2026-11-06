@@ -549,9 +549,6 @@ mod test {
     /// A warp moves every vertex offset from one contour point by the same
     /// amount, so a ribbon is displaced as a unit and its two edges never
     /// shear apart.
-    ///
-    /// Noise at its roughest is the warp that would tell them apart, if
-    /// anything per vertex reached it.
     #[test]
     fn a_warp_moves_a_ribbon_as_a_unit() {
         use super::super::geometry::StrokeGeometry;

@@ -116,17 +116,17 @@ fn get_simplex_gen() -> &'static Simplex {
     &SIMPLEX_GEN
 }
 
-/// How much finer noise grows as its smoothing falls.
-///
-/// Noise is sampled along a line through its field, and smoothing turns that
-/// line: at one it runs with time, so the clock carries a pattern along the
-/// phase, and at zero it stands across time, so the noise boils in place. The
-/// line also lengthens as it turns, to `periods × (1 + this × (1 − smoothing))`,
-/// so a rough setting is sharp and choppy rather than a slow wobble.
-pub const NOISE_ROUGHENING: f64 = 7.0;
+/// How much the noise line lengthens as smoothing falls, to
+/// `periods × (1 + this × (1 − smoothing))`, so a rough setting is sharp and
+/// choppy rather than a slow wobble.
+const NOISE_ROUGHENING: f64 = 7.0;
 
-/// The line through the noise field that the phase runs along, lengthened and
-/// turned by smoothing (see [`NOISE_ROUGHENING`]).
+/// The line through the noise field that the phase runs along.
+///
+/// Smoothing turns it and lengthens it (see [`NOISE_ROUGHENING`]): at one it
+/// runs with time, so the clock carries a pattern along the phase, and at zero
+/// it stands across time, so the noise boils in place. No periodicity is a line
+/// of no length, one value everywhere.
 #[derive(Clone, Copy, Debug)]
 struct NoiseLine {
     length: f64,
@@ -491,9 +491,6 @@ impl PreparedAnimation<'_> {
     }
 
     /// The waveform's own value at a phase, before amplitude.
-    ///
-    /// For noise, the phase places a point on a line through the field that
-    /// smoothing turns and lengthens (see [`NOISE_ROUGHENING`]).
     pub fn unit_value(&self, spatial_phase_offset: Phase) -> f64 {
         let result = match self.waveform {
             PreparedWaveform::SineSquare => {
@@ -517,14 +514,10 @@ impl PreparedAnimation<'_> {
                     return 0.0;
                 }
 
-                // The phase places the point on a line through the field,
-                // turned from time's direction by roughness and lengthened
-                // with it. No periodicity is a line of no length, one value
-                // everywhere.
-                let (spatial_x, y_offset) = line.at(spatial_phase_offset);
-                let x_offset = self.ticks as f64 + spatial_x + temporal_phase;
-
-                let val = self.simplex_gen.get([x_offset, y_offset]);
+                let (along_time, across_time) = line.at(spatial_phase_offset);
+                let val = self
+                    .simplex_gen
+                    .get([self.ticks as f64 + along_time + temporal_phase, across_time]);
 
                 if self.static_params.pulse {
                     gate_noise(val)

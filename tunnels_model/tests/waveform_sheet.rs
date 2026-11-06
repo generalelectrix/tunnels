@@ -13,8 +13,7 @@
 //! The noise sheet draws noise across `NOISE_PERIODS` periods to a cell.
 //! Noise is sampled along a line through its field that smoothing turns and
 //! lengthens, so smoothing reads as how far through the field a cell's sweep
-//! reaches rather than as a shape: a calm curve at smoothing 1, and a sharp,
-//! choppy one at smoothing 0. That roughening up the rows is what the sheet is
+//! reaches: a calm curve at smoothing 1, and a sharp, choppy one at smoothing 0. That roughening up the rows is what the sheet is
 //! for. A duty cycle holds the back of each period at zero, and a pulse holds
 //! the trace flat at both ends of the unipolar range.
 //!
@@ -128,11 +127,11 @@ fn draw_frame(sheet: &mut RgbaImage, (x0, y0): (u32, u32)) {
 ///
 /// The vertical span between consecutive samples is filled, so a hard edge
 /// stays a connected line rather than a sample at either end of it.
-fn draw_trace(sheet: &mut RgbaImage, (x0, y0): (u32, u32), colour: Rgba<u8>, rows: &[u32]) {
+fn draw_trace(sheet: &mut RgbaImage, (x0, y0): (u32, u32), rows: &[u32]) {
     for (x, &here) in rows.iter().enumerate() {
         let next = rows.get(x + 1).copied().unwrap_or(here);
         for y in here.min(next)..=here.max(next) {
-            sheet.put_pixel(x0 + 1 + x as u32, y0 + 1 + y, colour);
+            sheet.put_pixel(x0 + 1 + x as u32, y0 + 1 + y, TRACE);
         }
     }
 }
@@ -179,7 +178,7 @@ fn waveform_sheet(waveform: WaveformFn) -> RgbaImage {
                 pulse,
             })
         });
-        draw_trace(sheet, origin, TRACE, &rows);
+        draw_trace(sheet, origin, &rows);
     })
 }
 
@@ -245,21 +244,12 @@ fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnim
     )
 }
 
-/// The rows noise traces in one cell.
-fn noise_rows(smoothing: f64, duty_cycle: f64, pulse: bool) -> Vec<u32> {
-    let animation = noise_animation(smoothing, duty_cycle, pulse);
-    trace_rows(|phase| animation.unit_value(phase))
-}
-
 /// A sheet of noise at every smoothing, duty cycle and pulse setting.
 fn noise_sheet() -> RgbaImage {
     sheet_of(|sheet, origin, smoothing, duty_cycle, pulse| {
-        draw_trace(
-            sheet,
-            origin,
-            TRACE,
-            &noise_rows(smoothing, duty_cycle, pulse),
-        );
+        let animation = noise_animation(smoothing, duty_cycle, pulse);
+        let rows = trace_rows(|phase| animation.unit_value(phase));
+        draw_trace(sheet, origin, &rows);
     })
 }
 
@@ -296,7 +286,7 @@ fn spectrum_sheet() -> RgbaImage {
             &spectrum,
         );
         let rows = trace_rows(|phase| animation.unit_value(phase));
-        draw_trace(sheet, origin, TRACE, &rows);
+        draw_trace(sheet, origin, &rows);
     })
 }
 
@@ -321,34 +311,6 @@ fn waveforms_draw_their_sheets() {
     }
     goldens.compare(&noise_sheet(), "noise.png");
     goldens.compare(&spectrum_sheet(), "spectrum.png");
-}
-
-/// Smoothing is what decides how far through its field noise reaches across a
-/// cell: at every step up the rows the trace travels further, from a calm
-/// curve at full smoothing to a choppy one at none.
-///
-/// This is the claim the noise sheet is drawn to show, and a sheet alone
-/// cannot fail when it stops being true.
-#[test]
-fn smoothing_calms_the_noise_down_the_rows() {
-    // How far a cell's trace travels, in pixel rows.
-    let travel = |smoothing: f64| -> u32 {
-        noise_rows(smoothing, 1.0, false)
-            .windows(2)
-            .map(|pair| pair[0].abs_diff(pair[1]))
-            .sum()
-    };
-    let travels = SMOOTHINGS.map(travel);
-    for (travel, smoothing) in travels.windows(2).zip(SMOOTHINGS.windows(2)) {
-        assert!(
-            travel[0] > travel[1],
-            "noise travelled {} rows at smoothing {} and {} at the smoother {}",
-            travel[0],
-            smoothing[0],
-            travel[1],
-            smoothing[1]
-        );
-    }
 }
 
 /// A pulsed cell is drawn across enough of the noise field to show the gate

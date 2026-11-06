@@ -129,7 +129,7 @@ pub fn build_into(
         for anim in anims {
             let value = anim.animation.value(phase);
             // The same adjustments a beam makes to its own colour, against
-            // the ramp's coordinate instead of a segment index.
+            // the ramp's coordinate instead of a segment's phase.
             match anim.target {
                 AnimationTarget::Color => adjust.center += value * 0.5,
                 AnimationTarget::ColorSpread => adjust.width += value,
