@@ -91,8 +91,7 @@ impl VertexBuffers {
     /// Each vertex's polar coordinates are worked out once and serve
     /// everything that wants them: the ramp coordinate is an angle, a spin is
     /// a rotation about the same centre, and a radial animation scales the
-    /// same radius. Computed separately that was two `atan2` calls a vertex,
-    /// which a profile of the prototype put at a third of the frame.
+    /// same radius.
     ///
     /// Every warp is asked for its value at all the vertices in one call
     /// before any vertex is moved, so an animation is evaluated in a loop of
