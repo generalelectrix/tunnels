@@ -140,12 +140,16 @@ rsvg-convert -w 600 -h 400 "$PROJECT_DIR/resources/dmg-background.svg" > "$BG_PN
 
 DMG="$PROJECT_DIR/dist/Tunnels.dmg"
 rm -f "$DMG"
+# resources/dmg-dsstore is the DMG window layout, captured from an image that
+# Finder laid out, so --skip-jenkins can skip create-dmg's Finder AppleScript,
+# which takes over the screen while it runs. The layout refers to the volume,
+# app and background by name, so those names must keep matching it. The
+# add-file and app-drop-link coordinates are required but unused.
 create-dmg \
   --volname "Tunnels" \
   --background "$BG_PNG" \
-  --window-size 600 400 \
-  --icon-size 128 \
-  --icon "Tunnels.app" 150 210 \
+  --skip-jenkins \
+  --add-file .DS_Store "$PROJECT_DIR/resources/dmg-dsstore" 0 0 \
   --app-drop-link 450 210 \
   "$DMG" "$APP"
 rm -f "$BG_PNG"
