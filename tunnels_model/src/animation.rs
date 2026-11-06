@@ -112,7 +112,6 @@ pub struct Animation {
 const NOISE_ROUGHENING: f64 = 7.0;
 
 /// An animation's controls and clock as they stand for one frame.
-#[derive(Clone, Copy)]
 struct FrameControls {
     params: StaticParams,
     smoothing: UnipolarFloat,
@@ -155,7 +154,7 @@ struct NoiseLine {
 }
 
 impl NoiseLine {
-    fn new(frame: FrameControls) -> Self {
+    fn new(frame: &FrameControls) -> Self {
         let rough = 1.0 - frame.smoothing.val();
         let angle = rough * std::f64::consts::FRAC_PI_2;
         let length = f64::from(frame.params.n_periods) * (1.0 + NOISE_ROUGHENING * rough);
@@ -232,7 +231,7 @@ enum PreparedWaveform {
 }
 
 impl PreparedWaveform {
-    fn new(frame: FrameControls) -> Self {
+    fn new(frame: &FrameControls) -> Self {
         match frame.params.waveform {
             Waveform::SineSquare => Self::SineSquare,
             Waveform::TriSaw => Self::TriSaw,
@@ -356,7 +355,7 @@ impl Animation {
             phase_temporal: frame.clock,
             duty_cycle: frame.duty_cycle,
             smoothing: frame.smoothing,
-            waveform: PreparedWaveform::new(frame),
+            waveform: PreparedWaveform::new(&frame),
             scale: frame.scale,
             spectrum,
             active: self.active(),
