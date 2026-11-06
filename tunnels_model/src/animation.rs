@@ -1016,6 +1016,48 @@ mod test {
         }
     }
 
+    /// A duty cycle of zero lights nothing, including a point exactly at the
+    /// start of a cycle, however the point is asked for.
+    #[test]
+    fn a_duty_cycle_of_zero_lights_nothing() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let prepared = |duty_cycle: f64| {
+            let mut animation = Animation::default();
+            for sc in [
+                StateChange::Waveform(Waveform::Noise),
+                StateChange::NPeriods(2),
+                StateChange::Size(UnipolarFloat::ONE),
+                StateChange::Smoothing(UnipolarFloat::new(0.5)),
+                StateChange::DutyCycle(UnipolarFloat::new(duty_cycle)),
+            ] {
+                animation.control(ControlMessage::Set(sc), &mut Noop);
+            }
+            animation.settle_controls();
+            animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &SpectrumTables::SILENT,
+            )
+        };
+        // With two periods and the clock at rest, this is where a cycle starts.
+        const CYCLE_START: f32 = 0.5;
+        let at_start = Phase::new(f64::from(CYCLE_START));
+        assert_ne!(
+            prepared(1.0).value(at_start),
+            0.0,
+            "the field reads zero here, so this could not show a point lit"
+        );
+
+        let dark = prepared(0.0);
+        assert_eq!(dark.value(at_start), 0.0);
+        let mut batched = [f32::NAN];
+        dark.values_on_figure(&[CYCLE_START], &mut batched);
+        assert_eq!(batched[0], 0.0);
+    }
+
     /// Asked about many places at once, an animation answers each exactly as
     /// it does asked about that place alone, whatever waveform and shape it
     /// has.

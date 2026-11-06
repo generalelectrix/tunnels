@@ -223,19 +223,23 @@ pub fn gate(v: f32) -> f32 {
 mod test {
     use super::*;
 
-    /// The hash the field computes incrementally for a cell's three corners is
-    /// the hash of each corner's own cell, near and far from the origin and
-    /// across the many cells an offset can cross.
+    /// The field reads what a plain `f64` evaluation reads, near and far from
+    /// the origin and anywhere within 128 of its base. So the hash it computes
+    /// incrementally for a cell's three corners is each corner's own, across all
+    /// the cells an offset can cross, and `f32` carries the offset accurately.
     #[test]
-    fn corners_hash_as_their_cells() {
+    fn the_field_matches_a_plain_evaluation_within_128_of_its_base() {
         for (x, y) in [(0.3, 0.1), (-7.25, 3.5), (1e6 + 0.37, 12.0), (-3e9, 2e9)] {
             let base = NoiseBase::new(x, y);
-            for k in 0..64 {
-                let (dx, dy) = (k as f32 * 0.173, k as f32 * -0.091);
+            for k in 0..4096 {
+                let (dx, dy) = (
+                    (k as f32 * 0.173) % 180.0 - 90.0,
+                    (k as f32 * 0.091) % 180.0 - 90.0,
+                );
                 let direct = direct_field(x + f64::from(dx), y + f64::from(dy));
                 let v = base.sample(dx, dy);
                 assert!(
-                    (f64::from(v) - direct).abs() < 2e-5,
+                    (f64::from(v) - direct).abs() < 1e-4,
                     "field at ({x}, {y}) + ({dx}, {dy}) read {v}, directly {direct}"
                 );
             }

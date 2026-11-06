@@ -3,14 +3,14 @@
 
 Noise is only cheap across many points when the compiler vectorises the loop
 over them, and nothing else notices if it stops, because the values come out
-the same. So this builds `tunnels_model` in release, as it ships, and counts
-packed float multiplies in the functions holding those loops.
+the same. So this builds `tunnels_model` in release and counts packed float
+multiplies in the functions holding those loops.
 
 Each function holds two loops, plain and pulsed:
 
               both vectorised   one   neither
-    x86_64          66           40      16
-    arm64           50           24       0
+    x86_64          66         40-42     16
+    arm64           50         24-26      0
 
 x86 keeps some with neither, because the compiler still pairs a few operations
 within one point. The minimums sit between the first two columns, so losing
@@ -18,6 +18,7 @@ either loop fails. Run from the repository root; pass an assembly file and a
 machine name to check existing output instead of building.
 """
 
+import os
 import platform
 import re
 import subprocess
@@ -42,10 +43,15 @@ def build_assembly() -> Path:
         ["cargo", "rustc", "--release", "-p", "tunnels_model", "--", "--emit=asm"],
         check=True,
     )
-    return max(
-        Path("target/release/deps").glob("tunnels_model-*.s"),
+    deps = Path(os.environ.get("CARGO_TARGET_DIR", "target")) / "release" / "deps"
+    assembly = max(
+        deps.glob("tunnels_model-*.s"),
         key=lambda path: path.stat().st_mtime,
+        default=None,
     )
+    if assembly is None:
+        sys.exit(f"no tunnels_model assembly in {deps}")
+    return assembly
 
 
 def packed_multiplies(assembly: Path, packed: re.Pattern) -> dict[str, int]:

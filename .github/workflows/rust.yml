@@ -45,5 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
+      - name: Test optimised, where the batch loops are vectorised
+        run: cargo test --release -p tunnels_model
       - name: Check that batch animation evaluation vectorises
         run: python3 scripts/check-vectorized.py

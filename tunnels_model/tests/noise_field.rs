@@ -194,7 +194,7 @@ fn features_are_the_kernels_size_in_every_direction() {
 }
 
 /// The field is uncorrelated with itself at large displacements: powers of two,
-/// multiples of where a field built on a 256-entry table comes close to
+/// shifts at which simplex noise driven by a 256-entry table comes close to
 /// repeating, and large shifts in y.
 #[test]
 fn the_field_does_not_repeat() {
@@ -235,27 +235,6 @@ fn the_field_does_not_repeat() {
             "the field correlated {r} with itself shifted by {shift:?}"
         );
     }
-}
-
-/// A point given as a small offset from a far base reads what the same point
-/// reads resolved whole, to within what `f32` can carry at that offset.
-#[test]
-fn an_offset_reads_what_the_point_reads_resolved_whole() {
-    let mut rng = Rng(5);
-    let mut worst = 0.0f64;
-    for _ in 0..200_000 {
-        let origin = [rng.range(0.0, 1e6), rng.range(0.0, 4096.0)];
-        let reach = rng.range(0.0, 128.0);
-        let angle = rng.range(0.0, std::f64::consts::TAU);
-        let (dx, dy) = ((reach * angle.cos()) as f32, (reach * angle.sin()) as f32);
-        let near = NoiseBase::new(origin[0], origin[1]).sample(dx, dy);
-        let whole = NoiseBase::new(origin[0] + f64::from(dx), origin[1] + f64::from(dy));
-        worst = worst.max((f64::from(near) - f64::from(whole.sample(0.0, 0.0))).abs());
-    }
-    assert!(
-        worst < 1e-4,
-        "an offset within 128 of its base read {worst} from the point resolved whole"
-    );
 }
 
 /// FNV-1a over the field's bits at fixed probes, near and far from the origin.
