@@ -49,12 +49,13 @@ jobs:
       - name: Identify the compiler
         id: compiler
         run: echo "hash=$(rustc -vV | shasum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # Saves the path below at the end of a successful job, if the key is new.
       - name: Look for an earlier pass on these inputs
         id: earlier_pass
-        uses: actions/cache/restore@v6
+        uses: actions/cache@v6
         with:
           path: .vectorization-passed
-          key: vectorization-${{ matrix.os }}-${{ steps.compiler.outputs.hash }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'scripts/check-vectorized.py', 'golden_image/**', 'tunnels_lib/**', 'tunnels_model/**', 'tunnels_shapes/**', 'tunnels_sprites/**') }}
+          key: vectorization-passed-${{ matrix.os }}-${{ steps.compiler.outputs.hash }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'scripts/check-vectorized.py', 'golden_image/**', 'tunnels_lib/**', 'tunnels_model/**', 'tunnels_shapes/**', 'tunnels_sprites/**') }}
       - name: Report the earlier pass
         if: steps.earlier_pass.outputs.cache-hit == 'true'
         run: echo "Nothing this job depends on has changed since $(cat .vectorization-passed) passed."
@@ -69,8 +70,3 @@ jobs:
       - name: Record the pass
         if: steps.earlier_pass.outputs.cache-hit != 'true'
         run: echo "$GITHUB_SHA" > .vectorization-passed
-      - uses: actions/cache/save@v6
-        if: steps.earlier_pass.outputs.cache-hit != 'true'
-        with:
-          path: .vectorization-passed
-          key: ${{ steps.earlier_pass.outputs.cache-primary-key }}
