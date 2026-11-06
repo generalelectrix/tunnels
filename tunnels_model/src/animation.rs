@@ -144,16 +144,14 @@ impl NoiseLine {
 
 /// What turns a sample of noise into a value, in the `f32` a point is worked
 /// out in.
-#[derive(Clone, Copy)]
 struct NoiseShape {
     periods: f32,
     clock: f32,
     duty_cycle: f32,
-    gain: f32,
 }
 
 impl NoiseShape {
-    /// The value at `phase`, in [0, 1], on `line`.
+    /// The value at `phase`, in [0, 1], on `line`, before amplitude.
     ///
     /// Duty cycle is a bit odd compared to waveforms, since noise isn't
     /// periodic. Rather than trying to compress the waveform to maintain the
@@ -167,8 +165,7 @@ impl NoiseShape {
         let sample = line
             .base
             .sample(phase * line.reach[0], phase * line.reach[1]);
-        let shaped = if PULSE { noise::gate(sample) } else { sample };
-        shaped * self.gain
+        if PULSE { noise::gate(sample) } else { sample }
     }
 }
 
@@ -500,19 +497,14 @@ impl PreparedAnimation<'_> {
         if !self.active {
             return 0.;
         }
-        match &self.waveform {
-            PreparedWaveform::Noise(line) => {
-                f64::from(self.noise_value(line, spatial_phase_offset, self.signed_scale()))
-            }
-            _ => self.unit_value(spatial_phase_offset) * self.scale,
-        }
+        self.unit_value(spatial_phase_offset) * self.scale
     }
 
     /// The animation's value at many points on a figure, with amplitude
     /// applied.
     ///
-    /// `out[i]` is [`value`](Self::value) at the phase `alongs[i]`, narrowed to
-    /// `f32`. As many values are written as the shorter of the two holds.
+    /// `out[i]` is [`value`](Self::value) at the phase `alongs[i]`, to `f32`
+    /// precision. As many values are written as the shorter of the two holds.
     pub fn values_on_figure(&self, alongs: &[f32], out: &mut [f32]) {
         match &self.waveform {
             PreparedWaveform::Noise(line) if self.active => {
@@ -530,7 +522,7 @@ impl PreparedAnimation<'_> {
     /// unit of phase, with amplitude applied.
     ///
     /// The run is as long as `out`: element `i` of `n` sits at phase `i / n`,
-    /// and `out[i]` is [`value`](Self::value) at that phase, narrowed to `f32`.
+    /// and `out[i]` is [`value`](Self::value) at that phase, to `f32` precision.
     pub fn values_on_elements(&self, out: &mut [f32]) {
         match &self.waveform {
             PreparedWaveform::Noise(line) if self.active => {
@@ -562,7 +554,7 @@ impl PreparedAnimation<'_> {
                 waveforms::tri_saw(&self.waveform_args(spatial_phase_offset))
             }
             PreparedWaveform::Noise(line) => {
-                f64::from(self.noise_value(&line, spatial_phase_offset, 1.0))
+                f64::from(self.noise_value(&line, spatial_phase_offset))
             }
             PreparedWaveform::Spectrum => {
                 waveforms::spectrum(&self.waveform_args(spatial_phase_offset), self.spectrum)
@@ -577,27 +569,17 @@ impl PreparedAnimation<'_> {
         }
     }
 
-    /// Amplitude with inversion applied.
-    fn signed_scale(&self) -> f64 {
-        if self.static_params.invert {
-            -self.scale
-        } else {
-            self.scale
-        }
-    }
-
-    fn noise_shape(&self, gain: f64) -> NoiseShape {
+    fn noise_shape(&self) -> NoiseShape {
         NoiseShape {
             periods: f32::from(self.static_params.n_periods),
             clock: self.phase_temporal.val() as f32,
             duty_cycle: self.duty_cycle.val() as f32,
-            gain: gain as f32,
         }
     }
 
-    /// Noise at `phase`, multiplied by `gain`.
-    fn noise_value(&self, line: &NoiseLine, phase: Phase, gain: f64) -> f32 {
-        let shape = self.noise_shape(gain);
+    /// Noise at `phase`, before amplitude and inversion.
+    fn noise_value(&self, line: &NoiseLine, phase: Phase) -> f32 {
+        let shape = self.noise_shape();
         let phase = phase.val() as f32;
         if self.static_params.pulse {
             shape.at::<true>(line, phase)
@@ -606,18 +588,23 @@ impl PreparedAnimation<'_> {
         }
     }
 
-    /// Write noise at each of `phases`, each in [0, 1], with amplitude applied,
-    /// into the same place in `out`.
+    /// Write noise at each of `phases`, each in [0, 1], with amplitude and
+    /// inversion applied, into the same place in `out`.
     #[inline]
     fn noise_fill(&self, line: &NoiseLine, phases: impl Iterator<Item = f32>, out: &mut [f32]) {
-        let shape = self.noise_shape(self.signed_scale());
+        let shape = self.noise_shape();
+        let gain = (if self.static_params.invert {
+            -self.scale
+        } else {
+            self.scale
+        }) as f32;
         if self.static_params.pulse {
             for (value, phase) in out.iter_mut().zip(phases) {
-                *value = shape.at::<true>(line, phase);
+                *value = shape.at::<true>(line, phase) * gain;
             }
         } else {
             for (value, phase) in out.iter_mut().zip(phases) {
-                *value = shape.at::<false>(line, phase);
+                *value = shape.at::<false>(line, phase) * gain;
             }
         }
     }
@@ -1058,9 +1045,9 @@ mod test {
         assert_eq!(batched[0], 0.0);
     }
 
-    /// Asked about many places at once, an animation answers each exactly as
-    /// it does asked about that place alone, whatever waveform and shape it
-    /// has.
+    /// Asked about many places at once, an animation answers each as it does
+    /// asked about that place alone, whatever waveform and shape it has, to
+    /// within the rounding of applying amplitude in `f32`.
     #[test]
     fn a_batch_answers_each_place_as_it_is_answered_alone() {
         struct Noop;
@@ -1118,6 +1105,7 @@ mod test {
         // Off either end of the unit interval as well as inside it, since a
         // figure's coordinates can run past both.
         let alongs: Vec<f32> = (-20..140).map(|i| i as f32 / 97.0).collect();
+        const ROUNDING: f32 = 1e-6;
         let elements = 37;
         for changes in shapes {
             let mut animation = Animation::default();
@@ -1140,9 +1128,8 @@ mod test {
             prepared.values_on_figure(&alongs, &mut on_figure);
             for (&along, &batched) in alongs.iter().zip(&on_figure) {
                 let alone = prepared.value(Phase::new(f64::from(along))) as f32;
-                assert_eq!(
-                    batched.to_bits(),
-                    alone.to_bits(),
+                assert!(
+                    (batched - alone).abs() < ROUNDING,
                     "{changes:?} answered {batched} on a figure at {along}, and {alone} alone"
                 );
             }
@@ -1151,9 +1138,8 @@ mod test {
             prepared.values_on_elements(&mut on_elements);
             for (i, &batched) in on_elements.iter().enumerate() {
                 let alone = prepared.value(Phase::new(i as f64 / elements as f64)) as f32;
-                assert_eq!(
-                    batched.to_bits(),
-                    alone.to_bits(),
+                assert!(
+                    (batched - alone).abs() < ROUNDING,
                     "{changes:?} answered {batched} at element {i} of a run, and {alone} alone"
                 );
             }

@@ -52,7 +52,7 @@ fn mix(mut h: u32) -> u32 {
 /// remainders within that cell, so a point near it is evaluated with `f32`
 /// arithmetic on small numbers however far the position itself is from the
 /// origin. Cells wrap at 2³², as the hash does.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct NoiseBase {
     /// The cell's coordinates, multiplied into the hash.
     hash_i: u32,
