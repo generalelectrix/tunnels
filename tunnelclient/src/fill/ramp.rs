@@ -111,7 +111,7 @@ pub fn blank(span: RampSpan) -> RgbaImage {
 #[derive(Default)]
 pub struct RampScratch {
     /// One animation's value at every texel.
-    values: Vec<f64>,
+    values: Vec<f32>,
     /// What the animations add to each texel's colour.
     adjusts: Vec<ColorAdjust>,
 }
@@ -143,6 +143,7 @@ pub fn build_into(
         // an animation's period is the span's and never the colour's.
         anim.animation.values_on_elements(values);
         for (adjust, &value) in adjusts.iter_mut().zip(values.iter()) {
+            let value = f64::from(value);
             // The same adjustments a beam makes to its own colour, against
             // the ramp's coordinate instead of a segment's phase.
             match anim.target {

@@ -13,6 +13,7 @@ pub mod clock_bank;
 pub mod layer;
 mod look;
 pub mod mixer;
+pub mod noise;
 pub mod palette;
 pub mod position_bank;
 pub mod render_context;

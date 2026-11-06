@@ -2151,9 +2151,9 @@ mod test {
     /// The stress fixture reaches every waveform.
     ///
     /// The fixture exists to put the expensive paths under load, and the
-    /// waveforms are not alike in cost: noise samples a simplex field and is
-    /// bound by memory latency where the rest are a few arithmetic operations
-    /// on a phase. A fixture that skips one measures the half it kept.
+    /// waveforms are not alike in cost: noise samples a simplex field where the
+    /// rest are a few arithmetic operations on a phase. A fixture that skips one
+    /// measures the half it kept.
     ///
     /// A waveform set that outgrows the animation slots fails here, where
     /// whoever grew it has to decide what the fixture does about it, rather
@@ -2269,9 +2269,9 @@ pub mod fixture {
                 // A slot apiece, so that the load this fixture puts on a
                 // render includes the cost of every waveform rather than of
                 // whichever ones the slots happened to land on. Noise is the
-                // one that matters most: it samples a simplex field and waits
-                // on memory where the rest are arithmetic on a phase. The
-                // spectrum, last in the table, is the one left without a slot.
+                // one that matters most: it samples a simplex field where the
+                // rest are arithmetic on a phase. The spectrum, last in the
+                // table, is the one left without a slot.
                 //
                 // Taken from the written-out table rather than from the enum,
                 // for the reason `WAVEFORMS` gives: which slot draws which
