@@ -36,4 +36,4 @@ rmp-serde = "1"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 anyhow = "1"
 strum = { version = "0.28", features = ["derive"] }
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
