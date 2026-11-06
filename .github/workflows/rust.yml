@@ -36,3 +36,14 @@ jobs:
         run: |
           cargo build --workspace
           cargo test --workspace
+
+  vectorization:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Check that batch animation evaluation vectorises
+        run: python3 scripts/check-vectorized.py
