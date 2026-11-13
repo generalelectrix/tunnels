@@ -9,6 +9,7 @@ use crate::{clock_bank::ClockIdx, waveforms};
 use noise::NoiseFn;
 use noise::Simplex;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 use std::sync::LazyLock;
 use std::time::Duration;
 use strum::VariantArray;
@@ -55,6 +56,9 @@ pub struct StaticParams {
     pub pulse: bool,
     pub standing: bool,
     pub invert: bool,
+    /// Whether the places the animation is asked at read as two mirror images
+    /// about their middle.
+    pub reflect: bool,
     pub n_periods: u16,
 }
 
@@ -65,7 +69,30 @@ impl Default for StaticParams {
             pulse: false,
             standing: false,
             invert: false,
+            reflect: false,
             n_periods: 1,
+        }
+    }
+}
+
+/// How the places an animation is asked for a value lie along its phase.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Sampling {
+    /// Anywhere along it.
+    #[default]
+    Continuous,
+    /// This many places, evenly spaced from the start of a cycle: place `i`
+    /// of `n` at phase `i / n`.
+    Points(NonZeroUsize),
+}
+
+impl Sampling {
+    /// How far along the phase the places reach: to the last of them, or to
+    /// the end of the cycle when they lie anywhere.
+    fn span(self) -> f64 {
+        match self {
+            Self::Continuous => 1.0,
+            Self::Points(n) => 1.0 - 1.0 / n.get() as f64,
         }
     }
 }
@@ -89,9 +116,12 @@ impl TargetedAnimation {
         external_clocks: &impl ClockStore,
         audio: &AudioState,
         spectrum: &'f SpectrumTables,
+        sampling: Sampling,
     ) -> TargetedAnimation<PreparedAnimation<'f>> {
         TargetedAnimation {
-            animation: self.animation.prepare(external_clocks, audio, spectrum),
+            animation: self
+                .animation
+                .prepare(external_clocks, audio, spectrum, sampling),
             target: self.target,
         }
     }
@@ -270,15 +300,19 @@ impl Animation {
     /// what phase it is at, where the smoother has got to, and the amplitude
     /// the size, submaster and audio envelope multiply out to. None of it
     /// depends on where in the figure the question is being asked.
+    ///
+    /// `sampling` is how the places it will be asked at lie along its phase.
     pub fn prepare<'f>(
         &self,
         external_clocks: &impl ClockStore,
         audio: &AudioState,
         spectrum: &'f SpectrumTables,
+        sampling: Sampling,
     ) -> PreparedAnimation<'f> {
         let smoothing = self.smoothing.smoothed();
         PreparedAnimation {
             static_params: self.static_params,
+            reflect_span: self.static_params.reflect.then(|| sampling.span()),
             phase_temporal: self.phase(external_clocks),
             duty_cycle: self.duty_cycle.smoothed(),
             smoothing,
@@ -328,6 +362,7 @@ impl Animation {
         emitter.emit_animation_state_change(Pulse(self.static_params.pulse));
         emitter.emit_animation_state_change(Standing(self.static_params.standing));
         emitter.emit_animation_state_change(Invert(self.static_params.invert));
+        emitter.emit_animation_state_change(Reflect(self.static_params.reflect));
         emitter.emit_animation_state_change(NPeriods(self.static_params.n_periods));
         emitter.emit_animation_state_change(Speed(self.clock_speed()));
         emitter.emit_animation_state_change(Size(self.size.target()));
@@ -361,6 +396,11 @@ impl Animation {
                 self.static_params.invert = !self.static_params.invert;
                 emitter.emit_animation_state_change(StateChange::Invert(self.static_params.invert));
             }
+            ToggleReflect => {
+                self.static_params.reflect = !self.static_params.reflect;
+                emitter
+                    .emit_animation_state_change(StateChange::Reflect(self.static_params.reflect));
+            }
             ToggleUseAudioSize => {
                 self.use_audio_size = !self.use_audio_size;
                 emitter.emit_animation_state_change(StateChange::UseAudioSize(self.use_audio_size));
@@ -381,6 +421,7 @@ impl Animation {
             Pulse(v) => self.static_params.pulse = v,
             Standing(v) => self.static_params.standing = v,
             Invert(v) => self.static_params.invert = v,
+            Reflect(v) => self.static_params.reflect = v,
             NPeriods(v) => self.static_params.n_periods = v,
             Speed(v) => self.set_clock_speed(v),
             Size(v) => self.size.set_target(v),
@@ -400,6 +441,7 @@ pub enum StateChange {
     Pulse(bool),
     Standing(bool),
     Invert(bool),
+    Reflect(bool),
     NPeriods(u16),
     Speed(BipolarFloat),
     Size(UnipolarFloat),
@@ -418,6 +460,7 @@ pub enum ControlMessage {
     TogglePulse,
     ToggleStanding,
     ToggleInvert,
+    ToggleReflect,
     ToggleUseAudioSize,
     ToggleUseAudioSpeed,
 }
@@ -434,6 +477,9 @@ pub trait EmitStateChange {
 #[derive(Clone, Copy, Debug)]
 pub struct PreparedAnimation<'f> {
     static_params: StaticParams,
+    /// With reflect on, how far along the phase the places it is asked at
+    /// reach; the second half of that span reads the first half backwards.
+    reflect_span: Option<f64>,
     /// Where the driving clock has got to.
     phase_temporal: Phase,
     /// The duty cycle control's current value, not its target.
@@ -492,6 +538,7 @@ impl PreparedAnimation<'_> {
 
     /// The waveform's own value at a phase, before amplitude.
     pub fn unit_value(&self, spatial_phase_offset: Phase) -> f64 {
+        let spatial_phase_offset = self.reflected(spatial_phase_offset);
         let result = match self.waveform {
             PreparedWaveform::SineSquare => {
                 waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
@@ -535,6 +582,22 @@ impl PreparedAnimation<'_> {
             -result
         } else {
             result
+        }
+    }
+
+    /// Where a place reads the waveform.
+    ///
+    /// Reflected, a phase past the middle of the places reads as far short of
+    /// the middle as it is past it, and one past the last place reads the
+    /// first.
+    #[inline(always)]
+    fn reflected(&self, phase: Phase) -> Phase {
+        match self.reflect_span {
+            None => phase,
+            Some(span) => {
+                let p = phase.val();
+                Phase::new(p.min(span - p).max(0.0))
+            }
         }
     }
 
@@ -686,7 +749,12 @@ mod test {
             animation.update_state(Duration::from_millis(500), &AudioState::default());
 
             let reached = animation
-                .prepare(&clocks, &AudioState::default(), &SpectrumTables::SILENT)
+                .prepare(
+                    &clocks,
+                    &AudioState::default(),
+                    &SpectrumTables::SILENT,
+                    Sampling::Continuous,
+                )
                 .smoothing;
             assert_eq!(
                 reached,
@@ -744,7 +812,12 @@ mod test {
         {
             let mut animation = Animation::default();
             let prepared = |a: &Animation| {
-                rendered(&a.prepare(&clocks, &AudioState::default(), &SpectrumTables::SILENT))
+                rendered(&a.prepare(
+                    &clocks,
+                    &AudioState::default(),
+                    &SpectrumTables::SILENT,
+                    Sampling::Continuous,
+                ))
             };
             let before = prepared(&animation);
             animation.control(ControlMessage::Set(control()), &mut Recorder::default());
@@ -800,6 +873,7 @@ mod test {
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
+                Sampling::Continuous,
             )
         };
 
@@ -853,6 +927,7 @@ mod test {
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
+                Sampling::Continuous,
             )
         };
         let phases: Vec<Phase> = (0..1000)
@@ -980,7 +1055,12 @@ mod test {
                 animation.control(ControlMessage::Set(sc.clone()), &mut Noop);
             }
             animation.settle_controls();
-            animation.prepare(&ClockBank::default(), &AudioState::default(), &tables)
+            animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &tables,
+                Sampling::Continuous,
+            )
         };
         let plain = prepare(&[]);
         let clock = plain.phase_temporal;
@@ -1051,6 +1131,133 @@ mod test {
                 tables.value(clock, smoothing).mul_add(2.0, -1.0),
                 "no periodicity read a different place at {x:?}"
             );
+        }
+    }
+
+    /// Reflected, the places an animation is asked at read as two mirror
+    /// images about their middle. Each reads the same as the place as far from
+    /// the other end — evenly spaced places pair the first with the last,
+    /// however many there are, and a continuous coordinate pairs each phase
+    /// with the one as far short of the end of the cycle — while the first
+    /// half reads what it would unreflected. Unreflected, how the places lie
+    /// makes no difference to what any of them reads.
+    #[test]
+    fn a_reflected_animation_mirrors_its_places_about_their_middle() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let tables = SpectrumTables::new(&AudioFrame::new(
+            Default::default(),
+            std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0)),
+        ));
+        let running = |changes: &[StateChange]| {
+            let mut animation = Animation::default();
+            for sc in [
+                StateChange::Size(UnipolarFloat::ONE),
+                StateChange::NPeriods(3),
+                StateChange::Smoothing(UnipolarFloat::new(0.4)),
+                StateChange::Speed(BipolarFloat::new(0.3)),
+            ]
+            .iter()
+            .chain(changes)
+            {
+                animation.control(ControlMessage::Set(sc.clone()), &mut Noop);
+            }
+            animation.settle_controls();
+            // Off the start of the clock's cycle, where a waveform read at
+            // evenly spaced places could happen to mirror them already.
+            animation.update_state(Duration::from_millis(700), &AudioState::default());
+            animation
+        };
+        let prepare = |animation: &Animation, sampling| {
+            animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &tables,
+                sampling,
+            )
+        };
+        let points = |n| Sampling::Points(NonZeroUsize::new(n).unwrap());
+        // Where the places lie. A continuous coordinate is read at the centre
+        // of each of a run of slices, so that no place and its mirror sit on
+        // either side of a step in a waveform by no more than rounding.
+        let places = |sampling| -> Vec<Phase> {
+            match sampling {
+                Sampling::Points(n) => {
+                    let n = n.get();
+                    (0..n).map(|i| Phase::new(i as f64 / n as f64)).collect()
+                }
+                Sampling::Continuous => (0..400)
+                    .map(|i| Phase::new((i as f64 + 0.5) / 400.0))
+                    .collect(),
+            }
+        };
+
+        for (name, changes) in [
+            ("sine", vec![StateChange::Waveform(Waveform::SineSquare)]),
+            ("triangle", vec![StateChange::Waveform(Waveform::TriSaw)]),
+            ("noise", vec![StateChange::Waveform(Waveform::Noise)]),
+            (
+                "noise cut by a duty cycle",
+                vec![
+                    StateChange::Waveform(Waveform::Noise),
+                    StateChange::DutyCycle(UnipolarFloat::new(0.6)),
+                ],
+            ),
+            ("spectrum", vec![StateChange::Waveform(Waveform::Spectrum)]),
+        ] {
+            let plain = running(&changes);
+            let reflected = running(&[changes, vec![StateChange::Reflect(true)]].concat());
+            let anywhere = prepare(&plain, Sampling::Continuous);
+
+            let eight = places(points(8));
+            let unmirrored = prepare(&plain, points(8));
+            assert!(
+                (0..4).any(|i| {
+                    (unmirrored.unit_value(eight[i]) - unmirrored.unit_value(eight[7 - i])).abs()
+                        > 1e-3
+                }),
+                "unreflected {name} already read each of eight places the same as its \
+                 mirror, so reflecting it would show nothing"
+            );
+
+            for sampling in [
+                points(2),
+                points(4),
+                points(5),
+                points(8),
+                Sampling::Continuous,
+            ] {
+                let unreflected = prepare(&plain, sampling);
+                let mirrored = prepare(&reflected, sampling);
+                let places = places(sampling);
+                let n = places.len();
+                for (i, &place) in places.iter().enumerate() {
+                    assert_eq!(
+                        unreflected.unit_value(place),
+                        anywhere.unit_value(place),
+                        "unreflected {name} at {place:?} read differently laid out as \
+                         {sampling:?}"
+                    );
+                    let partner = n - 1 - i;
+                    let here = mirrored.unit_value(place);
+                    let there = mirrored.unit_value(places[partner]);
+                    assert!(
+                        (here - there).abs() < 1e-9,
+                        "reflected {name} read {here} at place {i} of {sampling:?} and \
+                         {there} at place {partner}, its mirror"
+                    );
+                    if i < partner {
+                        let own = unreflected.unit_value(place);
+                        assert!(
+                            (here - own).abs() < 1e-9,
+                            "reflected {name} read {here} at place {i} of {sampling:?}, in \
+                             the first half, where unreflected it reads {own}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::animation::{PreparedAnimation, TargetedAnimation};
+use crate::animation::{PreparedAnimation, Sampling, TargetedAnimation};
 use crate::layer::{
     ColorAdjust, ColorField, DrawMode, FigureId, FigureLibrary, FillLayer, GeneratedId, Layer,
     PaintMode, PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry,
@@ -13,6 +13,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
+use std::num::NonZeroUsize;
 use std::time::Duration;
 use strum::VariantArray;
 use tunnels_lib::audio::AudioState;
@@ -321,13 +322,25 @@ impl Tunnel {
     /// Above forty an odd count is rounded up, for artistic reasons: a run that
     /// dense reads better without the seam an odd one leaves.
     ///
-    /// This is the count an animation is resolved against, so it is also how
-    /// many places along the tunnel an animation is asked for a value.
+    /// This is the count an animation is resolved against on a run, so it is
+    /// also how many places along the run an animation is asked for a value.
     pub fn segment_count(&self) -> u8 {
         if self.segs > 40 && !self.segs.is_multiple_of(2) {
             self.segs + 1
         } else {
             self.segs
+        }
+    }
+
+    /// How the places this tunnel asks an animation for a value lie along its
+    /// phase: one per segment of a run, anywhere on a figure.
+    pub fn sampling(&self) -> Sampling {
+        match self.shape_mode {
+            ShapeMode::Ellipse | ShapeMode::Line => {
+                NonZeroUsize::new(usize::from(self.segment_count()))
+                    .map_or(Sampling::Continuous, Sampling::Points)
+            }
+            ShapeMode::Sprite | ShapeMode::Generated => Sampling::Continuous,
         }
     }
 
@@ -405,8 +418,10 @@ impl Tunnel {
         // costs is mostly deciding which clock drives it, where that clock is,
         // where its smoother has got to and what the amplitude works out to —
         // none of which depends on where in the figure the question is asked.
-        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] =
-            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio, ctx.spectrum));
+        let sampling = self.sampling();
+        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] = std::array::from_fn(|i| {
+            self.anims[i].prepare(ctx.clocks, ctx.audio, ctx.spectrum, sampling)
+        });
 
         match self.shape_mode {
             ShapeMode::Ellipse => Layer::Segments(self.render_segments(
@@ -1798,6 +1813,72 @@ mod test {
                 interval >= 1 || interval <= -2,
                 "knob position {knob} gives an interval of {interval}"
             );
+        }
+    }
+
+    /// The segments of a run are evenly spaced places along its path, so a
+    /// reflected animation reads the same on each segment as on the one as far
+    /// from the other end of the run: the first and the last alike, and so on
+    /// inwards, whatever the path and however many segments there are.
+    #[test]
+    fn a_reflected_animation_pairs_a_runs_segments_from_either_end() {
+        for (shape_mode, segments) in [
+            (ShapeMode::Ellipse, 4u8),
+            (ShapeMode::Ellipse, 5),
+            (ShapeMode::Line, 8),
+        ] {
+            let mut tunnel = Tunnel {
+                shape_mode,
+                // Every segment drawn, so the run holds them all in order.
+                blacking: BlackingInterval(1),
+                ..Default::default()
+            };
+            tunnel.handle_state_change(StateChange::Segments(segments - SEGMENTS_MIN), &mut Silent);
+            tunnel.anims[0].target = AnimationTarget::Size;
+            for sc in [
+                AnimStateChange::Size(UnipolarFloat::new(0.5)),
+                AnimStateChange::Speed(BipolarFloat::new(0.3)),
+                AnimStateChange::Reflect(true),
+            ] {
+                tunnel.anims[0]
+                    .animation
+                    .control(AnimControlMessage::Set(sc), &mut Silent);
+            }
+            tunnel.update_state(Duration::from_millis(700), &AudioState::default());
+
+            let layer = tunnel.render(
+                UnipolarFloat::ONE,
+                PaintMode::Normal,
+                RenderContext {
+                    clocks: &ClockBank::default().as_static(),
+                    palette: &ColorPalette::default(),
+                    positions: &PositionBank::default(),
+                    audio: &AudioState::default(),
+                    spectrum: &SpectrumTables::SILENT,
+                },
+            );
+            let Layer::Segments(run) = &layer else {
+                panic!("a segment mode rendered something other than a run of segments");
+            };
+            let sizes: Vec<f64> = run.shapes.iter().map(|s| s.placement.extent_x).collect();
+            assert_eq!(sizes.len(), usize::from(segments));
+            let spread = sizes
+                .iter()
+                .fold(0.0_f64, |m, s| m.max((s - sizes[0]).abs()));
+            assert!(
+                spread > 1e-3,
+                "the animation left every segment of {shape_mode:?} the same size"
+            );
+            let n = sizes.len();
+            for (i, size) in sizes.iter().enumerate() {
+                let mirror = sizes[n - 1 - i];
+                assert!(
+                    (size - mirror).abs() < 1e-9,
+                    "segment {i} of {n} on {shape_mode:?} is {size} across, and segment {} \
+                     at the other end {mirror}",
+                    n - 1 - i
+                );
+            }
         }
     }
 

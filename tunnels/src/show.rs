@@ -290,18 +290,18 @@ impl Show {
         if !self.visualizer_active {
             return;
         }
-        let (animation, fixture_count) = self
+        let (animation, sampling) = self
             .state
             .ui
-            .current_animation_and_segments(&mut self.state.mixer)
-            .map(|(a, segments)| (a.animation.clone(), segments))
+            .current_animation_and_sampling(&mut self.state.mixer)
+            .map(|(a, sampling)| (a.animation.clone(), sampling))
             .unwrap_or_default();
         self.gui_state
             .animation_state
             .store(std::sync::Arc::new(AnimationSnapshot {
                 animation,
                 clocks: self.clock_data(),
-                fixture_count,
+                sampling,
                 // A tunnel is drawn as a dense run, so its points would only
                 // retrace the line they lie on.
                 show_fixture_values: false,
@@ -915,6 +915,7 @@ mod test {
             a("anim/pulse_on", A::Pulse(true));
             a("anim/pulse_off", A::Pulse(false));
             a("anim/invert_on", A::Invert(true));
+            a("anim/reflect_on", A::Reflect(true));
             a("anim/standing_on", A::Standing(true));
             a("anim/clock_internal", A::ClockSource(None));
             a("anim/clock_0", A::ClockSource(Some(ClockIdx(0))));
@@ -1406,25 +1407,38 @@ mod test {
     }
 
     /// An animation is resolved once for each place along the beam it is
-    /// spread over, one per segment, so a snapshot of it carries how many
-    /// segments the beam has and follows the control that changes the count.
+    /// spread over: one per segment of a run, anywhere on a figure. So a
+    /// snapshot of it carries how those places lie, and follows the controls
+    /// that change them.
     #[test]
     fn an_animation_snapshot_carries_the_places_along_the_beam() {
+        use std::num::NonZeroUsize;
+        use tunnels_model::animation::Sampling;
+        use tunnels_model::layer::ShapeMode;
         use tunnels_model::tunnel::{SEGMENTS_MIN, StateChange as TunnelStateChange};
 
         let (mut show, _send) = Show::test_new();
         show.visualizer_active = true;
 
-        let snapshot_segments = |show: &mut Show| {
+        let snapshot_sampling = |show: &mut Show| {
             show.snapshot_animation_state();
-            show.gui_state.animation_state.load().fixture_count
+            show.gui_state.animation_state.load().sampling
+        };
+        let set = |show: &mut Show, sc| {
+            show.state.ui.handle_control_message(
+                ControlMessage::Tunnel(tunnel::ControlMessage::Set(sc)),
+                &mut show.state.mixer,
+                &mut show.state.clocks,
+                &mut show.state.color_palette,
+                &mut show.state.positions,
+                &mut show.audio_input,
+                &mut show.dispatcher,
+            );
         };
 
-        let initial = snapshot_segments(&mut show);
-        assert_ne!(
-            initial, 0,
-            "the visualiser was told the beam has nowhere to resolve an animation"
-        );
+        let Sampling::Points(initial) = snapshot_sampling(&mut show) else {
+            panic!("the visualiser was told a run of segments is a continuous figure");
+        };
 
         // Move the segment count through the control the operator turns, so the
         // snapshot is shown to follow the beam rather than a constant. Few
@@ -1432,24 +1446,25 @@ mod test {
         // rounding it up the way it does a dense odd run.
         let segments = 20u8;
         assert_ne!(
-            segments as usize, initial,
+            usize::from(segments),
+            initial.get(),
             "the count was already what the test moves it to"
         );
-        show.state.ui.handle_control_message(
-            ControlMessage::Tunnel(tunnel::ControlMessage::Set(TunnelStateChange::Segments(
-                segments - SEGMENTS_MIN,
-            ))),
-            &mut show.state.mixer,
-            &mut show.state.clocks,
-            &mut show.state.color_palette,
-            &mut show.state.positions,
-            &mut show.audio_input,
-            &mut show.dispatcher,
+        set(
+            &mut show,
+            TunnelStateChange::Segments(segments - SEGMENTS_MIN),
         );
         assert_eq!(
-            snapshot_segments(&mut show),
-            segments as usize,
+            snapshot_sampling(&mut show),
+            Sampling::Points(NonZeroUsize::new(usize::from(segments)).unwrap()),
             "the visualiser kept the segment count the beam no longer has"
+        );
+
+        set(&mut show, TunnelStateChange::ShapeMode(ShapeMode::Sprite));
+        assert_eq!(
+            snapshot_sampling(&mut show),
+            Sampling::Continuous,
+            "the visualiser was told a figure is a run of segments"
         );
     }
 

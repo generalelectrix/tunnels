@@ -43,7 +43,7 @@ use image::{Rgba, RgbaImage};
 use tunnels_lib::audio::{AudioFrame, AudioState, SPECTRUM_BANDS, UnipolarF32};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 use tunnels_model::animation::{
-    Animation, ControlMessage, EmitStateChange, PreparedAnimation, StateChange, Waveform,
+    Animation, ControlMessage, EmitStateChange, PreparedAnimation, Sampling, StateChange, Waveform,
 };
 use tunnels_model::clock_bank::ClockBank;
 use tunnels_model::spectrum::SpectrumTables;
@@ -197,7 +197,12 @@ fn settled_animation(
         ControlMessage::Set(StateChange::Size(UnipolarFloat::ONE)),
         &mut Discard,
     );
-    animation.prepare(&ClockBank::default(), &AudioState::default(), spectrum)
+    animation.prepare(
+        &ClockBank::default(),
+        &AudioState::default(),
+        spectrum,
+        Sampling::Continuous,
+    )
 }
 
 /// An animation driving noise at the given settings, resolved for a frame.

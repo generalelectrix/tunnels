@@ -498,7 +498,7 @@ mod test {
     use tunnels_lib::audio::AudioState;
     use tunnels_lib::number::UnipolarFloat;
     use tunnels_model::animation::{
-        Animation, ControlMessage, EmitStateChange, StateChange, Waveform,
+        Animation, ControlMessage, EmitStateChange, Sampling, StateChange, Waveform,
     };
     use tunnels_model::clock_bank::ClockBank;
     use tunnels_model::spectrum::SpectrumTables;
@@ -511,6 +511,7 @@ mod test {
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
+                Sampling::Continuous,
             ),
             target,
         }
@@ -541,6 +542,7 @@ mod test {
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
+                Sampling::Continuous,
             ),
             target,
         }
@@ -691,6 +693,7 @@ mod test {
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
+                Sampling::Continuous,
             ),
             target,
         }
