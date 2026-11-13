@@ -1452,7 +1452,7 @@ mod test {
         );
         set(
             &mut show,
-            TunnelStateChange::Segments(segments - SEGMENTS_MIN),
+            TunnelStateChange::Segments(segments - SEGMENTS_MIN.get()),
         );
         assert_eq!(
             snapshot_sampling(&mut show),
