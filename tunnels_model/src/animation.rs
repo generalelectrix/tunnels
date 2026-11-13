@@ -589,14 +589,17 @@ impl PreparedAnimation<'_> {
     ///
     /// Reflected, a phase past the middle of the places reads as far short of
     /// the middle as it is past it, and one past the last place reads the
-    /// first.
+    /// first. The middle itself reads from just short of it, the side both
+    /// halves approach it from, so a hard edge that falls exactly there leaves
+    /// no lone point beyond it.
     #[inline(always)]
     fn reflected(&self, phase: Phase) -> Phase {
         match self.reflect_span {
             None => phase,
             Some(span) => {
                 let p = phase.val();
-                Phase::new(p.min(span - p).max(0.0))
+                let short_of_middle = (span / 2.0).next_down();
+                Phase::new(p.min(span - p).min(short_of_middle).max(0.0))
             }
         }
     }
@@ -1259,5 +1262,65 @@ mod test {
                 }
             }
         }
+    }
+
+    /// At its middle, a reflected animation reads what the phases just either
+    /// side of the middle read. Both halves approach the middle from the same
+    /// side, so a hard edge that falls exactly on it — a square's, a saw's, or
+    /// the close of a duty cycle's window — leaves the middle on that side too,
+    /// rather than a lone point beyond the edge.
+    #[test]
+    fn a_reflected_animation_reads_its_middle_as_the_phases_beside_it_do() {
+        struct Noop;
+        impl EmitStateChange for Noop {
+            fn emit_animation_state_change(&mut self, _: StateChange) {}
+        }
+        let tables = SpectrumTables::new(&AudioFrame::new(
+            Default::default(),
+            std::array::from_fn(|b| UnipolarF32::new(((b * 7) % 26) as f32 / 25.0 * 0.8 + 0.1)),
+        ));
+        let middle = Phase::new(0.5);
+        let beside = [Phase::new(0.5 - 1e-6), Phase::new(0.5 + 1e-6)];
+
+        let mut apart = Vec::new();
+        for (name, waveform, n_periods, duty_cycle) in [
+            ("square", Waveform::SineSquare, 1, 1.0),
+            ("square over two periods", Waveform::SineSquare, 2, 1.0),
+            ("square over three periods", Waveform::SineSquare, 3, 1.0),
+            ("saw", Waveform::TriSaw, 1, 1.0),
+            ("square cut by a duty cycle", Waveform::SineSquare, 1, 0.5),
+            ("spectrum cut by a duty cycle", Waveform::Spectrum, 1, 0.5),
+        ] {
+            let mut animation = Animation::default();
+            for sc in [
+                StateChange::Waveform(waveform),
+                StateChange::NPeriods(n_periods),
+                StateChange::DutyCycle(UnipolarFloat::new(duty_cycle)),
+                StateChange::Smoothing(UnipolarFloat::ZERO),
+                StateChange::Size(UnipolarFloat::ONE),
+                StateChange::Reflect(true),
+            ] {
+                animation.control(ControlMessage::Set(sc), &mut Noop);
+            }
+            animation.settle_controls();
+            let reflected = animation.prepare(
+                &ClockBank::default(),
+                &AudioState::default(),
+                &tables,
+                Sampling::Continuous,
+            );
+
+            let at_middle = reflected.unit_value(middle);
+            for phase in beside {
+                let there = reflected.unit_value(phase);
+                if (at_middle - there).abs() >= 1e-3 {
+                    apart.push(format!(
+                        "reflected {name} read {at_middle} at its middle and {there} at \
+                         {phase:?}, beside it"
+                    ));
+                }
+            }
+        }
+        assert!(apart.is_empty(), "{}", apart.join("\n"));
     }
 }
