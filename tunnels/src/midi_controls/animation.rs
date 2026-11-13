@@ -30,6 +30,7 @@ const PULSE: Mapping = note_on_ch1(0);
 const INVERT: Mapping = note_on_ch1(1);
 const USE_AUDIO_SIZE: Mapping = note_on_ch1(2);
 const USE_AUDIO_SPEED: Mapping = note_on_ch1(3);
+const REFLECT: Mapping = note_on_ch1(4);
 const STANDING: Mapping = note_on_ch1(7);
 
 const CLOCK_SELECT_CONTROL_OFFSET: i32 = 112;
@@ -72,6 +73,7 @@ pub fn interpret(event: &Event) -> Option<crate::show::ControlMessage> {
         PULSE => Animation(TogglePulse),
         INVERT => Animation(ToggleInvert),
         STANDING => Animation(ToggleStanding),
+        REFLECT => Animation(ToggleReflect),
         USE_AUDIO_SIZE => Animation(ToggleUseAudioSize),
         USE_AUDIO_SPEED => Animation(ToggleUseAudioSpeed),
         m if m.event_type == EventType::NoteOn && m.channel == 0 && m.control < 16 => {
@@ -123,6 +125,7 @@ pub fn update_animation_control(sc: StateChange, manager: &mut impl MidiOutput) 
         NPeriods(v) => N_PERIODS_SELECT_BUTTONS.select(note_on_ch0(v as u8), send),
         Invert(v) => send(event(INVERT, v as u8)),
         Standing(v) => send(event(STANDING, v as u8)),
+        Reflect(v) => send(event(REFLECT, v as u8)),
         Pulse(v) => send(event(PULSE, v as u8)),
         ClockSource(v) => {
             let index = match v {

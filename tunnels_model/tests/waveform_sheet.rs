@@ -30,6 +30,10 @@
 //! overshoot either side of the full-scale pair is cut flat at both ends of
 //! it.
 //!
+//! Each waveform also has a reflected sheet, laid out the same way and drawn
+//! with reflect on: in every cell the right half reads the left half
+//! backwards, about the middle of the cell.
+//!
 //! Nothing is labelled and nothing is antialiased: a label needs a font and a
 //! blend needs a rounding, and either one puts differences into a golden that
 //! are not differences in a waveform. The layout is documented here instead of
@@ -43,7 +47,7 @@ use image::{Rgba, RgbaImage};
 use tunnels_lib::audio::{AudioFrame, AudioState, SPECTRUM_BANDS, UnipolarF32};
 use tunnels_lib::number::{Phase, UnipolarFloat};
 use tunnels_model::animation::{
-    Animation, ControlMessage, EmitStateChange, PreparedAnimation, StateChange, Waveform,
+    Animation, ControlMessage, EmitStateChange, PreparedAnimation, Sampling, StateChange, Waveform,
 };
 use tunnels_model::clock_bank::ClockBank;
 use tunnels_model::spectrum::SpectrumTables;
@@ -165,6 +169,7 @@ struct Cell {
     smoothing: f64,
     duty_cycle: f64,
     pulse: bool,
+    reflect: bool,
 }
 
 /// An animation driving `waveform` over `n_periods` at a cell's settings,
@@ -187,6 +192,7 @@ fn settled_animation(
         StateChange::NPeriods(n_periods),
         StateChange::DutyCycle(UnipolarFloat::new(cell.duty_cycle)),
         StateChange::Pulse(cell.pulse),
+        StateChange::Reflect(cell.reflect),
         StateChange::Smoothing(UnipolarFloat::new(cell.smoothing)),
     ] {
         animation.control(ControlMessage::Set(change), &mut Discard);
@@ -197,7 +203,12 @@ fn settled_animation(
         ControlMessage::Set(StateChange::Size(UnipolarFloat::ONE)),
         &mut Discard,
     );
-    animation.prepare(&ClockBank::default(), &AudioState::default(), spectrum)
+    animation.prepare(
+        &ClockBank::default(),
+        &AudioState::default(),
+        spectrum,
+        Sampling::Continuous,
+    )
 }
 
 /// An animation driving noise at the given settings, resolved for a frame.
@@ -209,19 +220,26 @@ fn noise_animation(smoothing: f64, duty_cycle: f64, pulse: bool) -> PreparedAnim
             smoothing,
             duty_cycle,
             pulse,
+            reflect: false,
         },
         &SpectrumTables::SILENT,
     )
 }
 
 /// A sheet of `waveform` over `n_periods` to a cell, at every smoothing, duty
-/// cycle and pulse setting.
-fn sheet(waveform: Waveform, n_periods: u16, spectrum: &SpectrumTables) -> RgbaImage {
+/// cycle and pulse setting, reflected or not.
+fn sheet(
+    waveform: Waveform,
+    n_periods: u16,
+    spectrum: &SpectrumTables,
+    reflect: bool,
+) -> RgbaImage {
     sheet_of(|sheet, origin, smoothing, duty_cycle, pulse| {
         let cell = Cell {
             smoothing,
             duty_cycle,
             pulse,
+            reflect,
         };
         let animation = settled_animation(waveform, n_periods, cell, spectrum);
         let rows = trace_rows(|phase| animation.unit_value(phase));
@@ -263,18 +281,30 @@ fn goldens() -> Goldens {
     )
 }
 
-/// Every waveform draws the sheet its golden holds.
+/// Every waveform draws the sheets its goldens hold, plain and reflected.
 #[test]
 fn waveforms_draw_their_sheets() {
     let goldens = goldens();
     let silent = SpectrumTables::SILENT;
-    goldens.compare(&sheet(Waveform::SineSquare, 1, &silent), "sine_square.png");
-    goldens.compare(&sheet(Waveform::TriSaw, 1, &silent), "tri_saw.png");
-    goldens.compare(&sheet(Waveform::Noise, NOISE_PERIODS, &silent), "noise.png");
-    goldens.compare(
-        &sheet(Waveform::Spectrum, 1, &sheet_spectrum()),
-        "spectrum.png",
-    );
+    let spectrum = sheet_spectrum();
+    for (reflect, suffix) in [(false, ""), (true, "_reflected")] {
+        goldens.compare(
+            &sheet(Waveform::SineSquare, 1, &silent, reflect),
+            &format!("sine_square{suffix}.png"),
+        );
+        goldens.compare(
+            &sheet(Waveform::TriSaw, 1, &silent, reflect),
+            &format!("tri_saw{suffix}.png"),
+        );
+        goldens.compare(
+            &sheet(Waveform::Noise, NOISE_PERIODS, &silent, reflect),
+            &format!("noise{suffix}.png"),
+        );
+        goldens.compare(
+            &sheet(Waveform::Spectrum, 1, &spectrum, reflect),
+            &format!("spectrum{suffix}.png"),
+        );
+    }
 }
 
 /// A pulsed cell is drawn across enough of the noise field to show the gate

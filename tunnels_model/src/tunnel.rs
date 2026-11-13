@@ -1,4 +1,4 @@
-use crate::animation::{PreparedAnimation, TargetedAnimation};
+use crate::animation::{PreparedAnimation, Sampling, TargetedAnimation};
 use crate::layer::{
     ColorAdjust, ColorField, DrawMode, FigureId, FigureLibrary, FillLayer, GeneratedId, Layer,
     PaintMode, PhaseAxis, Placement, RenderMode, SegmentLayer, SegmentPath, ShapeGeometry,
@@ -13,6 +13,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
+use std::num::NonZeroU8;
 use std::time::Duration;
 use strum::VariantArray;
 use tunnels_lib::audio::AudioState;
@@ -114,7 +115,7 @@ pub struct Tunnel {
     /// If Some: use this index from the positions.
     position_selection: Option<PositionIdx>,
     /// TODO: regularize segs interface into regular float knobs
-    segs: u8,
+    segs: NonZeroU8,
     /// How often a segment is taken out.
     ///
     /// The default takes out every other chicklet.
@@ -168,7 +169,7 @@ impl Default for Tunnel {
             col_sat: UnipolarFloat::ZERO.into(),
             palette_selection: None,
             position_selection: None,
-            segs: 126,
+            segs: const { NonZeroU8::new(126).unwrap() },
             blacking: BlackingInterval(2),
             curr_rot_angle: Phase::ZERO,
             curr_marquee_angle: Phase::ZERO,
@@ -274,7 +275,7 @@ impl Tunnel {
     /// about which figure is drawn.
     fn segments_control(&self) -> u8 {
         match self.shelf() {
-            None => self.segs - SEGMENTS_MIN,
+            None => self.segs.get() - SEGMENTS_MIN.get(),
             Some(place) => KnobTravel::SEGMENTS.position(place.families),
         }
     }
@@ -321,13 +322,22 @@ impl Tunnel {
     /// Above forty an odd count is rounded up, for artistic reasons: a run that
     /// dense reads better without the seam an odd one leaves.
     ///
-    /// This is the count an animation is resolved against, so it is also how
-    /// many places along the tunnel an animation is asked for a value.
-    pub fn segment_count(&self) -> u8 {
-        if self.segs > 40 && !self.segs.is_multiple_of(2) {
-            self.segs + 1
+    /// This is the count an animation is resolved against on a run, so it is
+    /// also how many places along the run an animation is asked for a value.
+    pub fn segment_count(&self) -> NonZeroU8 {
+        if self.segs.get() > 40 && !self.segs.get().is_multiple_of(2) {
+            self.segs.saturating_add(1)
         } else {
             self.segs
+        }
+    }
+
+    /// How this tunnel samples its animations: once per segment of a run,
+    /// continuously across a figure.
+    pub fn sampling(&self) -> Sampling {
+        match self.shape_mode {
+            ShapeMode::Ellipse | ShapeMode::Line => Sampling::Points(self.segment_count().into()),
+            ShapeMode::Sprite | ShapeMode::Generated => Sampling::Continuous,
         }
     }
 
@@ -405,8 +415,10 @@ impl Tunnel {
         // costs is mostly deciding which clock drives it, where that clock is,
         // where its smoother has got to and what the amplitude works out to —
         // none of which depends on where in the figure the question is asked.
-        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] =
-            std::array::from_fn(|i| self.anims[i].prepare(ctx.clocks, ctx.audio, ctx.spectrum));
+        let sampling = self.sampling();
+        let anims: [TargetedAnimation<PreparedAnimation>; N_ANIM] = std::array::from_fn(|i| {
+            self.anims[i].prepare(ctx.clocks, ctx.audio, ctx.spectrum, sampling)
+        });
 
         match self.shape_mode {
             ShapeMode::Ellipse => Layer::Segments(self.render_segments(
@@ -599,7 +611,7 @@ impl Tunnel {
         ctx: RenderContext,
         anims: &[TargetedAnimation<PreparedAnimation>; N_ANIM],
     ) -> SegmentLayer {
-        let segs = self.segment_count();
+        let segs = self.segment_count().get();
 
         let mut arcs = Vec::new();
 
@@ -816,7 +828,7 @@ impl Tunnel {
             // One knob, two fields: a segment mode counts segments with it and a
             // figure mode opens a family of the library with it.
             Segments(v) => match self.shelf() {
-                None => self.segs = SEGMENTS_MIN + v.min(KNOB_MAX),
+                None => self.segs = SEGMENTS_MIN.saturating_add(v.min(KNOB_MAX)),
                 Some(place) => {
                     self.select_figure(Shelf {
                         families: KnobTravel::SEGMENTS.select(v, place.families),
@@ -931,8 +943,8 @@ pub const KNOB_CENTRE: u8 = 64;
 ///
 /// The knob counts from zero and the count from one, because a beam of no
 /// segments is not a beam.
-pub const SEGMENTS_MIN: u8 = 1;
-pub const SEGMENTS_MAX: u8 = SEGMENTS_MIN + KNOB_MAX;
+pub const SEGMENTS_MIN: NonZeroU8 = NonZeroU8::MIN;
+pub const SEGMENTS_MAX: NonZeroU8 = SEGMENTS_MIN.saturating_add(KNOB_MAX);
 
 /// Where a variant sits in its own list of variants.
 ///
@@ -1418,7 +1430,7 @@ mod test {
         let saucer = variant_index(RenderMode::Saucer);
         tunnel.handle_state_change(StateChange::RenderModeButton(saucer), &mut Silent);
         tunnel.handle_state_change(StateChange::MarqueeSpeed(marquee), &mut Silent);
-        assert_eq!(tunnel.segs, segments + SEGMENTS_MIN);
+        assert_eq!(tunnel.segs.get(), segments + SEGMENTS_MIN.get());
         assert_eq!(tunnel.render_mode, RenderMode::Saucer);
         assert_eq!(
             tunnel.draw_mode,
@@ -1474,8 +1486,8 @@ mod test {
             );
 
             assert_eq!(
-                tunnel.segs,
-                segments + SEGMENTS_MIN,
+                tunnel.segs.get(),
+                segments + SEGMENTS_MIN.get(),
                 "{mode:?}: the segment count is untouched"
             );
             assert_eq!(
@@ -1798,6 +1810,75 @@ mod test {
                 interval >= 1 || interval <= -2,
                 "knob position {knob} gives an interval of {interval}"
             );
+        }
+    }
+
+    /// The segments of a run are evenly spaced places along its path, so a
+    /// reflected animation reads the same on each segment as on the one as far
+    /// from the other end of the run: the first and the last alike, and so on
+    /// inwards, whatever the path and however many segments there are.
+    #[test]
+    fn a_reflected_animation_pairs_a_runs_segments_from_either_end() {
+        for (shape_mode, segments) in [
+            (ShapeMode::Ellipse, 4u8),
+            (ShapeMode::Ellipse, 5),
+            (ShapeMode::Line, 8),
+        ] {
+            let mut tunnel = Tunnel {
+                shape_mode,
+                // Every segment drawn, so the run holds them all in order.
+                blacking: BlackingInterval(1),
+                ..Default::default()
+            };
+            tunnel.handle_state_change(
+                StateChange::Segments(segments - SEGMENTS_MIN.get()),
+                &mut Silent,
+            );
+            tunnel.anims[0].target = AnimationTarget::Size;
+            for sc in [
+                AnimStateChange::Size(UnipolarFloat::new(0.5)),
+                AnimStateChange::Speed(BipolarFloat::new(0.3)),
+                AnimStateChange::Reflect(true),
+            ] {
+                tunnel.anims[0]
+                    .animation
+                    .control(AnimControlMessage::Set(sc), &mut Silent);
+            }
+            tunnel.update_state(Duration::from_millis(700), &AudioState::default());
+
+            let layer = tunnel.render(
+                UnipolarFloat::ONE,
+                PaintMode::Normal,
+                RenderContext {
+                    clocks: &ClockBank::default().as_static(),
+                    palette: &ColorPalette::default(),
+                    positions: &PositionBank::default(),
+                    audio: &AudioState::default(),
+                    spectrum: &SpectrumTables::SILENT,
+                },
+            );
+            let Layer::Segments(run) = &layer else {
+                panic!("a segment mode rendered something other than a run of segments");
+            };
+            let sizes: Vec<f64> = run.shapes.iter().map(|s| s.placement.extent_x).collect();
+            assert_eq!(sizes.len(), usize::from(segments));
+            let spread = sizes
+                .iter()
+                .fold(0.0_f64, |m, s| m.max((s - sizes[0]).abs()));
+            assert!(
+                spread > 1e-3,
+                "the animation left every segment of {shape_mode:?} the same size"
+            );
+            let n = sizes.len();
+            for (i, size) in sizes.iter().enumerate() {
+                let mirror = sizes[n - 1 - i];
+                assert!(
+                    (size - mirror).abs() < 1e-9,
+                    "segment {i} of {n} on {shape_mode:?} is {size} across, and segment {} \
+                     at the other end {mirror}",
+                    n - 1 - i
+                );
+            }
         }
     }
 
@@ -2358,7 +2439,7 @@ pub mod fixture {
     /// states the count it wants drawn and this finds the position for it.
     fn set_segments(tunnel: &mut Tunnel, segments: u8) {
         tunnel.handle_state_change(
-            StateChange::Segments(segments - SEGMENTS_MIN),
+            StateChange::Segments(segments - SEGMENTS_MIN.get()),
             &mut NoopEmitter,
         );
     }

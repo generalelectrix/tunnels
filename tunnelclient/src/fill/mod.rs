@@ -798,7 +798,8 @@ mod test {
         use tunnels_lib::audio::AudioState;
         use tunnels_lib::number::UnipolarFloat;
         use tunnels_model::animation::{
-            Animation, ControlMessage, EmitStateChange, StateChange, TargetedAnimation, Waveform,
+            Animation, ControlMessage, EmitStateChange, Sampling, StateChange, TargetedAnimation,
+            Waveform,
         };
         use tunnels_model::animation_target::AnimationTarget;
         use tunnels_model::clock_bank::ClockBank;
@@ -822,6 +823,7 @@ mod test {
                 &ClockBank::default(),
                 &AudioState::default(),
                 &SpectrumTables::SILENT,
+                Sampling::Continuous,
             ),
             target: AnimationTarget::PositionX,
         };

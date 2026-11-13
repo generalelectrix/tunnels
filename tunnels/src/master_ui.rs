@@ -1,5 +1,5 @@
 use crate::{
-    animation::TargetedAnimation,
+    animation::{Sampling, TargetedAnimation},
     audio::{AudioInput, ShowEmitter},
     beam::Beam,
     beam_store::{BeamStore, BeamStoreAddr},
@@ -61,17 +61,17 @@ impl MasterUI {
         }
     }
 
-    /// The animation the controls are pointed at, and how many places along the
-    /// beam it is resolved at: one per segment, each at its own phase.
-    pub(crate) fn current_animation_and_segments<'m>(
+    /// The animation the controls are pointed at, and how the places along the
+    /// beam it is resolved at lie along its phase.
+    pub(crate) fn current_animation_and_sampling<'m>(
         &self,
         mixer: &'m mut Mixer,
-    ) -> Option<(&'m mut TargetedAnimation, usize)> {
+    ) -> Option<(&'m mut TargetedAnimation, Sampling)> {
         match self.current_beam(mixer) {
             Beam::Look(_) => None,
             Beam::Tunnel(t) => {
-                let segments = t.segment_count() as usize;
-                Some((t.animation(self.current_animation_idx()), segments))
+                let sampling = t.sampling();
+                Some((t.animation(self.current_animation_idx()), sampling))
             }
         }
     }

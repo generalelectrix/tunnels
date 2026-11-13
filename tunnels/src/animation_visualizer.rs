@@ -3,7 +3,7 @@ use egui_plot::{Line, Plot, PlotPoint, PlotPoints, Points};
 use tunnels_lib::number::Phase;
 use tunnels_model::spectrum::SpectrumTables;
 
-use crate::animation::Animation;
+use crate::animation::{Animation, Sampling};
 use crate::clock_server::SharedClockData;
 
 /// Snapshot of animation state for the visualizer panel.
@@ -11,13 +11,12 @@ use crate::clock_server::SharedClockData;
 pub struct AnimationSnapshot {
     pub animation: Animation,
     pub clocks: SharedClockData,
-    /// How many places along the beam take a value from the animation, one
-    /// per segment, evenly spaced across a cycle from its start.
+    /// How the places along the beam that take a value from the animation lie
+    /// along its phase.
     ///
     /// Each place reads the animation at its own phase, so its value lies on
-    /// the scaled waveform, and the count marks points on that line without
-    /// changing its shape.
-    pub fixture_count: usize,
+    /// the scaled waveform.
+    pub sampling: Sampling,
     /// Whether each of those places is also drawn as a point of its own.
     ///
     /// A run dense enough that its points merge into a line is already served
@@ -43,10 +42,12 @@ impl VisualizerPanelState {
         // waveform ignores the amplitude, so one preparation serves all three
         // plots.
         let spectrum = SpectrumTables::new(&state.clocks.audio.frame);
-        let anim =
-            state
-                .animation
-                .prepare(&state.clocks.clock_bank, &state.clocks.audio, &spectrum);
+        let anim = state.animation.prepare(
+            &state.clocks.clock_bank,
+            &state.clocks.audio,
+            &spectrum,
+            state.sampling,
+        );
 
         // Unit waveform (amplitude always 1).
         self.preview.clear();
@@ -65,9 +66,9 @@ impl VisualizerPanelState {
 
         // Individual fixture dots, each at its own phase.
         self.dots.clear();
-        if state.show_fixture_values {
-            let phase_offset_per_fixture = 1.0 / state.fixture_count as f64;
-            self.dots.extend((0..state.fixture_count).map(|i| {
+        if let (true, Sampling::Points(count)) = (state.show_fixture_values, state.sampling) {
+            let phase_offset_per_fixture = 1.0 / count.get() as f64;
+            self.dots.extend((0..count.get()).map(|i| {
                 let phase = i as f64 * phase_offset_per_fixture;
                 PlotPoint::new(phase, anim.value(Phase::new(phase)))
             }));
@@ -110,7 +111,12 @@ impl VisualizerPanelState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::num::NonZeroUsize;
     use tunnels_lib::audio::AudioState;
+
+    fn points(n: usize) -> Sampling {
+        Sampling::Points(NonZeroUsize::new(n).unwrap())
+    }
 
     #[test]
     fn compute_default_state() {
@@ -120,14 +126,14 @@ mod tests {
 
         assert_eq!(panel.preview.len(), NUM_WAVE_POINTS);
         assert_eq!(panel.live.len(), NUM_WAVE_POINTS);
-        // Default fixture_count is 0, so no dots.
+        // Default sampling is continuous, so no dots.
         assert_eq!(panel.dots.len(), 0);
     }
 
     #[test]
     fn compute_with_fixtures() {
         let state = AnimationSnapshot {
-            fixture_count: 4,
+            sampling: points(4),
             show_fixture_values: true,
             ..Default::default()
         };
@@ -161,7 +167,7 @@ mod tests {
     #[test]
     fn live_has_same_x_as_preview() {
         let state = AnimationSnapshot {
-            fixture_count: 2,
+            sampling: points(2),
             ..Default::default()
         };
         let mut panel = VisualizerPanelState::default();
@@ -178,7 +184,7 @@ mod tests {
 
         // First compute with 4 fixtures.
         panel.compute(&AnimationSnapshot {
-            fixture_count: 4,
+            sampling: points(4),
             show_fixture_values: true,
             ..Default::default()
         });
@@ -186,7 +192,7 @@ mod tests {
 
         // Recompute with 2 fixtures -- dots should shrink.
         panel.compute(&AnimationSnapshot {
-            fixture_count: 2,
+            sampling: points(2),
             show_fixture_values: true,
             ..Default::default()
         });
@@ -196,8 +202,10 @@ mod tests {
     /// The plot is the function a beam renders: every point of the waveform
     /// is the animation's unit value at that phase, and every fixture's dot
     /// its scaled value at that fixture's phase. So neither how many places
-    /// the beam has nor whether each is drawn changes the line, and noise
-    /// comes out shaped by its smoothing at any count of places, one included.
+    /// the beam has nor whether each is drawn changes the line of an
+    /// unreflected animation, and noise comes out shaped by its smoothing at
+    /// any count of places, one included. A reflected animation is plotted
+    /// mirrored about the middle of the beam's places, as a beam renders it.
     #[test]
     fn the_plot_is_the_animation_at_each_phase() {
         use crate::animation::{ControlMessage, EmitStateChange, StateChange, Waveform};
@@ -224,20 +232,22 @@ mod tests {
             animation.update_state(std::time::Duration::from_secs(1), &AudioState::default());
             animation
         };
-        let plot = |animation: &Animation, fixture_count: usize, show_fixture_values: bool| {
+        let plot = |animation: &Animation, sampling: Sampling, show_fixture_values: bool| {
             let state = AnimationSnapshot {
                 animation: animation.clone(),
-                fixture_count,
+                sampling,
                 show_fixture_values,
                 ..Default::default()
             };
             let mut panel = VisualizerPanelState::default();
             panel.compute(&state);
             let spectrum = SpectrumTables::new(&state.clocks.audio.frame);
-            let rendered =
-                state
-                    .animation
-                    .prepare(&state.clocks.clock_bank, &state.clocks.audio, &spectrum);
+            let rendered = state.animation.prepare(
+                &state.clocks.clock_bank,
+                &state.clocks.audio,
+                &spectrum,
+                sampling,
+            );
             for point in &panel.preview {
                 assert_eq!(
                     point.y,
@@ -261,11 +271,11 @@ mod tests {
         let line = |panel: &VisualizerPanelState| -> Vec<f64> {
             panel.preview.iter().map(|p| p.y).collect()
         };
-        let reference = line(&plot(&rough, 1, false));
+        let reference = line(&plot(&rough, points(1), false));
         for (fixture_count, show_fixture_values) in
             [(1, true), (4, true), (126, true), (126, false)]
         {
-            let panel = plot(&rough, fixture_count, show_fixture_values);
+            let panel = plot(&rough, points(fixture_count), show_fixture_values);
             assert_eq!(
                 line(&panel),
                 reference,
@@ -283,7 +293,15 @@ mod tests {
             );
         }
 
-        let smooth = line(&plot(&noise(1.0), 1, false));
+        let mut reflected = rough.clone();
+        reflected.control(ControlMessage::Set(StateChange::Reflect(true)), &mut Silent);
+        let mirrored = plot(&reflected, points(5), true);
+        assert_eq!(
+            mirrored.dots[0].y, mirrored.dots[4].y,
+            "a reflected animation drew the first of five places apart from the last"
+        );
+
+        let smooth = line(&plot(&noise(1.0), points(1), false));
         let spread = reference
             .iter()
             .zip(&smooth)
