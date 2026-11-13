@@ -56,8 +56,7 @@ pub struct StaticParams {
     pub pulse: bool,
     pub standing: bool,
     pub invert: bool,
-    /// Whether the places the animation is asked at read as two mirror images
-    /// about their middle.
+    /// Reflect the animation about the midpoint.
     pub reflect: bool,
     pub n_periods: u16,
 }
@@ -75,19 +74,19 @@ impl Default for StaticParams {
     }
 }
 
-/// How the places an animation is asked for a value lie along its phase.
+/// Is this animation sampled at a discrete number of points, or continuously?
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Sampling {
     /// Anywhere along it.
     #[default]
     Continuous,
-    /// This many places, evenly spaced from the start of a cycle: place `i`
+    /// This many samples, evenly spaced from the start of a cycle: place `i`
     /// of `n` at phase `i / n`.
     Points(NonZeroUsize),
 }
 
 impl Sampling {
-    /// How far along the phase the places reach: to the last of them, or to
+    /// How far along the phase the samples reach: to the last of them, or to
     /// the end of the cycle when they lie anywhere.
     fn span(self) -> f64 {
         match self {
@@ -300,8 +299,6 @@ impl Animation {
     /// what phase it is at, where the smoother has got to, and the amplitude
     /// the size, submaster and audio envelope multiply out to. None of it
     /// depends on where in the figure the question is being asked.
-    ///
-    /// `sampling` is how the places it will be asked at lie along its phase.
     pub fn prepare<'f>(
         &self,
         external_clocks: &impl ClockStore,
@@ -477,7 +474,7 @@ pub trait EmitStateChange {
 #[derive(Clone, Copy, Debug)]
 pub struct PreparedAnimation<'f> {
     static_params: StaticParams,
-    /// With reflect on, how far along the phase the places it is asked at
+    /// With reflect on, how far along the phase the samples
     /// reach; the second half of that span reads the first half backwards.
     reflect_span: Option<f64>,
     /// Where the driving clock has got to.
@@ -585,7 +582,7 @@ impl PreparedAnimation<'_> {
         }
     }
 
-    /// Where a place reads the waveform.
+    /// Where a sample reads the waveform.
     ///
     /// Reflected, a phase past the middle of the places reads as far short of
     /// the middle as it is past it, and one past the last place reads the
