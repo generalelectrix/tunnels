@@ -538,7 +538,7 @@ impl PreparedAnimation<'_> {
 
     /// The waveform's own value at a phase, before amplitude.
     pub fn unit_value(&self, spatial_phase_offset: Phase) -> f64 {
-        let spatial_phase_offset = self.reflected(spatial_phase_offset);
+        let spatial_phase_offset = self.phase_with_reflection(spatial_phase_offset);
         let result = match self.waveform {
             PreparedWaveform::SineSquare => {
                 waveforms::sine_square(&self.waveform_args(spatial_phase_offset))
@@ -593,7 +593,7 @@ impl PreparedAnimation<'_> {
     /// halves approach it from, so a hard edge that falls exactly there leaves
     /// no lone point beyond it.
     #[inline(always)]
-    fn reflected(&self, phase: Phase) -> Phase {
+    fn phase_with_reflection(&self, phase: Phase) -> Phase {
         match self.reflect_span {
             None => phase,
             Some(span) => {
