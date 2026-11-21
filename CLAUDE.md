@@ -72,7 +72,8 @@ nothing more.
 | `console` | GUI binary (eframe/egui): show configuration, MIDI, audio, animation viz |
 | `tunnelclient` | Render client |
 | `tunnel-bootstrap` | Client bootstrapping |
-| `gui_common` | Shared GUI components (audio panel, envelope viewer, MIDI panel, scrolling plot) |
+| `gui_common` | Shared GUI components (audio panel, envelope viewer, MIDI panel, scrolling plot, update window) |
+| `app_update` | Self-update of a macOS app bundle from its GitHub Releases |
 | `stage_theme` | Dark egui theme for stage environments |
 | `midi_harness` | MIDI device management |
 | `zero_configure` | DNSSD service discovery |

@@ -1,0 +1,15 @@
+[package]
+name = "app_update"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+flate2 = "1"
+serde = { workspace = true }
+tar = "0.4"
+tempfile = "3"
+thiserror = "2"
+ureq = { version = "3", default-features = false, features = ["native-tls", "json"] }
+
+[dev-dependencies]
+tiny_http = "0.12"
