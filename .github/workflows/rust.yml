@@ -7,12 +7,17 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # rustc 1.100 can't compile objc2 0.3.0-beta.3, which tunnelclient's windowing stack depends on
+  # (rust-lang/rust#166229). Remove this pin once a fixed rustc or objc2 is released.
+  RUSTUP_TOOLCHAIN: "1.99"
 
 jobs:
   fmt:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
       - name: Check formatting
         run: cargo fmt -- --check
 
@@ -20,6 +25,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -31,6 +38,8 @@ jobs:
         os: [macos-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - uses: Swatinem/rust-cache@v2
       - name: Build and test
         run: |

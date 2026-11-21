@@ -14,6 +14,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   MACOSX_DEPLOYMENT_TARGET: "10.13"
+  # Pinned for the same reason as in rust.yml.
+  RUSTUP_TOOLCHAIN: "1.99"
 
 jobs:
   release:
@@ -28,6 +30,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake librsvg create-dmg
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           rustup target add x86_64-apple-darwin
           rustup target add aarch64-apple-darwin
 
